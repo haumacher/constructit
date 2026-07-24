@@ -272,6 +272,23 @@ class EditorTest {
     }
 
     @Test
+    fun keyPointsOfAFilletArcGivesCentreAndTangentPoints() {
+        val ed = Editor()
+        ed.setTool(Tools.SEGMENT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(50.0, 0.0))
+        ed.setTool(Tools.SEGMENT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(0.0, 50.0))
+        ed.activeScalar = ed.doc.newParameter("r", 10.0.mm)
+        ed.setTool(Tools.FILLET); ed.click(Vec2(30.0, 0.0)); ed.click(Vec2(0.0, 30.0))  // fillet, centre (10,10)
+        ed.setTool(Tools.KEY_POINTS); ed.click(Vec2(2.93, 2.93))                        // click the fillet arc
+
+        val pts = ed.doc.elements.filter { it.kind == ElementKind.DERIVED_POINT }
+            .map { Evaluator().point(it.ref as constructit.dsl.PointRef) }
+        assertEquals(3, pts.size)                                   // centre + two tangent endpoints
+        assertClose(pts[0].x, 10.0); assertClose(pts[0].y, 10.0)   // centre
+        assertClose(pts[1].x, 10.0); assertClose(pts[1].y, 0.0)    // tangent point on +x leg
+        assertClose(pts[2].x, 0.0); assertClose(pts[2].y, 10.0)    // tangent point on +y leg
+    }
+
+    @Test
     fun keyPointsExposesMirroredSegmentEndpoints() {
         val ed = Editor()
         ed.setTool(Tools.SEGMENT); ed.click(Vec2(10.0, 10.0)); ed.click(Vec2(30.0, 10.0))
