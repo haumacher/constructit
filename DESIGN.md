@@ -117,6 +117,42 @@ path-dependent and would break reproducibility/undo/reload.)
   as a heuristic to auto-update the discrete selector — but the discrete selector is always
   persisted, so the stored model stays pure. Does not compromise the core.
 
+## Platform & deployment architecture (OP-10, OP-12 — RESOLVED)
+
+**Language/platform (OP-10):** **JVM, Kotlin** — specifically **Kotlin Multiplatform**, so one
+engine codebase runs on JVM (server/desktop) *and* in the browser (Kotlin/JS; Kotlin/Wasm as
+it matures). No hand-written JS. (Chosen after ruling out C/C++, TS/JS, and Rust — the last on
+error-model ergonomics. Kotlin over plain Java for the shared browser story.)
+
+**Layered architecture (OP-12):**
+1. **Core engine** — a *pure Kotlin library* (model, type system, DAG eval, geometry ops,
+   later the Manifold binding). **Zero** dependency on any UI, server framework, or TopLogic.
+   This is the load-bearing rule: it makes the deployment/shell choice a later, reversible
+   packaging decision.
+2. **Client** — the interactive canvas runs **client-side in the browser** (non-negotiable for
+   live drag-with-recompute at interactive rates). The engine is compiled to the browser via
+   Kotlin Multiplatform; the canvas is **hand-rendered** (Canvas2D/SVG for 2D → WebGL for 3D).
+   Surrounding chrome (toolbars, property panel, tree) also Kotlin.
+3. **Persistence/format** — a construction is a **document** in a clean serialization format;
+   this is the contract between engine and any shell.
+4. **Shell — deferred/optional.** Start as a **fat browser client** (or a desktop JavaFX
+   harness for fastest phase-1 iteration) with **file-based** persistence. Phase-1 (2D) needs
+   no kernel and no server.
+
+**Client-stack rationale:** Kotlin uniquely satisfies the shared-engine goal that justified
+the JVM. GWT/J2CL was justified *only* by TopLogic alignment — and **TL-as-shell is an
+explicit non-requirement** (a valid embedding option that must not guide the decision).
+Flutter/Dart is the best pure-UI toolkit but would sacrifice the shared engine (separate
+language + RPC boundary); the app is **canvas-centric, not widget-centric** (the canvas is
+hand-rendered regardless), so Flutter's widget edge buys the least here.
+
+**Open embeddings / later options (non-driving):**
+- **TL module** as an enterprise shell (auth, projects, persistence, collaboration) *around*
+  the canvas — managing constructions **as documents, not per-node model objects** (which
+  sidesteps the fine-grained-node-graph concern). Valid, not a requirement.
+- **Heavy 3D compute server-side** in phase-2 (Manifold via JNI on the JVM) if in-browser mesh
+  booleans get too heavy — the shared engine makes this a deployment toggle, not a rewrite.
+
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
 - Every node has a **validity state** (valid / invalid).
@@ -357,11 +393,15 @@ Three broad families (see OP-9 decision above):
       but **not day-one → posture 1**. Ship printing-first on Manifold; **preserve exact
       analytic provenance** so a B-rep/STEP export (e.g. OCCT export-only backend) can be added
       later. Exact surfaces can't be reconstructed from a mesh after the fact.
-- [ ] **OP-10 Implementation platform** — DEFERRED. Constraints so far: dislikes C and
-      TS/JS; **web is an acceptable platform**. Note: "web" does not require writing JS —
-      a web frontend can be compiled from Java (GWT/TeaVM), Kotlin/JS, or Rust→WASM. So
-      leading candidates are JVM (Java/Kotlin) or Rust, optionally targeting the browser.
-      Interacts strongly with kernel choice (OP-9).
+- [x] **OP-10 Implementation platform** — RESOLVED: **JVM + Kotlin (Kotlin Multiplatform)**,
+      shared engine on JVM (server/desktop) and browser (Kotlin/JS, Kotlin/Wasm). Ruled out
+      C/C++, TS/JS, and Rust (error-model ergonomics). Kotlin over Java for the browser story.
+- [x] **OP-12 Deployment / UI architecture** — RESOLVED (principles): layered — pure Kotlin
+      engine (no shell deps) → client-side hand-rendered canvas (engine compiled to browser) →
+      document/serialization format → shell deferred (start fat browser client / desktop
+      JavaFX harness, file persistence). Client stack = Kotlin (TL-as-shell a non-requirement,
+      so GWT/J2CL not indicated; Flutter would sacrifice the shared engine). TL module and
+      server-side 3D compute remain valid non-driving later options.
 
 ## Prior art to keep in mind
 
@@ -420,3 +460,11 @@ Three broad families (see OP-9 decision above):
   (non-ancestor) analytic construction** forward (acyclic); only feeding back into the mesh's
   ancestors is a cycle (OP-4). Such values are **approximate** (mesh resolution) — acceptable
   where clearance/play is wanted (e.g. bore for a rotating axle); UI should flag them.
+- **Turn 10** — Resolved OP-10 (platform): **JVM + Kotlin (Kotlin Multiplatform)** — ruled out
+  C/C++, TS/JS, Rust (error-model ergonomics); Kotlin over Java for the shared browser engine.
+  Resolved OP-12 (deployment/UI architecture): layered — pure Kotlin engine (no shell deps),
+  client-side hand-rendered canvas (engine compiled to browser), document format, deferred
+  shell (start fat browser client / JavaFX harness). Client stack = Kotlin; **TL-as-shell is
+  an explicit non-requirement** (so GWT/J2CL not indicated; Flutter would sacrifice the shared
+  engine; app is canvas-centric not widget-centric). TL module and server-side 3D compute kept
+  as non-driving later options.
