@@ -109,7 +109,7 @@ class Editor(
 
         if (pendingCount == tool.slots.size) {
             if (tool.scalar && activeScalar == null) {
-                statusHint = "${tool.label}: select a parameter in the panel first"
+                statusHint = "${tool.label}: select a parameter or measurement in the panel first"
                 resetPicks(); onChange(); return
             }
             tool.build(doc, Picks(pickedPoints.toList(), pickedElements.toList(), world), activeScalar?.ref)

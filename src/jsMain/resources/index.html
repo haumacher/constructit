@@ -36,7 +36,9 @@
         .prow .pname { flex: 1; }
         .prow .pval { width: 56px; }
         .prow .punit { width: 20px; color: #999; }
-        .mrow { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 4px; color: #333; }
+        .mrow { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 4px; color: #333; border-radius: 4px; cursor: pointer; }
+        .mrow:hover { background: #eef4fb; }
+        .mrow.active { background: #e2eefb; outline: 1px solid #1f77b4; }
         .mrow .mval { color: #2ca02c; }
         #tree .item { font-size: 12px; padding: 2px 4px; border-radius: 4px; }
         #tree .item .eid { color: #bbb; float: right; }

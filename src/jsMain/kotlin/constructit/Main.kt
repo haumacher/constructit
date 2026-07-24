@@ -80,20 +80,39 @@ private fun setupApp() {
         repaint()
     })
     val paramsList = document.getElementById("params-list") as HTMLElement
-    // select active parameter by clicking a row
+    // select active parameter by clicking a row — but NOT when clicking the value field
+    // (that would repaint and destroy the input, stealing focus)
     paramsList.addEventListener("click", {
-        val row = (it.target as? HTMLElement)?.closest(".prow") ?: return@addEventListener
-        val sid = row.getAttribute("data-sid")
-        editor.activeScalar = editor.doc.scalars.firstOrNull { s -> s.id == sid }
+        val target = it.target as? HTMLElement ?: return@addEventListener
+        if (target is HTMLInputElement) return@addEventListener
+        val row = target.closest(".prow") ?: return@addEventListener
+        editor.activeScalar = editor.doc.scalars.firstOrNull { s -> s.id == row.getAttribute("data-sid") }
         repaint()
     })
-    // edit a parameter value (on commit)
+    // focusing a value field selects that parameter without rebuilding (keeps the caret)
+    paramsList.addEventListener("focusin", {
+        val sid = (it.target as? HTMLInputElement)?.getAttribute("data-sid") ?: return@addEventListener
+        editor.activeScalar = editor.doc.scalars.firstOrNull { s -> s.id == sid }
+        val rows = paramsList.querySelectorAll(".prow")
+        for (i in 0 until rows.length) {
+            val r = rows.item(i) as HTMLElement
+            r.className = if (r.getAttribute("data-sid") == sid) "prow active" else "prow"
+        }
+    })
+    // edit a parameter value (on commit: blur / Enter)
     paramsList.addEventListener("change", {
         val input = it.target as? HTMLInputElement ?: return@addEventListener
         val sid = input.getAttribute("data-sid") ?: return@addEventListener
         val entry = editor.doc.scalars.firstOrNull { s -> s.id == sid } ?: return@addEventListener
         val v = input.value.toDoubleOrNull() ?: return@addEventListener
         editor.doc.setParameter(entry, quantityIn(entry, v))
+        repaint()
+    })
+
+    // a measurement can drive a new construction: click it to make it the active scalar (OP-4)
+    (document.getElementById("measure-list") as HTMLElement).addEventListener("click", {
+        val row = (it.target as? HTMLElement)?.closest(".mrow") ?: return@addEventListener
+        editor.activeScalar = editor.doc.scalars.firstOrNull { s -> s.id == row.getAttribute("data-sid") }
         repaint()
     })
 
@@ -145,8 +164,9 @@ private fun renderPanel(editor: Editor) {
     // measurements (read-only)
     val mlist = document.getElementById("measure-list") as HTMLElement
     mlist.innerHTML = editor.doc.scalars.filter { !it.editable }.joinToString("") { s ->
+        val active = if (s === editor.activeScalar) " active" else ""
         val value = (ev.eval(s.ref.node) as? constructit.core.EvalResult.Ok)?.let { Format.quantity((it.value as constructit.core.ScalarValue).q) } ?: "—"
-        "<div class=\"mrow\"><span>${s.name}</span><span class=\"mval\">$value</span></div>"
+        "<div class=\"mrow$active\" data-sid=\"${s.id}\"><span>${s.name}</span><span class=\"mval\">$value</span></div>"
     }
 
     // element tree
