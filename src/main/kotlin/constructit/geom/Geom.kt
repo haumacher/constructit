@@ -35,6 +35,9 @@ data class Vec2(val x: Double, val y: Double) {
 /** An infinite line through [origin] with unit direction [dir]. */
 data class Line(val origin: Vec2, val dir: Vec2)
 
+/** A ray from [origin] in unit direction [dir] (t >= 0). */
+data class Ray(val origin: Vec2, val dir: Vec2)
+
 data class Segment(val a: Vec2, val b: Vec2)
 
 data class Circle(val center: Vec2, val radius: Double)
@@ -50,6 +53,18 @@ data class Arc(
 
 /** Ordered solution set of points (OP-1 canonical ordering). Cardinality 0, 1 or 2. */
 data class PointSet(val points: List<Vec2>)
+
+/** A 2D direction / free vector. */
+data class Direction(val v: Vec2)
+
+/** One element of a profile chain. */
+sealed interface ProfileElement {
+    data class Seg(val segment: Segment) : ProfileElement
+    data class ArcE(val arc: Arc) : ProfileElement
+}
+
+/** An ordered (ideally closed) chain of segments and arcs — the bridge to 3D extrude/revolve. */
+data class Profile(val elements: List<ProfileElement>)
 
 /** Geometry math: intersections emit ordered [PointSet]s (OP-1). */
 object GeomMath {
@@ -93,6 +108,46 @@ object GeomMath {
         val half = sqrt(max(0.0, c.radius * c.radius - distToCenter * distToCenter))
         if (half < EPS) return PointSet(listOf(closest))
         return PointSet(listOf(line.origin + line.dir * (proj - half), line.origin + line.dir * (proj + half)))
+    }
+
+    /** Circumcentre of three points (null if collinear). */
+    fun circumcenter(a: Vec2, b: Vec2, c: Vec2): Vec2? {
+        val dd = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
+        if (abs(dd) < EPS) return null
+        val a2 = a.x * a.x + a.y * a.y
+        val b2 = b.x * b.x + b.y * b.y
+        val c2 = c.x * c.x + c.y * c.y
+        val ux = (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / dd
+        val uy = (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / dd
+        return Vec2(ux, uy)
+    }
+
+    /** Rotate a vector by [theta] radians. */
+    private fun rot(v: Vec2, theta: Double): Vec2 {
+        val co = kotlin.math.cos(theta); val si = kotlin.math.sin(theta)
+        return Vec2(v.x * co - v.y * si, v.x * si + v.y * co)
+    }
+
+    /**
+     * Common tangent lines of two circles. [inner] selects the crossing (internal) tangents,
+     * otherwise the external ones. Returns 0 or 2 lines (order: rotation +phi then -phi).
+     */
+    fun commonTangents(c1: Circle, c2: Circle, inner: Boolean): List<Line> {
+        val d = c2.center - c1.center
+        val dist = d.length()
+        if (dist < EPS) return emptyList()
+        val u = d * (1.0 / dist)
+        val k = if (inner) -(c1.radius + c2.radius) else (c2.radius - c1.radius)
+        val cosPhi = k / dist
+        if (cosPhi < -1.0 - 1e-12 || cosPhi > 1.0 + 1e-12) return emptyList()
+        val phi = kotlin.math.acos(cosPhi.coerceIn(-1.0, 1.0))
+        val result = ArrayList<Line>(2)
+        for (s in intArrayOf(1, -1)) {
+            val n = rot(u, s * phi)                 // unit normal of the tangent line
+            val p = n.dot(c1.center) - c1.radius    // signed offset: n . x = p
+            result.add(Line(n * p, n.perp()))
+        }
+        return result
     }
 
     /** Axis-aligned bounding box of a set of points, or null if empty. */

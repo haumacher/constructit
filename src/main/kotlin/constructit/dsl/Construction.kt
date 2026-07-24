@@ -2,6 +2,7 @@ package constructit.dsl
 
 import constructit.core.ArcValue
 import constructit.core.CircleValue
+import constructit.core.DirectionValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.LineValue
@@ -9,17 +10,26 @@ import constructit.core.Node
 import constructit.core.OpNode
 import constructit.core.PointSetValue
 import constructit.core.PointValue
+import constructit.core.ProfileValue
+import constructit.core.RayValue
 import constructit.core.ScalarValue
 import constructit.core.SegmentValue
 import constructit.core.SourceNode
 import constructit.core.Value
+import constructit.core.transformValue
+import constructit.geom.Affine
 import constructit.geom.Arc
 import constructit.geom.Circle
+import constructit.geom.Direction
 import constructit.geom.GeomMath
 import constructit.geom.Line
+import constructit.geom.Profile
+import constructit.geom.ProfileElement
+import constructit.geom.Ray
 import constructit.geom.Segment
 import constructit.geom.Vec2
 import constructit.units.Dimension
+import constructit.units.DimensionError
 import constructit.units.Quantity
 
 /** A typed handle to a node's output. Compile-time typing over the generic graph (OP-5). */
@@ -32,6 +42,9 @@ typealias SegmentRef = Ref<SegmentValue>
 typealias CircleRef = Ref<CircleValue>
 typealias ArcRef = Ref<ArcValue>
 typealias PointSetRef = Ref<PointSetValue>
+typealias RayRef = Ref<RayValue>
+typealias DirectionRef = Ref<DirectionValue>
+typealias ProfileRef = Ref<ProfileValue>
 
 /**
  * Builder for a construction DAG. Generates stable ids; supports macro instantiation with
@@ -184,6 +197,224 @@ class Construction {
 
     fun measureDistance(a: PointRef, b: PointRef): ScalarRef =
         op(a, b) { EvalResult.Ok(ScalarValue(Quantity.mm(((it[1] as PointValue).p - (it[0] as PointValue).p).length()))) }
+
+    private fun pt(v: Value) = (v as PointValue).p
+    private fun ln(v: Value) = (v as LineValue).line
+    private fun cir(v: Value) = (v as CircleValue).circle
+    private fun sc(v: Value) = (v as ScalarValue).q
+
+    // ================= Tier 1: relational construction =================
+
+    /** Line through [point] perpendicular to [line]. */
+    fun perpendicularThrough(line: LineRef, point: PointRef): LineRef =
+        op(line, point) { EvalResult.Ok(LineValue(Line(pt(it[1]), ln(it[0]).dir.perp()))) }
+
+    /** Line through [point] parallel to [line]. */
+    fun parallelThrough(line: LineRef, point: PointRef): LineRef =
+        op(line, point) { EvalResult.Ok(LineValue(Line(pt(it[1]), ln(it[0]).dir))) }
+
+    /** Perpendicular bisector of two points (direct construction). */
+    fun perpBisector(a: PointRef, b: PointRef): LineRef =
+        op(a, b) {
+            val pa = pt(it[0]); val pb = pt(it[1])
+            if ((pb - pa).length() < Vec2.EPS) EvalResult.Invalid("bisector of coincident points")
+            else EvalResult.Ok(LineValue(Line((pa + pb) * 0.5, (pb - pa).perp().normalized())))
+        }
+
+    /** Internal angle bisector at [vertex] of the angle opening toward [a] and [b]. */
+    fun angleBisector(a: PointRef, vertex: PointRef, b: PointRef): LineRef =
+        op(a, vertex, b) {
+            val v = pt(it[1])
+            val ua = (pt(it[0]) - v).normalized(); val ub = (pt(it[2]) - v).normalized()
+            val bis = ua + ub
+            if (bis.length() < Vec2.EPS) EvalResult.Invalid("degenerate angle bisector (straight/opposite)")
+            else EvalResult.Ok(LineValue(Line(v, bis.normalized())))
+        }
+
+    /** Foot of the perpendicular from [point] onto [line]. */
+    fun projectToLine(point: PointRef, line: LineRef): PointRef =
+        op(point, line) {
+            val l = ln(it[1]); val p = pt(it[0])
+            EvalResult.Ok(PointValue(l.origin + l.dir * (p - l.origin).dot(l.dir)))
+        }
+
+    /** Point at signed [distance] (a length) along [line] from its origin. */
+    fun pointOnLineAt(line: LineRef, distance: ScalarRef): PointRef =
+        op(line, distance) { EvalResult.Ok(PointValue(ln(it[0]).origin + ln(it[0]).dir * sc(it[1]).mm)) }
+
+    /** Point on [circle] at the given [angle]. */
+    fun pointOnCircle(circle: CircleRef, angle: ScalarRef): PointRef =
+        op(circle, angle) {
+            val c = cir(it[0]); val a = sc(it[1]).requireDim(Dimension.ANGLE, "angle").base
+            EvalResult.Ok(PointValue(c.center + Vec2(c.radius * Math.cos(a), c.radius * Math.sin(a))))
+        }
+
+    /** Circle by centre and a point it passes through (compass). */
+    fun circleCP(center: PointRef, through: PointRef): CircleRef =
+        op(center, through) {
+            val r = (pt(it[1]) - pt(it[0])).length()
+            if (r < Vec2.EPS) EvalResult.Invalid("zero-radius circle") else EvalResult.Ok(CircleValue(Circle(pt(it[0]), r)))
+        }
+
+    // ================= Tier 1: general transforms (any geometry) =================
+
+    fun <V : Value> mirror(g: Ref<V>, axis: LineRef): Ref<V> =
+        op(g, axis) { EvalResult.Ok(transformValue(Affine.reflection(ln(it[1])), it[0])) }
+
+    fun <V : Value> rotate(g: Ref<V>, center: PointRef, angle: ScalarRef): Ref<V> =
+        op(g, center, angle) {
+            EvalResult.Ok(transformValue(Affine.rotation(pt(it[1]), sc(it[2]).requireDim(Dimension.ANGLE, "angle").base), it[0]))
+        }
+
+    fun <V : Value> scaleGeom(g: Ref<V>, center: PointRef, factor: ScalarRef): Ref<V> =
+        op(g, center, factor) { EvalResult.Ok(transformValue(Affine.scaling(pt(it[1]), sc(it[2]).base), it[0])) }
+
+    fun <V : Value> translateGeom(g: Ref<V>, dx: ScalarRef, dy: ScalarRef): Ref<V> =
+        op(g, dx, dy) { EvalResult.Ok(transformValue(Affine.translation(Vec2(sc(it[1]).mm, sc(it[2]).mm)), it[0])) }
+
+    // ================= Tier 1: scalar functions =================
+
+    fun mul(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) { EvalResult.Ok(ScalarValue(sc(it[0]) * sc(it[1]))) }
+    fun div(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) { EvalResult.Ok(ScalarValue(sc(it[0]) / sc(it[1]))) }
+    fun absS(a: ScalarRef): ScalarRef = op(a) { EvalResult.Ok(ScalarValue(Quantity(Math.abs(sc(it[0]).base), sc(it[0]).dim))) }
+
+    fun minS(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) {
+        if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("min of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
+        EvalResult.Ok(ScalarValue(Quantity(Math.min(sc(it[0]).base, sc(it[1]).base), sc(it[0]).dim)))
+    }
+    fun maxS(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) {
+        if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("max of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
+        EvalResult.Ok(ScalarValue(Quantity(Math.max(sc(it[0]).base, sc(it[1]).base), sc(it[0]).dim)))
+    }
+    fun modS(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) {
+        if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("mod of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
+        EvalResult.Ok(ScalarValue(Quantity(sc(it[0]).base % sc(it[1]).base, sc(it[0]).dim)))
+    }
+
+    fun powS(a: ScalarRef, n: Int): ScalarRef = op(a) {
+        val q = sc(it[0])
+        EvalResult.Ok(ScalarValue(Quantity(Math.pow(q.base, n.toDouble()), Dimension(q.dim.length * n, q.dim.angle * n))))
+    }
+    fun sqrtS(a: ScalarRef): ScalarRef = op(a) {
+        val q = sc(it[0])
+        if (q.dim.length % 2 != 0 || q.dim.angle % 2 != 0) throw DimensionError("sqrt of odd dimension ${q.dim}")
+        if (q.base < 0) throw ArithmeticException("sqrt of negative")
+        EvalResult.Ok(ScalarValue(Quantity(Math.sqrt(q.base), Dimension(q.dim.length / 2, q.dim.angle / 2))))
+    }
+
+    fun sinS(a: ScalarRef): ScalarRef = op(a) { EvalResult.Ok(ScalarValue(constructit.units.sin(sc(it[0])))) }
+    fun cosS(a: ScalarRef): ScalarRef = op(a) { EvalResult.Ok(ScalarValue(constructit.units.cos(sc(it[0])))) }
+    fun tanS(a: ScalarRef): ScalarRef = op(a) { EvalResult.Ok(ScalarValue(constructit.units.tan(sc(it[0])))) }
+    fun atan2S(y: ScalarRef, x: ScalarRef): ScalarRef = op(y, x) {
+        if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("atan2 of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
+        EvalResult.Ok(ScalarValue(Quantity.rad(Math.atan2(sc(it[0]).base, sc(it[1]).base))))
+    }
+
+    // ================= Tier 1: measurements =================
+
+    /** Angle at [vertex] between rays to [a] and [b], in [0, PI]. */
+    fun measureAngle(a: PointRef, vertex: PointRef, b: PointRef): ScalarRef =
+        op(a, vertex, b) {
+            val va = pt(it[0]) - pt(it[1]); val vb = pt(it[2]) - pt(it[1])
+            if (va.length() < Vec2.EPS || vb.length() < Vec2.EPS) EvalResult.Invalid("zero-length arm")
+            else EvalResult.Ok(ScalarValue(Quantity.rad(Math.acos((va.dot(vb) / (va.length() * vb.length())).coerceIn(-1.0, 1.0)))))
+        }
+
+    /** Acute angle between two (undirected) lines, in [0, PI/2]. */
+    fun measureAngleLines(l1: LineRef, l2: LineRef): ScalarRef =
+        op(l1, l2) { EvalResult.Ok(ScalarValue(Quantity.rad(Math.acos(Math.abs(ln(it[0]).dir.dot(ln(it[1]).dir)).coerceIn(0.0, 1.0))))) }
+
+    fun measureLength(segment: SegmentRef): ScalarRef =
+        op(segment) { val s = (it[0] as SegmentValue).seg; EvalResult.Ok(ScalarValue(Quantity.mm((s.b - s.a).length()))) }
+
+    fun measureRadius(circle: CircleRef): ScalarRef =
+        op(circle) { EvalResult.Ok(ScalarValue(Quantity.mm(cir(it[0]).radius))) }
+
+    fun measureX(point: PointRef): ScalarRef = op(point) { EvalResult.Ok(ScalarValue(Quantity.mm(pt(it[0]).x))) }
+    fun measureY(point: PointRef): ScalarRef = op(point) { EvalResult.Ok(ScalarValue(Quantity.mm(pt(it[0]).y))) }
+
+    // ================= Tier 2: mechanical constructions =================
+
+    /** Fillet arc of [radius] in the corner at [corner] opening toward [p1] and [p2]. */
+    fun filletCorner(p1: PointRef, corner: PointRef, p2: PointRef, radius: ScalarRef): ArcRef =
+        op(p1, corner, p2, radius) {
+            val v = pt(it[1]); val r = sc(it[3]).mm
+            val u1 = (pt(it[0]) - v).normalized(); val u2 = (pt(it[2]) - v).normalized()
+            val bis = u1 + u2
+            if (bis.length() < Vec2.EPS) return@op EvalResult.Invalid("degenerate corner")
+            val bisU = bis.normalized()
+            val half = Math.acos(u1.dot(bisU).coerceIn(-1.0, 1.0))
+            val sinH = Math.sin(half); val tanH = Math.tan(half)
+            if (sinH < Vec2.EPS || tanH < Vec2.EPS) return@op EvalResult.Invalid("degenerate corner angle")
+            val center = v + bisU * (r / sinH)
+            val t1 = v + u1 * (r / tanH); val t2 = v + u2 * (r / tanH)
+            val start = (t1 - center).angle(); val end = (t2 - center).angle()
+            EvalResult.Ok(ArcValue(Arc(center, r, start, end, (t1 - center).cross(t2 - center) > 0)))
+        }
+
+    /** The two tangent points on [circle] of the tangents from external [point] (via Thales' circle). */
+    fun tangentPointsFromPoint(point: PointRef, circle: CircleRef): PointSetRef =
+        op(point, circle) {
+            val p = pt(it[0]); val c = cir(it[1])
+            val thales = Circle((p + c.center) * 0.5, (p - c.center).length() * 0.5)
+            EvalResult.Ok(PointSetValue(GeomMath.intersectCC(thales, c)))
+        }
+
+    /** External (outer) common tangent of two circles; [sign] >= 0 picks the first, else the second. */
+    fun outerTangent(c1: CircleRef, c2: CircleRef, sign: Int): LineRef = commonTangent(c1, c2, inner = false, sign = sign)
+    fun innerTangent(c1: CircleRef, c2: CircleRef, sign: Int): LineRef = commonTangent(c1, c2, inner = true, sign = sign)
+
+    private fun commonTangent(c1: CircleRef, c2: CircleRef, inner: Boolean, sign: Int): LineRef =
+        op(c1, c2) {
+            val lines = GeomMath.commonTangents(cir(it[0]), cir(it[1]), inner)
+            val idx = if (sign >= 0) 0 else 1
+            if (idx >= lines.size) EvalResult.Invalid("no such common tangent") else EvalResult.Ok(LineValue(lines[idx]))
+        }
+
+    fun ray(origin: PointRef, through: PointRef): RayRef =
+        op(origin, through) {
+            val d = pt(it[1]) - pt(it[0])
+            if (d.length() < Vec2.EPS) EvalResult.Invalid("ray through coincident points") else EvalResult.Ok(RayValue(Ray(pt(it[0]), d.normalized())))
+        }
+
+    /** Circumcircle through three points. */
+    fun circle3(a: PointRef, b: PointRef, c: PointRef): CircleRef =
+        op(a, b, c) {
+            val cc = GeomMath.circumcenter(pt(it[0]), pt(it[1]), pt(it[2]))
+                ?: return@op EvalResult.Invalid("collinear points")
+            EvalResult.Ok(CircleValue(Circle(cc, (pt(it[0]) - cc).length())))
+        }
+
+    /** Arc through three points (from a, through b, to c). */
+    fun arc3(a: PointRef, b: PointRef, c: PointRef): ArcRef =
+        op(a, b, c) {
+            val pa = pt(it[0]); val pb = pt(it[1]); val pc = pt(it[2])
+            val cc = GeomMath.circumcenter(pa, pb, pc) ?: return@op EvalResult.Invalid("collinear points")
+            val r = (pa - cc).length()
+            val ccw = (pb - pa).cross(pc - pa) > 0
+            EvalResult.Ok(ArcValue(Arc(cc, r, (pa - cc).angle(), (pc - cc).angle(), ccw)))
+        }
+
+    fun direction(from: PointRef, to: PointRef): DirectionRef =
+        op(from, to) {
+            val d = pt(it[1]) - pt(it[0])
+            if (d.length() < Vec2.EPS) EvalResult.Invalid("zero direction") else EvalResult.Ok(DirectionValue(Direction(d.normalized())))
+        }
+
+    // ================= Tier 3: profile (bridge to 3D) =================
+
+    /** Assemble an ordered profile (chain) from segment and arc refs. */
+    fun profile(vararg parts: Ref<*>): ProfileRef =
+        op(*parts) { args ->
+            val elems = args.map { v ->
+                when (v) {
+                    is SegmentValue -> ProfileElement.Seg(v.seg)
+                    is ArcValue -> ProfileElement.ArcE(v.arc)
+                    else -> throw IllegalArgumentException("profile element must be a segment or arc")
+                }
+            }
+            EvalResult.Ok(ProfileValue(Profile(elems)))
+        }
 }
 
 // ---- typed accessors over an Evaluator pass ----
@@ -195,5 +426,10 @@ fun Evaluator.valueOf(ref: Ref<*>): Value? = (eval(ref.node) as? EvalResult.Ok)?
 fun Evaluator.point(ref: PointRef): Vec2 = (valueOf(ref) as PointValue).p
 fun Evaluator.scalar(ref: ScalarRef): Quantity = (valueOf(ref) as ScalarValue).q
 fun Evaluator.line(ref: LineRef): Line = (valueOf(ref) as LineValue).line
+fun Evaluator.segment(ref: SegmentRef): Segment = (valueOf(ref) as SegmentValue).seg
 fun Evaluator.circle(ref: CircleRef): Circle = (valueOf(ref) as CircleValue).circle
 fun Evaluator.arc(ref: ArcRef): Arc = (valueOf(ref) as ArcValue).arc
+fun Evaluator.ray(ref: RayRef): Ray = (valueOf(ref) as RayValue).ray
+fun Evaluator.direction(ref: DirectionRef): Direction = (valueOf(ref) as DirectionValue).dir
+fun Evaluator.profile(ref: ProfileRef): Profile = (valueOf(ref) as ProfileValue).profile
+fun Evaluator.pointSet(ref: PointSetRef): constructit.geom.PointSet = (valueOf(ref) as PointSetValue).set

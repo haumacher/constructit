@@ -2,8 +2,11 @@ package constructit.core
 
 import constructit.geom.Arc
 import constructit.geom.Circle
+import constructit.geom.Direction
 import constructit.geom.Line
 import constructit.geom.PointSet
+import constructit.geom.Profile
+import constructit.geom.Ray
 import constructit.geom.Segment
 import constructit.geom.Vec2
 import constructit.units.Quantity
@@ -13,10 +16,13 @@ sealed interface Value
 data class ScalarValue(val q: Quantity) : Value
 data class PointValue(val p: Vec2) : Value
 data class LineValue(val line: Line) : Value
+data class RayValue(val ray: Ray) : Value
 data class SegmentValue(val seg: Segment) : Value
 data class CircleValue(val circle: Circle) : Value
 data class ArcValue(val arc: Arc) : Value
 data class PointSetValue(val set: PointSet) : Value
+data class DirectionValue(val dir: Direction) : Value
+data class ProfileValue(val profile: Profile) : Value
 
 /** Result of evaluating a node: valid value or invalid with a reason (OP-3). */
 sealed interface EvalResult {

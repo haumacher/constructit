@@ -50,7 +50,13 @@ both value-level and SVG-golden level. Toolchain: Java 17 + Gradle 8.7 wrapper, 
 
 All four produce committed **SVG goldens**; the whole suite passes via `./gradlew test`.
 
-## Primitive/operation backlog (post-DoD, to complete the algebra)
+## Primitive/operation backlog — ✅ IMPLEMENTED (Tier 1–3)
+
+Tier 1, Tier 2, and Tier 3 below are now implemented and covered by showcase tests
+(triangle centers/Euler line, Thales, tangents-from-point, fillet, slot/obround, hexagon,
+golden-ratio pentagon, general transforms, profile). **33 tests green.** Original inventory
+kept below for reference.
+
 
 Implemented so far: `Scalar/Point/Line/Segment/Circle/Arc/PointSet`; parameter/const/freePoint,
 scalar scale/add/sub/neg, pointXY/translate/polarPoint/midpoint, lineThrough/segment/circleCR/arc,

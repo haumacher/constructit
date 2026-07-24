@@ -503,3 +503,11 @@ Three broad families (see OP-9 decision above):
   canonical SVG serializer). All four DoD examples pass at value + SVG-golden level; 16 tests
   green via Gradle 8.7 wrapper. Deferred within phase-1: OP-7 string parser, incremental
   dirty-recompute, interactive UI, DXF/PDF export.
+- **Turn 13** — Completed the primitive/operation algebra (Tier 1–3): relational ops
+  (perp/parallel-through, perp-bisector, angle-bisector, project-to-line, point-on-line/circle,
+  circle-through-point), general affine transforms on any geometry (mirror/rotate/scale/
+  translate), scalar functions (mul/div/sqrt/trig/atan2/abs/min/max/pow/mod), measurements
+  (angle/length/radius/x/y), fillet arc, tangents (from-point, common), ray/circumcircle/
+  arc-through-3/direction, and a Profile type (bridge to 3D). Added showcase tests with
+  known-answer invariants (Euler line, Thales, tangent lengths, fillet tangency, obround,
+  hexagon, golden-ratio pentagon). 33 tests green.

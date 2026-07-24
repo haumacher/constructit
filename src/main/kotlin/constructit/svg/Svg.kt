@@ -6,10 +6,14 @@ import constructit.core.Evaluator
 import constructit.core.LineValue
 import constructit.core.PointSetValue
 import constructit.core.PointValue
+import constructit.core.ProfileValue
+import constructit.core.RayValue
 import constructit.core.SegmentValue
 import constructit.dsl.Ref
 import constructit.dsl.valueOf
 import constructit.geom.Line
+import constructit.geom.ProfileElement
+import constructit.geom.Ray
 import constructit.geom.Segment
 import constructit.geom.Vec2
 import java.util.Locale
@@ -72,8 +76,19 @@ object Svg {
                     prepared.add(Prepared("arc", d, a))
                 }
                 is LineValue -> prepared.add(Prepared("line", d, v.line)) // clipped later; not in bbox
+                is RayValue -> prepared.add(Prepared("ray", d, v.ray))
+                is ProfileValue -> {
+                    for (el in v.profile.elements) when (el) {
+                        is ProfileElement.Seg -> { samples.add(el.segment.a); samples.add(el.segment.b) }
+                        is ProfileElement.ArcE -> {
+                            samples.add(el.arc.center + Vec2(el.arc.radius, el.arc.radius))
+                            samples.add(el.arc.center - Vec2(el.arc.radius, el.arc.radius))
+                        }
+                    }
+                    prepared.add(Prepared("profile", d, v.profile))
+                }
                 is PointSetValue -> for (p in v.set.points) { samples.add(p); prepared.add(Prepared("point", d, p)) }
-                else -> {} // scalars etc. not drawable
+                else -> {} // scalars, directions etc. not drawable
             }
         }
 
@@ -122,6 +137,16 @@ object Svg {
                     sb.append("  <circle cx=\"${fmt(s.x)}\" cy=\"${fmt(s.y)}\" r=\"${fmt(c.radius)}\" fill=\"${p.d.fill}\" stroke=\"${p.d.stroke}\" stroke-width=\"${fmt(STROKE_WIDTH)}\"/>\n")
                 }
                 "arc" -> sb.append(arcTag(p.geom as constructit.geom.Arc, p.d.stroke))
+                "ray" -> {
+                    val clipped = clipRayToRect(p.geom as Ray, clipMin, clipMax)
+                    if (clipped != null) sb.append(lineTag(screen(clipped.a), screen(clipped.b), p.d.stroke))
+                }
+                "profile" -> {
+                    for (el in (p.geom as constructit.geom.Profile).elements) when (el) {
+                        is ProfileElement.Seg -> sb.append(lineTag(screen(el.segment.a), screen(el.segment.b), p.d.stroke))
+                        is ProfileElement.ArcE -> sb.append(arcTag(el.arc, p.d.stroke))
+                    }
+                }
             }
         }
         sb.append("</svg>\n")
@@ -148,6 +173,29 @@ object Svg {
         var tMin = Double.NEGATIVE_INFINITY
         var tMax = Double.POSITIVE_INFINITY
         val o = line.origin; val dir = line.dir
+        for (axis in 0..1) {
+            val od = if (axis == 0) dir.x else dir.y
+            val oo = if (axis == 0) o.x else o.y
+            val lom = if (axis == 0) lo.x else lo.y
+            val him = if (axis == 0) hi.x else hi.y
+            if (abs(od) < Vec2.EPS) {
+                if (oo < lom || oo > him) return null
+            } else {
+                val t1 = (lom - oo) / od
+                val t2 = (him - oo) / od
+                tMin = max(tMin, min(t1, t2))
+                tMax = min(tMax, max(t1, t2))
+            }
+        }
+        if (tMin > tMax) return null
+        return Segment(o + dir * tMin, o + dir * tMax)
+    }
+
+    /** Clip a forward ray (t >= 0) to an axis-aligned rectangle. */
+    private fun clipRayToRect(ray: Ray, lo: Vec2, hi: Vec2): Segment? {
+        var tMin = 0.0
+        var tMax = Double.POSITIVE_INFINITY
+        val o = ray.origin; val dir = ray.dir
         for (axis in 0..1) {
             val od = if (axis == 0) dir.x else dir.y
             val oo = if (axis == 0) o.x else o.y

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6.000 -46.000 62.000 52.000" width="62.000" height="52.000">
+  <line x1="0.000" y1="0.000" x2="50.000" y2="0.000" stroke="#999999" stroke-width="0.500"/>
+  <line x1="0.000" y1="0.000" x2="0.000" y2="-40.000" stroke="#999999" stroke-width="0.500"/>
+  <path d="M 12.000 0.000 A 12.000 12.000 0 0 1 0.000 -12.000" fill="none" stroke="#d62728" stroke-width="0.500"/>
+</svg>
