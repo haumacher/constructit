@@ -62,27 +62,65 @@ as constraints become **shared inputs or shared sub-constructions** here.
 3. **Vanishing solutions** — propagate a first-class **undefined** state downstream
    (render greyed/dashed, keep definitions so the model heals when params return to valid).
 
+## Scope, deliverables & phasing (OP-2 — RESOLVED)
+
+- **Primary goal:** 3D geometries for **3D printing**.
+- **Secondary, first-class goal:** pure 2D technical / architectural drawings.
+- **2D is a valid sub-goal, not a toy** — the 2D construction engine becomes the sketcher
+  inside the 3D tool, so it is the first slice of the 3D product, not a detour.
+- **Design now covers 3D fully; implementation is phased.**
+
+### Deliverables
+
+- **3D:** watertight, manifold, orientable solids exported as **STL** and (preferably)
+  **3MF** for slicers. Printability (closed, non-self-intersecting) is a hard requirement.
+- **2D:** technical/architectural drawings; export likely **SVG/DXF/PDF** (TBD).
+
+### Implementation phases
+
+- **Phase 1 — 2D construction engine.** DAG evaluation, primitive algebra, intersections
+  (branch/continuity), undefined propagation, macros, measurements-as-parameters, 2D export.
+  Exercises the entire novel/risky part of the concept with no solid kernel.
+- **Phase 2 — 3D.** Sketch→feature loop, solid representation/kernel, booleans, extrude/
+  revolve/sweep, fillet/chamfer, STL/3MF export, topological identity.
+- **Phase 3+** — assemblies, drawings-from-3D, standard-part macro libraries.
+
 ## Going to 3D
 
 - Sketch → feature → sketch loop (sketch on datum plane → extrude/revolve/sweep → derive
   datum from a solid face → sketch again). DAG spans 2D constructions, 3D features, datums.
-- Needs a solid-modeling kernel (booleans, extrude, fillet). Likely **OpenCASCADE (OCCT)**
-  vs writing our own B-rep kernel (multi-year effort).
+- Needs a solid representation/kernel. Three broad families (see OP-9):
+  - **B-rep (OpenCASCADE / OCCT):** precise, real fillets/chamfers, native STEP; C++ with
+    bindings; heavy; brings the topological-naming problem. Best fit for mechanical precision.
+  - **CSG (à la OpenSCAD):** union/difference/intersection of primitives — literally
+    "constructive," maps beautifully onto our DAG; simple & robust; but fillets and
+    face-referencing are hard/awkward.
+  - **Implicit / F-rep / SDF:** compose signed-distance fields; trivial booleans, easy
+    blends/fillets, great for organic+mechanical mixes and 3D printing (mesh via marching
+    cubes/dual contouring); but precise dimensions, exact edges and face identity are harder.
+  - Note: for **3D printing** the final artifact is a mesh anyway, which softens the case for
+    exact B-rep — but mechanical features (holes, precise fillets, datum faces) still favor it.
 - **Topological naming problem**: re-identifying "this face/edge" after regeneration when the
   kernel renumbers. 2D is fine (identity = node); the pain is at the solid-kernel boundary.
+  Note CSG/implicit representations sidestep some of this (no persistent B-rep topology to
+  re-identify) but make "sketch on this face / fillet this edge" harder to express.
 
 ## Open points (to discuss one by one)
 
 - [ ] **OP-1 Branch/continuity policy** for intersections
       (deterministic-with-selector vs continuity-tracking).
-- [ ] **OP-2 Scope & kernel**: 2D-first then extend, or 3D from the start?
-      If 3D: OCCT vs own kernel.
+- [x] **OP-2 Scope & phasing** — RESOLVED: 3D is the goal, 2D is a first-class sub-goal and
+      the phase-1 implementation; design covers 3D up front. Primary delivery = 3D printing.
 - [ ] **OP-3 Undefined-state propagation** semantics.
 - [ ] **OP-4 Measurements feeding back as parameters** (bidirectional dataflow) in v1?
 - [ ] **OP-5 Node graph data model** — concrete representation of nodes/edges/params.
 - [ ] **OP-6 Macros / custom constructions** — encapsulation & composition mechanics.
 - [ ] **OP-7 Expression language** for parameters (units, derived values).
 - [ ] **OP-8 Topological naming** identity strategy at the 3D kernel boundary.
+- [ ] **OP-9 3D representation / kernel** — B-rep (OCCT) vs CSG vs implicit (F-rep/SDF).
+      Depends on platform (OP-10) and fillet/chamfer precision needs.
+- [ ] **OP-10 Implementation platform** — desktop native vs web/browser; language(s).
+      Interacts strongly with kernel choice.
 
 ## Prior art to keep in mind
 
@@ -97,3 +135,7 @@ as constraints become **shared inputs or shared sub-constructions** here.
   constructions), no constraint solver. Identified intersections (branch selection /
   continuity) as the central hard problem. Sketched primitive algebra and the 2D→3D path.
   Captured open points OP-1..OP-8.
+- **Turn 2** — Resolved OP-2 (scope & phasing): 3D is the goal (primary delivery = 3D
+  printing), 2D is a first-class sub-goal and phase-1 implementation; design covers 3D up
+  front. Added deliverables (STL/3MF for 3D; SVG/DXF/PDF for 2D) and a 3-phase plan. Split
+  out OP-9 (3D representation/kernel: B-rep vs CSG vs implicit) and OP-10 (platform).
