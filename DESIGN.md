@@ -128,6 +128,55 @@ path-dependent and would break reproducibility/undo/reload.)
 - The model **heals automatically**: when inputs return to a valid range, nodes recompute and
   reappear. No manual repair, no deletion.
 
+## Macros / custom constructions (OP-6 — RESOLVED)
+
+A macro is a **subgraph** with typed **input ports**; it is a reusable, function-like
+construction (e.g. `perpBisector(P1: Point, P2: Point)`). Phase-1 feature.
+
+### Definition — by example
+Build the construction concretely, then designate which internal nodes are the **inputs**
+(bound to arguments at instantiation). No separate macro editor required. Type-checked
+against the strong type system (OP-5), which also drives context-sensitive tools.
+
+### Instances — reference/composite with derived path-IDs
+- An instance is a **composite node** `{macroId, argument bindings}` — a real *function*.
+  Editing the definition **propagates to all instances** (enables standard-part libraries).
+- **No output declaration.** Only inputs are designated. The instance is a **namespace**:
+  every internal node is addressable via a **qualified/path ID** `M/n1`, `M/n2`, …; any
+  outside construction may reference `M/nk`. Nesting composes paths: `M/n3/m2`.
+- A macro-instance node yields a **group ("drawing") value**; `M/nk` is a **structured
+  accessor** into it — the *same* shape as `PointSet` + `Select`. One consistent principle:
+  compound values with accessors; primitive nodes stay single-output.
+- **Implementation = virtual addressing, not copying:** resolving `M/nk` evaluates
+  definition-node `nk` under `M`'s bindings, cached per `(instanceId, internalNodeId)`. No
+  duplicated nodes → edit-propagation is automatic.
+
+### Transparent groups (encapsulation trade-off)
+- Because any `M/nk` is referenceable, external constructions can depend on a macro's
+  *internals*. Macros are **transparent groups, not black boxes**. Sound as long as internal
+  IDs are **stable identities** (not positional): while `nk` persists across a definition
+  edit, `M/nk` stays valid; deleting `nk` makes external refs to `M/nk` invalid (OP-3).
+
+### Purity — no per-instance overrides
+- An instance is a **pure function of its arguments**. You may *read* `M/nk` from outside but
+  not *rewrite* an instance's internal node. Vary-per-instance ⇒ make it an **input**.
+- Internal non-input source values (a free point/parameter inside the definition not
+  designated an input) are **captured as fixed defaults**, shared by all instances.
+
+### Specialization (partial application)
+- Fixed variants are **derived macros**: e.g. `standardRect(width, height)` = `roundedRect`
+  with `borderRadius` bound to a constant `2mm`, exposing only `width`/`height`. Definition-
+  level partial application — needs no per-instance override. Editing the fixed value
+  re-propagates to all instances of the derived macro.
+- **Optional inputs with defaults** (`roundedRect(w, h, borderRadius=2mm)`) — a possible later
+  convenience; named specialization is the primary mechanism.
+
+### Other rules
+- **No recursion** (macros form their own DAG at the definition level).
+- **Parameter presentation flag** (orthogonal to graph semantics): a parameter/source node is
+  either **adjustable** (interactive handle / slider, optional range+step) or
+  **constant/locked** (editable value, no slider, not draggable).
+
 ## Expression language & units (OP-7 — RESOLVED)
 
 ### Expressions & named values
@@ -231,7 +280,11 @@ path-dependent and would break reproducibility/undo/reload.)
       unified numbers+geometry; exactly one output per node; intersections emit an ordered
       `PointSet` value consumed by a separate `Select(set, sign)` node (computed once, shared);
       topological eval with dirty-marking.
-- [ ] **OP-6 Macros / custom constructions** — encapsulation & composition mechanics.
+- [x] **OP-6 Macros / custom constructions** — RESOLVED: by-example definition;
+      reference/composite instances with edit-propagation; instance = namespace of derived
+      path-IDs `M/nk` (no output declaration; transparent groups); virtual addressing; pure
+      functions of arguments (no per-instance overrides); specialization via partial
+      application; adjustable-vs-constant parameter presentation flag; no recursion.
 - [x] **OP-7 Expression language & units** — RESOLVED: named values + v1 expression language
       (arithmetic, common functions, `pi`, references; no conditionals); unit-aware scalars
       with dimensional analysis (Length/Angle/Dimensionless + derived Area/Volume), base units
@@ -280,3 +333,10 @@ path-dependent and would break reproducibility/undo/reload.)
   (arithmetic, common functions, `pi`, references; no conditionals in v1); unit-aware scalars
   with dimensional analysis (Length/Angle/Dimensionless + derived Area/Volume), base units
   internal, display unit as presentation.
+- **Turn 7** — Resolved OP-6 (macros): by-example definition; reference/composite instances
+  with edit-propagation. Key model (user's idea): an instance is a namespace whose internal
+  nodes are addressable via derived path-IDs `M/nk` — no output declaration, transparent
+  groups; unifies with `PointSet`+`Select` as "compound value + accessor"; implemented via
+  virtual addressing. Instances are pure functions of arguments (no per-instance overrides);
+  fixed variants via **specialization/partial application** (e.g. `standardRect` from
+  `roundedRect`); added adjustable-vs-constant parameter presentation flag; no recursion.
