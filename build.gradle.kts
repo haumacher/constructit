@@ -27,6 +27,7 @@ kotlin {
         val jvmTest by getting {
             dependencies {
                 implementation("org.junit.jupiter:junit-jupiter:5.10.2")
+                implementation("com.microsoft.playwright:playwright:1.44.0")
             }
         }
         val jsMain by getting {
@@ -39,4 +40,7 @@ kotlin {
 
 tasks.named<Test>("jvmTest") {
     useJUnitPlatform()
+    // forward -De2e=1 to the test JVM so the (otherwise-skipped) browser E2E can opt in
+    System.getProperty("e2e")?.let { systemProperty("e2e", it) }
+    testLogging { events("passed", "failed", "skipped") }
 }
