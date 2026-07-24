@@ -37,6 +37,24 @@ object HitTest {
         return best
     }
 
+    /** Nearest element (point or curve) satisfying [filter], within [tol]. */
+    fun nearest(doc: Document, ev: Evaluator, world: Vec2, tol: Double, filter: (Element) -> Boolean): Element? {
+        var best: Element? = null
+        var bestD = tol
+        for (el in doc.elements) {
+            if (!filter(el)) continue
+            val d = when (val v = ev.valueOf(el.ref)) {
+                is PointValue -> (v.p - world).length()
+                is LineValue -> abs((world - v.line.origin).cross(v.line.dir))
+                is CircleValue -> abs((world - v.circle.center).length() - v.circle.radius)
+                is SegmentValue -> distToSegment(world, v.seg.a, v.seg.b)
+                else -> continue
+            }
+            if (d <= bestD) { bestD = d; best = el }
+        }
+        return best
+    }
+
     fun nearestCurve(doc: Document, ev: Evaluator, world: Vec2, tol: Double): Element? {
         var best: Element? = null
         var bestD = tol

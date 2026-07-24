@@ -5,13 +5,11 @@ import constructit.dsl.PointRef
 import constructit.geom.Vec2
 import constructit.units.mm
 
-enum class Tool { SELECT, POINT, LINE, CIRCLE, INTERSECT }
-
 /**
- * The pure interaction controller: a tool state machine over abstract pointer events (in
- * screen coordinates), driving hit-testing, free-point dragging (live parametric recompute),
- * and geometry creation. No platform APIs — fully headless-testable by simulating gestures.
- * The shell only forwards native events here and calls [render] on [onChange].
+ * Pure interaction controller. In SELECT mode it drags free points (live recompute) or pans;
+ * otherwise it runs the active [ToolDef] as a generic slot-collector, picking existing
+ * geometry or creating points per click, and consuming the active parameter for scalar slots.
+ * No platform APIs — fully headless-testable by simulating gestures.
  */
 class Editor(
     val doc: Document = Document(),
@@ -19,33 +17,36 @@ class Editor(
     var canvasH: Double = 600.0,
 ) {
     var camera: Camera = Camera.centered(canvasW, canvasH)
-    var tool: Tool = Tool.SELECT
+    var toolId: String = Tools.SELECT
         private set
+    var activeScalar: ScalarEntry? = null
     var onChange: () -> Unit = {}
     var showGrid: Boolean = false
+    var statusHint: String = ""
+        private set
 
     private val tolPx = 10.0
     private fun tolWorld() = tolPx / camera.scale
     private fun ev() = Evaluator()
 
-    // transient interaction state
+    // transient state
     private var dragPoint: Element? = null
     private var panning = false
     private var lastScreen = Vec2(0.0, 0.0)
-    private val pendingPoints = ArrayList<PointRef>()
-    private val pendingCurves = ArrayList<Element>()
+    private val pickedPoints = ArrayList<PointRef>()
+    private val pickedElements = ArrayList<Element>()
 
-    /** Points/curves collected so far by a multi-click tool (for shells to show a hint). */
-    val pendingCount: Int get() = pendingPoints.size + pendingCurves.size
+    val pendingCount: Int get() = pickedPoints.size + pickedElements.size
 
-    fun setTool(t: Tool) {
-        tool = t
-        resetPending()
+    fun setTool(id: String) {
+        toolId = id
+        resetPicks()
+        statusHint = ""
         onChange()
     }
 
-    private fun resetPending() {
-        pendingPoints.clear(); pendingCurves.clear(); dragPoint = null; panning = false
+    private fun resetPicks() {
+        pickedPoints.clear(); pickedElements.clear(); dragPoint = null; panning = false
     }
 
     fun render(target: DrawTarget) = SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid)
@@ -56,30 +57,13 @@ class Editor(
     }
 
     fun pointerDown(screen: Vec2) {
-        val world = camera.screenToWorld(screen)
-        when (tool) {
-            Tool.SELECT -> {
-                val hit = HitTest.nearestFreePoint(doc, ev(), world, tolWorld())
-                if (hit != null) dragPoint = hit else { panning = true; lastScreen = screen }
-            }
-            Tool.POINT -> { doc.freePoint(world.x.mm, world.y.mm); onChange() }
-            Tool.LINE -> {
-                pendingPoints.add(pointOrCreate(world))
-                if (pendingPoints.size == 2) { doc.line(pendingPoints[0], pendingPoints[1]); resetPending() }
-                onChange()
-            }
-            Tool.CIRCLE -> {
-                pendingPoints.add(pointOrCreate(world))
-                if (pendingPoints.size == 2) { doc.circle(pendingPoints[0], pendingPoints[1]); resetPending() }
-                onChange()
-            }
-            Tool.INTERSECT -> {
-                val curve = HitTest.nearestCurve(doc, ev(), world, tolWorld()) ?: return
-                pendingCurves.add(curve)
-                if (pendingCurves.size == 2) { doc.intersect(pendingCurves[0], pendingCurves[1]); resetPending() }
-                onChange()
-            }
+        if (toolId == Tools.SELECT) {
+            val world = camera.screenToWorld(screen)
+            val hit = HitTest.nearestFreePoint(doc, ev(), world, tolWorld())
+            if (hit != null) dragPoint = hit else { panning = true; lastScreen = screen }
+            return
         }
+        runToolClick(screen)
     }
 
     fun pointerMove(screen: Vec2) {
@@ -96,6 +80,41 @@ class Editor(
     fun pointerUp(@Suppress("UNUSED_PARAMETER") screen: Vec2) {
         dragPoint = null
         panning = false
+    }
+
+    private fun runToolClick(screen: Vec2) {
+        val tool = Tools.byId(toolId) ?: return
+        val world = camera.screenToWorld(screen)
+        val slot = tool.slots[pendingCount]
+        val picked = when (slot) {
+            SlotKind.PLACE_POINT -> { pickedPoints.add(doc.freePoint(world.x.mm, world.y.mm)); true }
+            SlotKind.POINT -> { pickedPoints.add(pointOrCreate(world)); true }
+            SlotKind.CURVE -> pickElement(world) { it.isCurve }
+            SlotKind.LINE -> pickElement(world) { it.kind == ElementKind.LINE }
+            SlotKind.CIRCLE -> pickElement(world) { it.kind == ElementKind.CIRCLE }
+            SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
+            SlotKind.GEOMETRY -> pickElement(world) { true }
+        }
+        if (!picked) { statusHint = "Click a ${slot.name.lowercase()} for ${tool.label}"; onChange(); return }
+
+        if (pendingCount == tool.slots.size) {
+            if (tool.scalar && activeScalar == null) {
+                statusHint = "${tool.label}: select a parameter in the panel first"
+                resetPicks(); onChange(); return
+            }
+            tool.build(doc, Picks(pickedPoints.toList(), pickedElements.toList()), activeScalar?.ref)
+            resetPicks()
+            statusHint = ""
+        } else {
+            statusHint = "${tool.label}: ${tool.slots.size - pendingCount} more"
+        }
+        onChange()
+    }
+
+    private fun pickElement(world: Vec2, filter: (Element) -> Boolean): Boolean {
+        val el = HitTest.nearest(doc, ev(), world, tolWorld(), filter) ?: return false
+        pickedElements.add(el)
+        return true
     }
 
     private fun pointOrCreate(world: Vec2): PointRef {

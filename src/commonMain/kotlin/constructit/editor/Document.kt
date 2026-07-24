@@ -1,19 +1,23 @@
 package constructit.editor
 
 import constructit.core.PointValue
+import constructit.core.ScalarValue
 import constructit.core.SourceNode
+import constructit.core.Value
 import constructit.dsl.CircleRef
 import constructit.dsl.Construction
 import constructit.dsl.LineRef
 import constructit.dsl.PointRef
 import constructit.dsl.PointSetRef
 import constructit.dsl.Ref
+import constructit.dsl.ScalarRef
+import constructit.dsl.SegmentRef
 import constructit.geom.Vec2
 import constructit.units.Quantity
 
-enum class ElementKind { POINT, DERIVED_POINT, LINE, CIRCLE, SEGMENT, ARC }
+enum class ElementKind { POINT, DERIVED_POINT, LINE, RAY, CIRCLE, SEGMENT, ARC }
 
-/** A retained, displayable/selectable graph output with style + kind (the editor's unit of work). */
+/** A retained, displayable/selectable graph output with style + kind. */
 class Element(
     val id: String,
     val ref: Ref<*>,
@@ -22,16 +26,22 @@ class Element(
     var visible: Boolean = true,
 ) {
     val draggable: Boolean get() = kind == ElementKind.POINT
+    val isCurve: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY || kind == ElementKind.ARC
+    val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT
 }
+
+/** A named scalar: an editable parameter (OP-7) or a read-only measurement (OP-4). */
+class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val editable: Boolean)
 
 /**
  * A retained construction document: owns the [Construction] DAG plus display metadata, and
- * exposes enumeration (for rendering/hit-testing) and mutation (for tools). This is the
- * backbone the editor and, later, the file format hang off of.
+ * exposes enumeration (rendering/hit-testing/panels) and mutation (tools). Every op is wrapped
+ * as an element- or scalar-adder so the whole 2D algebra is reachable from the UI.
  */
 class Document {
     val cx = Construction()
     val elements = ArrayList<Element>()
+    val scalars = ArrayList<ScalarEntry>()
     private var counter = 0
     private fun nextId(prefix: String) = "$prefix${++counter}"
 
@@ -43,54 +53,101 @@ class Document {
         return el
     }
 
-    fun freePoint(x: Quantity, y: Quantity): PointRef {
-        val ref = cx.freePoint("P${counter + 1}", x, y)
-        add(ref, ElementKind.POINT, Styles.FREE_POINT)
-        return ref
+    private fun addDerived(ref: PointRef) = add(ref, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
+
+    // ---- free points & scalars ----
+
+    fun freePoint(x: Quantity, y: Quantity): PointRef =
+        cx.freePoint("P${counter + 1}", x, y).also { add(it, ElementKind.POINT, Styles.FREE_POINT) }
+
+    fun newParameter(name: String, value: Quantity): ScalarEntry {
+        val e = ScalarEntry(nextId("s"), name, cx.parameter(name, value), editable = true)
+        scalars.add(e); return e
     }
 
-    fun line(a: PointRef, b: PointRef): LineRef =
-        cx.lineThrough(a, b).also { add(it, ElementKind.LINE, Styles.CURVE) }
-
-    fun circle(center: PointRef, through: PointRef): CircleRef =
-        cx.circleCP(center, through).also { add(it, ElementKind.CIRCLE, Styles.CURVE) }
-
-    fun segment(a: PointRef, b: PointRef) =
-        cx.segment(a, b).also { add(it, ElementKind.SEGMENT, Styles.CURVE) }
-
-    /**
-     * Intersect two curve elements, adding one derived point per solution *branch*.
-     * Branch count is a property of the pair type: line∩line has a single solution;
-     * line∩circle and circle∩circle have two. (This avoids two coincident points for lines.)
-     */
-    fun intersect(a: Element, b: Element): List<PointRef> {
-        val lineLine = a.kind == ElementKind.LINE && b.kind == ElementKind.LINE
-        @Suppress("UNCHECKED_CAST")
-        val set: PointSetRef = when {
-            lineLine ->
-                cx.intersectLL(a.ref as LineRef, b.ref as LineRef)
-            a.kind == ElementKind.CIRCLE && b.kind == ElementKind.CIRCLE ->
-                cx.intersectCC(a.ref as CircleRef, b.ref as CircleRef)
-            a.kind == ElementKind.LINE && b.kind == ElementKind.CIRCLE ->
-                cx.intersectLC(a.ref as LineRef, b.ref as CircleRef)
-            a.kind == ElementKind.CIRCLE && b.kind == ElementKind.LINE ->
-                cx.intersectLC(b.ref as LineRef, a.ref as CircleRef)
-            else -> return emptyList()
-        }
-        val refs = ArrayList<PointRef>()
-        refs.add(cx.select(set, +1))
-        if (!lineLine) refs.add(cx.select(set, -1))
-        refs.forEach { add(it, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT) }
-        return refs
+    private fun measurement(name: String, ref: ScalarRef): ScalarEntry {
+        val e = ScalarEntry(nextId("m"), name, ref, editable = false)
+        scalars.add(e); return e
     }
 
-    /** Move a free point (mutates its source node) for a parametric recompute. */
+    fun setParameter(e: ScalarEntry, value: Quantity) {
+        require(e.editable) { "not an editable parameter" }
+        (e.ref.node as SourceNode).value = ScalarValue(value)
+    }
+
     fun moveFreePoint(el: Element, world: Vec2) {
         require(el.kind == ElementKind.POINT) { "not a free point" }
         (el.ref.node as SourceNode).value = PointValue(world)
     }
 
     fun remove(el: Element) { elements.remove(el) }
+
+    // ---- points ----
+
+    fun midpoint(a: PointRef, b: PointRef) = addDerived(cx.midpoint(a, b))
+    fun projectToLine(p: PointRef, line: Element) = addDerived(cx.projectToLine(p, line.ref as LineRef))
+    fun pointOnCircle(circle: Element, angle: ScalarRef) = addDerived(cx.pointOnCircle(circle.ref as CircleRef, angle))
+    fun pointOnLine(line: Element, dist: ScalarRef) = addDerived(cx.pointOnLineAt(line.ref as LineRef, dist))
+
+    /** Intersect two curves; branch count follows the pair type (line-line: 1, else: 2). */
+    fun intersect(a: Element, b: Element): List<PointRef> {
+        val lineLine = a.kind == ElementKind.LINE && b.kind == ElementKind.LINE
+        @Suppress("UNCHECKED_CAST")
+        val set: PointSetRef = when {
+            lineLine -> cx.intersectLL(a.ref as LineRef, b.ref as LineRef)
+            a.kind == ElementKind.CIRCLE && b.kind == ElementKind.CIRCLE -> cx.intersectCC(a.ref as CircleRef, b.ref as CircleRef)
+            a.kind == ElementKind.LINE && b.kind == ElementKind.CIRCLE -> cx.intersectLC(a.ref as LineRef, b.ref as CircleRef)
+            a.kind == ElementKind.CIRCLE && b.kind == ElementKind.LINE -> cx.intersectLC(b.ref as LineRef, a.ref as CircleRef)
+            else -> return emptyList()
+        }
+        val refs = ArrayList<PointRef>()
+        refs.add(cx.select(set, +1))
+        if (!lineLine) refs.add(cx.select(set, -1))
+        refs.forEach { addDerived(it) }
+        return refs
+    }
+
+    fun tangentFromPoint(p: PointRef, circle: Element): List<PointRef> {
+        val set = cx.tangentPointsFromPoint(p, circle.ref as CircleRef)
+        val refs = listOf(cx.select(set, +1), cx.select(set, -1))
+        refs.forEach { addDerived(it) }
+        return refs
+    }
+
+    // ---- curves ----
+
+    fun line(a: PointRef, b: PointRef) = add(cx.lineThrough(a, b), ElementKind.LINE, Styles.CURVE)
+    fun segment(a: PointRef, b: PointRef) = add(cx.segment(a, b), ElementKind.SEGMENT, Styles.CURVE)
+    fun ray(a: PointRef, b: PointRef) = add(cx.ray(a, b), ElementKind.RAY, Styles.CURVE)
+    fun circle(center: PointRef, through: PointRef) = add(cx.circleCP(center, through), ElementKind.CIRCLE, Styles.CURVE)
+    fun circleCR(center: PointRef, radius: ScalarRef) = add(cx.circleCR(center, radius), ElementKind.CIRCLE, Styles.CURVE)
+    fun circle3(a: PointRef, b: PointRef, c: PointRef) = add(cx.circle3(a, b, c), ElementKind.CIRCLE, Styles.CURVE)
+    fun arc3(a: PointRef, b: PointRef, c: PointRef) = add(cx.arc3(a, b, c), ElementKind.ARC, Styles.CURVE)
+
+    // ---- relational constructions ----
+
+    fun perpBisector(a: PointRef, b: PointRef) = add(cx.perpBisector(a, b), ElementKind.LINE, Styles.CONSTRUCT)
+    fun angleBisector(a: PointRef, v: PointRef, b: PointRef) = add(cx.angleBisector(a, v, b), ElementKind.LINE, Styles.CONSTRUCT)
+    fun perpendicularThrough(line: Element, p: PointRef) = add(cx.perpendicularThrough(line.ref as LineRef, p), ElementKind.LINE, Styles.CONSTRUCT)
+    fun parallelThrough(line: Element, p: PointRef) = add(cx.parallelThrough(line.ref as LineRef, p), ElementKind.LINE, Styles.CONSTRUCT)
+
+    // ---- transforms (preserve source kind & style) ----
+
+    @Suppress("UNCHECKED_CAST")
+    fun mirror(geom: Element, axis: Element) = add(cx.mirror(geom.ref as Ref<Value>, axis.ref as LineRef), geom.kind, geom.style)
+
+    @Suppress("UNCHECKED_CAST")
+    fun rotate(geom: Element, center: PointRef, angle: ScalarRef) = add(cx.rotate(geom.ref as Ref<Value>, center, angle), geom.kind, geom.style)
+
+    @Suppress("UNCHECKED_CAST")
+    fun scale(geom: Element, center: PointRef, factor: ScalarRef) = add(cx.scaleGeom(geom.ref as Ref<Value>, center, factor), geom.kind, geom.style)
+
+    // ---- measurements ----
+
+    fun measureDistance(a: PointRef, b: PointRef) = measurement("dist", cx.measureDistance(a, b))
+    fun measureAngle(a: PointRef, v: PointRef, b: PointRef) = measurement("angle", cx.measureAngle(a, v, b))
+    fun measureLength(seg: Element) = measurement("len", cx.measureLength(seg.ref as SegmentRef))
+    fun measureRadius(circle: Element) = measurement("radius", cx.measureRadius(circle.ref as CircleRef))
 }
 
 /** Default element styles. */
@@ -98,6 +155,7 @@ object Styles {
     val FREE_POINT = Style(stroke = "#1f77b4", width = 1.0)
     val DERIVED_POINT = Style(stroke = "#2ca02c", width = 1.0)
     val CURVE = Style(stroke = "#333333", width = 1.5)
+    val CONSTRUCT = Style(stroke = "#9467bd", width = 1.2)
     val INVALID = Style(stroke = "#dddddd", width = 1.0)
     val PREVIEW = Style(stroke = "#ff7f0e", width = 1.0)
 }

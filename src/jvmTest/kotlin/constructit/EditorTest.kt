@@ -6,11 +6,13 @@ import constructit.dsl.LineRef
 import constructit.dsl.circle
 import constructit.dsl.line
 import constructit.dsl.point
+import constructit.dsl.scalar
 import constructit.editor.Editor
+import constructit.editor.Tools
 import constructit.editor.ElementKind
 import constructit.editor.SvgDrawTarget
-import constructit.editor.Tool
 import constructit.geom.Vec2
+import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -32,7 +34,7 @@ class EditorTest {
     @Test
     fun lineToolCreatesLineAndEndpoints() {
         val ed = Editor()
-        ed.setTool(Tool.LINE)
+        ed.setTool(Tools.LINE)
         ed.click(Vec2(-20.0, 0.0))
         ed.click(Vec2(20.0, 0.0))
 
@@ -47,12 +49,12 @@ class EditorTest {
     fun draggingAFreePointRecomputesDependents() {
         val ed = Editor()
         // two free points, then a line reusing them
-        ed.setTool(Tool.POINT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(30.0, 0.0))
-        ed.setTool(Tool.LINE); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(30.0, 0.0))
+        ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(30.0, 0.0))
+        ed.setTool(Tools.LINE); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(30.0, 0.0))
         assertEquals(2, ed.doc.freePoints.size, "line endpoints should reuse existing points")
 
         // drag the first point up to (0,20); the line must follow
-        ed.setTool(Tool.SELECT)
+        ed.setTool(Tools.SELECT)
         ed.pointerDown(ed.camera.worldToScreen(Vec2(0.0, 0.0)))
         ed.pointerMove(ed.camera.worldToScreen(Vec2(0.0, 20.0)))
         ed.pointerUp(ed.camera.worldToScreen(Vec2(0.0, 20.0)))
@@ -67,11 +69,11 @@ class EditorTest {
     fun intersectToolProducesTwoDerivedPoints() {
         val ed = Editor()
         // centres and a shared through-point at (0,20): both circles get radius 25
-        ed.setTool(Tool.POINT); ed.click(Vec2(-15.0, 0.0)); ed.click(Vec2(15.0, 0.0)); ed.click(Vec2(0.0, 20.0))
-        ed.setTool(Tool.CIRCLE)
+        ed.setTool(Tools.POINT); ed.click(Vec2(-15.0, 0.0)); ed.click(Vec2(15.0, 0.0)); ed.click(Vec2(0.0, 20.0))
+        ed.setTool(Tools.CIRCLE)
         ed.click(Vec2(-15.0, 0.0)); ed.click(Vec2(0.0, 20.0))   // circle 1
         ed.click(Vec2(15.0, 0.0)); ed.click(Vec2(0.0, 20.0))    // circle 2
-        ed.setTool(Tool.INTERSECT)
+        ed.setTool(Tools.INTERSECT)
         ed.click(Vec2(10.0, 0.0))    // on circle 1 (centre -15, r 25)
         ed.click(Vec2(-10.0, 0.0))   // on circle 2 (centre  15, r 25)
 
@@ -86,13 +88,13 @@ class EditorTest {
     @Test
     fun lineLineIntersectionYieldsExactlyOnePoint() {
         val ed = Editor()
-        ed.setTool(Tool.POINT)
+        ed.setTool(Tools.POINT)
         ed.click(Vec2(-30.0, -20.0)); ed.click(Vec2(30.0, 20.0))   // line 1 endpoints
         ed.click(Vec2(-30.0, 20.0)); ed.click(Vec2(30.0, -20.0))   // line 2 endpoints
-        ed.setTool(Tool.LINE)
+        ed.setTool(Tools.LINE)
         ed.click(Vec2(-30.0, -20.0)); ed.click(Vec2(30.0, 20.0))
         ed.click(Vec2(-30.0, 20.0)); ed.click(Vec2(30.0, -20.0))
-        ed.setTool(Tool.INTERSECT)
+        ed.setTool(Tools.INTERSECT)
         ed.click(Vec2(15.0, 10.0))    // on line 1 only
         ed.click(Vec2(15.0, -10.0))   // on line 2 only
 
@@ -105,8 +107,8 @@ class EditorTest {
     @Test
     fun lineToolSnapsToExistingPoint() {
         val ed = Editor()
-        ed.setTool(Tool.POINT); ed.click(Vec2(0.0, 0.0))
-        ed.setTool(Tool.LINE)
+        ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 0.0))
+        ed.setTool(Tools.LINE)
         ed.click(Vec2(0.4, 0.0))     // within tolerance of the existing point -> reuse
         ed.click(Vec2(30.0, 0.0))    // new point
         assertEquals(2, ed.doc.freePoints.size, "should reuse the nearby point, not duplicate it")
@@ -119,7 +121,7 @@ class EditorTest {
         ed.wheel(Vec2(400.0, 300.0), -1.0)
         assertTrue(ed.camera.scale > s0, "wheel up should zoom in")
 
-        ed.setTool(Tool.SELECT)
+        ed.setTool(Tools.SELECT)
         val panBefore = ed.camera.panX
         ed.pointerDown(Vec2(400.0, 300.0)) // empty -> pan
         ed.pointerMove(Vec2(415.0, 300.0))
@@ -128,13 +130,32 @@ class EditorTest {
     }
 
     @Test
+    fun scalarToolUsesActiveParameter() {
+        val ed = Editor()
+        ed.activeScalar = ed.doc.newParameter("r", 15.0.mm)
+        ed.setTool(Tools.CIRCLE_R)
+        ed.click(Vec2(0.0, 0.0))   // single slot (centre) -> builds circle with the active radius
+        val circleEl = ed.doc.elements.first { it.kind == ElementKind.CIRCLE }
+        assertClose(Evaluator().circle(circleEl.ref as CircleRef).radius, 15.0)
+    }
+
+    @Test
+    fun measurementToolAddsReadonlyScalar() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(3.0, 4.0))
+        ed.setTool(Tools.DISTANCE); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(3.0, 4.0))
+        val m = ed.doc.scalars.first { !it.editable }
+        assertClose(Evaluator().scalar(m.ref).mm, 5.0)
+    }
+
+    @Test
     fun sceneSvgGolden() {
         val ed = Editor(canvasW = 400.0, canvasH = 300.0)
         ed.camera = constructit.editor.Camera.centered(400.0, 300.0, scale = 4.0)
         // a small live construction: two points, a line, a circle
-        ed.setTool(Tool.POINT); ed.click(Vec2(-30.0, -10.0)); ed.click(Vec2(30.0, 10.0))
-        ed.setTool(Tool.LINE); ed.click(Vec2(-30.0, -10.0)); ed.click(Vec2(30.0, 10.0))
-        ed.setTool(Tool.CIRCLE); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(25.0, 0.0))
+        ed.setTool(Tools.POINT); ed.click(Vec2(-30.0, -10.0)); ed.click(Vec2(30.0, 10.0))
+        ed.setTool(Tools.LINE); ed.click(Vec2(-30.0, -10.0)); ed.click(Vec2(30.0, 10.0))
+        ed.setTool(Tools.CIRCLE); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(25.0, 0.0))
 
         val target = SvgDrawTarget()
         ed.render(target)
