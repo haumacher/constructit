@@ -50,6 +50,34 @@ both value-level and SVG-golden level. Toolchain: Java 17 + Gradle 8.7 wrapper, 
 
 All four produce committed **SVG goldens**; the whole suite passes via `./gradlew test`.
 
+## Primitive/operation backlog (post-DoD, to complete the algebra)
+
+Implemented so far: `Scalar/Point/Line/Segment/Circle/Arc/PointSet`; parameter/const/freePoint,
+scalar scale/add/sub/neg, pointXY/translate/polarPoint/midpoint, lineThrough/segment/circleCR/arc,
+intersectCC/LL/LC + select, measureDistance.
+
+**Tier 1 — makes it a real construction engine:**
+- perpendicular-through-point, parallel-through-point, perpendicular-bisector, angle-bisector
+- project-point-onto-line (foot), point-on-line/segment (dist/param), point-on-circle (angle)
+- circle by center+through-point
+- general transforms on any geometry: mirror/reflect across line, rotate, scale/homothety
+- scalar mul, div; functions sqrt, sin/cos/tan, atan2, abs, min, max, pow, mod (nodes)
+- measurements: angle (3 pts / 2 lines), length, radius, x/y coordinate readouts
+
+**Tier 2 — mechanical niceties:**
+- fillet arc (tangent arc radius r between two lines/segments)
+- tangent-from-point to circle; common tangents to two circles
+- ray; 3-point circle (circumcircle); 3-point / tangent arc; Direction/Vector value
+
+**Tier 3 — bridge to 3D:**
+- Profile/Path value (ordered closed chain of segments+arcs) for extrude/revolve (phase-2)
+
+**Showcase example tests (each with a known-answer invariant):**
+- Triangle centers + Euler line (collinearity; centroid 2:1) — exercises most of Tier 1
+- Thales right angle; tangents-from-point (equal tangent lengths); fillet corner (tangency)
+- Slot/obround (common tangents, mirror); regular polygon (equal sides / interior angle)
+- Golden-ratio pentagon (diagonal/side = phi)
+
 ## Explicitly deferred within Phase 1 (not required by DoD)
 
 - String **expression parser** (OP-7 language) — the graph-level `expr` nodes and units are in;
