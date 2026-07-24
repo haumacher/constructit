@@ -9,8 +9,11 @@ enum class SlotKind { PLACE_POINT, POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY
 
 enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE }
 
-/** Geometry picked so far for the active tool (split by kind), plus [at] = the last click's world position. */
-class Picks(val points: List<PointRef>, val elements: List<Element>, val at: Vec2)
+/**
+ * Geometry picked so far for the active tool (split by kind), [at] = the last click's world
+ * position, and [clicks] = the world position of every click in slot order.
+ */
+class Picks(val points: List<PointRef>, val elements: List<Element>, val at: Vec2, val clicks: List<Vec2>)
 
 /**
  * A data-driven tool: geometry [slots] to pick by clicking (plus an optional [scalar] from the
@@ -108,7 +111,7 @@ object Tools {
         ToolDef(PARALLEL_AT, "Parallel at distance", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.SIDE), scalar = true, help = "Select a distance, click the base line, then click the side you want the parallel on.") { d, p, s -> d.parallelAtDistance(p.elements[0], s!!, p.at) },
         ToolDef(TANGENT, "Tangent from point", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.CIRCLE), help = "Click an external point, then a circle.") { d, p, _ -> d.tangentFromPoint(p.points[0], p.elements[0]) },
         ToolDef(TANGENT_AT, "Tangent at point", ToolCategory.CONSTRUCT, listOf(SlotKind.ON_CIRCLE_POINT), help = "Click a point that lies on a circle for the tangent there (use Point on circle).") { d, p, _ -> d.tangentAtPointOnCircle(p.elements[0]) },
-        ToolDef(FILLET, "Fillet", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), scalar = true, help = "Select a radius, then click a point on one leg, the corner, and a point on the other leg.") { d, p, s -> d.fillet(p.points[0], p.points[1], p.points[2], s!!) },
+        ToolDef(FILLET, "Fillet", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.LINE), scalar = true, help = "Select a radius, then click the two legs on the sides of the corner you want rounded.") { d, p, s -> d.filletBetweenLines(p.elements[0], p.elements[1], s!!, p.clicks[0], p.clicks[1]) },
         ToolDef(OUTER_TANGENTS, "Outer tangents", ToolCategory.CONSTRUCT, listOf(SlotKind.CIRCLE, SlotKind.CIRCLE), help = "Click two circles for their outer common tangents.") { d, p, _ -> d.commonTangents(p.elements[0], p.elements[1], inner = false) },
         ToolDef(INNER_TANGENTS, "Inner tangents", ToolCategory.CONSTRUCT, listOf(SlotKind.CIRCLE, SlotKind.CIRCLE), help = "Click two circles for their inner (crossing) common tangents.") { d, p, _ -> d.commonTangents(p.elements[0], p.elements[1], inner = true) },
 

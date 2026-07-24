@@ -391,6 +391,28 @@ class Construction {
             else EvalResult.Ok(LineValue(Line(p, radial.perp().normalized())))
         }
 
+    /**
+     * Fillet arc of [radius] tangent to two lines, in the corner (their intersection) chosen by
+     * [sign1]/[sign2] (which way along each line's direction the fillet opens). Captured at creation.
+     */
+    fun filletBetweenLines(l1: LineRef, l2: LineRef, radius: ScalarRef, sign1: Int, sign2: Int): ArcRef =
+        op(l1, l2, radius) {
+            val la = ln(it[0]); val lb = ln(it[1]); val r = sc(it[2]).mm
+            val denom = la.dir.cross(lb.dir)
+            if (kotlin.math.abs(denom) < Vec2.EPS) return@op EvalResult.Invalid("parallel legs")
+            val corner = la.origin + la.dir * ((lb.origin - la.origin).cross(lb.dir) / denom)
+            val u1 = la.dir * sign1.toDouble(); val u2 = lb.dir * sign2.toDouble()
+            val bis = u1 + u2
+            if (bis.length() < Vec2.EPS) return@op EvalResult.Invalid("degenerate corner")
+            val bisU = bis.normalized()
+            val half = kotlin.math.acos(u1.dot(bisU).coerceIn(-1.0, 1.0))
+            val sinH = kotlin.math.sin(half); val tanH = kotlin.math.tan(half)
+            if (sinH < Vec2.EPS || tanH < Vec2.EPS) return@op EvalResult.Invalid("degenerate corner angle")
+            val center = corner + bisU * (r / sinH)
+            val t1 = corner + u1 * (r / tanH); val t2 = corner + u2 * (r / tanH)
+            EvalResult.Ok(ArcValue(Arc(center, r, (t1 - center).angle(), (t2 - center).angle(), (t1 - center).cross(t2 - center) > 0)))
+        }
+
     /** The two tangent points on [circle] of the tangents from external [point] (via Thales' circle). */
     fun tangentPointsFromPoint(point: PointRef, circle: CircleRef): PointSetRef =
         op(point, circle) {

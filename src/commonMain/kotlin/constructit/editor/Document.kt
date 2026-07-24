@@ -261,9 +261,26 @@ class Document {
     }
     fun parallelThrough(line: Element, p: PointRef) = add(cx.parallelThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
 
-    /** Fillet arc of [radius] in the corner at [corner] opening toward [p1] and [p2]. */
-    fun fillet(p1: PointRef, corner: PointRef, p2: PointRef, radius: ScalarRef) =
-        add(cx.filletCorner(p1, corner, p2, radius), ElementKind.ARC, Styles.CURVE)
+    /**
+     * Fillet between two legs (lines/segments/rays). The corner is their intersection; the
+     * quadrant is chosen by which side of the corner each leg was clicked ([clickA]/[clickB]).
+     */
+    fun filletBetweenLines(leg1: Element, leg2: Element, radius: ScalarRef, clickA: Vec2, clickB: Vec2): Element {
+        val l1 = carrierLine(leg1); val l2 = carrierLine(leg2)
+        val ev = Evaluator()
+        val la = (ev.eval(l1.node) as? EvalResult.Ok)?.value as? LineValue
+        val lb = (ev.eval(l2.node) as? EvalResult.Ok)?.value as? LineValue
+        var sign1 = 1; var sign2 = 1
+        if (la != null && lb != null) {
+            val denom = la.line.dir.cross(lb.line.dir)
+            if (kotlin.math.abs(denom) > Vec2.EPS) {
+                val corner = la.line.origin + la.line.dir * ((lb.line.origin - la.line.origin).cross(lb.line.dir) / denom)
+                sign1 = if ((clickA - corner).dot(la.line.dir) < 0) -1 else 1
+                sign2 = if ((clickB - corner).dot(lb.line.dir) < 0) -1 else 1
+            }
+        }
+        return add(cx.filletBetweenLines(l1, l2, radius, sign1, sign2), ElementKind.ARC, Styles.CURVE)
+    }
 
     /** Both external (or internal) common tangents of two circles. */
     fun commonTangents(c1: Element, c2: Element, inner: Boolean): List<Element> {

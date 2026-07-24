@@ -333,14 +333,25 @@ class EditorTest {
     }
 
     @Test
-    fun filletToolAddsTangentArc() {
+    fun filletBetweenTwoLegsRoundsTheCorner() {
         val ed = Editor()
-        ed.setTool(Tools.POINT); ed.click(Vec2(50.0, 0.0)); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(0.0, 50.0))
+        ed.setTool(Tools.SEGMENT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(50.0, 0.0))   // +x leg
+        ed.setTool(Tools.SEGMENT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(0.0, 50.0))   // +y leg
         ed.activeScalar = ed.doc.newParameter("r", 10.0.mm)
-        ed.setTool(Tools.FILLET); ed.click(Vec2(50.0, 0.0)); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(0.0, 50.0))
+        ed.setTool(Tools.FILLET); ed.click(Vec2(30.0, 0.0)); ed.click(Vec2(0.0, 30.0))   // click each leg on the +x/+y side
         val a = Evaluator().arc(ed.doc.elements.last { it.kind == ElementKind.ARC }.ref as ArcRef)
         assertClose(a.radius, 10.0)
         assertClose(a.center.x, 10.0); assertClose(a.center.y, 10.0)  // right-angle corner -> centre (r,r)
+    }
+
+    @Test
+    fun filletCreatesNoStrayGeometryWithoutLegs() {
+        val ed = Editor()
+        ed.activeScalar = ed.doc.newParameter("r", 10.0.mm)
+        ed.setTool(Tools.FILLET)
+        val before = ed.doc.elements.size
+        ed.click(Vec2(120.0, 120.0))   // empty space
+        assertEquals(before, ed.doc.elements.size, "must not create stray points/geometry")
     }
 
     @Test

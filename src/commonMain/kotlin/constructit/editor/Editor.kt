@@ -35,6 +35,7 @@ class Editor(
     private var lastScreen = Vec2(0.0, 0.0)
     private val pickedPoints = ArrayList<PointRef>()
     private val pickedElements = ArrayList<Element>()
+    private val pickedClicks = ArrayList<Vec2>()
     private var filledSlots = 0
 
     val pendingCount: Int get() = filledSlots
@@ -47,7 +48,7 @@ class Editor(
     }
 
     private fun resetPicks() {
-        pickedPoints.clear(); pickedElements.clear(); filledSlots = 0; dragPoint = null; panning = false
+        pickedPoints.clear(); pickedElements.clear(); pickedClicks.clear(); filledSlots = 0; dragPoint = null; panning = false
     }
 
     /** Set a transient status-bar note (e.g. panel feedback). */
@@ -114,13 +115,14 @@ class Editor(
         // existing-only slots do NOT create anything on a miss — just hint and wait
         if (!picked) { statusHint = tool.help; onChange(); return }
         filledSlots++
+        pickedClicks.add(world)
 
         if (filledSlots == tool.slots.size) {
             if (tool.scalar && activeScalar == null) {
                 statusHint = "${tool.label}: select a parameter or measurement in the panel first"
                 resetPicks(); onChange(); return
             }
-            tool.build(doc, Picks(pickedPoints.toList(), pickedElements.toList(), world), activeScalar?.ref)
+            tool.build(doc, Picks(pickedPoints.toList(), pickedElements.toList(), world, pickedClicks.toList()), activeScalar?.ref)
             resetPicks()
             statusHint = ""
         } else {
