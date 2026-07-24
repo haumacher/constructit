@@ -29,11 +29,12 @@ enum class ElementKind { POINT, DERIVED_POINT, ON_CURVE, LINE, RAY, CIRCLE, SEGM
 class Element(
     val id: String,
     val ref: Ref<*>,
-    val kind: ElementKind,
+    /** Mutable: a free point can become an on-curve point in place when attached to a curve. */
+    var kind: ElementKind,
     var style: Style,
     var visible: Boolean = true,
     /** For [ElementKind.ON_CURVE]: how a drag updates the hidden position parameter. */
-    val constraint: PointConstraint? = null,
+    var constraint: PointConstraint? = null,
 ) {
     val draggable: Boolean get() =
         (kind == ElementKind.POINT && (ref.node as? SourceNode)?.boundTo == null) || kind == ElementKind.ON_CURVE
@@ -176,13 +177,81 @@ class Document {
         return true
     }
 
-    /** Un-weld: [alias] resumes as an independent free point at its current (master's) position. */
+    /** Un-weld / detach: the point resumes as an independent free point at its current position. */
     fun unweld(alias: Element) {
         val node = alias.ref.node as? SourceNode ?: return
         val cur = (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p }
         node.boundTo = null
         if (cur != null) node.value = PointValue(cur)
+        alias.kind = ElementKind.POINT
+        alias.constraint = null
+        alias.style = Styles.FREE_POINT
         alias.visible = true
+    }
+
+    // ---- drag-to-attach: weld a free point onto a curve so it slides along it (1 DOF) ----
+
+    /**
+     * Where free point [pt] would land if attached to [curve] (its projection onto the line, or
+     * the nearest point on the circle), or null if the attach is invalid — [pt] is not an
+     * un-welded free point, [curve] is not a line/segment/ray/circle, or [curve] is built from
+     * [pt] (which would cycle). Used for the drag magnet's eligibility + halo position.
+     */
+    fun attachTargetPos(pt: Element, curve: Element): Vec2? {
+        val node = pt.ref.node as? SourceNode ?: return null
+        if (pt.kind != ElementKind.POINT || node.boundTo != null) return null
+        val p = (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p } ?: return null
+        return when {
+            curve.isLinear -> {
+                val lr = carrierLine(curve)
+                if (dependsOn(lr.node, node, HashSet())) return null
+                val l = (Evaluator().eval(lr.node) as? EvalResult.Ok)?.value as? LineValue ?: return null
+                l.line.origin + l.line.dir * (p - l.line.origin).dot(l.line.dir)
+            }
+            curve.kind == ElementKind.CIRCLE -> {
+                val cr = curve.ref as CircleRef
+                if (dependsOn(cr.node, node, HashSet())) return null
+                val c = (Evaluator().eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue ?: return null
+                val d = p - c.circle.center
+                val len = d.length()
+                if (len < Vec2.EPS) c.circle.center + Vec2(c.circle.radius, 0.0)
+                else c.circle.center + d * (c.circle.radius / len)
+            }
+            else -> null
+        }
+    }
+
+    /**
+     * Attach free point [pt] onto [curve]: it becomes a 1-DOF on-curve point (draggable along the
+     * curve). The point's node is welded ([SourceNode.boundTo]) onto a fresh point-on-curve node
+     * driven by a hidden parameter, so everything already referencing the point now slides with it.
+     * Reversible via [unweld]. Same validity rules as [attachTargetPos].
+     */
+    fun attachToCurve(pt: Element, curve: Element): Boolean {
+        val node = pt.ref.node as? SourceNode ?: return false
+        if (attachTargetPos(pt, curve) == null) return false
+        val ev = Evaluator()
+        val p = (ev.eval(node) as EvalResult.Ok).let { (it.value as PointValue).p }
+        when {
+            curve.isLinear -> {
+                val lr = carrierLine(curve)
+                val l = (ev.eval(lr.node) as EvalResult.Ok).value as LineValue
+                val t0 = (p - l.line.origin).dot(l.line.dir)
+                val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(t0)))
+                node.boundTo = cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode)).node
+                pt.constraint = OnLineConstraint(lr, tNode)
+            }
+            else -> {   // circle
+                val cr = curve.ref as CircleRef
+                val c = (ev.eval(cr.node) as EvalResult.Ok).value as CircleValue
+                val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
+                node.boundTo = cx.pointOnCircle(cr, Ref<ScalarValue>(aNode)).node
+                pt.constraint = OnCircleConstraint(cr, aNode)
+            }
+        }
+        pt.kind = ElementKind.ON_CURVE
+        pt.style = Styles.ON_CURVE
+        return true
     }
 
     fun remove(el: Element) { elements.remove(el) }

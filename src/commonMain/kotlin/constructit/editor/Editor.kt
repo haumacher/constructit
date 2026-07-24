@@ -33,7 +33,9 @@ class Editor(
 
     // transient state
     private var dragPoint: Element? = null
-    private var weldTarget: Element? = null
+    private var weldTarget: Element? = null      // a point to weld onto
+    private var attachTarget: Element? = null    // a curve to attach onto
+    private var haloPos: Vec2? = null            // where the magnet ring is drawn
     private var panning = false
     private var lastScreen = Vec2(0.0, 0.0)
     private val pickedPoints = ArrayList<PointRef>()
@@ -52,7 +54,7 @@ class Editor(
 
     private fun resetPicks() {
         pickedPoints.clear(); pickedElements.clear(); pickedClicks.clear(); filledSlots = 0
-        dragPoint = null; weldTarget = null; panning = false
+        dragPoint = null; weldTarget = null; attachTarget = null; haloPos = null; panning = false
     }
 
     /** Set a transient status-bar note (e.g. panel feedback). */
@@ -63,8 +65,7 @@ class Editor(
         if (toolId == Tools.SELECT) Tools.SELECT_HELP else Tools.byId(toolId)?.help ?: ""
 
     fun render(target: DrawTarget) {
-        val halo = weldTarget?.let { (ev().valueOf(it.ref) as? PointValue)?.p }
-        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, halo)
+        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos)
     }
 
     fun wheel(screen: Vec2, deltaY: Double) {
@@ -89,10 +90,10 @@ class Editor(
                 val world = camera.screenToWorld(screen)
                 val c = el.constraint
                 if (c != null) {
-                    c.update(world, ev()); weldTarget = null
+                    c.update(world, ev()); clearMagnet()
                 } else {
                     doc.moveFreePoint(el, world)
-                    weldTarget = nearestWeldTarget(el, world)   // magnet: highlight a point to join onto
+                    updateMagnet(el, world)   // highlight a point to weld onto, or a curve to attach to
                 }
                 onChange()
             }
@@ -106,28 +107,47 @@ class Editor(
 
     fun pointerUp(@Suppress("UNUSED_PARAMETER") screen: Vec2) {
         val dragged = dragPoint
-        val tgt = weldTarget
+        val weld = weldTarget
+        val attach = attachTarget
         dragPoint = null
-        weldTarget = null            // clear before rendering so the magnet halo doesn't linger
+        clearMagnet()                // clear before rendering so the magnet halo doesn't linger
         panning = false
-        if (dragged != null && tgt != null && doc.weld(dragged, tgt)) {
-            statusHint = "Joined ${dragged.id} onto ${tgt.id}"
-            onChange()
+        if (dragged != null) {
+            if (weld != null && doc.weld(dragged, weld)) {
+                statusHint = "Joined ${dragged.id} onto ${weld.id}"; onChange()
+            } else if (attach != null && doc.attachToCurve(dragged, attach)) {
+                statusHint = "Attached ${dragged.id} to ${attach.id}"; onChange()
+            }
         }
     }
 
-    /** Nearest visible point (other than [dragged]) within snap tolerance — the weld magnet target. */
-    private fun nearestWeldTarget(dragged: Element, world: Vec2): Element? {
+    private fun clearMagnet() { weldTarget = null; attachTarget = null; haloPos = null }
+
+    /**
+     * Magnet: prefer a nearby point to weld onto; otherwise a nearby curve to attach onto. Sets
+     * [haloPos] to the point (or the projection onto the curve) where the drag will land.
+     */
+    private fun updateMagnet(dragged: Element, world: Vec2) {
         val ev = ev()
         var best: Element? = null
+        var bestPos: Vec2? = null
         var bestD = tolWorld()
-        for (el in doc.elements) {
+        for (el in doc.elements) {   // points win over curves at equal distance (checked first)
             if (el === dragged || !el.visible || !el.isPoint) continue
             val p = (ev.valueOf(el.ref) as? PointValue)?.p ?: continue
             val d = (p - world).length()
-            if (d <= bestD) { bestD = d; best = el }
+            if (d <= bestD) { bestD = d; best = el; bestPos = p }
         }
-        return best
+        if (best != null) { weldTarget = best; attachTarget = null; haloPos = bestPos; return }
+
+        bestD = tolWorld()
+        for (el in doc.elements) {
+            if (el === dragged || !el.visible || !el.isCurve) continue
+            val pos = doc.attachTargetPos(dragged, el) ?: continue
+            val d = (pos - world).length()
+            if (d <= bestD) { bestD = d; best = el; bestPos = pos }
+        }
+        if (best != null) { attachTarget = best; weldTarget = null; haloPos = bestPos } else clearMagnet()
     }
 
     private fun runToolClick(screen: Vec2) {

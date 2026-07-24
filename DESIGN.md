@@ -234,10 +234,16 @@ another shows a magnet *halo*; releasing welds — the GeoGebra-like fluid path)
 points** tool (click the point to keep, then the one to weld — precise/discoverable). Master
 survives; the drop target wins, so the resulting position is never ambiguous.
 
-*Generalization (planned):* welding a point *onto a curve* = point-on-line/point-on-circle
-(2→1 DOF), onto a *derived/intersection point* = alias (2→0 DOF). Folding join +
-point-on-line + point-on-circle into a single **drag-to-attach** gesture is the elegant
-endpoint; plain point-to-point weld is the first slice.
+*Generalization — **drag-to-attach** (implemented for lines & circles):* the same magnet also
+snaps onto **curves**. Dragging a free point onto a line/segment/ray attaches it as a
+**point-on-line** (2→1 DOF), onto a circle as a **point-on-circle**; it then slides along the
+curve. Realized on the same substrate: the point's `SourceNode.boundTo` is welded onto a fresh
+`pointOnLineAt`/`pointOnCircle` node (so every reference follows) and its `Element` flips to
+`ON_CURVE` in place with the matching `PointConstraint`. Curves built *from* the point are
+excluded (cycle check), and the point's own endpoints therefore never self-attach. Points win
+over curves when both are in snap range. `unweld` detaches either kind back to a free point.
+Remaining: attach onto **arcs** (needs the arc's carrier circle) and onto a **derived/intersection
+point** (alias, 2→0 DOF).
 
 **Remaining — build order (all planned; ordered, not deferred):**
 
@@ -249,10 +255,10 @@ endpoint; plain point-to-point weld is the first slice.
    dependents), undo/redo (snapshot source values + element list), save/load — the `Document`
    is the file-format seam.
 3. **Productivity.** Auto-snapping (ordinary point clicks snap to key points, intersections,
-   grid); **drag-to-attach** (extend the weld magnet so dragging a free point onto a curve makes
-   it point-on-curve, onto a derived point aliases it — see *Welding*); Arrays — linear (repeat N
-   along a vector) and circular (around a centre), the interactive generalization of the
-   bolt-circle/hole-pattern macros (needs a count input).
+   grid); drag-to-attach onto **arcs** and onto **derived points** (the two cases the weld magnet
+   doesn't yet cover — see *Welding*); Arrays — linear (repeat N along a vector) and circular
+   (around a centre), the interactive generalization of the bolt-circle/hole-pattern macros
+   (needs a count input).
 4. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
    tool (OP-6 `Macro` machinery exists in the engine; needs the record/parameterize UI). The
    headline capability of the paradigm.

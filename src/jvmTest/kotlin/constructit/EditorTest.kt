@@ -482,4 +482,35 @@ class EditorTest {
         val pb = Evaluator().point(b.ref as constructit.dsl.PointRef)
         assertClose(pb.x, 0.0); assertClose(pb.y, 0.0)
     }
+
+    @Test
+    fun draggingAFreePointOntoALineAttachesItAsSlidingOnCurve() {
+        val ed = Editor()
+        ed.setTool(Tools.LINE); ed.click(Vec2(-40.0, 0.0)); ed.click(Vec2(40.0, 0.0))  // horizontal line
+        ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 30.0))                              // a free point above it
+        val p = ed.doc.freePoints.last()
+
+        // drag the free point down onto the line -> it should attach as an on-curve point
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(0.0, 30.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(10.0, 0.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(10.0, 0.0)))
+
+        assertEquals(ElementKind.ON_CURVE, p.kind, "point should become on-curve after attaching")
+        assertTrue(p.draggable, "an attached point still slides along the curve")
+        assertClose(Evaluator().point(p.ref as constructit.dsl.PointRef).y, 0.0)   // landed on the line
+
+        // now it is constrained: dragging it away (up-left) keeps it on the line
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(10.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(-20.0, 25.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(-20.0, 25.0)))
+        val pv = Evaluator().point(p.ref as constructit.dsl.PointRef)
+        assertClose(pv.y, 0.0, tol = 1e-6); assertClose(pv.x, -20.0, tol = 1e-6)   // slid along, stayed on the line
+
+        // detaching restores an independent free point at the current position
+        ed.doc.unweld(p)
+        assertEquals(ElementKind.POINT, p.kind); assertEquals(null, p.constraint)
+        val pf = Evaluator().point(p.ref as constructit.dsl.PointRef)
+        assertClose(pf.y, 0.0); assertClose(pf.x, -20.0)
+    }
 }
