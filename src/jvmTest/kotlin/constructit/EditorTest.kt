@@ -84,6 +84,25 @@ class EditorTest {
     }
 
     @Test
+    fun lineLineIntersectionYieldsExactlyOnePoint() {
+        val ed = Editor()
+        ed.setTool(Tool.POINT)
+        ed.click(Vec2(-30.0, -20.0)); ed.click(Vec2(30.0, 20.0))   // line 1 endpoints
+        ed.click(Vec2(-30.0, 20.0)); ed.click(Vec2(30.0, -20.0))   // line 2 endpoints
+        ed.setTool(Tool.LINE)
+        ed.click(Vec2(-30.0, -20.0)); ed.click(Vec2(30.0, 20.0))
+        ed.click(Vec2(-30.0, 20.0)); ed.click(Vec2(30.0, -20.0))
+        ed.setTool(Tool.INTERSECT)
+        ed.click(Vec2(15.0, 10.0))    // on line 1 only
+        ed.click(Vec2(15.0, -10.0))   // on line 2 only
+
+        val derived = ed.doc.elements.filter { it.kind == ElementKind.DERIVED_POINT }
+        assertEquals(1, derived.size, "two lines meet in a single point")
+        val p = Evaluator().point(derived[0].ref as constructit.dsl.PointRef)
+        assertClose(p.x, 0.0); assertClose(p.y, 0.0)   // the two lines cross at the origin
+    }
+
+    @Test
     fun lineToolSnapsToExistingPoint() {
         val ed = Editor()
         ed.setTool(Tool.POINT); ed.click(Vec2(0.0, 0.0))

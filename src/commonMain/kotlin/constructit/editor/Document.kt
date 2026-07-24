@@ -58,11 +58,16 @@ class Document {
     fun segment(a: PointRef, b: PointRef) =
         cx.segment(a, b).also { add(it, ElementKind.SEGMENT, Styles.CURVE) }
 
-    /** Intersect two curve elements, adding the (up to two) selectable derived points. */
+    /**
+     * Intersect two curve elements, adding one derived point per solution *branch*.
+     * Branch count is a property of the pair type: line∩line has a single solution;
+     * line∩circle and circle∩circle have two. (This avoids two coincident points for lines.)
+     */
     fun intersect(a: Element, b: Element): List<PointRef> {
+        val lineLine = a.kind == ElementKind.LINE && b.kind == ElementKind.LINE
         @Suppress("UNCHECKED_CAST")
         val set: PointSetRef = when {
-            a.kind == ElementKind.LINE && b.kind == ElementKind.LINE ->
+            lineLine ->
                 cx.intersectLL(a.ref as LineRef, b.ref as LineRef)
             a.kind == ElementKind.CIRCLE && b.kind == ElementKind.CIRCLE ->
                 cx.intersectCC(a.ref as CircleRef, b.ref as CircleRef)
@@ -72,10 +77,11 @@ class Document {
                 cx.intersectLC(b.ref as LineRef, a.ref as CircleRef)
             else -> return emptyList()
         }
-        val p1 = cx.select(set, +1); val p2 = cx.select(set, -1)
-        add(p1, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
-        add(p2, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
-        return listOf(p1, p2)
+        val refs = ArrayList<PointRef>()
+        refs.add(cx.select(set, +1))
+        if (!lineLine) refs.add(cx.select(set, -1))
+        refs.forEach { add(it, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT) }
+        return refs
     }
 
     /** Move a free point (mutates its source node) for a parametric recompute. */
