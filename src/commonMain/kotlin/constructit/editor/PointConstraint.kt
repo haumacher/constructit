@@ -39,6 +39,9 @@ class OnLineConstraint(private val line: LineRef, private val t: SourceNode) : P
 class OrthoCornerConstraint(val xNode: SourceNode, val yNode: SourceNode) : PointConstraint {
     /** True while this vertex terminates its path (degree 1) — the case that may weld/attach. */
     var isEndpoint: Boolean = true
+    /** Which coordinate is this vertex's *own* (not shared with a neighbour): 0 = x, 1 = y. The one
+     *  to bind when attaching to a line, so the shared coordinate stays free for the neighbour. */
+    var ownCoord: Int = 0
     override fun update(world: Vec2, ev: Evaluator) {
         xNode.value = ScalarValue(Quantity.mm(world.x))
         yNode.value = ScalarValue(Quantity.mm(world.y))

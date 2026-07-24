@@ -297,29 +297,50 @@ class Document {
     fun attachOrthoEndpointToCurve(el: Element, curve: Element): Boolean {
         val corner = orthoEndpoint(el) ?: return false
         val ev = Evaluator()
-        val p = (ev.eval(el.ref.node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p } ?: return false
-        val pol: PointRef = when {
-            curve.isLinear -> {
-                val lr = carrierLine(curve)
-                if (dependsOn(lr.node, el.ref.node, HashSet())) return false
-                val l = (ev.eval(lr.node) as EvalResult.Ok).value as LineValue
-                val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm((p - l.line.origin).dot(l.line.dir))))
-                el.constraint = OnLineConstraint(lr, tNode)
-                cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode))
+        if (curve.isLinear) {
+            val lr = carrierLine(curve)
+            if (dependsOn(lr.node, el.ref.node, HashSet())) return false
+            val dir = ((ev.eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line?.dir ?: return false
+            // Bind only the OWN coordinate, derived as where the line crosses the (free, shared) one —
+            // so the shared coordinate stays writable and the neighbour keeps its DOF. Works while the
+            // line isn't parallel to the own axis; otherwise fall back to pinning both onto the line.
+            if (corner.ownCoord == 0 && abs(dir.y) > Vec2.EPS) {           // own x from shared y
+                val sy = Ref<ScalarValue>(corner.yNode)
+                val cut = cx.lineThrough(cx.pointXY(cx.const(0.0.mm), sy), cx.pointXY(cx.const(1.0.mm), sy))
+                corner.xNode.boundTo = cx.measureX(cx.select(cx.intersectLL(lr, cut), +1)).node
+                corner.isEndpoint = false
+                return true
             }
-            curve.kind == ElementKind.CIRCLE -> {
-                val cr = curve.ref as CircleRef
-                if (dependsOn(cr.node, el.ref.node, HashSet())) return false
-                val c = (ev.eval(cr.node) as EvalResult.Ok).value as CircleValue
-                val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
-                el.constraint = OnCircleConstraint(cr, aNode)
-                cx.pointOnCircle(cr, Ref<ScalarValue>(aNode))
+            if (corner.ownCoord == 1 && abs(dir.x) > Vec2.EPS) {           // own y from shared x
+                val sx = Ref<ScalarValue>(corner.xNode)
+                val cut = cx.lineThrough(cx.pointXY(sx, cx.const(0.0.mm)), cx.pointXY(sx, cx.const(1.0.mm)))
+                corner.yNode.boundTo = cx.measureY(cx.select(cx.intersectLL(lr, cut), +1)).node
+                corner.isEndpoint = false
+                return true
             }
-            else -> return false
+            // edge parallel to the line: the shared coordinate is genuinely pinned — bind both to a slider
+            val p = (ev.eval(el.ref.node) as EvalResult.Ok).let { (it.value as PointValue).p }
+            val l = (ev.eval(lr.node) as EvalResult.Ok).value as LineValue
+            val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm((p - l.line.origin).dot(l.line.dir))))
+            val pol = cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode))
+            el.constraint = OnLineConstraint(lr, tNode)
+            corner.xNode.boundTo = cx.measureX(pol).node
+            corner.yNode.boundTo = cx.measureY(pol).node
+            return true
         }
-        corner.xNode.boundTo = cx.measureX(pol).node
-        corner.yNode.boundTo = cx.measureY(pol).node
-        return true
+        if (curve.kind == ElementKind.CIRCLE) {
+            val cr = curve.ref as CircleRef
+            if (dependsOn(cr.node, el.ref.node, HashSet())) return false
+            val p = (ev.eval(el.ref.node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p } ?: return false
+            val c = (ev.eval(cr.node) as EvalResult.Ok).value as CircleValue
+            val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
+            val pol = cx.pointOnCircle(cr, Ref<ScalarValue>(aNode))
+            el.constraint = OnCircleConstraint(cr, aNode)
+            corner.xNode.boundTo = cx.measureX(pol).node
+            corner.yNode.boundTo = cx.measureY(pol).node
+            return true
+        }
+        return false
     }
 
     /** Weld an ortho path endpoint [el] onto point [target]: its coordinates track the target. */
@@ -438,6 +459,7 @@ class Document {
 
     private fun orthoVertex(x: SourceNode, y: SourceNode, ownAxis: Int): OrthoVertex {
         val corner = OrthoCornerConstraint(x, y)
+        corner.ownCoord = if (ownAxis == -1) 0 else ownAxis   // start: fixed once its first edge is drawn
         val ref = cx.pointXY(Ref<ScalarValue>(x), Ref<ScalarValue>(y))
         addConstrained(ref, corner)
         return OrthoVertex(ref, corner, ownAxis)
@@ -461,6 +483,7 @@ class Document {
         if (abs(dx) >= abs(dy)) { xNode = scalarSource(to.x); yNode = prev.corner.yNode; ownAxis = 0 }
         else                    { xNode = prev.corner.xNode; yNode = scalarSource(to.y); ownAxis = 1 }
         if (prev.ownAxis != -1) prev.corner.isEndpoint = false   // prev now has two edges (unless it is the start)
+        else prev.corner.ownCoord = ownAxis                      // the start's own coord = the one V1 didn't share
         return orthoVertex(xNode, yNode, ownAxis).also { segment(prev.ref, it.ref) }
     }
 

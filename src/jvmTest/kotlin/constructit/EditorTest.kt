@@ -571,6 +571,31 @@ class EditorTest {
     }
 
     @Test
+    fun neighbourKeepsTwoDofAfterEndpointAttachesToACrossingLine() {
+        val ed = Editor()
+        ed.setTool(Tools.LINE); ed.click(Vec2(30.0, -50.0)); ed.click(Vec2(30.0, 50.0))   // vertical line x=30
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(3.0, 40.0)); ed.click(Vec2(20.0, 40.0))     // V0, V1(0,40), V2(20,40)
+        ed.finishPath()
+        val v = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }                  // [V0,V1,V2]
+        fun p(i: Int) = Evaluator().point(v[i].ref as constructit.dsl.PointRef)
+
+        // attach the endpoint V2 (its edge V1-V2 is horizontal, crossing the vertical line) onto the line
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(20.0, 40.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(30.0, 40.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(30.0, 40.0)))
+        assertClose(p(2).x, 30.0)   // V2 on the line
+
+        // the neighbour V1 must still have 2 DOF: drag it diagonally
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(0.0, 40.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(10.0, 60.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(10.0, 60.0)))
+        assertClose(p(1).x, 10.0); assertClose(p(1).y, 60.0)     // neighbour moved in BOTH axes (2 DOF)
+        assertClose(p(2).x, 30.0); assertClose(p(2).y, 60.0)     // endpoint stayed on the line and slid with it
+    }
+
+    @Test
     fun closedWallLoopMitersEveryCornerWithNoCaps() {
         val ed = Editor()
         ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)
