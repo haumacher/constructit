@@ -188,7 +188,11 @@ class Document {
     fun perpBisector(a: PointRef, b: PointRef) = add(cx.perpBisector(a, b), ElementKind.LINE, Styles.CONSTRUCT)
     fun angleBisector(a: PointRef, v: PointRef, b: PointRef) = add(cx.angleBisector(a, v, b), ElementKind.LINE, Styles.CONSTRUCT)
     fun perpendicularThrough(line: Element, p: PointRef) = add(cx.perpendicularThrough(line.ref as LineRef, p), ElementKind.LINE, Styles.CONSTRUCT)
-    fun tangentAtCircle(circle: Element, point: PointRef) = add(cx.tangentAtCircle(circle.ref as CircleRef, point), ElementKind.LINE, Styles.CONSTRUCT)
+    /** Tangent at a point-on-circle — the circle is inferred from the point's constraint. */
+    fun tangentAtPointOnCircle(pointEl: Element) {
+        val c = pointEl.constraint
+        if (c is OnCircleConstraint) add(cx.tangentAtCircle(c.circle, pointEl.ref as PointRef), ElementKind.LINE, Styles.CONSTRUCT)
+    }
     fun parallelThrough(line: Element, p: PointRef) = add(cx.parallelThrough(line.ref as LineRef, p), ElementKind.LINE, Styles.CONSTRUCT)
 
     // ---- transforms (preserve source kind & style) ----

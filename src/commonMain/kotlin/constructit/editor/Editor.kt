@@ -104,8 +104,10 @@ class Editor(
             SlotKind.CIRCLE -> pickElement(world) { it.kind == ElementKind.CIRCLE }
             SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
             SlotKind.GEOMETRY -> pickElement(world) { true }
+            SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.constraint is OnCircleConstraint }
         }
-        if (!picked) { statusHint = "Click a ${slot.name.lowercase()} for ${tool.label}"; onChange(); return }
+        // existing-only slots do NOT create anything on a miss — just hint and wait
+        if (!picked) { statusHint = tool.help; onChange(); return }
 
         if (pendingCount == tool.slots.size) {
             if (tool.scalar && activeScalar == null) {

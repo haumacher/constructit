@@ -30,7 +30,7 @@ class OnLineConstraint(private val line: LineRef, private val t: SourceNode) : P
 }
 
 /** Point on a circle: internal parameter is the angle around the centre. */
-class OnCircleConstraint(private val circle: CircleRef, private val angle: SourceNode) : PointConstraint {
+class OnCircleConstraint(val circle: CircleRef, private val angle: SourceNode) : PointConstraint {
     override fun update(world: Vec2, ev: Evaluator) {
         val c = (ev.valueOf(circle) as? CircleValue)?.circle ?: return
         angle.value = ScalarValue(Quantity.rad((world - c.center).angle()))

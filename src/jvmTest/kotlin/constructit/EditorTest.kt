@@ -169,18 +169,27 @@ class EditorTest {
     }
 
     @Test
-    fun tangentAtPointIsPerpendicularToRadius() {
+    fun tangentAtPointOnCircleInfersTheCircleFromOneClick() {
         val ed = Editor()
         ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(25.0, 0.0))  // centre + through
         ed.setTool(Tools.CIRCLE); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(25.0, 0.0)) // circle r=25
-        ed.setTool(Tools.TANGENT_AT); ed.click(Vec2(0.0, 25.0)); ed.click(Vec2(25.0, 0.0)) // circle, then point on it
+        ed.setTool(Tools.POINT_ON_CIRCLE); ed.click(Vec2(25.0, 0.0))                  // point ON the circle
+        ed.setTool(Tools.TANGENT_AT); ed.click(Vec2(25.0, 0.0))                       // single click the point
 
         val lineEl = ed.doc.elements.last { it.kind == ElementKind.LINE }
         val l = Evaluator().line(lineEl.ref as LineRef)
         assertClose(l.dir.x, 0.0, tol = 1e-9)  // tangent at (25,0) is vertical
-        // tangency: distance from centre to the line equals the radius
         val dist = kotlin.math.abs((Vec2(0.0, 0.0) - l.origin).cross(l.dir))
-        assertClose(dist, 25.0)
+        assertClose(dist, 25.0)                // distance centre->line == radius
+    }
+
+    @Test
+    fun tangentAtCreatesNothingOnEmptyClick() {
+        val ed = Editor()
+        ed.setTool(Tools.TANGENT_AT)
+        val before = ed.doc.elements.size
+        ed.click(Vec2(120.0, 120.0))   // empty space
+        assertEquals(before, ed.doc.elements.size, "must not create a stray point")
     }
 
     @Test
