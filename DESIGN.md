@@ -128,6 +128,27 @@ path-dependent and would break reproducibility/undo/reload.)
 - The model **heals automatically**: when inputs return to a valid range, nodes recompute and
   reappear. No manual repair, no deletion.
 
+## Expression language & units (OP-7 — RESOLVED)
+
+### Expressions & named values
+- `Parameter`/`Expr` nodes hold a **formula** referencing other values **by name**.
+- Nodes get optional **user-facing names** (`width`, `boltCircleDia`); internally edges stay
+  id-based (a name resolves to an id at parse time → a normal dependency edge).
+- Free points keep **draggable literal** coordinates (an expression-bound coord isn't draggable).
+- **v1 language:** arithmetic `+ - * / ^`; functions `sqrt`, `sin/cos/tan`, `atan2`, `abs`,
+  `min`, `max`, `floor/ceil`, `mod`; constant `pi`; references. Pure, no side effects.
+  **No conditionals in v1.**
+- Errors (parse, unknown name, dimension mismatch, div-by-zero) → node **invalid** (OP-3).
+  Name resolution respects the DAG invariant (no cyclic references).
+
+### Units & dimensions
+- **Unit-aware scalars with lightweight dimensional analysis.** Every quantity carries a
+  **dimension**: `Length`, `Angle`, `Dimensionless`, plus derived `Area` (L²), `Volume` (L³).
+- Stored internally in **canonical base units** (mm, radians); **display unit is a
+  presentation attribute** only. Mixed-unit input (`1in`, `30°`) is parsed to base units.
+- **Dimensional rules:** `*`/`/` combine dimensions; `+`/`-`/comparisons require matching
+  dimensions; `sin()` etc. take `Angle` → `Dimensionless`. Mismatches → invalid, caught early.
+
 ## Measurements & value feedback (OP-4 — RESOLVED)
 
 - Measurements are **first-class derived nodes** with `Scalar`/`Angle` outputs
@@ -211,7 +232,10 @@ path-dependent and would break reproducibility/undo/reload.)
       `PointSet` value consumed by a separate `Select(set, sign)` node (computed once, shared);
       topological eval with dirty-marking.
 - [ ] **OP-6 Macros / custom constructions** — encapsulation & composition mechanics.
-- [ ] **OP-7 Expression language** for parameters (units, derived values).
+- [x] **OP-7 Expression language & units** — RESOLVED: named values + v1 expression language
+      (arithmetic, common functions, `pi`, references; no conditionals); unit-aware scalars
+      with dimensional analysis (Length/Angle/Dimensionless + derived Area/Volume), base units
+      internal, display unit as presentation.
 - [ ] **OP-8 Topological naming** identity strategy at the 3D kernel boundary.
 - [ ] **OP-9 3D representation / kernel** — B-rep (OCCT) vs CSG vs implicit (F-rep/SDF).
       Depends on platform (OP-10) and fillet/chamfer precision needs.
@@ -252,3 +276,7 @@ path-dependent and would break reproducibility/undo/reload.)
   forward-only (driven), never cyclic (driving XOR driven). Clarified freeze/convert:
   (a) freeze-to-constant in v1; (b) re-parameterize a free source = a DOF-preserving
   coordinate change (no solver), deferred on-demand; (c) general inversion out of scope.
+- **Turn 6** — Resolved OP-7 (expressions & units): named values + v1 expression language
+  (arithmetic, common functions, `pi`, references; no conditionals in v1); unit-aware scalars
+  with dimensional analysis (Length/Angle/Dimensionless + derived Area/Volume), base units
+  internal, display unit as presentation.
