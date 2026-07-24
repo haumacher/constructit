@@ -292,6 +292,15 @@ against the strong type system (OP-5), which also drives context-sensitive tools
 - [ ] **OP-8 Topological naming** identity strategy at the 3D kernel boundary.
 - [ ] **OP-9 3D representation / kernel** — B-rep (OCCT) vs CSG vs implicit (F-rep/SDF).
       Depends on platform (OP-10) and fillet/chamfer precision needs.
+- [ ] **OP-11 CNC / STEP (B-rep) interop scope** — is precision CNC machining with STEP
+      export to external CAM/shops a target, and day-one core or later? B-rep not strictly
+      required for CNC (mesh CAM exists) but effectively expected for precision + interop
+      (exact surfaces, feature recognition, STEP AP203/214/242). Postures: (1) printing-first,
+      preserve analytic provenance so a B-rep/STEP export (e.g. OCCT export-only backend) can
+      be added later; (2) CNC core → B-rep kernel (OCCT) as the core from day one;
+      (3) dual-representation (analytic → Manifold for print + OCCT for STEP). Directly gates
+      OP-9. NOTE: exact surfaces can't be reconstructed from a mesh after the fact — must come
+      from the analytic layer, so preserving it matters even in posture 1.
 - [ ] **OP-10 Implementation platform** — DEFERRED. Constraints so far: dislikes C and
       TS/JS; **web is an acceptable platform**. Note: "web" does not require writing JS —
       a web frontend can be compiled from Java (GWT/TeaVM), Kotlin/JS, or Rust→WASM. So
