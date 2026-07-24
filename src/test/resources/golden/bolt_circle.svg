@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-60.000 -56.000 120.000 112.000" width="120.000" height="112.000">
+  <circle cx="0.000" cy="0.000" r="50.000" fill="none" stroke="#bbbbbb" stroke-width="0.500"/>
+  <circle cx="50.000" cy="0.000" r="4.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <circle cx="25.000" cy="-43.301" r="4.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <circle cx="-25.000" cy="-43.301" r="4.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <circle cx="-50.000" cy="0.000" r="4.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <circle cx="-25.000" cy="43.301" r="4.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <circle cx="25.000" cy="43.301" r="4.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <circle cx="50.000" cy="0.000" r="1.200" fill="#2ca02c"/>
+  <circle cx="25.000" cy="-43.301" r="1.200" fill="#2ca02c"/>
+  <circle cx="-25.000" cy="-43.301" r="1.200" fill="#2ca02c"/>
+  <circle cx="-50.000" cy="0.000" r="1.200" fill="#2ca02c"/>
+  <circle cx="-25.000" cy="43.301" r="1.200" fill="#2ca02c"/>
+  <circle cx="25.000" cy="43.301" r="1.200" fill="#2ca02c"/>
+</svg>
