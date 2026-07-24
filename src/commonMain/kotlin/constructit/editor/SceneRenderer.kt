@@ -34,7 +34,10 @@ object SceneRenderer {
     private const val POINT_PX = 4.0
     private const val TWO_PI = 2.0 * kotlin.math.PI
 
-    fun render(doc: Document, ev: Evaluator, cam: Camera, target: DrawTarget, wPx: Double, hPx: Double, grid: Boolean = false) {
+    private val haloOuter = Style("#ff7f0e", 2.0)
+    private val haloInner = Style("#ff7f0e", 1.0)
+
+    fun render(doc: Document, ev: Evaluator, cam: Camera, target: DrawTarget, wPx: Double, hPx: Double, grid: Boolean = false, highlight: Vec2? = null) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
         if (grid) drawGrid(cam, target, view)
@@ -50,6 +53,12 @@ object SceneRenderer {
                 is PointSetValue -> v.set.points.forEach { target.dot(cam.worldToScreen(it), POINT_PX, el.style.stroke) }
                 else -> {}
             }
+        }
+        // weld magnet: a double ring around the point a dragged point will snap/join onto
+        highlight?.let {
+            val s = cam.worldToScreen(it)
+            target.circle(s, 11.0, haloOuter)
+            target.circle(s, 6.0, haloInner)
         }
         target.end()
     }

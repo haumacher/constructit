@@ -35,7 +35,8 @@ class Element(
     /** For [ElementKind.ON_CURVE]: how a drag updates the hidden position parameter. */
     val constraint: PointConstraint? = null,
 ) {
-    val draggable: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.ON_CURVE
+    val draggable: Boolean get() =
+        (kind == ElementKind.POINT && (ref.node as? SourceNode)?.boundTo == null) || kind == ElementKind.ON_CURVE
     val isCurve: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY || kind == ElementKind.ARC
     val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT || kind == ElementKind.ON_CURVE
     /** Line / segment / ray — anything that determines an infinite line. */
@@ -149,6 +150,39 @@ class Document {
     fun moveFreePoint(el: Element, world: Vec2) {
         require(el.kind == ElementKind.POINT) { "not a free point" }
         (el.ref.node as SourceNode).value = PointValue(world)
+    }
+
+    // ---- welding: join two points by aliasing one onto the other (point-level wiring) ----
+
+    /** True if [el] is a free point currently welded onto a master. */
+    fun isWelded(el: Element): Boolean =
+        el.kind == ElementKind.POINT && (el.ref.node as? SourceNode)?.boundTo != null
+
+    /**
+     * Weld free point [alias] onto [master] so they coincide: [alias] becomes a driven alias of
+     * [master] ([SourceNode.boundTo]). Everything already referencing [alias] transparently follows
+     * [master]; [alias] loses its DOF and is hidden so the pair reads as a single point. Reversible
+     * via [unweld]. Rejected unless [alias] is an un-welded free point, differs from [master], and
+     * welding would not create a cycle.
+     */
+    fun weld(alias: Element, master: Element): Boolean {
+        val node = alias.ref.node as? SourceNode ?: return false
+        if (alias.kind != ElementKind.POINT || node.boundTo != null) return false
+        if (!master.isPoint || master === alias) return false
+        val masterNode = master.ref.node
+        if (masterNode === node || dependsOn(masterNode, node, HashSet())) return false   // no cycles
+        node.boundTo = masterNode
+        alias.visible = false
+        return true
+    }
+
+    /** Un-weld: [alias] resumes as an independent free point at its current (master's) position. */
+    fun unweld(alias: Element) {
+        val node = alias.ref.node as? SourceNode ?: return
+        val cur = (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p }
+        node.boundTo = null
+        if (cur != null) node.value = PointValue(cur)
+        alias.visible = true
     }
 
     fun remove(el: Element) { elements.remove(el) }

@@ -207,7 +207,8 @@ Engine                 — Construction DAG + Evaluator (unchanged)
 active parameter/measurement; existing-only slots never create stray points; scalar names are
 auto-uniquified so wiring is unambiguous):
 - Points: Point, Midpoint, Intersect, Project-to-line, Point-on-circle & Point-on-line
-  (1-DOF draggable), Point-at-distance (0-DOF, side by click), Key points (sub-entity extract)
+  (1-DOF draggable), Point-at-distance (0-DOF, side by click), Key points (sub-entity extract),
+  Join points (weld two points into one — see *Welding* below)
 - Curves: Line, Segment, Ray, Circle (c,pt), Circle (c,r), Circle (3pt), Arc (3pt),
   Arc (centre,ends), Concentric circle
 - Construct: Perp/Parallel-through, Perp-bisector, Angle-bisector, Parallel-at-distance,
@@ -216,6 +217,27 @@ auto-uniquified so wiring is unambiguous):
 - Measure: Distance, Angle (3pt), Angle (2 lines), Length, Radius, X/Y coordinate
 - Parameter **wiring** (reduce DOF; equality by shared reference), measurement-as-scalar-input.
 - Any `LINE` slot also accepts a segment/ray (carrier line).
+
+#### Welding (joining two points) — point-level wiring
+
+Joining two otherwise-unconstrained points is the **point-level analog of parameter wiring**,
+not a constraint to be solved. A free point is a `SourceNode` holding a `PointValue`; giving it
+the same optional `boundTo` that `ParameterNode` already has lets us **weld** one point (the
+*alias*) onto another (the *master*): `alias.boundTo = master`. Because binding mutates the
+alias node *in place*, every reference already pointing at it transparently follows the master —
+no immutable input list is ever rewired. The alias loses its 2 DOF, is hidden so the pair reads
+as a single dot, and the weld is fully reversible (`unweld` restores an independent free point
+at the current position). Cycles are rejected via the existing `dependsOn` check.
+
+Two interactions expose it: **drag-to-weld** (dragging a free point within snap tolerance of
+another shows a magnet *halo*; releasing welds — the GeoGebra-like fluid path) and the **Join
+points** tool (click the point to keep, then the one to weld — precise/discoverable). Master
+survives; the drop target wins, so the resulting position is never ambiguous.
+
+*Generalization (planned):* welding a point *onto a curve* = point-on-line/point-on-circle
+(2→1 DOF), onto a *derived/intersection point* = alias (2→0 DOF). Folding join +
+point-on-line + point-on-circle into a single **drag-to-attach** gesture is the elegant
+endpoint; plain point-to-point weld is the first slice.
 
 **Remaining — build order (all planned; ordered, not deferred):**
 
@@ -227,8 +249,10 @@ auto-uniquified so wiring is unambiguous):
    dependents), undo/redo (snapshot source values + element list), save/load — the `Document`
    is the file-format seam.
 3. **Productivity.** Auto-snapping (ordinary point clicks snap to key points, intersections,
-   grid); Arrays — linear (repeat N along a vector) and circular (around a centre), the
-   interactive generalization of the bolt-circle/hole-pattern macros (needs a count input).
+   grid); **drag-to-attach** (extend the weld magnet so dragging a free point onto a curve makes
+   it point-on-curve, onto a derived point aliases it — see *Welding*); Arrays — linear (repeat N
+   along a vector) and circular (around a centre), the interactive generalization of the
+   bolt-circle/hole-pattern macros (needs a count input).
 4. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
    tool (OP-6 `Macro` machinery exists in the engine; needs the record/parameterize UI). The
    headline capability of the paradigm.

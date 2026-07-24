@@ -21,7 +21,7 @@ object HitTest {
         var best: Element? = null
         var bestD = tol
         for (el in doc.elements) {
-            if (!el.draggable) continue
+            if (!el.visible || !el.draggable) continue
             val p = (ev.valueOf(el.ref) as? PointValue)?.p ?: continue
             val d = (p - world).length()
             if (d <= bestD) { bestD = d; best = el }
@@ -34,7 +34,7 @@ object HitTest {
         var best: Element? = null
         var bestD = tol
         for (el in doc.elements) {
-            if (!el.isPoint) continue
+            if (!el.visible || !el.isPoint) continue
             val p = (ev.valueOf(el.ref) as? PointValue)?.p ?: continue
             val d = (p - world).length()
             if (d <= bestD) { bestD = d; best = el }
@@ -47,7 +47,7 @@ object HitTest {
         var best: Element? = null
         var bestD = tol
         for (el in doc.elements) {
-            if (!filter(el)) continue
+            if (!el.visible || !filter(el)) continue
             val d = when (val v = ev.valueOf(el.ref)) {
                 is PointValue -> (v.p - world).length()
                 is LineValue -> abs((world - v.line.origin).cross(v.line.dir))
@@ -65,6 +65,7 @@ object HitTest {
         var best: Element? = null
         var bestD = tol
         for (el in doc.elements) {
+            if (!el.visible) continue
             val d = when (val v = ev.valueOf(el.ref)) {
                 is LineValue -> abs((world - v.line.origin).cross(v.line.dir))
                 is CircleValue -> abs((world - v.circle.center).length() - v.circle.radius)

@@ -1,7 +1,9 @@
 package constructit.editor
 
 import constructit.core.Evaluator
+import constructit.core.PointValue
 import constructit.dsl.PointRef
+import constructit.dsl.valueOf
 import constructit.geom.Vec2
 import constructit.units.mm
 
@@ -31,6 +33,7 @@ class Editor(
 
     // transient state
     private var dragPoint: Element? = null
+    private var weldTarget: Element? = null
     private var panning = false
     private var lastScreen = Vec2(0.0, 0.0)
     private val pickedPoints = ArrayList<PointRef>()
@@ -48,7 +51,8 @@ class Editor(
     }
 
     private fun resetPicks() {
-        pickedPoints.clear(); pickedElements.clear(); pickedClicks.clear(); filledSlots = 0; dragPoint = null; panning = false
+        pickedPoints.clear(); pickedElements.clear(); pickedClicks.clear(); filledSlots = 0
+        dragPoint = null; weldTarget = null; panning = false
     }
 
     /** Set a transient status-bar note (e.g. panel feedback). */
@@ -58,7 +62,10 @@ class Editor(
     fun currentHelp(): String =
         if (toolId == Tools.SELECT) Tools.SELECT_HELP else Tools.byId(toolId)?.help ?: ""
 
-    fun render(target: DrawTarget) = SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid)
+    fun render(target: DrawTarget) {
+        val halo = weldTarget?.let { (ev().valueOf(it.ref) as? PointValue)?.p }
+        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, halo)
+    }
 
     fun wheel(screen: Vec2, deltaY: Double) {
         camera = camera.zoomAt(screen, if (deltaY < 0) 1.1 else 1.0 / 1.1)
@@ -81,7 +88,12 @@ class Editor(
                 val el = dragPoint!!
                 val world = camera.screenToWorld(screen)
                 val c = el.constraint
-                if (c != null) c.update(world, ev()) else doc.moveFreePoint(el, world)
+                if (c != null) {
+                    c.update(world, ev()); weldTarget = null
+                } else {
+                    doc.moveFreePoint(el, world)
+                    weldTarget = nearestWeldTarget(el, world)   // magnet: highlight a point to join onto
+                }
                 onChange()
             }
             panning -> {
@@ -93,8 +105,29 @@ class Editor(
     }
 
     fun pointerUp(@Suppress("UNUSED_PARAMETER") screen: Vec2) {
+        val dragged = dragPoint
+        val tgt = weldTarget
         dragPoint = null
+        weldTarget = null            // clear before rendering so the magnet halo doesn't linger
         panning = false
+        if (dragged != null && tgt != null && doc.weld(dragged, tgt)) {
+            statusHint = "Joined ${dragged.id} onto ${tgt.id}"
+            onChange()
+        }
+    }
+
+    /** Nearest visible point (other than [dragged]) within snap tolerance — the weld magnet target. */
+    private fun nearestWeldTarget(dragged: Element, world: Vec2): Element? {
+        val ev = ev()
+        var best: Element? = null
+        var bestD = tolWorld()
+        for (el in doc.elements) {
+            if (el === dragged || !el.visible || !el.isPoint) continue
+            val p = (ev.valueOf(el.ref) as? PointValue)?.p ?: continue
+            val d = (p - world).length()
+            if (d <= bestD) { bestD = d; best = el }
+        }
+        return best
     }
 
     private fun runToolClick(screen: Vec2) {
@@ -104,6 +137,7 @@ class Editor(
         val picked = when (slot) {
             SlotKind.PLACE_POINT -> { pickedPoints.add(doc.freePoint(world.x.mm, world.y.mm)); true }
             SlotKind.POINT -> { pickedPoints.add(pointOrCreate(world)); true }
+            SlotKind.EXISTING_POINT -> pickElement(world) { it.isPoint }
             SlotKind.CURVE -> pickElement(world) { it.isCurve }
             SlotKind.LINE -> pickElement(world) { it.isLinear }   // a segment or ray also carries a line
             SlotKind.CIRCLE -> pickElement(world) { it.kind == ElementKind.CIRCLE }

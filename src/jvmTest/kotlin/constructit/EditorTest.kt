@@ -431,4 +431,55 @@ class EditorTest {
         ed.render(target)
         Golden.check("editor_scene", target.svg())
     }
+
+    @Test
+    fun joinToolWeldsSecondPointOntoFirstAndFollowsMaster() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(30.0, 0.0))
+        // a segment that reuses the second (soon-to-be-welded) point
+        ed.setTool(Tools.SEGMENT); ed.click(Vec2(30.0, 0.0)); ed.click(Vec2(30.0, 20.0))
+        val a = ed.doc.freePoints[0]; val b = ed.doc.freePoints[1]
+        val seg = ed.doc.elements.first { it.kind == ElementKind.SEGMENT }
+
+        // Join: keep A (first click), weld B (second click) onto it
+        ed.setTool(Tools.JOIN); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(30.0, 0.0))
+
+        assertTrue(ed.doc.isWelded(b), "B should be welded onto A")
+        assertFalse(b.visible, "a welded point is hidden so the pair reads as one")
+        assertFalse(b.draggable, "a welded point has no DOF and cannot be dragged")
+        var s = Evaluator().segment(seg.ref as SegmentRef)
+        assertClose(s.a.x, 0.0); assertClose(s.a.y, 0.0)   // the segment endpoint now coincides with A
+
+        // dragging the master A drags the welded endpoint with it
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(0.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(0.0, 10.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(0.0, 10.0)))
+        s = Evaluator().segment(seg.ref as SegmentRef)
+        assertClose(s.a.x, 0.0); assertClose(s.a.y, 10.0)
+
+        // unweld restores an independent free point at the current position
+        ed.doc.unweld(b)
+        assertFalse(ed.doc.isWelded(b)); assertTrue(b.visible); assertTrue(b.draggable)
+        val pb = Evaluator().point(b.ref as constructit.dsl.PointRef)
+        assertClose(pb.x, 0.0); assertClose(pb.y, 10.0)
+    }
+
+    @Test
+    fun draggingAPointOntoAnotherWeldsThem() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(30.0, 0.0))
+        val b = ed.doc.freePoints[1]
+
+        // drag B (30,0) directly onto A (0,0); on release the magnet welds them
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(30.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(0.0, 0.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(0.0, 0.0)))
+
+        assertTrue(ed.doc.isWelded(b), "dropping B on A should weld it")
+        assertFalse(b.visible)
+        val pb = Evaluator().point(b.ref as constructit.dsl.PointRef)
+        assertClose(pb.x, 0.0); assertClose(pb.y, 0.0)
+    }
 }

@@ -38,10 +38,17 @@ abstract class Node(val id: String) {
     abstract fun compute(args: List<Value>): EvalResult
 }
 
-/** A source node holding a mutable literal (free point / parameter). No inputs. */
-class SourceNode(id: String, var value: Value) : Node(id) {
-    override val inputs: List<Node> = emptyList()
-    override fun compute(args: List<Value>): EvalResult = EvalResult.Ok(value)
+/**
+ * A source node holding a mutable literal (free point / parameter). It is an independent DOF
+ * while [boundTo] is null (it outputs [value]); **welding** it onto another node makes it track
+ * that node's value, removing the DOF — the point-level analog of parameter wiring (see
+ * [ParameterNode]). Because binding mutates this node in place, every reference already pointing
+ * here transparently follows the new master; no immutable input list is ever rewired.
+ */
+class SourceNode(id: String, var value: Value, var boundTo: Node? = null) : Node(id) {
+    override val inputs: List<Node> get() = boundTo?.let { listOf(it) } ?: emptyList()
+    override fun compute(args: List<Value>): EvalResult =
+        if (boundTo != null) EvalResult.Ok(args[0]) else EvalResult.Ok(value)
 }
 
 /**
