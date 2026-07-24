@@ -245,7 +245,53 @@ against the strong type system (OP-5), which also drives context-sensitive tools
 
 - Sketch → feature → sketch loop (sketch on datum plane → extrude/revolve/sweep → derive
   datum from a solid face → sketch again). DAG spans 2D constructions, 3D features, datums.
-- Needs a solid representation/kernel. Three broad families (see OP-9):
+### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
+
+**Decision:** an **analytic construction layer is the source of truth**; the mesh is an
+**output/preview/export artifact** (a terminal *sink*), produced by **Manifold** as the robust
+boolean-composition + guaranteed-watertight-mesh engine.
+
+- **CNC scope (OP-11):** precision CNC + STEP is a **target, but not day-one → posture 1.**
+  Ship printing-first on the mesh engine, but **preserve exact analytic provenance** so a
+  B-rep/STEP export can be added later (e.g. OCCT as an *export-only* backend). Exact surfaces
+  cannot be reconstructed from a mesh after the fact — they must come from the analytic layer.
+- **Engine (OP-9):** Manifold — guaranteed-manifold mesh booleans; JVM **and** Rust bindings
+  (fits OP-10; depending on a C++ lib via bindings ≠ writing C++); used by OpenSCAD/Blender/
+  Godot. Fillets/chamfers are **explicit constructions** (sweep a rounded profile along a
+  provenance-known edge, then boolean), not a magic kernel op. Optional implicit/SDF sub-layer
+  later for organic smooth-min blends.
+- **Sub-entity identity (OP-8):** **provenance-based**, not discovered topology — so the
+  topological-naming problem largely dissolves. Faces/edges/datums are constructed derived
+  accessors with stable IDs (e.g. `box.topFace`, `box.sideFace(edge_k)`), the same
+  compound-value+accessor principle as `PointSet`/macros. Through booleans, mesh face identity
+  rides on **Manifold's ID/property propagation**; exact surfaces come from the analytic
+  operands; datums stay analytic and never touch the mesh.
+
+#### The mesh-is-a-sink rule
+Follow-up constructions rely on the **analytic layer**, not the mesh — because most
+"mesh-looking" needs are actually analytic:
+- **Boolean results are analytic-preserving:** exact face surfaces = operand surfaces (known);
+  only trimmed boundaries are emergent (analytically computable). Manifold is a helper, not a
+  dependency. (This is what enables later STEP reconstruction.)
+- **Intersection edges/curves, datums, dimensions** — all analytic.
+
+A follow-up genuinely relies on **mesh output** only here:
+1. **Mesh-only geometry ops** — `offset`/`shell`/`hull`/`minkowski`/mesh-smoothing of a
+   composite: no clean analytic form → produce a `Mesh` value that stays mesh-only
+   (print/render), **not STEP-exportable**.
+2. **Imported meshes** — mesh-*as-source* (scan/download); referenceable, non-analytic,
+   non-STEP.
+3. **Global mass properties** — volume/CoM/bbox/thin-wall: easiest from mesh, but **terminal
+   read-outs**; feeding one back to drive an earlier parameter is a **cycle (forbidden, OP-4)**.
+
+**Operations partition** into *analytic-preserving* (primitives, extrude/revolve/sweep,
+booleans — exact + provenance, measurable, STEP-exportable later) and *mesh-only*
+(offset/shell/hull/minkowski/smoothing, imported meshes — `Mesh` type, print/render-only,
+never lifts back to analytic). The **strong type system (OP-5)** enforces the boundary:
+`Solid`/`Face`/`Edge` (analytic) are distinct from `Mesh`; no mesh→analytic lift.
+
+### Representation families considered (background)
+Three broad families (see OP-9 decision above):
   - **B-rep (OpenCASCADE / OCCT):** precise, real fillets/chamfers, native STEP; C++ with
     bindings; heavy; brings the topological-naming problem. Best fit for mechanical precision.
   - **CSG (à la OpenSCAD):** union/difference/intersection of primitives — literally
@@ -289,18 +335,18 @@ against the strong type system (OP-5), which also drives context-sensitive tools
       (arithmetic, common functions, `pi`, references; no conditionals); unit-aware scalars
       with dimensional analysis (Length/Angle/Dimensionless + derived Area/Volume), base units
       internal, display unit as presentation.
-- [ ] **OP-8 Topological naming** identity strategy at the 3D kernel boundary.
-- [ ] **OP-9 3D representation / kernel** — B-rep (OCCT) vs CSG vs implicit (F-rep/SDF).
-      Depends on platform (OP-10) and fillet/chamfer precision needs.
-- [ ] **OP-11 CNC / STEP (B-rep) interop scope** — is precision CNC machining with STEP
-      export to external CAM/shops a target, and day-one core or later? B-rep not strictly
-      required for CNC (mesh CAM exists) but effectively expected for precision + interop
-      (exact surfaces, feature recognition, STEP AP203/214/242). Postures: (1) printing-first,
-      preserve analytic provenance so a B-rep/STEP export (e.g. OCCT export-only backend) can
-      be added later; (2) CNC core → B-rep kernel (OCCT) as the core from day one;
-      (3) dual-representation (analytic → Manifold for print + OCCT for STEP). Directly gates
-      OP-9. NOTE: exact surfaces can't be reconstructed from a mesh after the fact — must come
-      from the analytic layer, so preserving it matters even in posture 1.
+- [x] **OP-8 Topological naming** — RESOLVED: provenance-based sub-entity identity (constructed
+      accessors with stable IDs, e.g. `box.topFace`); through booleans via Manifold's
+      ID/property propagation; datums stay analytic. Topological-naming problem largely dissolves.
+- [x] **OP-9 3D representation / kernel** — RESOLVED: analytic construction layer as source of
+      truth + **Manifold** (guaranteed-manifold mesh booleans, JVM/Rust bindings) as the
+      boolean/mesh/output engine; mesh is a terminal sink (see mesh-is-a-sink rule); fillets as
+      explicit constructions; optional implicit sub-layer later. Ops partition analytic-
+      preserving vs mesh-only, enforced by the type system.
+- [x] **OP-11 CNC / STEP (B-rep) interop scope** — RESOLVED: precision CNC + STEP is a target
+      but **not day-one → posture 1**. Ship printing-first on Manifold; **preserve exact
+      analytic provenance** so a B-rep/STEP export (e.g. OCCT export-only backend) can be added
+      later. Exact surfaces can't be reconstructed from a mesh after the fact.
 - [ ] **OP-10 Implementation platform** — DEFERRED. Constraints so far: dislikes C and
       TS/JS; **web is an acceptable platform**. Note: "web" does not require writing JS —
       a web frontend can be compiled from Java (GWT/TeaVM), Kotlin/JS, or Rust→WASM. So
@@ -349,3 +395,13 @@ against the strong type system (OP-5), which also drives context-sensitive tools
   virtual addressing. Instances are pure functions of arguments (no per-instance overrides);
   fixed variants via **specialization/partial application** (e.g. `standardRect` from
   `roundedRect`); added adjustable-vs-constant parameter presentation flag; no recursion.
+- **Turn 8** — Explored the 3D representation (OP-9), incl. B-rep/OCCT vs CSG vs implicit, and
+  evaluated **Manifold** (verified via web: guaranteed-manifold mesh booleans; C++ core with
+  JVM/Rust/WASM/Python bindings; ID/property propagation; used by OpenSCAD/Blender/Godot).
+  Resolved OP-11 (CNC/STEP a target but not day-one → posture 1: printing-first, preserve
+  analytic provenance for later B-rep/STEP export). Resolved OP-9 (analytic layer = source of
+  truth + Manifold as boolean/mesh/output engine; fillets as explicit constructions) and OP-8
+  (provenance-based identity via Manifold IDs + analytic datums). Established the
+  **mesh-is-a-sink rule** and the analytic-preserving vs mesh-only operation partition,
+  enforced by the type system (user's framing: mesh is output/rendering only, save for
+  mesh-only ops, imported meshes, and terminal mass-property read-outs).
