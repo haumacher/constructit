@@ -44,6 +44,17 @@ class SourceNode(id: String, var value: Value) : Node(id) {
     override fun compute(args: List<Value>): EvalResult = EvalResult.Ok(value)
 }
 
+/**
+ * A named scalar parameter (OP-7). It is an independent DOF while [boundTo] is null (it outputs
+ * [literal]); **wiring** it to another scalar node makes it track that node's value, removing
+ * the DOF — the constructive form of an equality constraint (shared reference, OP-5).
+ */
+class ParameterNode(id: String, var literal: ScalarValue, var boundTo: Node? = null) : Node(id) {
+    override val inputs: List<Node> get() = boundTo?.let { listOf(it) } ?: emptyList()
+    override fun compute(args: List<Value>): EvalResult =
+        if (boundTo != null) EvalResult.Ok(args[0]) else EvalResult.Ok(literal)
+}
+
 /** A derived node whose value is computed by [fn] from its inputs. */
 class OpNode(
     id: String,

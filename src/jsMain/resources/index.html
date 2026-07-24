@@ -33,9 +33,11 @@
         .prow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
         .prow:hover { background: #eef4fb; }
         .prow.active { background: #e2eefb; outline: 1px solid #1f77b4; }
-        .prow .pname { flex: 1; }
-        .prow .pval { width: 56px; }
-        .prow .punit { width: 20px; color: #999; }
+        .prow .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        .prow .pval { width: 46px; }
+        .prow .pval:disabled { background: #eee; color: #888; }
+        .prow .punit { width: 18px; color: #999; }
+        .prow .pbind { width: 44px; font-size: 11px; }
         .mrow { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 4px; color: #333; border-radius: 4px; cursor: pointer; }
         .mrow:hover { background: #eef4fb; }
         .mrow.active { background: #e2eefb; outline: 1px solid #1f77b4; }

@@ -49,6 +49,9 @@ class Editor(
         pickedPoints.clear(); pickedElements.clear(); dragPoint = null; panning = false
     }
 
+    /** Set a transient status-bar note (e.g. panel feedback). */
+    fun note(message: String) { statusHint = message }
+
     /** Help line for the active tool — shown in the status bar whenever there's no transient hint. */
     fun currentHelp(): String =
         if (toolId == Tools.SELECT) Tools.SELECT_HELP else Tools.byId(toolId)?.help ?: ""

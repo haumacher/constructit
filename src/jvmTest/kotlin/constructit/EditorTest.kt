@@ -12,9 +12,11 @@ import constructit.editor.Tools
 import constructit.editor.ElementKind
 import constructit.editor.SvgDrawTarget
 import constructit.geom.Vec2
+import constructit.units.deg
 import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -224,6 +226,42 @@ class EditorTest {
         val pts = derived.map { ev.point(it.ref as constructit.dsl.PointRef) }.sortedBy { it.x }
         assertClose(pts[0].x, 10.0); assertClose(pts[0].y, -10.0)
         assertClose(pts[1].x, 30.0); assertClose(pts[1].y, -10.0)
+    }
+
+    @Test
+    fun wiringAParameterTracksTargetAndRejectsBadWires() {
+        val ed = Editor()
+        val a = ed.doc.newParameter("a", 10.0.mm)
+        val b = ed.doc.newParameter("b", 25.0.mm)
+        assertClose(Evaluator().scalar(a.ref).mm, 10.0)
+
+        // wire a -> b: a now tracks b (DOF reduced)
+        assertTrue(ed.doc.wireParameter(a, b))
+        assertClose(Evaluator().scalar(a.ref).mm, 25.0)
+        ed.doc.setParameter(b, 40.0.mm)
+        assertClose(Evaluator().scalar(a.ref).mm, 40.0)
+
+        // type mismatch is rejected
+        val ang = ed.doc.newParameter("ang", 30.0.deg)
+        assertFalse(ed.doc.wireParameter(a, ang))
+
+        // unwire keeps the last driven value, then a is independent again
+        ed.doc.unwireParameter(a)
+        assertClose(Evaluator().scalar(a.ref).mm, 40.0)
+        ed.doc.setParameter(a, 5.0.mm)
+        assertClose(Evaluator().scalar(a.ref).mm, 5.0)
+        assertClose(Evaluator().scalar(b.ref).mm, 40.0)
+    }
+
+    @Test
+    fun wiringRejectsCycles() {
+        val ed = Editor()
+        val r = ed.doc.newParameter("r", 20.0.mm)
+        val center = ed.doc.freePoint(0.mm, 0.mm)
+        ed.doc.circleCR(center, r.ref)                       // circle driven by r
+        val circleEl = ed.doc.elements.last { it.kind == ElementKind.CIRCLE }
+        val m = ed.doc.measureRadius(circleEl)               // measurement depends on r
+        assertFalse(ed.doc.wireParameter(r, m), "wiring r to a measurement of its own circle is a cycle")
     }
 
     @Test

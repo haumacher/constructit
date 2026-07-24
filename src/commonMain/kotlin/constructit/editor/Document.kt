@@ -4,6 +4,8 @@ import constructit.core.CircleValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.LineValue
+import constructit.core.Node
+import constructit.core.ParameterNode
 import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.core.SourceNode
@@ -72,7 +74,8 @@ class Document {
         cx.freePoint("P${counter + 1}", x, y).also { add(it, ElementKind.POINT, Styles.FREE_POINT) }
 
     fun newParameter(name: String, value: Quantity): ScalarEntry {
-        val e = ScalarEntry(nextId("s"), name, cx.parameter(name, value), editable = true)
+        val node = ParameterNode(nextId("pn"), ScalarValue(value))
+        val e = ScalarEntry(nextId("s"), name, Ref<ScalarValue>(node), editable = true)
         scalars.add(e); return e
     }
 
@@ -83,7 +86,45 @@ class Document {
 
     fun setParameter(e: ScalarEntry, value: Quantity) {
         require(e.editable) { "not an editable parameter" }
-        (e.ref.node as SourceNode).value = ScalarValue(value)
+        (e.ref.node as ParameterNode).literal = ScalarValue(value)
+    }
+
+    // ---- wiring: reduce a parameter's DOF by binding it to another scalar (equality by reference) ----
+
+    fun isBound(e: ScalarEntry): Boolean = (e.ref.node as? ParameterNode)?.boundTo != null
+
+    fun boundEntry(e: ScalarEntry): ScalarEntry? {
+        val bt = (e.ref.node as? ParameterNode)?.boundTo ?: return null
+        return scalars.firstOrNull { it.ref.node === bt }
+    }
+
+    private fun dimOf(node: Node): constructit.units.Dimension? =
+        (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.dim }
+
+    private fun dependsOn(from: Node, target: Node, seen: MutableSet<String>): Boolean {
+        if (from === target) return true
+        if (!seen.add(from.id)) return false
+        for (i in from.inputs) if (dependsOn(i, target, seen)) return true
+        return false
+    }
+
+    /** Wire parameter [e] to track [target]. Rejected on type mismatch or if it would cycle. */
+    fun wireParameter(e: ScalarEntry, target: ScalarEntry): Boolean {
+        val node = e.ref.node as? ParameterNode ?: return false
+        if (target.ref.node === node) return false
+        val myDim = dimOf(node); val tgtDim = dimOf(target.ref.node)
+        if (myDim != null && tgtDim != null && myDim != tgtDim) return false      // same type only
+        if (dependsOn(target.ref.node, node, HashSet())) return false             // no cycles
+        node.boundTo = target.ref.node
+        return true
+    }
+
+    /** Free the parameter again, keeping its current (last driven) value. */
+    fun unwireParameter(e: ScalarEntry) {
+        val node = e.ref.node as? ParameterNode ?: return
+        val cur = (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as ScalarValue).q }
+        if (cur != null) node.literal = ScalarValue(cur)
+        node.boundTo = null
     }
 
     fun moveFreePoint(el: Element, world: Vec2) {

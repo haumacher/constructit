@@ -99,14 +99,23 @@ private fun setupApp() {
             r.className = if (r.getAttribute("data-sid") == sid) "prow active" else "prow"
         }
     })
-    // edit a parameter value (on commit: blur / Enter)
+    // edit a parameter value (pval) or wire it to another scalar (pbind), on commit
     paramsList.addEventListener("change", {
-        val input = it.target as? HTMLInputElement ?: return@addEventListener
-        val sid = input.getAttribute("data-sid") ?: return@addEventListener
-        val entry = editor.doc.scalars.firstOrNull { s -> s.id == sid } ?: return@addEventListener
-        val v = input.value.toDoubleOrNull() ?: return@addEventListener
-        editor.doc.setParameter(entry, quantityIn(entry, v))
-        repaint()
+        val t = it.target as? HTMLElement ?: return@addEventListener
+        val entry = editor.doc.scalars.firstOrNull { s -> s.id == t.getAttribute("data-sid") } ?: return@addEventListener
+        when {
+            t is HTMLInputElement && t.className.contains("pval") -> {
+                val v = t.value.toDoubleOrNull() ?: return@addEventListener
+                editor.doc.setParameter(entry, quantityIn(entry, v))
+                repaint()
+            }
+            t is HTMLSelectElement && t.className.contains("pbind") -> {
+                val target = editor.doc.scalars.firstOrNull { s -> s.id == t.value }
+                if (target == null) editor.doc.unwireParameter(entry)
+                else if (!editor.doc.wireParameter(entry, target)) editor.note("Can't wire ${entry.name}: type mismatch or would create a cycle")
+                repaint()
+            }
+        }
     })
 
     // a measurement can drive a new construction: click it to make it the active scalar (OP-4)
@@ -157,8 +166,22 @@ private fun renderPanel(editor: Editor) {
     plist.innerHTML = editor.doc.scalars.filter { it.editable }.joinToString("") { s ->
         val active = if (s === editor.activeScalar) " active" else ""
         val q = ev.scalar(s.ref)
-        "<div class=\"prow$active\" data-sid=\"${s.id}\"><span class=\"pname\">${s.name}</span>" +
-            "<input class=\"pval\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"><span class=\"punit\">${unitLabel(q.dim)}</span></div>"
+        val boundId = editor.doc.boundEntry(s)?.id ?: ""
+        // wire options: other scalars of the same dimension
+        val opts = StringBuilder("<option value=\"\">free</option>")
+        for (t in editor.doc.scalars) {
+            if (t === s) continue
+            val td = (ev.eval(t.ref.node) as? constructit.core.EvalResult.Ok)?.let { (it.value as? constructit.core.ScalarValue)?.q?.dim }
+            if (td == null || td != q.dim) continue
+            opts.append("<option value=\"${t.id}\"${if (t.id == boundId) " selected" else ""}>=${t.name}</option>")
+        }
+        val disabled = if (editor.doc.isBound(s)) " disabled" else ""
+        "<div class=\"prow$active\" data-sid=\"${s.id}\">" +
+            "<span class=\"pname\">${s.name}</span>" +
+            "<input class=\"pval\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"$disabled>" +
+            "<span class=\"punit\">${unitLabel(q.dim)}</span>" +
+            "<select class=\"pbind\" data-sid=\"${s.id}\">$opts</select>" +
+            "</div>"
     }
 
     // measurements (read-only)
