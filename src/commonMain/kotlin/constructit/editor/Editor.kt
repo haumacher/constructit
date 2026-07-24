@@ -22,6 +22,7 @@ class Editor(
     var tool: Tool = Tool.SELECT
         private set
     var onChange: () -> Unit = {}
+    var showGrid: Boolean = false
 
     private val tolPx = 10.0
     private fun tolWorld() = tolPx / camera.scale
@@ -47,7 +48,7 @@ class Editor(
         pendingPoints.clear(); pendingCurves.clear(); dragPoint = null; panning = false
     }
 
-    fun render(target: DrawTarget) = SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH)
+    fun render(target: DrawTarget) = SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid)
 
     fun wheel(screen: Vec2, deltaY: Double) {
         camera = camera.zoomAt(screen, if (deltaY < 0) 1.1 else 1.0 / 1.1)

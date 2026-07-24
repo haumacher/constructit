@@ -17,8 +17,11 @@ import constructit.geom.Vec2
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.sin
 
 /**
@@ -31,9 +34,10 @@ object SceneRenderer {
     private const val POINT_PX = 4.0
     private const val TWO_PI = 2.0 * kotlin.math.PI
 
-    fun render(doc: Document, ev: Evaluator, cam: Camera, target: DrawTarget, wPx: Double, hPx: Double) {
+    fun render(doc: Document, ev: Evaluator, cam: Camera, target: DrawTarget, wPx: Double, hPx: Double, grid: Boolean = false) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
+        if (grid) drawGrid(cam, target, view)
         for (el in doc.elements) {
             if (!el.visible) continue
             when (val v = ev.valueOf(el.ref)) {
@@ -58,6 +62,34 @@ object SceneRenderer {
         return (0..n).map {
             val ang = arc.startAngle + sweep * it / n
             arc.center + Vec2(arc.radius * cos(ang), arc.radius * sin(ang))
+        }
+    }
+
+    private val gridStyle = Style("#eeeeee", 1.0)
+    private val axisStyle = Style("#c8c8c8", 1.0)
+
+    /** A "nice" world grid spacing (1/2/5 x 10^k mm) so screen spacing is roughly 40 px. */
+    private fun niceStep(scale: Double): Double {
+        val worldPerTarget = 40.0 / scale
+        val mag = 10.0.pow(floor(log10(worldPerTarget)))
+        val norm = worldPerTarget / mag
+        val factor = if (norm < 2) 1.0 else if (norm < 5) 2.0 else 5.0
+        return factor * mag
+    }
+
+    private fun drawGrid(cam: Camera, target: DrawTarget, view: Rect) {
+        val step = niceStep(cam.scale)
+        var x = floor(view.lo.x / step) * step
+        while (x <= view.hi.x) {
+            val style = if (abs(x) < step * 0.5) axisStyle else gridStyle
+            target.polyline(listOf(cam.worldToScreen(Vec2(x, view.lo.y)), cam.worldToScreen(Vec2(x, view.hi.y))), style)
+            x += step
+        }
+        var y = floor(view.lo.y / step) * step
+        while (y <= view.hi.y) {
+            val style = if (abs(y) < step * 0.5) axisStyle else gridStyle
+            target.polyline(listOf(cam.worldToScreen(Vec2(view.lo.x, y)), cam.worldToScreen(Vec2(view.hi.x, y))), style)
+            y += step
         }
     }
 

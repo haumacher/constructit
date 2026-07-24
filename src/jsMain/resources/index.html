@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ConstructIt</title>
+    <style>
+        html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+        #app { display: flex; flex-direction: column; height: 100%; }
+        #toolbar {
+            display: flex; gap: 6px; align-items: center;
+            padding: 6px 10px; border-bottom: 1px solid #ddd; background: #fafafa;
+        }
+        #toolbar .brand { font-weight: 600; margin-right: 12px; color: #1f77b4; }
+        .tool {
+            border: 1px solid #ccc; background: #fff; border-radius: 6px;
+            padding: 6px 12px; cursor: pointer; font-size: 13px;
+        }
+        .tool:hover { background: #f0f0f0; }
+        .tool.active { background: #1f77b4; color: #fff; border-color: #1f77b4; }
+        #main { display: flex; flex: 1; min-height: 0; }
+        #canvas-area { flex: 1; position: relative; background: #fff; }
+        #canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+        #panel { width: 220px; border-left: 1px solid #ddd; overflow: auto; padding: 10px; background: #fafafa; }
+        #panel h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; color: #888; letter-spacing: .05em; }
+        #tree .item { font-size: 12px; padding: 3px 4px; border-radius: 4px; }
+        #tree .item:hover { background: #eef4fb; }
+        #tree .kind { color: #333; }
+        #tree .eid { color: #aaa; float: right; }
+        #hint { padding: 4px 10px; font-size: 12px; color: #888; border-top: 1px solid #eee; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div id="toolbar">
+        <span class="brand">ConstructIt</span>
+        <button id="tool-select" class="tool active">Select / Drag</button>
+        <button id="tool-point" class="tool">Point</button>
+        <button id="tool-line" class="tool">Line</button>
+        <button id="tool-circle" class="tool">Circle</button>
+        <button id="tool-intersect" class="tool">Intersect</button>
+    </div>
+    <div id="main">
+        <div id="canvas-area"><canvas id="canvas"></canvas></div>
+        <aside id="panel">
+            <h3>Elements</h3>
+            <div id="tree"></div>
+        </aside>
+    </div>
+    <div id="hint">Select: drag points (whole construction follows) or empty space to pan • wheel to zoom • Line/Circle: two clicks • Intersect: click two curves</div>
+</div>
+<script src="constructit.js"></script>
+</body>
+</html>
