@@ -605,8 +605,31 @@ Three broad families (see OP-9 decision above):
   DrawTarget interface; thin jsMain shell (HTML5 canvas + DOM). Phases A–D: KMP restructure,
   pure interaction core (headless gesture tests + SVG scene snapshot), browser shell, and
   Playwright E2E driving system Chrome with screenshots. 40 jvm tests (1 E2E, opt-in).
+- **Turn 15** — Editor tool set filled out to the full 2D algebra (data-driven `ToolDef` registry,
+  categorized palette, scalar tools, existing-only slots, unique scalar names); parameter wiring;
+  measurement-as-input; carrier-line coercion; arc hit-testing.
+- **Turn 16 — welding & drag-to-attach.** Joining two free points is **point-level wiring**, not a
+  solver constraint: `SourceNode` gained `boundTo` (mirroring `ParameterNode`), so welding an alias
+  onto a master mutates the alias in place and every reference follows (−2 DOF). Exposed as a Join
+  tool + drag-to-weld magnet (halo). Generalized to **drag-to-attach**: dropping a free point on a
+  line/circle makes it a point-on-curve.
+- **Turn 17 — architectural layer** (see below): ortho path, walls (offset + mitre), openings
+  (parametric gaps + jambs) — all macros over the core, no solver.
+- **Turn 18 — editing model rebuilt.** The ortho path moved from a relative leg-chain to the
+  **shared-coordinate model** (see *Implementation status*): local vertex dragging (only the vertex
+  + its two neighbours move), symmetric loop closing (the pre-closing vertex keeps 2 DOF), and open
+  endpoints that weld/attach to points/lines while the neighbour keeps its DOF. This **supersedes**
+  the direction/frame/length-parameter sketch in *Axis-aligned / perpendicular lines* below.
+- **End of session 1.** Pushed to `github.com/haumacher/constructit` (README added). 72 jvm tests
+  green; every feature verified live in-browser via Playwright. The 2D engine + interactive editor
+  + an architectural drawing layer are working; 3D remains designed-but-unbuilt.
 
 ## Domain layer: architectural drawing (draft — no new solver)
+
+> **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
+> (each vertex `pointXY(x,y)` sharing one coordinate node per neighbour), *not* by the
+> direction/frame/length-parameter approach sketched immediately below — that sketch is kept as
+> design rationale. See *Implementation status (as built)* for what actually ships.
 
 Architectural drawing is a **macro/vocabulary layer over the existing geometric algebra** — it
 needs no constraint solver and no new evaluation semantics. Three existing pieces are the enablers:
@@ -655,14 +678,30 @@ carried for later 3D even though invisible in 2D.
 Then 3D walls = extrude + boolean.
 
 ### Implementation status (as built)
-- **Slice 1 — ortho path** (`Tools.ORTHO_PATH`): rectilinear polyline as a shared-coordinate model — each vertex `pointXY(x,y)` shares one coordinate node with each neighbour (H edge shares y, V edge shares x). Dragging a vertex writes its two coords, so only it and its two neighbours move (no cascade) and edges stay axis-aligned. Closing binds the last vertex's own coordinate to the start (`SourceNode.boundTo`), snapping it so the closing edge is axis-aligned too. Rubber-band preview; Esc/double-click/click-start to finish.
-  `from + L·frameAxis` with a fresh length parameter; shared `frameAngle`; rubber-band preview;
-  Esc/double-click to finish.
+- **Slice 1 — ortho path** (`Tools.ORTHO_PATH`): rectilinear polyline as a **shared-coordinate
+  model** — each vertex is `pointXY(x, y)` and shares one coordinate node with each neighbour
+  (a horizontal edge shares `y`, a vertical edge shares `x`). Consequences, all solver-free:
+  - **Local editing** — dragging a vertex writes its two coordinate nodes; each is shared with
+    exactly one neighbour, so only the vertex and its two neighbours move (no downstream cascade),
+    and edges stay axis-aligned by construction (`OrthoCornerConstraint`).
+  - **Closing** is symmetric: the last vertex's own coordinate node is bound to the start's
+    (`SourceNode.boundTo`, so the geometry snaps to fit) *and* its drag-constraint is redirected to
+    write the start's node — so the vertex before the closing edge keeps 2 DOF like every other
+    corner. Closing is triggered by clicking the start.
+  - Rubber-band preview; Esc / double-click / click-start to finish.
 - **Slice 2 — walls** (`Tools.WALL`, `Document.buildWall`): centerline + thickness → two offset
   faces with `intersectLL` miter corners + end caps; retained as a `Wall` so it can be regenerated.
+  Wall corners are the same draggable ortho vertices, so walls edit like paths.
 - **Slice 3 — openings** (`Tools.OPENING`, `Document.addOpeningAt`/`regenerateWall`): click a wall
   to cut a door/window gap; position (distance-from-leg-start) + width are editable parameters;
   regenerates the wall with gapped faces + jamb reveal lines. Position is anchored at the start
   edge; width extends the end.
-- **Next:** wall-to-wall junction cleanup, opening sill/head heights (for 3D), and 3D walls
-  (extrude + boolean-subtract openings).
+- **Endpoint connections**: an **open** path's end vertices (`OrthoCornerConstraint.isEndpoint`)
+  take part in the weld/attach magnet — drag an end onto a point to **weld** it, or onto a
+  line/circle to **attach** it (becomes an on-curve slider). Attach binds only the endpoint's
+  *own* coordinate (derived as where the line crosses the still-free shared coordinate), so the
+  neighbour keeps its DOF; a connecting edge parallel to the target line is the one case where the
+  shared coordinate is genuinely pinned (falls back to a point-on-line slider).
+- **Next:** wall-to-wall junction cleanup (T/L merges), edge-length readouts (numeric length
+  editing over the coordinates), opening sill/head heights (for 3D), and 3D walls (extrude +
+  boolean-subtract openings).

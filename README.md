@@ -80,9 +80,15 @@ browsers installed).
 
 ## Status
 
-The 2D engine and interactive editor are working, with an architectural drawing layer on top.
-Planned next: wall junction cleanup, dimensions/annotations, delete + undo/redo + save/load, a
-user-defined macro (custom-tool) UI, and the 3D layer (extrude/revolve → mesh booleans).
+**End of session 1.** The 2D engine and interactive browser editor are working, with an
+architectural drawing layer (ortho paths, walls, openings) on top and a coherent editing model:
+local vertex dragging, closeable rectilinear loops, and path endpoints that weld to points or
+attach to lines — all solver-free. 72 headless tests pass and every feature was verified live
+in-browser.
+
+Planned next: wall-to-wall junction cleanup, edge-length readouts, dimensions/annotations,
+delete + undo/redo + save/load, a user-defined macro (custom-tool) UI, and the 3D layer
+(extrude/revolve → mesh booleans).
 
 ## Documentation
 
