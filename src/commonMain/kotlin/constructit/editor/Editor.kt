@@ -93,6 +93,7 @@ class Editor(
             }
             pathClick(camera.screenToWorld(screen)); return
         }
+        if (toolId == Tools.OPENING) { openingClick(camera.screenToWorld(screen)); return }
         runToolClick(screen)
     }
 
@@ -106,6 +107,14 @@ class Editor(
             doc.addOrthoLeg(pathVertices.last(), world)?.let { pathVertices.add(it) }
         }
         previewSeg = null
+        onChange()
+    }
+
+    /** One click of the opening tool: cut a door/window gap into the wall under the cursor. */
+    private fun openingClick(world: Vec2) {
+        val w = activeScalar
+        if (w == null) { statusHint = "Opening: select a width parameter in the panel first"; onChange(); return }
+        statusHint = if (doc.addOpeningAt(world, w.ref, tolWorld() * 2)) "Opening added" else "Click on a wall to place an opening"
         onChange()
     }
 

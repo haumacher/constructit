@@ -653,3 +653,16 @@ carried for later 3D even though invisible in 2D.
 3. Wall thickness macro (offset + miter).
 4. Openings (position + width, reusing point-on-line; carry sill/head).
 Then 3D walls = extrude + boolean.
+
+### Implementation status (as built)
+- **Slice 1 — ortho path** (`Tools.ORTHO_PATH`): turtle-style chained axis-aligned legs; each leg
+  `from + L·frameAxis` with a fresh length parameter; shared `frameAngle`; rubber-band preview;
+  Esc/double-click to finish.
+- **Slice 2 — walls** (`Tools.WALL`, `Document.buildWall`): centerline + thickness → two offset
+  faces with `intersectLL` miter corners + end caps; retained as a `Wall` so it can be regenerated.
+- **Slice 3 — openings** (`Tools.OPENING`, `Document.addOpeningAt`/`regenerateWall`): click a wall
+  to cut a door/window gap; position (distance-from-leg-start) + width are editable parameters;
+  regenerates the wall with gapped faces + jamb reveal lines. Position is anchored at the start
+  edge; width extends the end.
+- **Next:** wall-to-wall junction cleanup, opening sill/head heights (for 3D), and 3D walls
+  (extrude + boolean-subtract openings).

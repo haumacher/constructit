@@ -541,6 +541,42 @@ class EditorTest {
     }
 
     @Test
+    fun openingCutsAParametricGapWithJambsIntoAWall() {
+        val ed = Editor()
+        ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)
+        ed.setTool(Tools.WALL)
+        ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(100.0, 3.0))   // one straight leg -> (100,0)
+        ed.finishPath()
+        fun wallSegs() = ed.doc.elements.filter { it.kind == ElementKind.SEGMENT && it.style == Styles.WALL }
+        assertEquals(4, wallSegs().size, "straight wall: 1 face seg/side + 2 caps")
+
+        // cut a 20-wide opening near x=50
+        ed.activeScalar = ed.doc.newParameter("w", 20.0.mm)
+        ed.setTool(Tools.OPENING)
+        ed.click(Vec2(50.0, 0.0))
+        assertEquals(8, wallSegs().size, "each face splits in two (+2) plus two jambs (+2)")
+
+        val ev = Evaluator()
+        val segs = wallSegs().map { ev.segment(it.ref as SegmentRef) }
+        fun seg(ax: Double, ay: Double, bx: Double, by: Double) = segs.any {
+            fun eq(p: Double, q: Double) = kotlin.math.abs(p - q) < 1e-6
+            (eq(it.a.x, ax) && eq(it.a.y, ay) && eq(it.b.x, bx) && eq(it.b.y, by)) ||
+            (eq(it.a.x, bx) && eq(it.a.y, by) && eq(it.b.x, ax) && eq(it.b.y, ay))
+        }
+        // opening centred on 50, width 20 -> spans 40..60; jambs span the 10-thick wall at both edges
+        assertTrue(seg(40.0, 5.0, 40.0, -5.0), "jamb at opening start")
+        assertTrue(seg(60.0, 5.0, 60.0, -5.0), "jamb at opening end")
+        assertTrue(seg(0.0, 5.0, 40.0, 5.0), "solid face piece up to the opening")
+        assertTrue(seg(60.0, 5.0, 100.0, 5.0), "solid face piece after the opening")
+
+        // parametric: position is anchored at the start edge (40); widening to 40 extends the end to 80
+        ed.doc.setParameter(ed.doc.scalars.first { it.name == "w" }, 40.0.mm)
+        val segs2 = wallSegs().map { Evaluator().segment(it.ref as SegmentRef) }
+        assertTrue(segs2.any { kotlin.math.abs(it.a.x - 80.0) < 1e-6 && kotlin.math.abs(it.b.x - 80.0) < 1e-6 },
+                   "the end jamb follows the width parameter")
+    }
+
+    @Test
     fun draggingAFreePointOntoALineAttachesItAsSlidingOnCurve() {
         val ed = Editor()
         ed.setTool(Tools.LINE); ed.click(Vec2(-40.0, 0.0)); ed.click(Vec2(40.0, 0.0))  // horizontal line

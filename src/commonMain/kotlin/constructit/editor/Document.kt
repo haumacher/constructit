@@ -52,6 +52,19 @@ class Element(
 /** A named scalar: an editable parameter (OP-7) or a read-only measurement (OP-4). */
 class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val editable: Boolean)
 
+/** A gap in a wall leg: [position] = distance from the leg start, [width] along the leg. */
+class Opening(val legIndex: Int, val position: ScalarRef, val width: ScalarRef)
+
+/**
+ * A retained wall: a centerline through [vertices] with a [thickness], plus [openings]. Its face /
+ * cap / jamb geometry is derived and regenerated (into [ownedIds]) whenever openings change — the
+ * centerline and its length parameters live outside the wall, so editing them reshapes it too.
+ */
+class Wall(val vertices: List<PointRef>, val thickness: ScalarRef) {
+    val openings = ArrayList<Opening>()
+    val ownedIds = HashSet<String>()
+}
+
 /**
  * A retained construction document: owns the [Construction] DAG plus display metadata, and
  * exposes enumeration (rendering/hit-testing/panels) and mutation (tools). Every op is wrapped
@@ -409,30 +422,112 @@ class Document {
         return ep
     }
 
+    val walls = ArrayList<Wall>()
+
     /**
-     * Build a wall of [thickness] along the centerline through [vertices]: two offset faces whose
-     * interior corners are the intersections of adjacent offset lines (miter joints), closed by end
-     * caps. Fully parametric — faces track both the centerline vertices and the thickness. Face
-     * corners are derived points that are *not* retained as elements (only the wall segments are),
-     * so the drawing stays clean; a straight run (collinear legs) yields a parallel-line pair whose
-     * miter is undefined and simply renders invalid.
+     * Build a retained wall of [thickness] along the centerline through [vertices]: two offset faces
+     * whose interior corners are the intersections of adjacent offset lines (miter joints), closed
+     * by end caps. Fully parametric — faces track the centerline vertices and the thickness. Returns
+     * the [Wall] so openings can be added later. A straight run (collinear legs) yields parallel
+     * offsets whose miter is undefined and simply renders invalid.
      */
-    fun buildWall(vertices: List<PointRef>, thickness: ScalarRef) {
-        if (vertices.size < 2) return
-        val half = cx.scale(thickness, 0.5)
-        val legLines = (0 until vertices.size - 1).map { cx.lineThrough(vertices[it], vertices[it + 1]) }
-        val faces = ArrayList<List<PointRef>>()
-        for (sign in intArrayOf(+1, -1)) {
-            val fl = legLines.map { cx.parallelAtDistance(it, half, sign) }
-            val fv = ArrayList<PointRef>()
-            fv.add(cx.projectToLine(vertices.first(), fl.first()))                       // start cap corner
-            for (j in 1 until fl.size) fv.add(cx.select(cx.intersectLL(fl[j - 1], fl[j]), +1))  // miter
-            fv.add(cx.projectToLine(vertices.last(), fl.last()))                         // end cap corner
-            for (j in 0 until fv.size - 1) add(cx.segment(fv[j], fv[j + 1]), ElementKind.SEGMENT, Styles.WALL)
-            faces.add(fv)
+    fun buildWall(vertices: List<PointRef>, thickness: ScalarRef): Wall? {
+        if (vertices.size < 2) return null
+        val w = Wall(vertices.toList(), thickness)
+        walls.add(w)
+        regenerateWall(w)
+        return w
+    }
+
+    private fun evalMm(ref: ScalarRef): Double =
+        (Evaluator().eval(ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.mm } ?: 0.0
+
+    /** The face point at centerline distance [dist] from leg [legI]'s start, on face line [faceLine]. */
+    private fun facePointAt(legLine: LineRef, legStart: PointRef, dist: ScalarRef, faceLine: LineRef): PointRef =
+        cx.projectToLine(cx.pointAlongLine(legLine, legStart, dist, +1), faceLine)
+
+    /** (Re)build a wall's face/cap/jamb geometry from its centerline, thickness and openings. */
+    fun regenerateWall(w: Wall) {
+        elements.removeAll { it.id in w.ownedIds }
+        w.ownedIds.clear()
+        fun own(ref: SegmentRef) { w.ownedIds.add(add(ref, ElementKind.SEGMENT, Styles.WALL).id) }
+
+        val v = w.vertices
+        val n = v.size - 1
+        val half = cx.scale(w.thickness, 0.5)
+        val legLines = (0 until n).map { cx.lineThrough(v[it], v[it + 1]) }
+        val flBySide = intArrayOf(+1, -1).map { s -> legLines.map { cx.parallelAtDistance(it, half, s) } }
+
+        // corner points per side (start cap, interior miters, end cap): n+1 corners
+        val cornersBySide = flBySide.map { fl ->
+            val c = ArrayList<PointRef>()
+            c.add(cx.projectToLine(v.first(), fl.first()))
+            for (j in 1 until n) c.add(cx.select(cx.intersectLL(fl[j - 1], fl[j]), +1))
+            c.add(cx.projectToLine(v.last(), fl.last()))
+            c
         }
-        add(cx.segment(faces[0].first(), faces[1].first()), ElementKind.SEGMENT, Styles.WALL)  // start cap
-        add(cx.segment(faces[0].last(), faces[1].last()), ElementKind.SEGMENT, Styles.WALL)    // end cap
+
+        // face pieces per side, split by the openings on each leg
+        for (side in 0..1) {
+            val fl = flBySide[side]; val corners = cornersBySide[side]
+            for (legI in 0 until n) {
+                val ops = w.openings.filter { it.legIndex == legI }.sortedBy { evalMm(it.position) }
+                var prev = corners[legI]
+                for (op in ops) {
+                    val js = facePointAt(legLines[legI], v[legI], op.position, fl[legI])
+                    val je = facePointAt(legLines[legI], v[legI], cx.add(op.position, op.width), fl[legI])
+                    own(cx.segment(prev, js)); prev = je   // solid piece then gap
+                }
+                own(cx.segment(prev, corners[legI + 1]))
+            }
+        }
+        // end caps
+        own(cx.segment(cornersBySide[0].first(), cornersBySide[1].first()))
+        own(cx.segment(cornersBySide[0].last(), cornersBySide[1].last()))
+        // jambs (reveal lines) across the wall at each opening edge
+        for (op in w.openings) {
+            val leg = legLines[op.legIndex]; val start = v[op.legIndex]
+            val sEnd = cx.add(op.position, op.width)
+            own(cx.segment(facePointAt(leg, start, op.position, flBySide[0][op.legIndex]),
+                           facePointAt(leg, start, op.position, flBySide[1][op.legIndex])))
+            own(cx.segment(facePointAt(leg, start, sEnd, flBySide[0][op.legIndex]),
+                           facePointAt(leg, start, sEnd, flBySide[1][op.legIndex])))
+        }
+    }
+
+    /**
+     * Add an opening (door/window gap) of width [width] to whichever wall leg is nearest [at]. The
+     * opening is positioned by a new parameter (distance along the leg from its start), so both its
+     * position and width are editable and the wall regenerates around them. No-op if no wall leg is
+     * within tolerance.
+     */
+    fun addOpeningAt(at: Vec2, width: ScalarRef, tol: Double): Boolean {
+        val ev = Evaluator()
+        var best: Wall? = null; var bestLeg = -1; var bestPos = 0.0; var bestD = Double.MAX_VALUE
+        for (w in walls) {
+            val threshold = tol + evalMm(w.thickness) / 2   // clicking anywhere on the wall body counts
+            for (i in 0 until w.vertices.size - 1) {
+                val a = (ev.eval(w.vertices[i].node) as? EvalResult.Ok)?.value as? PointValue ?: continue
+                val b = (ev.eval(w.vertices[i + 1].node) as? EvalResult.Ok)?.value as? PointValue ?: continue
+                val ab = b.p - a.p; val len = ab.length()
+                if (len < Vec2.EPS) continue
+                val t = ((at - a.p).dot(ab) / (len * len)).coerceIn(0.0, 1.0)
+                val d = (at - (a.p + ab * t)).length()
+                if (d <= threshold && d < bestD) { bestD = d; best = w; bestLeg = i; bestPos = t * len }
+            }
+        }
+        val w = best ?: return false
+        val widthVal = evalMm(width)
+        val legLen = run {
+            val a = (ev.eval(w.vertices[bestLeg].node) as EvalResult.Ok).value as PointValue
+            val b = (ev.eval(w.vertices[bestLeg + 1].node) as EvalResult.Ok).value as PointValue
+            (b.p - a.p).length()
+        }
+        val pos = (bestPos - widthVal / 2).coerceIn(0.0, maxOf(0.0, legLen - widthVal))   // centre on the click
+        val posRef = newParameter("op", pos.mm).ref
+        w.openings.add(Opening(bestLeg, posRef, width))
+        regenerateWall(w)
+        return true
     }
     fun ray(a: PointRef, b: PointRef) = add(cx.ray(a, b), ElementKind.RAY, Styles.CURVE)
     fun circle(center: PointRef, through: PointRef) = add(cx.circleCP(center, through), ElementKind.CIRCLE, Styles.CURVE)
