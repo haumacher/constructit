@@ -188,6 +188,7 @@ class Document {
     fun perpBisector(a: PointRef, b: PointRef) = add(cx.perpBisector(a, b), ElementKind.LINE, Styles.CONSTRUCT)
     fun angleBisector(a: PointRef, v: PointRef, b: PointRef) = add(cx.angleBisector(a, v, b), ElementKind.LINE, Styles.CONSTRUCT)
     fun perpendicularThrough(line: Element, p: PointRef) = add(cx.perpendicularThrough(line.ref as LineRef, p), ElementKind.LINE, Styles.CONSTRUCT)
+    fun tangentAtCircle(circle: Element, point: PointRef) = add(cx.tangentAtCircle(circle.ref as CircleRef, point), ElementKind.LINE, Styles.CONSTRUCT)
     fun parallelThrough(line: Element, p: PointRef) = add(cx.parallelThrough(line.ref as LineRef, p), ElementKind.LINE, Styles.CONSTRUCT)
 
     // ---- transforms (preserve source kind & style) ----

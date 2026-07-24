@@ -364,6 +364,15 @@ class Construction {
             EvalResult.Ok(ArcValue(Arc(center, r, start, end, (t1 - center).cross(t2 - center) > 0)))
         }
 
+    /** Tangent to [circle] at [point] — the line through the point perpendicular to the radius. */
+    fun tangentAtCircle(circle: CircleRef, point: PointRef): LineRef =
+        op(circle, point) {
+            val c = cir(it[0]); val p = pt(it[1])
+            val radial = p - c.center
+            if (radial.length() < Vec2.EPS) EvalResult.Invalid("point at circle centre")
+            else EvalResult.Ok(LineValue(Line(p, radial.perp().normalized())))
+        }
+
     /** The two tangent points on [circle] of the tangents from external [point] (via Thales' circle). */
     fun tangentPointsFromPoint(point: PointRef, circle: CircleRef): PointSetRef =
         op(point, circle) {

@@ -55,6 +55,7 @@ object Tools {
     const val PERPENDICULAR = "perp"
     const val PARALLEL = "parallel"
     const val TANGENT = "tangent"
+    const val TANGENT_AT = "tangentat"
 
     // Transform
     const val MIRROR = "mirror"
@@ -93,6 +94,7 @@ object Tools {
         ToolDef(PERPENDICULAR, "Perpendicular", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the perpendicular through it.") { d, p, _ -> d.perpendicularThrough(p.elements[0], p.points[0]) },
         ToolDef(PARALLEL, "Parallel", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the parallel through it.") { d, p, _ -> d.parallelThrough(p.elements[0], p.points[0]) },
         ToolDef(TANGENT, "Tangent from point", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.CIRCLE), help = "Click an external point, then a circle.") { d, p, _ -> d.tangentFromPoint(p.points[0], p.elements[0]) },
+        ToolDef(TANGENT_AT, "Tangent at point", ToolCategory.CONSTRUCT, listOf(SlotKind.CIRCLE, SlotKind.POINT), help = "Click a circle, then a point on it, for the tangent there (pairs with Point on circle).") { d, p, _ -> d.tangentAtCircle(p.elements[0], p.points[0]) },
 
         // ----- Transform -----
         ToolDef(MIRROR, "Mirror", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.LINE), help = "Click geometry, then a line to mirror it across.") { d, p, _ -> d.mirror(p.elements[0], p.elements[1]) },
