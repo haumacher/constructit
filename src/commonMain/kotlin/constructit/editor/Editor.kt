@@ -44,8 +44,9 @@ class Editor(
     private var filledSlots = 0
 
     // ortho-path (turtle) state
-    private val pathVertices = ArrayList<PointRef>()
+    private val pathVerts = ArrayList<OrthoVertex>()
     private var pathActive = false
+    private var pathClosed = false
     private var previewSeg: Pair<Vec2, Vec2>? = null
     private var pathThickness: constructit.dsl.ScalarRef? = null   // set for the WALL tool
 
@@ -61,7 +62,8 @@ class Editor(
     private fun resetPicks() {
         pickedPoints.clear(); pickedElements.clear(); pickedClicks.clear(); filledSlots = 0
         dragPoint = null; weldTarget = null; attachTarget = null; haloPos = null; panning = false
-        pathVertices.clear(); pathActive = false; previewSeg = null; pathThickness = null
+        pathVerts.clear(); pathActive = false; pathClosed = false
+        previewSeg = null; pathThickness = null
     }
 
     /** Set a transient status-bar note (e.g. panel feedback). */
@@ -97,14 +99,19 @@ class Editor(
         runToolClick(screen)
     }
 
-    /** One click of a path tool (ortho path / wall): start a chain, or append an axis-aligned leg. */
+    /** One click of a path tool (ortho path / wall): start a chain, append a leg, or close the loop. */
     private fun pathClick(world: Vec2) {
         if (!pathActive) {
-            pathVertices.clear(); pathVertices.add(pointOrCreate(world)); pathActive = true
+            pathVerts.clear()
+            pathVerts.add(doc.startOrthoVertex(world)); pathActive = true
             if (toolId == Tools.WALL) pathThickness = activeScalar?.ref
-            statusHint = "${if (toolId == Tools.WALL) "Wall" else "Ortho path"}: click the next point (Esc or double-click to finish)"
+            statusHint = "${if (toolId == Tools.WALL) "Wall" else "Ortho path"}: click the next point; click the start to close (Esc/double-click to finish)"
         } else {
-            doc.addOrthoLeg(pathVertices.last(), world)?.let { pathVertices.add(it) }
+            val v0 = (ev().valueOf(pathVerts.first().ref) as? PointValue)?.p
+            if (v0 != null && pathVerts.size >= 3 && (world - v0).length() <= tolWorld() * 2) {
+                pathClosed = true; finishPath(); return   // clicked the start -> close the loop
+            }
+            doc.addOrthoVertex(pathVerts.last(), world)?.let { pathVerts.add(it) }
         }
         previewSeg = null
         onChange()
@@ -118,18 +125,24 @@ class Editor(
         onChange()
     }
 
-    /** Finish the current path (Esc / double-click / tool switch); for the WALL tool, build faces. */
+    /** Finish the current path (Esc / double-click / close / tool switch); for WALL, build faces. */
     fun finishPath() {
-        if (!pathActive && pathVertices.isEmpty()) return
+        if (!pathActive && pathVerts.isEmpty()) return
+        val closed = pathClosed && pathVerts.size >= 3
+        if (closed) {
+            doc.closeOrthoPath(pathVerts.first(), pathVerts.last())            // snap last coord to fit
+            doc.segment(pathVerts.last().ref, pathVerts.first().ref)          // close the centerline
+        }
         val t = pathThickness
-        if (t != null && pathVertices.size >= 2) doc.buildWall(pathVertices.toList(), t)
-        pathActive = false; pathVertices.clear(); previewSeg = null; pathThickness = null; statusHint = ""
+        if (t != null && pathVerts.size >= 2) doc.buildWall(pathVerts.map { it.ref }, t, closed)
+        pathActive = false; pathClosed = false; pathVerts.clear()
+        previewSeg = null; pathThickness = null; statusHint = ""
         onChange()
     }
 
     fun pointerMove(screen: Vec2) {
         if (toolId == Tools.ORTHO_PATH) {
-            previewSeg = if (pathActive) doc.orthoLegPreview(pathVertices.last(), camera.screenToWorld(screen)) else null
+            previewSeg = if (pathActive) doc.orthoLegPreview(pathVerts.last().ref, camera.screenToWorld(screen)) else null
             onChange()
             return
         }

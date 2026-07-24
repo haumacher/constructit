@@ -485,33 +485,60 @@ class EditorTest {
     }
 
     @Test
-    fun orthoPathChainsAxisAlignedParametricLegs() {
+    fun orthoPathEdgesAreAxisAlignedAndVerticesDraggable() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)
-        ed.click(Vec2(0.0, 0.0))     // start
-        ed.click(Vec2(40.0, 6.0))    // snaps to +X: endpoint (40,0)
-        ed.click(Vec2(37.0, 30.0))   // snaps to +Y from (40,0): endpoint (40,30)
+        ed.click(Vec2(0.0, 0.0))     // V0
+        ed.click(Vec2(40.0, 6.0))    // snaps horizontal -> (40,0)
+        ed.click(Vec2(37.0, 30.0))   // snaps vertical -> (40,30)
         ed.finishPath()
 
         val segs = ed.doc.elements.filter { it.kind == ElementKind.SEGMENT }
-        assertEquals(2, segs.size, "two legs")
+        assertEquals(2, segs.size)
         val s1 = Evaluator().segment(segs[0].ref as SegmentRef)
-        assertClose(s1.a.x, 0.0); assertClose(s1.a.y, 0.0)
         assertClose(s1.b.x, 40.0); assertClose(s1.b.y, 0.0)   // horizontal
         val s2 = Evaluator().segment(segs[1].ref as SegmentRef)
-        assertClose(s2.a.x, 40.0); assertClose(s2.a.y, 0.0)
-        assertClose(s2.b.x, 40.0); assertClose(s2.b.y, 30.0)  // vertical (x pinned to 40)
+        assertClose(s2.b.x, 40.0); assertClose(s2.b.y, 30.0)  // vertical (x stays 40)
+        assertEquals(3, ed.doc.elements.count { it.kind == ElementKind.ON_CURVE }, "every vertex is draggable")
+    }
 
-        // legs are parametric: editing the first length shifts everything downstream
-        val l1 = ed.doc.scalars.first { it.name == "L" }
-        ed.doc.setParameter(l1, 10.0.mm)
-        val s2b = Evaluator().segment(segs[1].ref as SegmentRef)
-        assertClose(s2b.a.x, 10.0); assertClose(s2b.b.x, 10.0)   // vertical leg followed the corner
+    @Test
+    fun draggingAnOrthoVertexMovesOnlyItAndItsTwoNeighbours() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))     // V0
+        ed.click(Vec2(40.0, 3.0))    // V1 -> (40,0)   [edge V0-V1 horizontal: shares y]
+        ed.click(Vec2(38.0, 30.0))   // V2 -> (40,30)  [edge V1-V2 vertical: shares x]
+        ed.click(Vec2(80.0, 28.0))   // V3 -> (80,30)  [edge V2-V3 horizontal: shares y]
+        ed.finishPath()
+        val verts = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }   // [V0,V1,V2,V3]
+        fun p(i: Int) = Evaluator().point(verts[i].ref as constructit.dsl.PointRef)
 
-        // rotating the project frame rotates the whole chain (still 'orthogonal' in its own frame)
-        ed.doc.setParameter(ed.doc.frameAngle(), 90.0.deg)
-        val s1c = Evaluator().segment(segs[0].ref as SegmentRef)
-        assertClose(s1c.b.x, 0.0, tol = 1e-6); assertClose(s1c.b.y, 10.0, tol = 1e-6)  // +X axis now points +Y
+        // drag V1 (40,0) to (50,-10)
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(40.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(50.0, -10.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(50.0, -10.0)))
+
+        assertClose(p(1).x, 50.0); assertClose(p(1).y, -10.0)   // dragged vertex follows cursor
+        assertClose(p(0).x, 0.0);  assertClose(p(0).y, -10.0)   // neighbour V0 followed in y (shared)
+        assertClose(p(2).x, 50.0); assertClose(p(2).y, 30.0)    // neighbour V2 followed in x (shared)
+        assertClose(p(3).x, 80.0); assertClose(p(3).y, 30.0)    // V3 (not a neighbour) did NOT move
+    }
+
+    @Test
+    fun closedWallLoopMitersEveryCornerWithNoCaps() {
+        val ed = Editor()
+        ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)
+        ed.setTool(Tools.WALL)
+        // a rectangular room, then click the start to close
+        ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(60.0, 3.0)); ed.click(Vec2(58.0, 40.0)); ed.click(Vec2(2.0, 40.0))
+        ed.click(Vec2(0.0, 0.0))   // clicking the start closes the loop and finishes
+
+        val wall = ed.doc.walls.last()
+        assertTrue(wall.closed, "loop should be closed")
+        val walls = ed.doc.elements.count { it.kind == ElementKind.SEGMENT && it.style == Styles.WALL }
+        assertEquals(8, walls, "4 legs x 2 faces, mitred all round, no end caps (an open 4-leg wall would be 10)")
     }
 
     @Test

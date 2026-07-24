@@ -29,6 +29,20 @@ class OnLineConstraint(private val line: LineRef, private val t: SourceNode) : P
     }
 }
 
+/**
+ * A corner of an ortho path/wall. The vertex is `pointXY(xNode, yNode)`; each coordinate node is
+ * *shared* with one neighbour (a horizontal edge shares y, a vertical edge shares x), so writing the
+ * dragged cursor into both nodes moves this vertex and exactly its two neighbours while keeping every
+ * edge axis-aligned — no downstream cascade, no solver. A coordinate welded to the start (loop
+ * closure) is bound and simply ignores the write.
+ */
+class OrthoCornerConstraint(private val xNode: SourceNode, private val yNode: SourceNode) : PointConstraint {
+    override fun update(world: Vec2, ev: Evaluator) {
+        xNode.value = ScalarValue(Quantity.mm(world.x))
+        yNode.value = ScalarValue(Quantity.mm(world.y))
+    }
+}
+
 /** Point on a circle: internal parameter is the angle around the centre. */
 class OnCircleConstraint(val circle: CircleRef, private val angle: SourceNode) : PointConstraint {
     override fun update(world: Vec2, ev: Evaluator) {

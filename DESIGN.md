@@ -655,7 +655,7 @@ carried for later 3D even though invisible in 2D.
 Then 3D walls = extrude + boolean.
 
 ### Implementation status (as built)
-- **Slice 1 — ortho path** (`Tools.ORTHO_PATH`): turtle-style chained axis-aligned legs; each leg
+- **Slice 1 — ortho path** (`Tools.ORTHO_PATH`): rectilinear polyline as a shared-coordinate model — each vertex `pointXY(x,y)` shares one coordinate node with each neighbour (H edge shares y, V edge shares x). Dragging a vertex writes its two coords, so only it and its two neighbours move (no cascade) and edges stay axis-aligned. Closing binds the last vertex's own coordinate to the start (`SourceNode.boundTo`), snapping it so the closing edge is axis-aligned too. Rubber-band preview; Esc/double-click/click-start to finish.
   `from + L·frameAxis` with a fresh length parameter; shared `frameAngle`; rubber-band preview;
   Esc/double-click to finish.
 - **Slice 2 — walls** (`Tools.WALL`, `Document.buildWall`): centerline + thickness → two offset

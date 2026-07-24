@@ -22,11 +22,8 @@ import constructit.dsl.ScalarRef
 import constructit.dsl.SegmentRef
 import constructit.geom.Vec2
 import constructit.units.Quantity
-import constructit.units.deg
 import constructit.units.mm
 import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.sin
 
 enum class ElementKind { POINT, DERIVED_POINT, ON_CURVE, LINE, RAY, CIRCLE, SEGMENT, ARC }
 
@@ -52,6 +49,13 @@ class Element(
 /** A named scalar: an editable parameter (OP-7) or a read-only measurement (OP-4). */
 class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val editable: Boolean)
 
+/**
+ * A vertex of an ortho path, carrying the two coordinate source nodes so drags/closure can write
+ * them. [ownAxis] is the coordinate introduced by the edge that created it (0 = x, 1 = y, -1 = the
+ * start, which owns both) — the safe one to bind when closing a loop.
+ */
+class OrthoVertex(val ref: PointRef, val xNode: SourceNode, val yNode: SourceNode, val ownAxis: Int)
+
 /** A gap in a wall leg: [position] = distance from the leg start, [width] along the leg. */
 class Opening(val legIndex: Int, val position: ScalarRef, val width: ScalarRef)
 
@@ -60,7 +64,7 @@ class Opening(val legIndex: Int, val position: ScalarRef, val width: ScalarRef)
  * cap / jamb geometry is derived and regenerated (into [ownedIds]) whenever openings change — the
  * centerline and its length parameters live outside the wall, so editing them reshapes it too.
  */
-class Wall(val vertices: List<PointRef>, val thickness: ScalarRef) {
+class Wall(val vertices: List<PointRef>, val thickness: ScalarRef, val closed: Boolean = false) {
     val openings = ArrayList<Opening>()
     val ownedIds = HashSet<String>()
 }
@@ -371,55 +375,56 @@ class Document {
     fun line(a: PointRef, b: PointRef) = add(cx.lineThrough(a, b), ElementKind.LINE, Styles.CURVE)
     fun segment(a: PointRef, b: PointRef) = add(cx.segment(a, b), ElementKind.SEGMENT, Styles.CURVE)
 
-    // ---- architectural: project frame + ortho path ----
+    // ---- architectural: ortho path (shared-coordinate rectilinear polyline) ----
 
-    private var frameAngleEntry: ScalarEntry? = null
+    private fun scalarSource(value: Double): SourceNode = SourceNode(nextId("oc"), ScalarValue(value.mm))
 
-    /** The shared project-frame rotation (0° = X horizontal). Created on first use; editable/wireable. */
-    fun frameAngle(): ScalarEntry =
-        frameAngleEntry ?: newParameter("frameAngle", 0.0.deg).also { frameAngleEntry = it }
-
-    private fun frameAngleRad(): Double =
-        (Evaluator().eval(frameAngle().ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.base } ?: 0.0
-
-    /** Snap the direction [from]→[to] to the nearest frame axis; returns (axis index 0..3, length). */
-    private fun snapToAxis(fromP: Vec2, to: Vec2): Pair<Int, Double> {
-        val theta = frameAngleRad()
-        val ux = Vec2(cos(theta), sin(theta)); val uy = Vec2(-sin(theta), cos(theta))
-        val d = to - fromP
-        val px = d.dot(ux); val py = d.dot(uy)
-        return when {
-            abs(px) >= abs(py) && px >= 0 -> 0 to px
-            abs(px) >= abs(py)            -> 2 to -px
-            py >= 0                       -> 1 to py
-            else                          -> 3 to -py
-        }
+    private fun orthoVertexElement(x: SourceNode, y: SourceNode): OrthoVertex {
+        val ref = cx.pointXY(Ref<ScalarValue>(x), Ref<ScalarValue>(y))
+        addConstrained(ref, OrthoCornerConstraint(x, y))
+        return OrthoVertex(ref, x, y, -1)
     }
 
-    /** Where an ortho leg from [from] toward [to] would land (for a live rubber-band preview). */
+    /** Start an ortho path at [at] with a fresh, draggable vertex owning both coordinates. */
+    fun startOrthoVertex(at: Vec2): OrthoVertex = orthoVertexElement(scalarSource(at.x), scalarSource(at.y))
+
+    /**
+     * Append an axis-aligned vertex from [prev] toward [to]: the dominant delta picks a horizontal or
+     * vertical edge, and the new vertex **shares** the perpendicular coordinate node with [prev] (so
+     * the edge stays axis-aligned and a later drag of either endpoint moves only it and its
+     * neighbours). Returns the new vertex, or null for a zero-length step.
+     */
+    fun addOrthoVertex(prev: OrthoVertex, to: Vec2): OrthoVertex? {
+        val p = (Evaluator().eval(prev.ref.node) as? EvalResult.Ok)?.value as? PointValue ?: return null
+        val dx = to.x - p.p.x; val dy = to.y - p.p.y
+        if (abs(dx) < Vec2.EPS && abs(dy) < Vec2.EPS) return null
+        // horizontal edge: new x node, share prev's y node (ownAxis 0); vertical: share x, new y (ownAxis 1)
+        val xNode: SourceNode; val yNode: SourceNode; val ownAxis: Int
+        if (abs(dx) >= abs(dy)) { xNode = scalarSource(to.x); yNode = prev.yNode; ownAxis = 0 }
+        else                    { xNode = prev.xNode; yNode = scalarSource(to.y); ownAxis = 1 }
+        val ref = cx.pointXY(Ref<ScalarValue>(xNode), Ref<ScalarValue>(yNode))
+        addConstrained(ref, OrthoCornerConstraint(xNode, yNode))
+        segment(prev.ref, ref)
+        return OrthoVertex(ref, xNode, yNode, ownAxis)
+    }
+
+    /** Where an ortho leg from [from] toward [to] lands (rubber-band preview): snapped to H or V. */
     fun orthoLegPreview(from: PointRef, to: Vec2): Pair<Vec2, Vec2>? {
-        val fromP = (Evaluator().eval(from.node) as? EvalResult.Ok)?.value as? PointValue ?: return null
-        val (k, len) = snapToAxis(fromP.p, to)
-        val a = frameAngleRad() + k * kotlin.math.PI / 2
-        return fromP.p to (fromP.p + Vec2(cos(a), sin(a)) * len)
+        val p = (Evaluator().eval(from.node) as? EvalResult.Ok)?.value as? PointValue ?: return null
+        val end = if (abs(to.x - p.p.x) >= abs(to.y - p.p.y)) Vec2(to.x, p.p.y) else Vec2(p.p.x, to.y)
+        return p.p to end
     }
 
     /**
-     * Append an axis-aligned leg to a path: from [from], snap the direction toward [to] to the
-     * nearest project-frame axis and construct the endpoint as `from + L·frameAxis`, where L is a
-     * new editable length parameter. The leg therefore stays axis-aligned (and rotates with the
-     * frame), and its length is a first-class parameter. Returns the derived endpoint, or null for
-     * a degenerate (zero-length) leg.
+     * Close an ortho loop: bind the last vertex's own coordinate to the start's matching coordinate
+     * (via [SourceNode.boundTo]), so the last point snaps one coordinate to fit and the closing edge
+     * is axis-aligned — and stays so if the start later moves.
      */
-    fun addOrthoLeg(from: PointRef, to: Vec2): PointRef? {
-        val fromP = (Evaluator().eval(from.node) as? EvalResult.Ok)?.value as? PointValue ?: return null
-        val (k, len) = snapToAxis(fromP.p, to)
-        if (len < Vec2.EPS) return null
-        val lenParam = newParameter("L", len.mm)
-        val ang = cx.add(frameAngle().ref, cx.const((k * 90).toDouble().deg))
-        val ep = addDerived(cx.polarPoint(from, lenParam.ref, ang))
-        segment(from, ep)
-        return ep
+    fun closeOrthoPath(first: OrthoVertex, last: OrthoVertex) {
+        when (last.ownAxis) {
+            0 -> last.xNode.boundTo = first.xNode   // own x -> vertical closing edge
+            1 -> last.yNode.boundTo = first.yNode   // own y -> horizontal closing edge
+        }
     }
 
     val walls = ArrayList<Wall>()
@@ -431,9 +436,9 @@ class Document {
      * the [Wall] so openings can be added later. A straight run (collinear legs) yields parallel
      * offsets whose miter is undefined and simply renders invalid.
      */
-    fun buildWall(vertices: List<PointRef>, thickness: ScalarRef): Wall? {
+    fun buildWall(vertices: List<PointRef>, thickness: ScalarRef, closed: Boolean = false): Wall? {
         if (vertices.size < 2) return null
-        val w = Wall(vertices.toList(), thickness)
+        val w = Wall(vertices.toList(), thickness, closed && vertices.size >= 3)
         walls.add(w)
         regenerateWall(w)
         return w
@@ -453,24 +458,29 @@ class Document {
         fun own(ref: SegmentRef) { w.ownedIds.add(add(ref, ElementKind.SEGMENT, Styles.WALL).id) }
 
         val v = w.vertices
-        val n = v.size - 1
+        val closed = w.closed && v.size >= 3
+        val legCount = if (closed) v.size else v.size - 1
         val half = cx.scale(w.thickness, 0.5)
-        val legLines = (0 until n).map { cx.lineThrough(v[it], v[it + 1]) }
+        val legLines = (0 until legCount).map { cx.lineThrough(v[it], v[(it + 1) % v.size]) }
         val flBySide = intArrayOf(+1, -1).map { s -> legLines.map { cx.parallelAtDistance(it, half, s) } }
 
-        // corner points per side (start cap, interior miters, end cap): n+1 corners
+        // corner points per side: closed -> one miter per vertex (wraps); open -> start cap, miters, end cap
         val cornersBySide = flBySide.map { fl ->
             val c = ArrayList<PointRef>()
-            c.add(cx.projectToLine(v.first(), fl.first()))
-            for (j in 1 until n) c.add(cx.select(cx.intersectLL(fl[j - 1], fl[j]), +1))
-            c.add(cx.projectToLine(v.last(), fl.last()))
+            if (closed) {
+                for (j in 0 until legCount) c.add(cx.select(cx.intersectLL(fl[(j - 1 + legCount) % legCount], fl[j]), +1))
+            } else {
+                c.add(cx.projectToLine(v.first(), fl.first()))
+                for (j in 1 until legCount) c.add(cx.select(cx.intersectLL(fl[j - 1], fl[j]), +1))
+                c.add(cx.projectToLine(v.last(), fl.last()))
+            }
             c
         }
 
         // face pieces per side, split by the openings on each leg
         for (side in 0..1) {
             val fl = flBySide[side]; val corners = cornersBySide[side]
-            for (legI in 0 until n) {
+            for (legI in 0 until legCount) {
                 val ops = w.openings.filter { it.legIndex == legI }.sortedBy { evalMm(it.position) }
                 var prev = corners[legI]
                 for (op in ops) {
@@ -478,12 +488,14 @@ class Document {
                     val je = facePointAt(legLines[legI], v[legI], cx.add(op.position, op.width), fl[legI])
                     own(cx.segment(prev, js)); prev = je   // solid piece then gap
                 }
-                own(cx.segment(prev, corners[legI + 1]))
+                own(cx.segment(prev, corners[if (closed) (legI + 1) % legCount else legI + 1]))
             }
         }
-        // end caps
-        own(cx.segment(cornersBySide[0].first(), cornersBySide[1].first()))
-        own(cx.segment(cornersBySide[0].last(), cornersBySide[1].last()))
+        // end caps only for an open wall (a closed loop has none)
+        if (!closed) {
+            own(cx.segment(cornersBySide[0].first(), cornersBySide[1].first()))
+            own(cx.segment(cornersBySide[0].last(), cornersBySide[1].last()))
+        }
         // jambs (reveal lines) across the wall at each opening edge
         for (op in w.openings) {
             val leg = legLines[op.legIndex]; val start = v[op.legIndex]
