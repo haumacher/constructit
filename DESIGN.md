@@ -497,3 +497,9 @@ Three broad families (see OP-9 decision above):
   tests. Recorded the testing strategy: value-level assertions + SVG golden/snapshot; requires
   a programmatic construction API and a canonical deterministic SVG serializer; test cases
   double as worked spec examples and extend to STL/3MF in phase-2.
+- **Turn 12** — Implemented **Phase 1** (see PHASE1_PLAN.md): Kotlin/JVM 2D construction engine
+  (units+dimensions, typed DAG + memoized eval with invalid propagation, geometry +
+  ordered-solution-set intersections + Select, macros with derived path-ids + specialization,
+  canonical SVG serializer). All four DoD examples pass at value + SVG-golden level; 16 tests
+  green via Gradle 8.7 wrapper. Deferred within phase-1: OP-7 string parser, incremental
+  dirty-recompute, interactive UI, DXF/PDF export.

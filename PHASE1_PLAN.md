@@ -6,6 +6,11 @@ as the **definition of done**. No 3D, no kernel, no UI beyond headless SVG rende
 Language/build: **Kotlin (JVM)**, Gradle wrapper, JUnit5. Engine is a **pure library**
 (no UI/shell deps) so tests build models in code and assert (value-level + SVG golden).
 
+## Status: ✅ COMPLETE
+
+All milestones done; **16 tests green** (`./gradlew test`), all four DoD examples pass at
+both value-level and SVG-golden level. Toolchain: Java 17 + Gradle 8.7 wrapper, Kotlin 1.9.24.
+
 ## Milestones
 
 - **M1 — Skeleton.** Gradle wrapper (modern), Kotlin JVM plugin, JUnit5, package layout.
