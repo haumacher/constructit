@@ -2,14 +2,15 @@ package constructit.editor
 
 import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
+import constructit.geom.Vec2
 
 /** What the next click of a tool must supply. */
 enum class SlotKind { PLACE_POINT, POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY }
 
 enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE }
 
-/** Geometry picked so far for the active tool, in slot order and split by kind. */
-class Picks(val points: List<PointRef>, val elements: List<Element>)
+/** Geometry picked so far for the active tool (split by kind), plus [at] = the last click's world position. */
+class Picks(val points: List<PointRef>, val elements: List<Element>, val at: Vec2)
 
 /**
  * A data-driven tool: geometry [slots] to pick by clicking (plus an optional [scalar] from the
@@ -71,8 +72,8 @@ object Tools {
         ToolDef(MIDPOINT, "Midpoint", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to place their midpoint.") { d, p, _ -> d.midpoint(p.points[0], p.points[1]) },
         ToolDef(INTERSECT, "Intersect", ToolCategory.POINTS, listOf(SlotKind.CURVE, SlotKind.CURVE), help = "Click two curves to add their intersection point(s).") { d, p, _ -> d.intersect(p.elements[0], p.elements[1]) },
         ToolDef(PROJECT, "Project to line", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), help = "Click a point, then a line, for the perpendicular foot.") { d, p, _ -> d.projectToLine(p.points[0], p.elements[0]) },
-        ToolDef(POINT_ON_CIRCLE, "Point on circle", ToolCategory.POINTS, listOf(SlotKind.CIRCLE), scalar = true, help = "Select an angle parameter, then click a circle.") { d, p, s -> d.pointOnCircle(p.elements[0], s!!) },
-        ToolDef(POINT_ON_LINE, "Point on line", ToolCategory.POINTS, listOf(SlotKind.LINE), scalar = true, help = "Select a distance parameter, then click a line.") { d, p, s -> d.pointOnLine(p.elements[0], s!!) },
+        ToolDef(POINT_ON_CIRCLE, "Point on circle", ToolCategory.POINTS, listOf(SlotKind.CIRCLE), help = "Click a circle to add a point on it; drag it around the circle in Select mode.") { d, p, _ -> d.pointOnCircle(p.elements[0], p.at) },
+        ToolDef(POINT_ON_LINE, "Point on line", ToolCategory.POINTS, listOf(SlotKind.LINE), help = "Click a line to add a point on it; drag it along the line in Select mode.") { d, p, _ -> d.pointOnLine(p.elements[0], p.at) },
         ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.CURVE), help = "Click a curve to add its defining points (endpoints, centre) — even on mirrored/derived geometry.") { d, p, _ -> d.extractPoints(p.elements[0]) },
 
         // ----- Curves -----

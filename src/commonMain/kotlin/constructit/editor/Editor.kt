@@ -72,7 +72,13 @@ class Editor(
 
     fun pointerMove(screen: Vec2) {
         when {
-            dragPoint != null -> { doc.moveFreePoint(dragPoint!!, camera.screenToWorld(screen)); onChange() }
+            dragPoint != null -> {
+                val el = dragPoint!!
+                val world = camera.screenToWorld(screen)
+                val c = el.constraint
+                if (c != null) c.update(world, ev()) else doc.moveFreePoint(el, world)
+                onChange()
+            }
             panning -> {
                 camera = camera.pan(screen.x - lastScreen.x, screen.y - lastScreen.y)
                 lastScreen = screen
@@ -106,7 +112,7 @@ class Editor(
                 statusHint = "${tool.label}: select a parameter in the panel first"
                 resetPicks(); onChange(); return
             }
-            tool.build(doc, Picks(pickedPoints.toList(), pickedElements.toList()), activeScalar?.ref)
+            tool.build(doc, Picks(pickedPoints.toList(), pickedElements.toList(), world), activeScalar?.ref)
             resetPicks()
             statusHint = ""
         } else {

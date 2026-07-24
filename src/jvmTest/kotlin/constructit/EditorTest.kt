@@ -149,6 +149,26 @@ class EditorTest {
     }
 
     @Test
+    fun pointOnLineIsCreatedByClickAndDragsAlongTheLine() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT); ed.click(Vec2(-50.0, 0.0)); ed.click(Vec2(50.0, 0.0))
+        ed.setTool(Tools.LINE); ed.click(Vec2(-50.0, 0.0)); ed.click(Vec2(50.0, 0.0))
+        ed.setTool(Tools.POINT_ON_LINE); ed.click(Vec2(20.0, 0.0))   // just click the line, no parameter
+
+        val ptEl = ed.doc.elements.first { it.kind == ElementKind.ON_CURVE }
+        val p1 = Evaluator().point(ptEl.ref as constructit.dsl.PointRef)
+        assertClose(p1.x, 20.0); assertClose(p1.y, 0.0)
+
+        // drag it toward (35,25): it must stay on the line, projecting to (35,0)
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(20.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(35.0, 25.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(35.0, 25.0)))
+        val p2 = Evaluator().point(ptEl.ref as constructit.dsl.PointRef)
+        assertClose(p2.x, 35.0); assertClose(p2.y, 0.0)
+    }
+
+    @Test
     fun keyPointsExposesMirroredSegmentEndpoints() {
         val ed = Editor()
         ed.setTool(Tools.SEGMENT); ed.click(Vec2(10.0, 10.0)); ed.click(Vec2(30.0, 10.0))

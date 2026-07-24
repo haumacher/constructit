@@ -1,5 +1,9 @@
 package constructit.editor
 
+import constructit.core.CircleValue
+import constructit.core.EvalResult
+import constructit.core.Evaluator
+import constructit.core.LineValue
 import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.core.SourceNode
@@ -17,7 +21,7 @@ import constructit.dsl.SegmentRef
 import constructit.geom.Vec2
 import constructit.units.Quantity
 
-enum class ElementKind { POINT, DERIVED_POINT, LINE, RAY, CIRCLE, SEGMENT, ARC }
+enum class ElementKind { POINT, DERIVED_POINT, ON_CURVE, LINE, RAY, CIRCLE, SEGMENT, ARC }
 
 /** A retained, displayable/selectable graph output with style + kind. */
 class Element(
@@ -26,10 +30,12 @@ class Element(
     val kind: ElementKind,
     var style: Style,
     var visible: Boolean = true,
+    /** For [ElementKind.ON_CURVE]: how a drag updates the hidden position parameter. */
+    val constraint: PointConstraint? = null,
 ) {
-    val draggable: Boolean get() = kind == ElementKind.POINT
+    val draggable: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.ON_CURVE
     val isCurve: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY || kind == ElementKind.ARC
-    val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT
+    val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT || kind == ElementKind.ON_CURVE
 }
 
 /** A named scalar: an editable parameter (OP-7) or a read-only measurement (OP-4). */
@@ -88,8 +94,29 @@ class Document {
 
     fun midpoint(a: PointRef, b: PointRef) = addDerived(cx.midpoint(a, b))
     fun projectToLine(p: PointRef, line: Element) = addDerived(cx.projectToLine(p, line.ref as LineRef))
-    fun pointOnCircle(circle: Element, angle: ScalarRef) = addDerived(cx.pointOnCircle(circle.ref as CircleRef, angle))
-    fun pointOnLine(line: Element, dist: ScalarRef) = addDerived(cx.pointOnLineAt(line.ref as LineRef, dist))
+
+    private fun addConstrained(ref: PointRef, constraint: PointConstraint): PointRef {
+        elements.add(Element(nextId("e"), ref, ElementKind.ON_CURVE, Styles.ON_CURVE, constraint = constraint))
+        return ref
+    }
+
+    /** Point that slides along a line; created at the projection of [at], draggable along the line. */
+    fun pointOnLine(line: Element, at: Vec2): PointRef {
+        val lineRef = line.ref as LineRef
+        val l = (Evaluator().eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
+        val t0 = if (l != null) (at - l.line.origin).dot(l.line.dir) else 0.0
+        val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(t0)))
+        return addConstrained(cx.pointOnLineAt(lineRef, Ref<ScalarValue>(tNode)), OnLineConstraint(lineRef, tNode))
+    }
+
+    /** Point that slides along a circle; created at the click angle, draggable around the circle. */
+    fun pointOnCircle(circle: Element, at: Vec2): PointRef {
+        val circleRef = circle.ref as CircleRef
+        val c = (Evaluator().eval(circleRef.node) as? EvalResult.Ok)?.value as? CircleValue
+        val a0 = if (c != null) (at - c.circle.center).angle() else 0.0
+        val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad(a0)))
+        return addConstrained(cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode)), OnCircleConstraint(circleRef, aNode))
+    }
 
     /** Intersect two curves; branch count follows the pair type (line-line: 1, else: 2). */
     fun intersect(a: Element, b: Element): List<PointRef> {
@@ -169,6 +196,7 @@ class Document {
 object Styles {
     val FREE_POINT = Style(stroke = "#1f77b4", width = 1.0)
     val DERIVED_POINT = Style(stroke = "#2ca02c", width = 1.0)
+    val ON_CURVE = Style(stroke = "#ff7f0e", width = 1.0)
     val CURVE = Style(stroke = "#333333", width = 1.5)
     val CONSTRUCT = Style(stroke = "#9467bd", width = 1.2)
     val INVALID = Style(stroke = "#dddddd", width = 1.0)

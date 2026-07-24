@@ -16,7 +16,7 @@ object HitTest {
         var best: Element? = null
         var bestD = tol
         for (el in doc.elements) {
-            if (el.kind != ElementKind.POINT) continue
+            if (!el.draggable) continue
             val p = (ev.valueOf(el.ref) as? PointValue)?.p ?: continue
             val d = (p - world).length()
             if (d <= bestD) { bestD = d; best = el }
@@ -24,12 +24,12 @@ object HitTest {
         return best
     }
 
-    /** Nearest point-like element (free or derived), for snapping/reuse. */
+    /** Nearest point-like element (free, derived, or on-curve), for snapping/reuse. */
     fun nearestAnyPoint(doc: Document, ev: Evaluator, world: Vec2, tol: Double): Element? {
         var best: Element? = null
         var bestD = tol
         for (el in doc.elements) {
-            if (el.kind != ElementKind.POINT && el.kind != ElementKind.DERIVED_POINT) continue
+            if (!el.isPoint) continue
             val p = (ev.valueOf(el.ref) as? PointValue)?.p ?: continue
             val d = (p - world).length()
             if (d <= bestD) { bestD = d; best = el }
