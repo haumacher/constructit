@@ -605,3 +605,51 @@ Three broad families (see OP-9 decision above):
   DrawTarget interface; thin jsMain shell (HTML5 canvas + DOM). Phases A–D: KMP restructure,
   pure interaction core (headless gesture tests + SVG scene snapshot), browser shell, and
   Playwright E2E driving system Chrome with screenshots. 40 jvm tests (1 E2E, opt-in).
+
+## Domain layer: architectural drawing (draft — no new solver)
+
+Architectural drawing is a **macro/vocabulary layer over the existing geometric algebra** — it
+needs no constraint solver and no new evaluation semantics. Three existing pieces are the enablers:
+**shared direction references** (axis-alignment by construction), **offset + line-line intersection**
+(mitered wall corners), and **point-on-line** (the sliding 1-DOF param, used for opening placement).
+
+### Axis-aligned / perpendicular lines
+Do not store a "horizontal" flag and solve it — construct so it *cannot* be otherwise.
+- **Persistent alignment via directions.** A segment as `start + direction·length`, where
+  `direction` is a *shared reference* to a project axis (the `Direction` primitive already exists).
+  Editing = changing a **length parameter**, not free-dragging — dimension-driven, pure DAG.
+- **Project frame.** Two named axes (X/Y), optionally **rotated**, so a building sited at an angle
+  still draws "orthogonally" in its own frame; rotating the frame rotates everything that
+  references it.
+- **Ortho input aid** (fast entry): while drawing, snap the direction to the frame axes / 90° and
+  **store the axis reference** (not baked coordinates) so alignment persists.
+- Motivates a **wall-path / turtle tool**: "from here go 4m east, 3m north…", each leg
+  `prev + axisDir·lengthParam` → axis-alignment + parametric dimension chains for free.
+
+### Wall pairs (thickness)
+A **Wall = centerline path + thickness parameter + justification** (center/left/right), a macro
+emitting two offset faces. The corner problem is solved by existing machinery:
+- Each leg's face = `parallelAtDistance(centerlineLeg, ±w/2, side)`.
+- Each **corner point = `intersectLL`(adjacent face lines)** — that *is* the miter joint.
+- End caps = perpendiculars at the path ends.
+- Compound value with accessors (OP-6): `wall.face(side)`, `wall.corner(i)` — reusable for
+  dimensioning / opening placement / wall-to-wall snapping.
+- Special case: collinear legs → offset lines parallel (intersection at infinity) → fall back to
+  the plain offset point.
+
+### Openings (windows / doors — gaps in a wall)
+An opening = **position** (distance along the centerline) + **width**, plus **sill/head heights**
+carried for later 3D even though invisible in 2D.
+- Position *is* a point-on-line on the centerline (reuses the sliding constraint); width is a param.
+- The Wall macro takes a list of openings and produces **segmented faces** (solid / gap / solid …)
+  — 1-D interval subtraction in the wall's own parameter space. Render solids; draw door-swing
+  arcs / window mullions as symbols in the gap.
+- 3D (later): wall extrudes to a slab; each opening becomes a subtracted box (sill→head) — analytic
+  params drive the boolean, matching the "mesh is a sink" plan.
+
+### Build order (MVP-first)
+1. Directions + project frame + ortho input (fast axis-aligned drawing).
+2. Wall-path tool (turtle/relative legs with length params) — the dimension-chain backbone.
+3. Wall thickness macro (offset + miter).
+4. Openings (position + width, reusing point-on-line; carry sill/head).
+Then 3D walls = extrude + boolean.
