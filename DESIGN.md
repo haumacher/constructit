@@ -153,6 +153,30 @@ hand-rendered regardless), so Flutter's widget edge buys the least here.
 - **Heavy 3D compute server-side** in phase-2 (Manifold via JNI on the JVM) if in-browser mesh
   booleans get too heavy — the shared engine makes this a deployment toggle, not a rewrite.
 
+## Testing strategy (enabled by the architecture)
+
+The **pure headless engine** + **SVG output** means tests can build a model *in code*,
+evaluate, render, and assert — no browser, no UI. Crucially, the model is **deterministic**
+(no solver, pure recompute, deterministic `Select` — OP-1), so output is reproducible and
+golden/snapshot testing is reliable (a concrete dividend of the no-solver paradigm).
+
+Two assertion levels, use both:
+1. **Value-level (workhorse):** assert on evaluated node outputs — coordinates, distances,
+   angles, validity states, branch chosen, unit/dimension results. Precise; robust to
+   rendering changes. E.g. perpendicular bisector is equidistant; bolt-circle holes at the
+   expected radius/angles.
+2. **SVG golden/snapshot:** render to SVG, diff against a stored reference. Exercises the whole
+   pipeline incl. rendering; artifacts are **human-inspectable**.
+
+Requirements this imposes (design in from the start):
+- A clean **programmatic construction/builder API** (also a scripting surface + documentation).
+- A **canonical, deterministic SVG serializer**: fixed decimal precision, stable element
+  ordering, stable ids — else floating-point formatting / iteration order causes spurious diffs.
+
+The test cases double as the model's **worked spec examples** (perpendicular bisector,
+rounded-rect macro, bolt circle, hole pattern). Same pattern extends to phase-2:
+construct in code → export STL/3MF → assert manifold / volume / bbox.
+
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
 - Every node has a **validity state** (valid / invalid).
@@ -468,3 +492,8 @@ Three broad families (see OP-9 decision above):
   an explicit non-requirement** (so GWT/J2CL not indicated; Flutter would sacrifice the shared
   engine; app is canvas-centric not widget-centric). TL module and server-side 3D compute kept
   as non-driving later options.
+- **Turn 11** — Noted a testing dividend of the architecture: the pure headless engine + SVG
+  output + deterministic model (no solver) enable **construct-in-code → render SVG → assert**
+  tests. Recorded the testing strategy: value-level assertions + SVG golden/snapshot; requires
+  a programmatic construction API and a canonical deterministic SVG serializer; test cases
+  double as worked spec examples and extend to STL/3MF in phase-2.
