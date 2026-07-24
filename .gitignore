@@ -3,3 +3,7 @@ build/
 *.class
 .idea/
 *.iml
+
+# local verification artifacts
+.playwright-mcp/
+/*.png
