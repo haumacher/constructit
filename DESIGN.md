@@ -128,6 +128,26 @@ path-dependent and would break reproducibility/undo/reload.)
 - The model **heals automatically**: when inputs return to a valid range, nodes recompute and
   reappear. No manual repair, no deletion.
 
+## Measurements & value feedback (OP-4 — RESOLVED)
+
+- Measurements are **first-class derived nodes** with `Scalar`/`Angle` outputs
+  (`Measure.Distance`, `Measure.Angle`, `Measure.Length`, …), **in v1**.
+- **Forward-only (driven).** A measured value can feed downstream inputs, but the flow stays
+  one-directional. Cycles are impossible by construction (a measurement can only be consumed
+  by nodes created after it). A quantity is therefore **driving XOR driven**, never both —
+  wanting both is a constraint, which is exactly what we exclude.
+
+### freeze / convert
+- **(a) Freeze to constant — IN v1.** Replace a measurement's consumers with an editable
+  `Parameter` initialized to the current value (a pure detach). Always possible.
+- **(b) Re-parameterize a free source — DEFERRED (on-demand later; no further design now).**
+  Not graph inversion but a coordinate change: replace a *free* source node (e.g. a free
+  point, 2 DOF cartesian) with an equivalent construction that exposes the measured quantity
+  as a driving parameter, capturing residual DOF from current geometry
+  (e.g. `P2 = P1 + PolarVector(d, θ)`). Preserves DOF count → **no solver**. Refused when the
+  quantity's endpoints are fully determined (no free DOF to absorb the input).
+- **(c) General inversion** (solve for a determined quantity) — out of scope (needs a solver).
+
 ## Scope, deliverables & phasing (OP-2 — RESOLVED)
 
 - **Primary goal:** 3D geometries for **3D printing**.
@@ -183,7 +203,9 @@ path-dependent and would break reproducibility/undo/reload.)
       input). Invalidity **propagates transitively** to all dependents. Invalid objects are
       **hidden and flagged invalid**; their definitions are retained, so the model **heals
       automatically** when inputs return to a valid range.
-- [ ] **OP-4 Measurements feeding back as parameters** (bidirectional dataflow) in v1?
+- [x] **OP-4 Measurements** — RESOLVED: first-class derived Scalar/Angle nodes in v1;
+      forward-only (driven), never cyclic; driving XOR driven. freeze-to-constant (a) in v1;
+      re-parameterize-a-free-source (b) deferred on-demand; general inversion (c) out of scope.
 - [x] **OP-5 Node graph data model** — RESOLVED: one uniform, strongly-typed dataflow DAG;
       unified numbers+geometry; exactly one output per node; intersections emit an ordered
       `PointSet` value consumed by a separate `Select(set, sign)` node (computed once, shared);
@@ -226,3 +248,7 @@ path-dependent and would break reproducibility/undo/reload.)
   intersections emit an ordered `PointSet` value consumed by a separate `Select(set, sign)`
   node — computed once, shared, uniform. Relocated OP-1's branch selector onto `Select`.
   Confirmed strong typing. OP-4/6/7 shown attaching cleanly to the model.
+- **Turn 5** — Resolved OP-4 (measurements): first-class derived Scalar/Angle nodes in v1,
+  forward-only (driven), never cyclic (driving XOR driven). Clarified freeze/convert:
+  (a) freeze-to-constant in v1; (b) re-parameterize a free source = a DOF-preserving
+  coordinate change (no solver), deferred on-demand; (c) general inversion out of scope.
