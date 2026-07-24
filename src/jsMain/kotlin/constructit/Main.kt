@@ -122,8 +122,7 @@ private fun buildPalette() {
 
 private fun renderPanel(editor: Editor) {
     (document.getElementById("status") as HTMLElement).textContent =
-        if (editor.statusHint.isNotEmpty()) editor.statusHint
-        else "Select: drag points / pan • wheel: zoom • scalar tools use the highlighted parameter"
+        if (editor.statusHint.isNotEmpty()) editor.statusHint else editor.currentHelp()
 
     // active tool highlight
     val toolNodes = document.querySelectorAll(".tool")

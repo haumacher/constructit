@@ -149,6 +149,23 @@ class EditorTest {
     }
 
     @Test
+    fun keyPointsExposesMirroredSegmentEndpoints() {
+        val ed = Editor()
+        ed.setTool(Tools.SEGMENT); ed.click(Vec2(10.0, 10.0)); ed.click(Vec2(30.0, 10.0))
+        ed.setTool(Tools.POINT); ed.click(Vec2(-40.0, 0.0)); ed.click(Vec2(40.0, 0.0))
+        ed.setTool(Tools.LINE); ed.click(Vec2(-40.0, 0.0)); ed.click(Vec2(40.0, 0.0))   // x-axis
+        ed.setTool(Tools.MIRROR); ed.click(Vec2(20.0, 10.0)); ed.click(Vec2(0.0, 0.0))  // segment across x-axis
+        ed.setTool(Tools.KEY_POINTS); ed.click(Vec2(20.0, -10.0))                       // on the mirrored segment
+
+        val derived = ed.doc.elements.filter { it.kind == ElementKind.DERIVED_POINT }
+        assertEquals(2, derived.size, "mirrored segment should expose its two endpoints")
+        val ev = Evaluator()
+        val pts = derived.map { ev.point(it.ref as constructit.dsl.PointRef) }.sortedBy { it.x }
+        assertClose(pts[0].x, 10.0); assertClose(pts[0].y, -10.0)
+        assertClose(pts[1].x, 30.0); assertClose(pts[1].y, -10.0)
+    }
+
+    @Test
     fun sceneSvgGolden() {
         val ed = Editor(canvasW = 400.0, canvasH = 300.0)
         ed.camera = constructit.editor.Camera.centered(400.0, 300.0, scale = 4.0)

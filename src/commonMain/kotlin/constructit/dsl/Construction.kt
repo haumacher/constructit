@@ -416,6 +416,24 @@ class Construction {
             }
             EvalResult.Ok(ProfileValue(Profile(elems)))
         }
+
+    // ================= sub-entity accessors (provenance-based points on a curve) =================
+    // These let *derived* geometry (e.g. a mirrored segment) expose usable points for further
+    // construction — the compound-value+accessor principle (OP-6/OP-8).
+
+    fun segmentStart(s: SegmentRef): PointRef = op(s) { EvalResult.Ok(PointValue((it[0] as SegmentValue).seg.a)) }
+    fun segmentEnd(s: SegmentRef): PointRef = op(s) { EvalResult.Ok(PointValue((it[0] as SegmentValue).seg.b)) }
+    fun circleCenter(c: CircleRef): PointRef = op(c) { EvalResult.Ok(PointValue((it[0] as CircleValue).circle.center)) }
+    fun rayOrigin(r: RayRef): PointRef = op(r) { EvalResult.Ok(PointValue((it[0] as RayValue).ray.origin)) }
+    fun arcCenter(a: ArcRef): PointRef = op(a) { EvalResult.Ok(PointValue((it[0] as ArcValue).arc.center)) }
+    fun arcStart(a: ArcRef): PointRef = op(a) {
+        val arc = (it[0] as ArcValue).arc
+        EvalResult.Ok(PointValue(arc.center + Vec2(arc.radius * kotlin.math.cos(arc.startAngle), arc.radius * kotlin.math.sin(arc.startAngle))))
+    }
+    fun arcEnd(a: ArcRef): PointRef = op(a) {
+        val arc = (it[0] as ArcValue).arc
+        EvalResult.Ok(PointValue(arc.center + Vec2(arc.radius * kotlin.math.cos(arc.endAngle), arc.radius * kotlin.math.sin(arc.endAngle))))
+    }
 }
 
 // ---- typed accessors over an Evaluator pass ----

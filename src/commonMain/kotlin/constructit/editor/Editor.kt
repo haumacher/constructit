@@ -49,6 +49,10 @@ class Editor(
         pickedPoints.clear(); pickedElements.clear(); dragPoint = null; panning = false
     }
 
+    /** Help line for the active tool — shown in the status bar whenever there's no transient hint. */
+    fun currentHelp(): String =
+        if (toolId == Tools.SELECT) Tools.SELECT_HELP else Tools.byId(toolId)?.help ?: ""
+
     fun render(target: DrawTarget) = SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid)
 
     fun wheel(screen: Vec2, deltaY: Double) {
@@ -106,7 +110,7 @@ class Editor(
             resetPicks()
             statusHint = ""
         } else {
-            statusHint = "${tool.label}: ${tool.slots.size - pendingCount} more"
+            statusHint = "${tool.help} (${tool.slots.size - pendingCount} more)"
         }
         onChange()
     }

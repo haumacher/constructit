@@ -4,11 +4,13 @@ import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.core.SourceNode
 import constructit.core.Value
+import constructit.dsl.ArcRef
 import constructit.dsl.CircleRef
 import constructit.dsl.Construction
 import constructit.dsl.LineRef
 import constructit.dsl.PointRef
 import constructit.dsl.PointSetRef
+import constructit.dsl.RayRef
 import constructit.dsl.Ref
 import constructit.dsl.ScalarRef
 import constructit.dsl.SegmentRef
@@ -103,6 +105,19 @@ class Document {
         val refs = ArrayList<PointRef>()
         refs.add(cx.select(set, +1))
         if (!lineLine) refs.add(cx.select(set, -1))
+        refs.forEach { addDerived(it) }
+        return refs
+    }
+
+    /** Materialize a curve's defining points as derived points (works on transformed geometry too). */
+    fun extractPoints(el: Element): List<PointRef> {
+        val refs: List<PointRef> = when (el.kind) {
+            ElementKind.SEGMENT -> listOf(cx.segmentStart(el.ref as SegmentRef), cx.segmentEnd(el.ref as SegmentRef))
+            ElementKind.CIRCLE -> listOf(cx.circleCenter(el.ref as CircleRef))
+            ElementKind.ARC -> listOf(cx.arcCenter(el.ref as ArcRef), cx.arcStart(el.ref as ArcRef), cx.arcEnd(el.ref as ArcRef))
+            ElementKind.RAY -> listOf(cx.rayOrigin(el.ref as RayRef))
+            else -> emptyList()
+        }
         refs.forEach { addDerived(it) }
         return refs
     }
