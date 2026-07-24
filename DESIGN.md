@@ -49,6 +49,50 @@ as constraints become **shared inputs or shared sub-constructions** here.
 - **Macros / custom constructions:** encapsulate a sub-DAG as a reusable tool,
   e.g. `perpBisector(P1, P2) → line`. First-class from day one.
 
+## Node graph data model (OP-5 — RESOLVED)
+
+One uniform, **strongly typed** dataflow DAG. Nodes produce typed values; numbers and
+geometry live in the *same* graph, so measurements (OP-4) and expressions (OP-7) are just
+ordinary nodes.
+
+### Value types
+- **v1 / 2D:** `Scalar`, `Angle`, `Point`, `Direction`, `Line`, `Ray`, `Segment`, `Circle`,
+  `Arc`, and **`PointSet`** (ordered solution set — see below).
+- **later / 3D:** `Point3`, `Plane`, `Axis`, `Sketch`, `Solid`, `Face`, `Edge`, …
+
+### Node structure
+- `id` — stable identity (references, files, undo)
+- `op` — operation (`FreePoint`, `Parameter`, `LineThrough`, `CircleCenterRadius`,
+  `IntersectCC`, `Select`, `Midpoint`, `Measure.*`, `Expr`, …)
+- `inputs` — ordered references to other nodes' outputs (the edges)
+- `literals` — stored constants for source nodes (free-point coords, parameter value/expr)
+- `output` — cached typed value (**exactly one per node**)
+- `validity` — valid / invalid (OP-3)
+
+### One output per node — intersections via a solution-set type
+Chosen over both "single-output + selector-on-node" and "multi-output ports":
+- Intersection ops emit an **ordered solution set** value (e.g. `IntersectCC → PointSet`).
+  The canonical ordering is fixed by the OP-1 orientation rule, so index/sign is stable.
+- A separate **`Select(set, sign) → Point`** node picks the branch.
+- **Benefits:** every node has exactly one output (uniform, simple edges); the set is
+  computed **once** and shared by multiple `Select` nodes (efficient); clean separation of
+  *solve* vs *choose branch*. The OP-1 branch selector lives on the `Select` node.
+- **Cardinality via validity:** empty set → `Select` invalid (propagates); tangency
+  (1 element) → both signs return the same point.
+- **Generalizes** to higher-order intersections (conics: up to 4) via the same ordered set.
+
+### Evaluation
+- Topological order with **dirty-marking** for incremental recompute: a free-point drag or
+  parameter edit mutates a literal, marks the node dirty, and recomputes only the affected
+  downstream cone. Outputs are cached.
+
+### How the coupled points attach (details deferred to their own OPs)
+- **OP-4 (measurements):** `Measure.Distance(P1, P2) → Scalar` is an ordinary node; its
+  `Scalar` output feeds any `Scalar` input. Graph stays acyclic.
+- **OP-7 (expressions):** an `Expr` node takes `Scalar`/`Angle` inputs → `Scalar`.
+- **OP-6 (macros):** a subgraph with designated input/output ports, instantiable as one
+  composite node.
+
 ## Intersections — branch selection (OP-1 — RESOLVED)
 
 `intersect(circle, circle)` yields 0, 1, or 2 points. **Decision: deterministic,
@@ -56,18 +100,19 @@ orientation-based branch selection; the model stays a pure function of its param
 (Continuity tracking is explicitly rejected as the core mechanism because it is
 path-dependent and would break reproducibility/undo/reload.)
 
-- Each intersection node stores a small discrete **branch selector** (sign `+1/-1` or index).
-- The branch is recomputed each evaluation from a geometric rule that is continuous
-  everywhere except at genuine degeneracies:
+- Intersection ops emit an **ordered solution set** value (see OP-5, `PointSet`); a separate
+  **`Select(set, sign)`** node holds the discrete **branch selector** (sign `+1/-1` or index).
+- The set's canonical ordering is fixed by a geometric rule, continuous everywhere except at
+  genuine degeneracies:
   - **circle–circle:** side of the directed line `center(C1) → center(C2)`
     (sign of a cross product). Stable under any translate/rotate/scale.
   - **line–circle:** order of the two hits along the line's own direction (first/second).
-  - **line–line:** unique — no selector needed.
-- **Creation UX:** clicking near one intersection sets the selector to that side. Natural to
-  create, stable to recompute.
-- **Tangency:** the two solutions coincide → same point, no special handling needed.
-- **No solution:** node becomes invalid → hidden + flagged; dependents propagate invalid
-  (see OP-3). No special-casing required.
+  - **line–line:** unique — the set has one element.
+- **Creation UX:** clicking near one intersection sets the `Select` sign to that side.
+  Natural to create, stable to recompute.
+- **Tangency:** the two solutions coincide → both signs return the same point.
+- **No solution:** empty set → `Select` becomes invalid → hidden + flagged; dependents
+  propagate invalid (see OP-3). No special-casing required.
 - **Optional later hybrid:** during interactive drag *only*, continuity tracking may be used
   as a heuristic to auto-update the discrete selector — but the discrete selector is always
   persisted, so the stored model stays pure. Does not compromise the core.
@@ -139,7 +184,10 @@ path-dependent and would break reproducibility/undo/reload.)
       **hidden and flagged invalid**; their definitions are retained, so the model **heals
       automatically** when inputs return to a valid range.
 - [ ] **OP-4 Measurements feeding back as parameters** (bidirectional dataflow) in v1?
-- [ ] **OP-5 Node graph data model** — concrete representation of nodes/edges/params.
+- [x] **OP-5 Node graph data model** — RESOLVED: one uniform, strongly-typed dataflow DAG;
+      unified numbers+geometry; exactly one output per node; intersections emit an ordered
+      `PointSet` value consumed by a separate `Select(set, sign)` node (computed once, shared);
+      topological eval with dirty-marking.
 - [ ] **OP-6 Macros / custom constructions** — encapsulation & composition mechanics.
 - [ ] **OP-7 Expression language** for parameters (units, derived values).
 - [ ] **OP-8 Topological naming** identity strategy at the 3D kernel boundary.
@@ -173,3 +221,8 @@ path-dependent and would break reproducibility/undo/reload.)
   parameters; continuity tracking rejected as core (optional drag-only heuristic later).
   Resolved OP-3: per-node validity, transitive invalid propagation, hide+flag, auto-heal.
   Recorded OP-10 as deferred with platform constraints (avoid C/JS, web acceptable).
+- **Turn 4** — Resolved OP-5 (node graph data model): one uniform strongly-typed dataflow
+  DAG, unified numbers+geometry, exactly one output per node. Key refinement (user's idea):
+  intersections emit an ordered `PointSet` value consumed by a separate `Select(set, sign)`
+  node — computed once, shared, uniform. Relocated OP-1's branch selector onto `Select`.
+  Confirmed strong typing. OP-4/6/7 shown attaching cleanly to the model.
