@@ -103,7 +103,7 @@ class Editor(
             SlotKind.PLACE_POINT -> { pickedPoints.add(doc.freePoint(world.x.mm, world.y.mm)); true }
             SlotKind.POINT -> { pickedPoints.add(pointOrCreate(world)); true }
             SlotKind.CURVE -> pickElement(world) { it.isCurve }
-            SlotKind.LINE -> pickElement(world) { it.kind == ElementKind.LINE }
+            SlotKind.LINE -> pickElement(world) { it.isLinear }   // a segment or ray also carries a line
             SlotKind.CIRCLE -> pickElement(world) { it.kind == ElementKind.CIRCLE }
             SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
             SlotKind.GEOMETRY -> pickElement(world) { true }

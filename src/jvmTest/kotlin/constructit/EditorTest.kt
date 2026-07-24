@@ -212,6 +212,31 @@ class EditorTest {
     }
 
     @Test
+    fun lineSlotsAcceptSegmentsAsCarrierLine() {
+        val ed = Editor()
+        ed.setTool(Tools.SEGMENT); ed.click(Vec2(-40.0, 0.0)); ed.click(Vec2(40.0, 0.0))  // horizontal segment
+        ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 20.0))
+        ed.setTool(Tools.PERPENDICULAR); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(0.0, 20.0)) // click the segment as the "line"
+
+        val l = Evaluator().line(ed.doc.elements.last { it.kind == ElementKind.LINE }.ref as LineRef)
+        assertClose(l.dir.x, 0.0, tol = 1e-9)   // perpendicular to a horizontal carrier line is vertical
+        assertClose(l.origin.x, 0.0); assertClose(l.origin.y, 20.0)
+    }
+
+    @Test
+    fun intersectingTwoSegmentsGivesOnePoint() {
+        val ed = Editor()
+        ed.setTool(Tools.SEGMENT); ed.click(Vec2(-30.0, -20.0)); ed.click(Vec2(30.0, 20.0))
+        ed.setTool(Tools.SEGMENT); ed.click(Vec2(-30.0, 20.0)); ed.click(Vec2(30.0, -20.0))
+        ed.setTool(Tools.INTERSECT); ed.click(Vec2(15.0, 10.0)); ed.click(Vec2(15.0, -10.0))
+
+        val derived = ed.doc.elements.filter { it.kind == ElementKind.DERIVED_POINT }
+        assertEquals(1, derived.size, "two segments' carrier lines meet in one point")
+        val p = Evaluator().point(derived[0].ref as constructit.dsl.PointRef)
+        assertClose(p.x, 0.0); assertClose(p.y, 0.0)
+    }
+
+    @Test
     fun keyPointsExposesMirroredSegmentEndpoints() {
         val ed = Editor()
         ed.setTool(Tools.SEGMENT); ed.click(Vec2(10.0, 10.0)); ed.click(Vec2(30.0, 10.0))

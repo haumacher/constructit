@@ -38,6 +38,8 @@ class Element(
     val draggable: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.ON_CURVE
     val isCurve: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY || kind == ElementKind.ARC
     val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT || kind == ElementKind.ON_CURVE
+    /** Line / segment / ray — anything that determines an infinite line. */
+    val isLinear: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY
 }
 
 /** A named scalar: an editable parameter (OP-7) or a read-only measurement (OP-4). */
@@ -66,6 +68,14 @@ class Document {
     private fun addDerived(ref: PointRef): PointRef {
         add(ref, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
         return ref
+    }
+
+    /** Coerce a line/segment/ray element to its infinite carrier line. */
+    @Suppress("UNCHECKED_CAST")
+    private fun carrierLine(el: Element): LineRef = when (el.kind) {
+        ElementKind.SEGMENT -> cx.lineOfSegment(el.ref as SegmentRef)
+        ElementKind.RAY -> cx.lineOfRay(el.ref as RayRef)
+        else -> el.ref as LineRef
     }
 
     // ---- free points & scalars ----
@@ -137,7 +147,7 @@ class Document {
     // ---- points ----
 
     fun midpoint(a: PointRef, b: PointRef) = addDerived(cx.midpoint(a, b))
-    fun projectToLine(p: PointRef, line: Element) = addDerived(cx.projectToLine(p, line.ref as LineRef))
+    fun projectToLine(p: PointRef, line: Element) = addDerived(cx.projectToLine(p, carrierLine(line)))
 
     private fun addConstrained(ref: PointRef, constraint: PointConstraint): PointRef {
         elements.add(Element(nextId("e"), ref, ElementKind.ON_CURVE, Styles.ON_CURVE, constraint = constraint))
@@ -146,7 +156,7 @@ class Document {
 
     /** Point that slides along a line; created at the projection of [at], draggable along the line. */
     fun pointOnLine(line: Element, at: Vec2): PointRef {
-        val lineRef = line.ref as LineRef
+        val lineRef = carrierLine(line)
         val l = (Evaluator().eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
         val t0 = if (l != null) (at - l.line.origin).dot(l.line.dir) else 0.0
         val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(t0)))
@@ -155,7 +165,7 @@ class Document {
 
     /** Fully-determined point on a line at [distance] from [from]; direction from the click side of [at]. */
     fun pointAlongLine(line: Element, from: PointRef, distance: ScalarRef, at: Vec2): PointRef {
-        val lineRef = line.ref as LineRef
+        val lineRef = carrierLine(line)
         val ev = Evaluator()
         val l = (ev.eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
         val fromP = (ev.eval(from.node) as? EvalResult.Ok)?.value as? PointValue
@@ -176,15 +186,20 @@ class Document {
         return addConstrained(cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode)), OnCircleConstraint(circleRef, aNode))
     }
 
-    /** Intersect two curves; branch count follows the pair type (line-line: 1, else: 2). */
+    /**
+     * Intersect two curves. Segments/rays are treated as their carrier line. Branch count
+     * follows the pair type (line-like ∩ line-like: 1 point, else: 2).
+     */
     fun intersect(a: Element, b: Element): List<PointRef> {
-        val lineLine = a.kind == ElementKind.LINE && b.kind == ElementKind.LINE
+        val aLin = a.isLinear; val bLin = b.isLinear
+        val aCirc = a.kind == ElementKind.CIRCLE; val bCirc = b.kind == ElementKind.CIRCLE
+        val lineLine = aLin && bLin
         @Suppress("UNCHECKED_CAST")
         val set: PointSetRef = when {
-            lineLine -> cx.intersectLL(a.ref as LineRef, b.ref as LineRef)
-            a.kind == ElementKind.CIRCLE && b.kind == ElementKind.CIRCLE -> cx.intersectCC(a.ref as CircleRef, b.ref as CircleRef)
-            a.kind == ElementKind.LINE && b.kind == ElementKind.CIRCLE -> cx.intersectLC(a.ref as LineRef, b.ref as CircleRef)
-            a.kind == ElementKind.CIRCLE && b.kind == ElementKind.LINE -> cx.intersectLC(b.ref as LineRef, a.ref as CircleRef)
+            lineLine -> cx.intersectLL(carrierLine(a), carrierLine(b))
+            aCirc && bCirc -> cx.intersectCC(a.ref as CircleRef, b.ref as CircleRef)
+            aLin && bCirc -> cx.intersectLC(carrierLine(a), b.ref as CircleRef)
+            aCirc && bLin -> cx.intersectLC(carrierLine(b), a.ref as CircleRef)
             else -> return emptyList()
         }
         val refs = ArrayList<PointRef>()
@@ -228,13 +243,13 @@ class Document {
 
     fun perpBisector(a: PointRef, b: PointRef) = add(cx.perpBisector(a, b), ElementKind.LINE, Styles.CONSTRUCT)
     fun angleBisector(a: PointRef, v: PointRef, b: PointRef) = add(cx.angleBisector(a, v, b), ElementKind.LINE, Styles.CONSTRUCT)
-    fun perpendicularThrough(line: Element, p: PointRef) = add(cx.perpendicularThrough(line.ref as LineRef, p), ElementKind.LINE, Styles.CONSTRUCT)
+    fun perpendicularThrough(line: Element, p: PointRef) = add(cx.perpendicularThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
     /** Tangent at a point-on-circle — the circle is inferred from the point's constraint. */
     fun tangentAtPointOnCircle(pointEl: Element) {
         val c = pointEl.constraint
         if (c is OnCircleConstraint) add(cx.tangentAtCircle(c.circle, pointEl.ref as PointRef), ElementKind.LINE, Styles.CONSTRUCT)
     }
-    fun parallelThrough(line: Element, p: PointRef) = add(cx.parallelThrough(line.ref as LineRef, p), ElementKind.LINE, Styles.CONSTRUCT)
+    fun parallelThrough(line: Element, p: PointRef) = add(cx.parallelThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
 
     // ---- transforms (preserve source kind & style) ----
 

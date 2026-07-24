@@ -441,6 +441,19 @@ class Construction {
     // These let *derived* geometry (e.g. a mirrored segment) expose usable points for further
     // construction — the compound-value+accessor principle (OP-6/OP-8).
 
+    /** The infinite line carrying a segment (through its endpoints). */
+    fun lineOfSegment(s: SegmentRef): LineRef = op(s) {
+        val seg = (it[0] as SegmentValue).seg
+        if ((seg.b - seg.a).length() < Vec2.EPS) EvalResult.Invalid("degenerate segment")
+        else EvalResult.Ok(LineValue(Line(seg.a, (seg.b - seg.a).normalized())))
+    }
+
+    /** The infinite line carrying a ray. */
+    fun lineOfRay(r: RayRef): LineRef = op(r) {
+        val ray = (it[0] as RayValue).ray
+        EvalResult.Ok(LineValue(Line(ray.origin, ray.dir)))
+    }
+
     fun segmentStart(s: SegmentRef): PointRef = op(s) { EvalResult.Ok(PointValue((it[0] as SegmentValue).seg.a)) }
     fun segmentEnd(s: SegmentRef): PointRef = op(s) { EvalResult.Ok(PointValue((it[0] as SegmentValue).seg.b)) }
     fun circleCenter(c: CircleRef): PointRef = op(c) { EvalResult.Ok(PointValue((it[0] as CircleValue).circle.center)) }
