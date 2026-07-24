@@ -217,23 +217,23 @@ auto-uniquified so wiring is unambiguous):
 - Parameter **wiring** (reduce DOF; equality by shared reference), measurement-as-scalar-input.
 - Any `LINE` slot also accepts a segment/ray (carrier line).
 
-**Deferred (natural, not yet built):**
-- **Point from coordinates** (needs two scalar inputs — our slot model has one active scalar).
-- **Chamfer** (straight bevel between two legs).
-- **Regular polygon** / **Rectangle** / **Rounded-rectangle** tools (the last exists as a macro).
-- **Arrays**: linear (repeat N along a vector) and circular (repeat around a centre) — the
-  interactive generalization of the bolt-circle/hole-pattern macros. Needs a count input.
-- **Area** measurement (needs an area op).
+**Remaining — build order (all planned; ordered, not deferred):**
 
-**Deferred (strategic):**
-- **User-defined macros UI** — record a sub-construction, designate inputs, get a reusable
-  tool (OP-6 `Macro` machinery exists in the engine; needs a record/parameterize UI). The
-  headline capability of this paradigm.
-- **Dimensions & annotations** — dimension lines/leaders showing a measured length/angle;
-  essential for the 2D technical/architectural-drawing goal.
-- **Auto-snapping** — ordinary point clicks snap to key points, intersections, and grid.
-- **Delete / undo-redo / save-load** — Delete with dependency handling; undo via source-value
-  snapshots; save/load with the `Document` as the file-format seam.
+1. **Tool completions.** Point-from-coordinates (needs two scalar inputs — extend the slot
+   model beyond a single active scalar), Chamfer (straight bevel between two legs), Rectangle,
+   Regular polygon, Rounded-rectangle (expose the existing macro), Area measurement (needs an
+   area op).
+2. **Editing & persistence.** Delete (dependency-aware — removing a node invalidates/removes
+   dependents), undo/redo (snapshot source values + element list), save/load — the `Document`
+   is the file-format seam.
+3. **Productivity.** Auto-snapping (ordinary point clicks snap to key points, intersections,
+   grid); Arrays — linear (repeat N along a vector) and circular (around a centre), the
+   interactive generalization of the bolt-circle/hole-pattern macros (needs a count input).
+4. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
+   tool (OP-6 `Macro` machinery exists in the engine; needs the record/parameterize UI). The
+   headline capability of the paradigm.
+5. **Dimensions & annotations.** Dimension lines/leaders showing a measured length/angle —
+   for the 2D technical/architectural-drawing goal.
 
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
