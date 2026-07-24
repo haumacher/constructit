@@ -137,8 +137,9 @@ object Svg {
         val s0 = screen(p0); val s1 = screen(p1)
         val sweepAngle = if (arc.ccw) norm2pi(arc.endAngle - arc.startAngle) else norm2pi(arc.startAngle - arc.endAngle)
         val largeArc = if (sweepAngle > Math.PI) 1 else 0
-        // math-CCW appears CW in screen space (y-down) -> SVG sweep-flag 1.
-        val sweepFlag = if (arc.ccw) 1 else 0
+        // We emit in screen space (y negated). SVG sweep-flag=1 is increasing screen-angle;
+        // negating y flips the sense, so a math-CCW arc is sweep-flag 0 (and math-CW is 1).
+        val sweepFlag = if (arc.ccw) 0 else 1
         return "  <path d=\"M ${fmt(s0.x)} ${fmt(s0.y)} A ${fmt(arc.radius)} ${fmt(arc.radius)} 0 $largeArc $sweepFlag ${fmt(s1.x)} ${fmt(s1.y)}\" fill=\"none\" stroke=\"$stroke\" stroke-width=\"${fmt(STROKE_WIDTH)}\"/>\n"
     }
 
