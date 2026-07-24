@@ -119,8 +119,11 @@ as constraints become **shared inputs or shared sub-constructions** here.
 - [ ] **OP-8 Topological naming** identity strategy at the 3D kernel boundary.
 - [ ] **OP-9 3D representation / kernel** — B-rep (OCCT) vs CSG vs implicit (F-rep/SDF).
       Depends on platform (OP-10) and fillet/chamfer precision needs.
-- [ ] **OP-10 Implementation platform** — desktop native vs web/browser; language(s).
-      Interacts strongly with kernel choice.
+- [ ] **OP-10 Implementation platform** — DEFERRED. Constraints so far: dislikes C and
+      TS/JS; **web is an acceptable platform**. Note: "web" does not require writing JS —
+      a web frontend can be compiled from Java (GWT/TeaVM), Kotlin/JS, or Rust→WASM. So
+      leading candidates are JVM (Java/Kotlin) or Rust, optionally targeting the browser.
+      Interacts strongly with kernel choice (OP-9).
 
 ## Prior art to keep in mind
 
