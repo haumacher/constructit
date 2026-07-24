@@ -177,6 +177,30 @@ The test cases double as the model's **worked spec examples** (perpendicular bis
 rounded-rect macro, bolt circle, hole pattern). Same pattern extends to phase-2:
 construct in code → export STL/3MF → assert manifold / volume / bbox.
 
+## Canvas / editor architecture (implemented)
+
+Elastic layering — everything except pixel-drawing and native events is pure Kotlin
+(`commonMain`, portable to any target); only the last two layers are platform-specific/thin:
+
+```
+Platform shell (thin)  — jsMain: DOM toolbar/tree, native event plumbing, repaint
+DrawTarget (interface) — screen-space draw ops; impls: SvgDrawTarget (tests), BrowserCanvas (jsMain)
+InteractionController  — Editor: tool state machine, hit-testing, drag; abstract pointer events
+Camera                 — world<->screen (pan/zoom about cursor)
+SceneRenderer          — world->screen projection, arc tessellation, line/ray clipping, grid
+Document               — retained construction + display metadata; enumerable; the file-format seam
+Engine                 — Construction DAG + Evaluator (unchanged)
+```
+
+- **Headless-testable:** interaction is pure + event-driven, so gestures are simulated in
+  `commonMain`/`jvmTest` and the scene snapshotted via `SvgDrawTarget` — same golden discipline.
+- **Browser E2E:** Playwright (Java) drives system Chrome against the built distribution,
+  gated behind `-De2e=1`; screenshots under `build/e2e/`.
+- **To move to another platform** (desktop, etc.): add one `DrawTarget` impl + one event
+  adapter; layers Document..InteractionController are untouched.
+- Run locally: `./gradlew jsBrowserDevelopmentRun`. MVP tools: Select/drag, Point, Line,
+  Circle, Intersect; live parametric recompute on drag; pan + zoom; grid + axes.
+
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
 - Every node has a **validity state** (valid / invalid).
@@ -511,3 +535,9 @@ Three broad families (see OP-9 decision above):
   arc-through-3/direction, and a Profile type (bridge to 3D). Added showcase tests with
   known-answer invariants (Euler line, Thales, tangent lengths, fillet tangency, obround,
   hexagon, golden-ratio pentagon). 33 tests green.
+- **Turn 14** — Built the interactive canvas as a Kotlin Multiplatform app (deferring the OP-7
+  string parser). Chose browser (Kotlin/JS) over JavaFX (DOM UI far cheaper; real target).
+  Elastic layering: pure engine/document/scene/camera/interaction core in commonMain behind a
+  DrawTarget interface; thin jsMain shell (HTML5 canvas + DOM). Phases A–D: KMP restructure,
+  pure interaction core (headless gesture tests + SVG scene snapshot), browser shell, and
+  Playwright E2E driving system Chrome with screenshots. 40 jvm tests (1 E2E, opt-in).
