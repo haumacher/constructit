@@ -36,7 +36,9 @@ class OnLineConstraint(private val line: LineRef, private val t: SourceNode) : P
  * edge axis-aligned — no downstream cascade, no solver. A coordinate welded to the start (loop
  * closure) is bound and simply ignores the write.
  */
-class OrthoCornerConstraint(private val xNode: SourceNode, private val yNode: SourceNode) : PointConstraint {
+class OrthoCornerConstraint(val xNode: SourceNode, val yNode: SourceNode) : PointConstraint {
+    /** True while this vertex terminates its path (degree 1) — the case that may weld/attach. */
+    var isEndpoint: Boolean = true
     override fun update(world: Vec2, ev: Evaluator) {
         xNode.value = ScalarValue(Quantity.mm(world.x))
         yNode.value = ScalarValue(Quantity.mm(world.y))

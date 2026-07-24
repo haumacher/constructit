@@ -527,6 +527,50 @@ class EditorTest {
     }
 
     @Test
+    fun draggingTheVertexBeforeAClosingEdgeHasTwoDof() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(60.0, 3.0)); ed.click(Vec2(58.0, 40.0)); ed.click(Vec2(2.0, 40.0))
+        ed.click(Vec2(0.0, 0.0))   // close -> V3 shares x with V0
+        val verts = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }   // [V0,V1,V2,V3]
+        fun p(i: Int) = Evaluator().point(verts[i].ref as constructit.dsl.PointRef)
+
+        // drag V3 (the vertex before the closing edge) diagonally: it must move in BOTH axes
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(p(3)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(20.0, 25.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(20.0, 25.0)))
+
+        assertClose(p(3).x, 20.0); assertClose(p(3).y, 25.0)   // 2 DOF, not pinned to the start
+        assertClose(p(0).x, 20.0)   // start followed on the shared (closing) axis, keeping the edge axis-aligned
+        assertClose(p(2).y, 25.0)   // the other neighbour followed too
+    }
+
+    @Test
+    fun openOrthoEndpointAttachesToALineByDragging() {
+        val ed = Editor()
+        ed.setTool(Tools.LINE); ed.click(Vec2(30.0, -50.0)); ed.click(Vec2(30.0, 50.0))  // vertical line x=30
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(40.0, 3.0)); ed.click(Vec2(38.0, 30.0))   // V0,V1(40,0),V2(40,30)
+        ed.finishPath()
+        val end = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }[2]           // V2, the open end
+
+        // drag the endpoint onto the line
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(40.0, 30.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(30.0, 30.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(30.0, 30.0)))
+        assertClose(Evaluator().point(end.ref as constructit.dsl.PointRef).x, 30.0)   // landed on the line
+
+        // it now slides along the line: dragging it stays on x=30
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(30.0, 30.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(25.0, 10.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(25.0, 10.0)))
+        val q = Evaluator().point(end.ref as constructit.dsl.PointRef)
+        assertClose(q.x, 30.0); assertClose(q.y, 10.0)   // constrained to the line, y follows
+    }
+
+    @Test
     fun closedWallLoopMitersEveryCornerWithNoCaps() {
         val ed = Editor()
         ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)

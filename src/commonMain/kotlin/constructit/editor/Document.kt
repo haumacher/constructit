@@ -54,7 +54,7 @@ class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val edit
  * them. [ownAxis] is the coordinate introduced by the edge that created it (0 = x, 1 = y, -1 = the
  * start, which owns both) — the safe one to bind when closing a loop.
  */
-class OrthoVertex(val ref: PointRef, val xNode: SourceNode, val yNode: SourceNode, val ownAxis: Int)
+class OrthoVertex(val ref: PointRef, val corner: OrthoCornerConstraint, val ownAxis: Int)
 
 /** A gap in a wall leg: [position] = distance from the leg start, [width] along the leg. */
 class Opening(val legIndex: Int, val position: ScalarRef, val width: ScalarRef)
@@ -222,17 +222,26 @@ class Document {
     fun attachTargetPos(pt: Element, curve: Element): Vec2? {
         val node = pt.ref.node as? SourceNode ?: return null
         if (pt.kind != ElementKind.POINT || node.boundTo != null) return null
-        val p = (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p } ?: return null
+        return curveProjection(pt, curve)
+    }
+
+    /**
+     * Where point-element [pt] projects onto [curve] (foot on a line, nearest point on a circle), or
+     * null if [curve] is built from [pt] (would cycle) or isn't a line/circle. Works for any point,
+     * so both free points and ortho endpoints can use it for the drag magnet.
+     */
+    fun curveProjection(pt: Element, curve: Element): Vec2? {
+        val p = (Evaluator().eval(pt.ref.node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p } ?: return null
         return when {
             curve.isLinear -> {
                 val lr = carrierLine(curve)
-                if (dependsOn(lr.node, node, HashSet())) return null
+                if (dependsOn(lr.node, pt.ref.node, HashSet())) return null
                 val l = (Evaluator().eval(lr.node) as? EvalResult.Ok)?.value as? LineValue ?: return null
                 l.line.origin + l.line.dir * (p - l.line.origin).dot(l.line.dir)
             }
             curve.kind == ElementKind.CIRCLE -> {
                 val cr = curve.ref as CircleRef
-                if (dependsOn(cr.node, node, HashSet())) return null
+                if (dependsOn(cr.node, pt.ref.node, HashSet())) return null
                 val c = (Evaluator().eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue ?: return null
                 val d = p - c.circle.center
                 val len = d.length()
@@ -273,6 +282,54 @@ class Document {
         }
         pt.kind = ElementKind.ON_CURVE
         pt.style = Styles.ON_CURVE
+        return true
+    }
+
+    /** The ortho-corner constraint of [el] if it is a draggable *end* of an open path, else null. */
+    fun orthoEndpoint(el: Element): OrthoCornerConstraint? =
+        (el.constraint as? OrthoCornerConstraint)?.takeIf { it.isEndpoint }
+
+    /**
+     * Attach an ortho path endpoint [el] onto [curve]: both its coordinate nodes are bound to a fresh
+     * point-on-curve, so the endpoint — and the neighbour sharing one coordinate — follow the curve,
+     * and dragging it now slides along the curve. The ortho analogue of [attachToCurve].
+     */
+    fun attachOrthoEndpointToCurve(el: Element, curve: Element): Boolean {
+        val corner = orthoEndpoint(el) ?: return false
+        val ev = Evaluator()
+        val p = (ev.eval(el.ref.node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p } ?: return false
+        val pol: PointRef = when {
+            curve.isLinear -> {
+                val lr = carrierLine(curve)
+                if (dependsOn(lr.node, el.ref.node, HashSet())) return false
+                val l = (ev.eval(lr.node) as EvalResult.Ok).value as LineValue
+                val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm((p - l.line.origin).dot(l.line.dir))))
+                el.constraint = OnLineConstraint(lr, tNode)
+                cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode))
+            }
+            curve.kind == ElementKind.CIRCLE -> {
+                val cr = curve.ref as CircleRef
+                if (dependsOn(cr.node, el.ref.node, HashSet())) return false
+                val c = (ev.eval(cr.node) as EvalResult.Ok).value as CircleValue
+                val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
+                el.constraint = OnCircleConstraint(cr, aNode)
+                cx.pointOnCircle(cr, Ref<ScalarValue>(aNode))
+            }
+            else -> return false
+        }
+        corner.xNode.boundTo = cx.measureX(pol).node
+        corner.yNode.boundTo = cx.measureY(pol).node
+        return true
+    }
+
+    /** Weld an ortho path endpoint [el] onto point [target]: its coordinates track the target. */
+    fun weldOrthoEndpointToPoint(el: Element, target: Element): Boolean {
+        val corner = orthoEndpoint(el) ?: return false
+        val tref = target.ref as? PointRef ?: return false
+        if (!target.isPoint || target === el || dependsOn(tref.node, el.ref.node, HashSet())) return false
+        corner.xNode.boundTo = cx.measureX(tref).node
+        corner.yNode.boundTo = cx.measureY(tref).node
+        corner.isEndpoint = false
         return true
     }
 
@@ -379,14 +436,15 @@ class Document {
 
     private fun scalarSource(value: Double): SourceNode = SourceNode(nextId("oc"), ScalarValue(value.mm))
 
-    private fun orthoVertexElement(x: SourceNode, y: SourceNode): OrthoVertex {
+    private fun orthoVertex(x: SourceNode, y: SourceNode, ownAxis: Int): OrthoVertex {
+        val corner = OrthoCornerConstraint(x, y)
         val ref = cx.pointXY(Ref<ScalarValue>(x), Ref<ScalarValue>(y))
-        addConstrained(ref, OrthoCornerConstraint(x, y))
-        return OrthoVertex(ref, x, y, -1)
+        addConstrained(ref, corner)
+        return OrthoVertex(ref, corner, ownAxis)
     }
 
     /** Start an ortho path at [at] with a fresh, draggable vertex owning both coordinates. */
-    fun startOrthoVertex(at: Vec2): OrthoVertex = orthoVertexElement(scalarSource(at.x), scalarSource(at.y))
+    fun startOrthoVertex(at: Vec2): OrthoVertex = orthoVertex(scalarSource(at.x), scalarSource(at.y), -1)
 
     /**
      * Append an axis-aligned vertex from [prev] toward [to]: the dominant delta picks a horizontal or
@@ -400,12 +458,10 @@ class Document {
         if (abs(dx) < Vec2.EPS && abs(dy) < Vec2.EPS) return null
         // horizontal edge: new x node, share prev's y node (ownAxis 0); vertical: share x, new y (ownAxis 1)
         val xNode: SourceNode; val yNode: SourceNode; val ownAxis: Int
-        if (abs(dx) >= abs(dy)) { xNode = scalarSource(to.x); yNode = prev.yNode; ownAxis = 0 }
-        else                    { xNode = prev.xNode; yNode = scalarSource(to.y); ownAxis = 1 }
-        val ref = cx.pointXY(Ref<ScalarValue>(xNode), Ref<ScalarValue>(yNode))
-        addConstrained(ref, OrthoCornerConstraint(xNode, yNode))
-        segment(prev.ref, ref)
-        return OrthoVertex(ref, xNode, yNode, ownAxis)
+        if (abs(dx) >= abs(dy)) { xNode = scalarSource(to.x); yNode = prev.corner.yNode; ownAxis = 0 }
+        else                    { xNode = prev.corner.xNode; yNode = scalarSource(to.y); ownAxis = 1 }
+        if (prev.ownAxis != -1) prev.corner.isEndpoint = false   // prev now has two edges (unless it is the start)
+        return orthoVertex(xNode, yNode, ownAxis).also { segment(prev.ref, it.ref) }
     }
 
     /** Where an ortho leg from [from] toward [to] lands (rubber-band preview): snapped to H or V. */
@@ -416,15 +472,24 @@ class Document {
     }
 
     /**
-     * Close an ortho loop: bind the last vertex's own coordinate to the start's matching coordinate
-     * (via [SourceNode.boundTo]), so the last point snaps one coordinate to fit and the closing edge
-     * is axis-aligned — and stays so if the start later moves.
+     * Close an ortho loop so the closing edge is axis-aligned. The last vertex's own coordinate is
+     * **shared** with the start's matching coordinate: its source node is bound to the start's (so
+     * the geometry snaps to fit), and its drag-constraint is redirected to write the start's node —
+     * so dragging the last vertex moves the start with it (2 DOF, symmetric with every other corner)
+     * rather than being pinned. Both vertices stop being endpoints.
      */
     fun closeOrthoPath(first: OrthoVertex, last: OrthoVertex) {
-        when (last.ownAxis) {
-            0 -> last.xNode.boundTo = first.xNode   // own x -> vertical closing edge
-            1 -> last.yNode.boundTo = first.yNode   // own y -> horizontal closing edge
+        val el = elements.firstOrNull { it.ref === last.ref } ?: return
+        val redirect = when (last.ownAxis) {
+            0 -> { last.corner.xNode.boundTo = first.corner.xNode      // own x -> vertical closing edge
+                   OrthoCornerConstraint(first.corner.xNode, last.corner.yNode) }
+            1 -> { last.corner.yNode.boundTo = first.corner.yNode      // own y -> horizontal closing edge
+                   OrthoCornerConstraint(last.corner.xNode, first.corner.yNode) }
+            else -> return
         }
+        redirect.isEndpoint = false
+        first.corner.isEndpoint = false
+        el.constraint = redirect
     }
 
     val walls = ArrayList<Wall>()

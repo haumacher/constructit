@@ -151,11 +151,11 @@ class Editor(
                 val el = dragPoint!!
                 val world = camera.screenToWorld(screen)
                 val c = el.constraint
-                if (c != null) {
-                    c.update(world, ev()); clearMagnet()
-                } else {
-                    doc.moveFreePoint(el, world)
-                    updateMagnet(el, world)   // highlight a point to weld onto, or a curve to attach to
+                when {
+                    // an open ortho-path end drags normally AND shows the weld/attach magnet
+                    c is OrthoCornerConstraint && c.isEndpoint -> { c.update(world, ev()); updateMagnet(el, world) }
+                    c != null -> { c.update(world, ev()); clearMagnet() }
+                    else -> { doc.moveFreePoint(el, world); updateMagnet(el, world) }
                 }
                 onChange()
             }
@@ -175,10 +175,13 @@ class Editor(
         clearMagnet()                // clear before rendering so the magnet halo doesn't linger
         panning = false
         if (dragged != null) {
-            if (weld != null && doc.weld(dragged, weld)) {
-                statusHint = "Joined ${dragged.id} onto ${weld.id}"; onChange()
-            } else if (attach != null && doc.attachToCurve(dragged, attach)) {
-                statusHint = "Attached ${dragged.id} to ${attach.id}"; onChange()
+            val ortho = dragged.constraint is OrthoCornerConstraint
+            if (weld != null) {
+                val ok = if (ortho) doc.weldOrthoEndpointToPoint(dragged, weld) else doc.weld(dragged, weld)
+                if (ok) { statusHint = "Joined ${dragged.id} onto ${weld.id}"; onChange() }
+            } else if (attach != null) {
+                val ok = if (ortho) doc.attachOrthoEndpointToCurve(dragged, attach) else doc.attachToCurve(dragged, attach)
+                if (ok) { statusHint = "Attached ${dragged.id} to ${attach.id}"; onChange() }
             }
         }
     }
@@ -205,7 +208,7 @@ class Editor(
         bestD = tolWorld()
         for (el in doc.elements) {
             if (el === dragged || !el.visible || !el.isCurve) continue
-            val pos = doc.attachTargetPos(dragged, el) ?: continue
+            val pos = doc.curveProjection(dragged, el) ?: continue
             val d = (pos - world).length()
             if (d <= bestD) { bestD = d; best = el; bestPos = pos }
         }
