@@ -169,6 +169,23 @@ class EditorTest {
     }
 
     @Test
+    fun pointAtDistanceChoosesDirectionByClickSide() {
+        fun buildAndReturnX(clickLineAt: Double): Double {
+            val ed = Editor()
+            ed.setTool(Tools.POINT); ed.click(Vec2(-50.0, 0.0)); ed.click(Vec2(50.0, 0.0)); ed.click(Vec2(0.0, 0.0))
+            ed.setTool(Tools.LINE); ed.click(Vec2(-50.0, 0.0)); ed.click(Vec2(50.0, 0.0))   // x-axis
+            ed.activeScalar = ed.doc.newParameter("d", 15.0.mm)
+            ed.setTool(Tools.POINT_AT_DIST)
+            ed.click(Vec2(0.0, 0.0))              // reference point (origin)
+            ed.click(Vec2(clickLineAt, 0.0))      // line + direction side
+            val ptEl = ed.doc.elements.last { it.kind == ElementKind.DERIVED_POINT }
+            return Evaluator().point(ptEl.ref as constructit.dsl.PointRef).x
+        }
+        assertClose(buildAndReturnX(30.0), 15.0)    // clicked +x side -> 15 mm right of origin
+        assertClose(buildAndReturnX(-30.0), -15.0)  // clicked -x side -> 15 mm left
+    }
+
+    @Test
     fun keyPointsExposesMirroredSegmentEndpoints() {
         val ed = Editor()
         ed.setTool(Tools.SEGMENT); ed.click(Vec2(10.0, 10.0)); ed.click(Vec2(30.0, 10.0))

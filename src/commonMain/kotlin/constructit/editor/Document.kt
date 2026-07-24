@@ -61,7 +61,10 @@ class Document {
         return el
     }
 
-    private fun addDerived(ref: PointRef) = add(ref, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
+    private fun addDerived(ref: PointRef): PointRef {
+        add(ref, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
+        return ref
+    }
 
     // ---- free points & scalars ----
 
@@ -107,6 +110,20 @@ class Document {
         val t0 = if (l != null) (at - l.line.origin).dot(l.line.dir) else 0.0
         val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(t0)))
         return addConstrained(cx.pointOnLineAt(lineRef, Ref<ScalarValue>(tNode)), OnLineConstraint(lineRef, tNode))
+    }
+
+    /** Fully-determined point on a line at [distance] from [from]; direction from the click side of [at]. */
+    fun pointAlongLine(line: Element, from: PointRef, distance: ScalarRef, at: Vec2): PointRef {
+        val lineRef = line.ref as LineRef
+        val ev = Evaluator()
+        val l = (ev.eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
+        val fromP = (ev.eval(from.node) as? EvalResult.Ok)?.value as? PointValue
+        val sign = if (l != null && fromP != null) {
+            val geom = l.line
+            val proj = geom.origin + geom.dir * (fromP.p - geom.origin).dot(geom.dir)
+            if ((at - proj).dot(geom.dir) >= 0) 1 else -1
+        } else 1
+        return addDerived(cx.pointAlongLine(lineRef, from, distance, sign))
     }
 
     /** Point that slides along a circle; created at the click angle, draggable around the circle. */

@@ -243,6 +243,17 @@ class Construction {
     fun pointOnLineAt(line: LineRef, distance: ScalarRef): PointRef =
         op(line, distance) { EvalResult.Ok(PointValue(ln(it[0]).origin + ln(it[0]).dir * sc(it[1]).mm)) }
 
+    /**
+     * Fully-determined point on [line] at [distance] from the projection of [from], in the
+     * direction sign*line.dir. [sign] (+1/-1) is captured at creation (OP-1-style branch).
+     */
+    fun pointAlongLine(line: LineRef, from: PointRef, distance: ScalarRef, sign: Int): PointRef =
+        op(line, from, distance) {
+            val l = ln(it[0]); val p = pt(it[1]); val d = sc(it[2]).mm
+            val proj = l.origin + l.dir * (p - l.origin).dot(l.dir)
+            EvalResult.Ok(PointValue(proj + l.dir * (sign * d)))
+        }
+
     /** Point on [circle] at the given [angle]. */
     fun pointOnCircle(circle: CircleRef, angle: ScalarRef): PointRef =
         op(circle, angle) {
