@@ -49,18 +49,39 @@ as constraints become **shared inputs or shared sub-constructions** here.
 - **Macros / custom constructions:** encapsulate a sub-DAG as a reusable tool,
   e.g. `perpBisector(P1, P2) → line`. First-class from day one.
 
-## The hard problem — intersections
+## Intersections — branch selection (OP-1 — RESOLVED)
 
-`intersect(circle, circle)` yields 0, 1, or 2 points, unstable under parameter change.
+`intersect(circle, circle)` yields 0, 1, or 2 points. **Decision: deterministic,
+orientation-based branch selection; the model stays a pure function of its parameters.**
+(Continuity tracking is explicitly rejected as the core mechanism because it is
+path-dependent and would break reproducibility/undo/reload.)
 
-1. **Branch selection** — which of the two solutions is "the" one? Needs a stable rule
-   (index, nearest-to-reference, sign/orientation). Naive rules flip under rotation.
-2. **Continuity vs determinism** — the fundamental fork:
-   - *Deterministic labeling* (GeoGebra default): simple, but solutions can swap/snap.
-   - *Continuity tracking* (Cinderella; Kortenkamp & Richter-Gebert): tear-free dragging,
-     may route through complex coordinates, but path-dependent (no longer a pure DAG).
-3. **Vanishing solutions** — propagate a first-class **undefined** state downstream
-   (render greyed/dashed, keep definitions so the model heals when params return to valid).
+- Each intersection node stores a small discrete **branch selector** (sign `+1/-1` or index).
+- The branch is recomputed each evaluation from a geometric rule that is continuous
+  everywhere except at genuine degeneracies:
+  - **circle–circle:** side of the directed line `center(C1) → center(C2)`
+    (sign of a cross product). Stable under any translate/rotate/scale.
+  - **line–circle:** order of the two hits along the line's own direction (first/second).
+  - **line–line:** unique — no selector needed.
+- **Creation UX:** clicking near one intersection sets the selector to that side. Natural to
+  create, stable to recompute.
+- **Tangency:** the two solutions coincide → same point, no special handling needed.
+- **No solution:** node becomes invalid → hidden + flagged; dependents propagate invalid
+  (see OP-3). No special-casing required.
+- **Optional later hybrid:** during interactive drag *only*, continuity tracking may be used
+  as a heuristic to auto-update the discrete selector — but the discrete selector is always
+  persisted, so the stored model stays pure. Does not compromise the core.
+
+## Validity & undefined propagation (OP-3 — RESOLVED)
+
+- Every node has a **validity state** (valid / invalid).
+- A node is *invalid* when its construction yields no result — e.g. an empty intersection,
+  or degenerate inputs (concentric circles, zero-length direction).
+- Invalidity **propagates transitively** through the DAG: any node depending (directly or
+  indirectly) on an invalid node is itself invalid.
+- Invalid objects are **hidden and flagged** in the UI; their definitions are **retained**.
+- The model **heals automatically**: when inputs return to a valid range, nodes recompute and
+  reappear. No manual repair, no deletion.
 
 ## Scope, deliverables & phasing (OP-2 — RESOLVED)
 
@@ -107,11 +128,16 @@ as constraints become **shared inputs or shared sub-constructions** here.
 
 ## Open points (to discuss one by one)
 
-- [ ] **OP-1 Branch/continuity policy** for intersections
-      (deterministic-with-selector vs continuity-tracking).
+- [x] **OP-1 Branch/continuity policy** — RESOLVED: deterministic, orientation-based branch
+      selector; model stays a pure function of parameters. Continuity tracking rejected as
+      core (optional drag-only heuristic later).
 - [x] **OP-2 Scope & phasing** — RESOLVED: 3D is the goal, 2D is a first-class sub-goal and
       the phase-1 implementation; design covers 3D up front. Primary delivery = 3D printing.
-- [ ] **OP-3 Undefined-state propagation** semantics.
+- [x] **OP-3 Undefined-state propagation** — RESOLVED: every node has a validity state.
+      A node is *invalid* when its construction has no result (empty intersection, degenerate
+      input). Invalidity **propagates transitively** to all dependents. Invalid objects are
+      **hidden and flagged invalid**; their definitions are retained, so the model **heals
+      automatically** when inputs return to a valid range.
 - [ ] **OP-4 Measurements feeding back as parameters** (bidirectional dataflow) in v1?
 - [ ] **OP-5 Node graph data model** — concrete representation of nodes/edges/params.
 - [ ] **OP-6 Macros / custom constructions** — encapsulation & composition mechanics.
@@ -142,3 +168,8 @@ as constraints become **shared inputs or shared sub-constructions** here.
   printing), 2D is a first-class sub-goal and phase-1 implementation; design covers 3D up
   front. Added deliverables (STL/3MF for 3D; SVG/DXF/PDF for 2D) and a 3-phase plan. Split
   out OP-9 (3D representation/kernel: B-rep vs CSG vs implicit) and OP-10 (platform).
+- **Turn 3** — Resolved OP-1: deterministic, orientation-based branch selector (side-of-line
+  for circle–circle, along-line order for line–circle); model stays a pure function of
+  parameters; continuity tracking rejected as core (optional drag-only heuristic later).
+  Resolved OP-3: per-node validity, transitive invalid propagation, hide+flag, auto-heal.
+  Recorded OP-10 as deferred with platform constraints (avoid C/JS, web acceptable).
