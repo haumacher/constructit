@@ -22,6 +22,11 @@ import constructit.dsl.ScalarRef
 import constructit.dsl.SegmentRef
 import constructit.geom.Vec2
 import constructit.units.Quantity
+import constructit.units.deg
+import constructit.units.mm
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 enum class ElementKind { POINT, DERIVED_POINT, ON_CURVE, LINE, RAY, CIRCLE, SEGMENT, ARC }
 
@@ -352,6 +357,57 @@ class Document {
 
     fun line(a: PointRef, b: PointRef) = add(cx.lineThrough(a, b), ElementKind.LINE, Styles.CURVE)
     fun segment(a: PointRef, b: PointRef) = add(cx.segment(a, b), ElementKind.SEGMENT, Styles.CURVE)
+
+    // ---- architectural: project frame + ortho path ----
+
+    private var frameAngleEntry: ScalarEntry? = null
+
+    /** The shared project-frame rotation (0° = X horizontal). Created on first use; editable/wireable. */
+    fun frameAngle(): ScalarEntry =
+        frameAngleEntry ?: newParameter("frameAngle", 0.0.deg).also { frameAngleEntry = it }
+
+    private fun frameAngleRad(): Double =
+        (Evaluator().eval(frameAngle().ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.base } ?: 0.0
+
+    /** Snap the direction [from]→[to] to the nearest frame axis; returns (axis index 0..3, length). */
+    private fun snapToAxis(fromP: Vec2, to: Vec2): Pair<Int, Double> {
+        val theta = frameAngleRad()
+        val ux = Vec2(cos(theta), sin(theta)); val uy = Vec2(-sin(theta), cos(theta))
+        val d = to - fromP
+        val px = d.dot(ux); val py = d.dot(uy)
+        return when {
+            abs(px) >= abs(py) && px >= 0 -> 0 to px
+            abs(px) >= abs(py)            -> 2 to -px
+            py >= 0                       -> 1 to py
+            else                          -> 3 to -py
+        }
+    }
+
+    /** Where an ortho leg from [from] toward [to] would land (for a live rubber-band preview). */
+    fun orthoLegPreview(from: PointRef, to: Vec2): Pair<Vec2, Vec2>? {
+        val fromP = (Evaluator().eval(from.node) as? EvalResult.Ok)?.value as? PointValue ?: return null
+        val (k, len) = snapToAxis(fromP.p, to)
+        val a = frameAngleRad() + k * kotlin.math.PI / 2
+        return fromP.p to (fromP.p + Vec2(cos(a), sin(a)) * len)
+    }
+
+    /**
+     * Append an axis-aligned leg to a path: from [from], snap the direction toward [to] to the
+     * nearest project-frame axis and construct the endpoint as `from + L·frameAxis`, where L is a
+     * new editable length parameter. The leg therefore stays axis-aligned (and rotates with the
+     * frame), and its length is a first-class parameter. Returns the derived endpoint, or null for
+     * a degenerate (zero-length) leg.
+     */
+    fun addOrthoLeg(from: PointRef, to: Vec2): PointRef? {
+        val fromP = (Evaluator().eval(from.node) as? EvalResult.Ok)?.value as? PointValue ?: return null
+        val (k, len) = snapToAxis(fromP.p, to)
+        if (len < Vec2.EPS) return null
+        val lenParam = newParameter("L", len.mm)
+        val ang = cx.add(frameAngle().ref, cx.const((k * 90).toDouble().deg))
+        val ep = addDerived(cx.polarPoint(from, lenParam.ref, ang))
+        segment(from, ep)
+        return ep
+    }
     fun ray(a: PointRef, b: PointRef) = add(cx.ray(a, b), ElementKind.RAY, Styles.CURVE)
     fun circle(center: PointRef, through: PointRef) = add(cx.circleCP(center, through), ElementKind.CIRCLE, Styles.CURVE)
     fun circleCR(center: PointRef, radius: ScalarRef) = add(cx.circleCR(center, radius), ElementKind.CIRCLE, Styles.CURVE)

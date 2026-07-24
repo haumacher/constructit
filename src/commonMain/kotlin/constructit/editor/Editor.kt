@@ -43,6 +43,11 @@ class Editor(
     private val pickedClicks = ArrayList<Vec2>()
     private var filledSlots = 0
 
+    // ortho-path (turtle) state
+    private val pathVertices = ArrayList<PointRef>()
+    private var pathActive = false
+    private var previewSeg: Pair<Vec2, Vec2>? = null
+
     val pendingCount: Int get() = filledSlots
 
     fun setTool(id: String) {
@@ -55,6 +60,7 @@ class Editor(
     private fun resetPicks() {
         pickedPoints.clear(); pickedElements.clear(); pickedClicks.clear(); filledSlots = 0
         dragPoint = null; weldTarget = null; attachTarget = null; haloPos = null; panning = false
+        pathVertices.clear(); pathActive = false; previewSeg = null
     }
 
     /** Set a transient status-bar note (e.g. panel feedback). */
@@ -65,7 +71,7 @@ class Editor(
         if (toolId == Tools.SELECT) Tools.SELECT_HELP else Tools.byId(toolId)?.help ?: ""
 
     fun render(target: DrawTarget) {
-        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos)
+        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg)
     }
 
     fun wheel(screen: Vec2, deltaY: Double) {
@@ -80,10 +86,35 @@ class Editor(
             if (hit != null) dragPoint = hit else { panning = true; lastScreen = screen }
             return
         }
+        if (toolId == Tools.ORTHO_PATH) { pathClick(camera.screenToWorld(screen)); return }
         runToolClick(screen)
     }
 
+    /** One click of the ortho-path tool: start a chain, or append an axis-aligned leg. */
+    private fun pathClick(world: Vec2) {
+        if (!pathActive) {
+            pathVertices.clear(); pathVertices.add(pointOrCreate(world)); pathActive = true
+            statusHint = "Ortho path: click the next point (Esc or double-click to finish)"
+        } else {
+            doc.addOrthoLeg(pathVertices.last(), world)?.let { pathVertices.add(it) }
+        }
+        previewSeg = null
+        onChange()
+    }
+
+    /** Finish the current ortho path (Esc / double-click / tool switch). */
+    fun finishPath() {
+        if (!pathActive && pathVertices.isEmpty()) return
+        pathActive = false; pathVertices.clear(); previewSeg = null; statusHint = ""
+        onChange()
+    }
+
     fun pointerMove(screen: Vec2) {
+        if (toolId == Tools.ORTHO_PATH) {
+            previewSeg = if (pathActive) doc.orthoLegPreview(pathVertices.last(), camera.screenToWorld(screen)) else null
+            onChange()
+            return
+        }
         when {
             dragPoint != null -> {
                 val el = dragPoint!!

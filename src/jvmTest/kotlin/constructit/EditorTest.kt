@@ -484,6 +484,36 @@ class EditorTest {
     }
 
     @Test
+    fun orthoPathChainsAxisAlignedParametricLegs() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))     // start
+        ed.click(Vec2(40.0, 6.0))    // snaps to +X: endpoint (40,0)
+        ed.click(Vec2(37.0, 30.0))   // snaps to +Y from (40,0): endpoint (40,30)
+        ed.finishPath()
+
+        val segs = ed.doc.elements.filter { it.kind == ElementKind.SEGMENT }
+        assertEquals(2, segs.size, "two legs")
+        val s1 = Evaluator().segment(segs[0].ref as SegmentRef)
+        assertClose(s1.a.x, 0.0); assertClose(s1.a.y, 0.0)
+        assertClose(s1.b.x, 40.0); assertClose(s1.b.y, 0.0)   // horizontal
+        val s2 = Evaluator().segment(segs[1].ref as SegmentRef)
+        assertClose(s2.a.x, 40.0); assertClose(s2.a.y, 0.0)
+        assertClose(s2.b.x, 40.0); assertClose(s2.b.y, 30.0)  // vertical (x pinned to 40)
+
+        // legs are parametric: editing the first length shifts everything downstream
+        val l1 = ed.doc.scalars.first { it.name == "L" }
+        ed.doc.setParameter(l1, 10.0.mm)
+        val s2b = Evaluator().segment(segs[1].ref as SegmentRef)
+        assertClose(s2b.a.x, 10.0); assertClose(s2b.b.x, 10.0)   // vertical leg followed the corner
+
+        // rotating the project frame rotates the whole chain (still 'orthogonal' in its own frame)
+        ed.doc.setParameter(ed.doc.frameAngle(), 90.0.deg)
+        val s1c = Evaluator().segment(segs[0].ref as SegmentRef)
+        assertClose(s1c.b.x, 0.0, tol = 1e-6); assertClose(s1c.b.y, 10.0, tol = 1e-6)  // +X axis now points +Y
+    }
+
+    @Test
     fun draggingAFreePointOntoALineAttachesItAsSlidingOnCurve() {
         val ed = Editor()
         ed.setTool(Tools.LINE); ed.click(Vec2(-40.0, 0.0)); ed.click(Vec2(40.0, 0.0))  // horizontal line

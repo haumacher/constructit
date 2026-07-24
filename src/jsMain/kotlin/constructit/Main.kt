@@ -63,6 +63,11 @@ private fun setupApp() {
         e.preventDefault()
         editor.wheel(pos(e), e.deltaY)
     })
+    canvas.addEventListener("dblclick", { editor.finishPath() })
+    document.addEventListener("keydown", {
+        val key = (it as org.w3c.dom.events.KeyboardEvent).key
+        if (key == "Escape" || key == "Enter") editor.finishPath()
+    })
 
     // ---- palette (tool selection via delegation) ----
     (document.getElementById("palette") as HTMLElement).addEventListener("click", {
