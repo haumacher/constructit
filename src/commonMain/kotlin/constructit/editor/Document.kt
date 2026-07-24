@@ -156,6 +156,13 @@ class Document {
     // ---- points ----
 
     fun midpoint(a: PointRef, b: PointRef) = addDerived(cx.midpoint(a, b))
+
+    /** The centre of a circle or arc as a derived point (works on 3-point circles etc.). */
+    fun centerOf(el: Element): PointRef? = when (el.kind) {
+        ElementKind.CIRCLE -> addDerived(cx.circleCenter(el.ref as CircleRef))
+        ElementKind.ARC -> addDerived(cx.arcCenter(el.ref as ArcRef))
+        else -> null
+    }
     fun projectToLine(p: PointRef, line: Element) = addDerived(cx.projectToLine(p, carrierLine(line)))
 
     private fun addConstrained(ref: PointRef, constraint: PointConstraint): PointRef {

@@ -110,6 +110,7 @@ class Editor(
             SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
             SlotKind.GEOMETRY -> pickElement(world) { true }
             SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.constraint is OnCircleConstraint }
+            SlotKind.CENTRIC -> pickElement(world) { it.kind == ElementKind.CIRCLE || it.kind == ElementKind.ARC }
             SlotKind.SIDE -> true   // captures the click position only; creates nothing
         }
         // existing-only slots do NOT create anything on a miss — just hint and wait

@@ -325,6 +325,16 @@ class EditorTest {
     }
 
     @Test
+    fun centreOfThreePointCircle() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(40.0, 0.0)); ed.click(Vec2(0.0, 40.0))
+        ed.setTool(Tools.CIRCLE_3); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(40.0, 0.0)); ed.click(Vec2(0.0, 40.0))
+        ed.setTool(Tools.CENTRE); ed.click(Vec2(48.284, 20.0))  // on the circle boundary (centre 20,20 r≈28.28)
+        val p = Evaluator().point(ed.doc.elements.last { it.kind == ElementKind.DERIVED_POINT }.ref as constructit.dsl.PointRef)
+        assertClose(p.x, 20.0, tol = 1e-3); assertClose(p.y, 20.0, tol = 1e-3)  // circumcentre
+    }
+
+    @Test
     fun scalarNamesAreUnique() {
         val ed = Editor()
         val a = ed.doc.newParameter("d", 10.0.mm)

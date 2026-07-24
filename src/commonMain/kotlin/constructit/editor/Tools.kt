@@ -5,7 +5,7 @@ import constructit.dsl.ScalarRef
 import constructit.geom.Vec2
 
 /** What the next click of a tool must supply. SIDE just captures a click position (creates nothing). */
-enum class SlotKind { PLACE_POINT, POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT, SIDE }
+enum class SlotKind { PLACE_POINT, POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT, SIDE, CENTRIC }
 
 enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE }
 
@@ -41,6 +41,7 @@ object Tools {
     const val POINT_ON_CIRCLE = "ptoncircle"
     const val POINT_ON_LINE = "ptonline"
     const val POINT_AT_DIST = "ptatdist"
+    const val CENTRE = "centre"
     const val KEY_POINTS = "keypoints"
 
     // Curves
@@ -90,6 +91,7 @@ object Tools {
         ToolDef(POINT_ON_CIRCLE, "Point on circle", ToolCategory.POINTS, listOf(SlotKind.CIRCLE), help = "Click a circle to add a point on it; drag it around the circle in Select mode.") { d, p, _ -> d.pointOnCircle(p.elements[0], p.at) },
         ToolDef(POINT_ON_LINE, "Point on line", ToolCategory.POINTS, listOf(SlotKind.LINE), help = "Click a line to add a point on it; drag it along the line in Select mode.") { d, p, _ -> d.pointOnLine(p.elements[0], p.at) },
         ToolDef(POINT_AT_DIST, "Point at distance", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), scalar = true, help = "Select a distance, click the reference point, then click the line on the side you want.") { d, p, s -> d.pointAlongLine(p.elements[0], p.points[0], s!!, p.at) },
+        ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTRIC), help = "Click a circle or arc to add its centre point.") { d, p, _ -> d.centerOf(p.elements[0]) },
         ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.CURVE), help = "Click a curve to add its defining points (endpoints, centre) — even on mirrored/derived geometry.") { d, p, _ -> d.extractPoints(p.elements[0]) },
 
         // ----- Curves -----
