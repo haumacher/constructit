@@ -291,6 +291,17 @@ class Construction {
     fun <V : Value> translateGeom(g: Ref<V>, dx: ScalarRef, dy: ScalarRef): Ref<V> =
         op(g, dx, dy) { EvalResult.Ok(transformValue(Affine.translation(Vec2(sc(it[1]).mm, sc(it[2]).mm)), it[0])) }
 
+    /** Translate any geometry by the vector [from] -> [to]. */
+    fun <V : Value> translateByVector(g: Ref<V>, from: PointRef, to: PointRef): Ref<V> =
+        op(g, from, to) { EvalResult.Ok(transformValue(Affine.translation(pt(it[2]) - pt(it[1])), it[0])) }
+
+    /** Concentric circle whose radius is offset by sign*distance. */
+    fun concentricCircle(circle: CircleRef, distance: ScalarRef, sign: Int): CircleRef =
+        op(circle, distance) {
+            val c = cir(it[0]); val r = c.radius + sign * sc(it[1]).mm
+            if (r <= 0.0) EvalResult.Invalid("non-positive radius") else EvalResult.Ok(CircleValue(Circle(c.center, r)))
+        }
+
     // ================= Tier 1: scalar functions =================
 
     fun mul(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) { EvalResult.Ok(ScalarValue(sc(it[0]) * sc(it[1]))) }

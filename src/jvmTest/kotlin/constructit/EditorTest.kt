@@ -4,8 +4,10 @@ import constructit.core.Evaluator
 import constructit.dsl.ArcRef
 import constructit.dsl.CircleRef
 import constructit.dsl.LineRef
+import constructit.dsl.SegmentRef
 import constructit.dsl.arc
 import constructit.dsl.circle
+import constructit.dsl.segment
 import constructit.dsl.line
 import constructit.dsl.point
 import constructit.dsl.scalar
@@ -320,6 +322,62 @@ class EditorTest {
         val circleEl = ed.doc.elements.last { it.kind == ElementKind.CIRCLE }
         val m = ed.doc.measureRadius(circleEl)               // measurement depends on r
         assertFalse(ed.doc.wireParameter(r, m), "wiring r to a measurement of its own circle is a cycle")
+    }
+
+    @Test
+    fun scalarNamesAreUnique() {
+        val ed = Editor()
+        val a = ed.doc.newParameter("d", 10.0.mm)
+        val b = ed.doc.newParameter("d", 20.0.mm)
+        assertEquals("d", a.name); assertEquals("d2", b.name)
+    }
+
+    @Test
+    fun filletToolAddsTangentArc() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT); ed.click(Vec2(50.0, 0.0)); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(0.0, 50.0))
+        ed.activeScalar = ed.doc.newParameter("r", 10.0.mm)
+        ed.setTool(Tools.FILLET); ed.click(Vec2(50.0, 0.0)); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(0.0, 50.0))
+        val a = Evaluator().arc(ed.doc.elements.last { it.kind == ElementKind.ARC }.ref as ArcRef)
+        assertClose(a.radius, 10.0)
+        assertClose(a.center.x, 10.0); assertClose(a.center.y, 10.0)  // right-angle corner -> centre (r,r)
+    }
+
+    @Test
+    fun concentricCircleGrowsOutsideShrinksInside() {
+        fun radiusFor(sideX: Double): Double {
+            val ed = Editor()
+            ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(30.0, 0.0))
+            ed.setTool(Tools.CIRCLE); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(30.0, 0.0))  // r=30
+            ed.activeScalar = ed.doc.newParameter("d", 10.0.mm)
+            ed.setTool(Tools.CONCENTRIC); ed.click(Vec2(30.0, 0.0)); ed.click(Vec2(sideX, 0.0))
+            return Evaluator().circle(ed.doc.elements.last { it.kind == ElementKind.CIRCLE }.ref as CircleRef).radius
+        }
+        assertClose(radiusFor(60.0), 40.0)  // click outside -> grow
+        assertClose(radiusFor(5.0), 20.0)   // click inside  -> shrink
+    }
+
+    @Test
+    fun translateByVectorMovesGeometry() {
+        val ed = Editor()
+        ed.setTool(Tools.SEGMENT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(10.0, 0.0))
+        ed.setTool(Tools.POINT); ed.click(Vec2(20.0, 5.0))  // 'to' point; 'from' reuses (0,0)
+        ed.setTool(Tools.TRANSLATE_V); ed.click(Vec2(5.0, 0.0)); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(20.0, 5.0))
+        val s = Evaluator().segment(ed.doc.elements.last { it.kind == ElementKind.SEGMENT }.ref as SegmentRef)
+        assertClose(s.a.x, 20.0); assertClose(s.a.y, 5.0)
+        assertClose(s.b.x, 30.0); assertClose(s.b.y, 5.0)
+    }
+
+    @Test
+    fun outerTangentsOfEqualCirclesAreParallelFlanks() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT); ed.click(Vec2(-30.0, 0.0)); ed.click(Vec2(-20.0, 0.0)); ed.click(Vec2(30.0, 0.0)); ed.click(Vec2(40.0, 0.0))
+        ed.setTool(Tools.CIRCLE); ed.click(Vec2(-30.0, 0.0)); ed.click(Vec2(-20.0, 0.0))  // c1 r10
+        ed.click(Vec2(30.0, 0.0)); ed.click(Vec2(40.0, 0.0))                              // c2 r10
+        ed.setTool(Tools.OUTER_TANGENTS); ed.click(Vec2(-40.0, 0.0)); ed.click(Vec2(20.0, 0.0))
+        val lines = ed.doc.elements.filter { it.kind == ElementKind.LINE }
+        assertEquals(2, lines.size)
+        lines.forEach { assertClose(kotlin.math.abs(Evaluator().line(it.ref as LineRef).origin.y), 10.0) }
     }
 
     @Test

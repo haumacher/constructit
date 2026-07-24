@@ -201,6 +201,40 @@ Engine                 — Construction DAG + Evaluator (unchanged)
 - Run locally: `./gradlew jsBrowserDevelopmentRun`. MVP tools: Select/drag, Point, Line,
   Circle, Intersect; live parametric recompute on drag; pan + zoom; grid + axes.
 
+### Editor tool roadmap
+
+**Implemented** (data-driven `ToolDef` registry, categorized palette; scalar tools use the
+active parameter/measurement; existing-only slots never create stray points; scalar names are
+auto-uniquified so wiring is unambiguous):
+- Points: Point, Midpoint, Intersect, Project-to-line, Point-on-circle & Point-on-line
+  (1-DOF draggable), Point-at-distance (0-DOF, side by click), Key points (sub-entity extract)
+- Curves: Line, Segment, Ray, Circle (c,pt), Circle (c,r), Circle (3pt), Arc (3pt),
+  Arc (centre,ends), Concentric circle
+- Construct: Perp/Parallel-through, Perp-bisector, Angle-bisector, Parallel-at-distance,
+  Tangent-from-point, Tangent-at-point (1 click), Fillet, Outer/Inner common tangents
+- Transform: Mirror, Rotate, Scale, Translate-by-vector
+- Measure: Distance, Angle (3pt), Angle (2 lines), Length, Radius, X/Y coordinate
+- Parameter **wiring** (reduce DOF; equality by shared reference), measurement-as-scalar-input.
+- Any `LINE` slot also accepts a segment/ray (carrier line).
+
+**Deferred (natural, not yet built):**
+- **Point from coordinates** (needs two scalar inputs — our slot model has one active scalar).
+- **Chamfer** (straight bevel between two legs).
+- **Regular polygon** / **Rectangle** / **Rounded-rectangle** tools (the last exists as a macro).
+- **Arrays**: linear (repeat N along a vector) and circular (repeat around a centre) — the
+  interactive generalization of the bolt-circle/hole-pattern macros. Needs a count input.
+- **Area** measurement (needs an area op).
+
+**Deferred (strategic):**
+- **User-defined macros UI** — record a sub-construction, designate inputs, get a reusable
+  tool (OP-6 `Macro` machinery exists in the engine; needs a record/parameterize UI). The
+  headline capability of this paradigm.
+- **Dimensions & annotations** — dimension lines/leaders showing a measured length/angle;
+  essential for the 2D technical/architectural-drawing goal.
+- **Auto-snapping** — ordinary point clicks snap to key points, intersections, and grid.
+- **Delete / undo-redo / save-load** — Delete with dependency handling; undo via source-value
+  snapshots; save/load with the `Document` as the file-format seam.
+
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
 - Every node has a **validity state** (valid / invalid).

@@ -83,14 +83,23 @@ class Document {
     fun freePoint(x: Quantity, y: Quantity): PointRef =
         cx.freePoint("P${counter + 1}", x, y).also { add(it, ElementKind.POINT, Styles.FREE_POINT) }
 
+    /** Ensure scalar names are unique so the wiring dropdown is never ambiguous. */
+    private fun uniqueScalarName(base: String): String {
+        val b = base.ifBlank { "p" }
+        if (scalars.none { it.name == b }) return b
+        var i = 2
+        while (scalars.any { it.name == "$b$i" }) i++
+        return "$b$i"
+    }
+
     fun newParameter(name: String, value: Quantity): ScalarEntry {
         val node = ParameterNode(nextId("pn"), ScalarValue(value))
-        val e = ScalarEntry(nextId("s"), name, Ref<ScalarValue>(node), editable = true)
+        val e = ScalarEntry(nextId("s"), uniqueScalarName(name), Ref<ScalarValue>(node), editable = true)
         scalars.add(e); return e
     }
 
     private fun measurement(name: String, ref: ScalarRef): ScalarEntry {
-        val e = ScalarEntry(nextId("m"), name, ref, editable = false)
+        val e = ScalarEntry(nextId("m"), uniqueScalarName(name), ref, editable = false)
         scalars.add(e); return e
     }
 
@@ -252,6 +261,26 @@ class Document {
     }
     fun parallelThrough(line: Element, p: PointRef) = add(cx.parallelThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
 
+    /** Fillet arc of [radius] in the corner at [corner] opening toward [p1] and [p2]. */
+    fun fillet(p1: PointRef, corner: PointRef, p2: PointRef, radius: ScalarRef) =
+        add(cx.filletCorner(p1, corner, p2, radius), ElementKind.ARC, Styles.CURVE)
+
+    /** Both external (or internal) common tangents of two circles. */
+    fun commonTangents(c1: Element, c2: Element, inner: Boolean): List<Element> {
+        val a = c1.ref as CircleRef; val b = c2.ref as CircleRef
+        return listOf(+1, -1).map {
+            add(if (inner) cx.innerTangent(a, b, it) else cx.outerTangent(a, b, it), ElementKind.LINE, Styles.CONSTRUCT)
+        }
+    }
+
+    /** Concentric circle offset by [distance]; shrinks if [at] is inside the circle, else grows. */
+    fun concentricCircle(circle: Element, distance: ScalarRef, at: Vec2): Element {
+        val ref = circle.ref as CircleRef
+        val c = (Evaluator().eval(ref.node) as? EvalResult.Ok)?.value as? CircleValue
+        val sign = if (c != null && (at - c.circle.center).length() < c.circle.radius) -1 else 1
+        return add(cx.concentricCircle(ref, distance, sign), ElementKind.CIRCLE, Styles.CURVE)
+    }
+
     /** Parallel to [line] offset by [distance]; side chosen by which side of the line [at] is on. */
     fun parallelAtDistance(line: Element, distance: ScalarRef, at: Vec2): Element {
         val lineRef = carrierLine(line)
@@ -271,12 +300,18 @@ class Document {
     @Suppress("UNCHECKED_CAST")
     fun scale(geom: Element, center: PointRef, factor: ScalarRef) = add(cx.scaleGeom(geom.ref as Ref<Value>, center, factor), geom.kind, geom.style)
 
+    @Suppress("UNCHECKED_CAST")
+    fun translateByVector(geom: Element, from: PointRef, to: PointRef) = add(cx.translateByVector(geom.ref as Ref<Value>, from, to), geom.kind, geom.style)
+
     // ---- measurements ----
 
     fun measureDistance(a: PointRef, b: PointRef) = measurement("dist", cx.measureDistance(a, b))
     fun measureAngle(a: PointRef, v: PointRef, b: PointRef) = measurement("angle", cx.measureAngle(a, v, b))
     fun measureLength(seg: Element) = measurement("len", cx.measureLength(seg.ref as SegmentRef))
     fun measureRadius(circle: Element) = measurement("radius", cx.measureRadius(circle.ref as CircleRef))
+    fun measureX(p: PointRef) = measurement("x", cx.measureX(p))
+    fun measureY(p: PointRef) = measurement("y", cx.measureY(p))
+    fun measureAngleLines(l1: Element, l2: Element) = measurement("angle", cx.measureAngleLines(carrierLine(l1), carrierLine(l2)))
 }
 
 /** Default element styles. */
