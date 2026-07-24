@@ -252,6 +252,24 @@ class EditorTest {
     }
 
     @Test
+    fun parallelAtDistanceOffsetsToChosenSide() {
+        fun originYFor(sideY: Double): Double {
+            val ed = Editor()
+            ed.setTool(Tools.POINT); ed.click(Vec2(-50.0, 0.0)); ed.click(Vec2(50.0, 0.0))
+            ed.setTool(Tools.LINE); ed.click(Vec2(-50.0, 0.0)); ed.click(Vec2(50.0, 0.0))   // x-axis
+            ed.activeScalar = ed.doc.newParameter("d", 10.0.mm)
+            ed.setTool(Tools.PARALLEL_AT)
+            ed.click(Vec2(0.0, 0.0))       // base line
+            ed.click(Vec2(0.0, sideY))     // side
+            val l = Evaluator().line(ed.doc.elements.last { it.kind == ElementKind.LINE }.ref as LineRef)
+            assertClose(l.dir.y, 0.0, tol = 1e-9)  // parallel stays horizontal
+            return l.origin.y
+        }
+        assertClose(originYFor(30.0), 10.0)    // side above -> +10 mm
+        assertClose(originYFor(-30.0), -10.0)  // side below -> -10 mm
+    }
+
+    @Test
     fun keyPointsExposesMirroredSegmentEndpoints() {
         val ed = Editor()
         ed.setTool(Tools.SEGMENT); ed.click(Vec2(10.0, 10.0)); ed.click(Vec2(30.0, 10.0))

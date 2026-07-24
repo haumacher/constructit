@@ -4,8 +4,8 @@ import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.geom.Vec2
 
-/** What the next click of a tool must supply. */
-enum class SlotKind { PLACE_POINT, POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT }
+/** What the next click of a tool must supply. SIDE just captures a click position (creates nothing). */
+enum class SlotKind { PLACE_POINT, POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT, SIDE }
 
 enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE }
 
@@ -55,6 +55,7 @@ object Tools {
     const val ANGLE_BISECTOR = "anglebis"
     const val PERPENDICULAR = "perp"
     const val PARALLEL = "parallel"
+    const val PARALLEL_AT = "parallelat"
     const val TANGENT = "tangent"
     const val TANGENT_AT = "tangentat"
 
@@ -95,6 +96,7 @@ object Tools {
         ToolDef(ANGLE_BISECTOR, "Angle bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click a point, the vertex, then another point.") { d, p, _ -> d.angleBisector(p.points[0], p.points[1], p.points[2]) },
         ToolDef(PERPENDICULAR, "Perpendicular", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the perpendicular through it.") { d, p, _ -> d.perpendicularThrough(p.elements[0], p.points[0]) },
         ToolDef(PARALLEL, "Parallel", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the parallel through it.") { d, p, _ -> d.parallelThrough(p.elements[0], p.points[0]) },
+        ToolDef(PARALLEL_AT, "Parallel at distance", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.SIDE), scalar = true, help = "Select a distance, click the base line, then click the side you want the parallel on.") { d, p, s -> d.parallelAtDistance(p.elements[0], s!!, p.at) },
         ToolDef(TANGENT, "Tangent from point", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.CIRCLE), help = "Click an external point, then a circle.") { d, p, _ -> d.tangentFromPoint(p.points[0], p.elements[0]) },
         ToolDef(TANGENT_AT, "Tangent at point", ToolCategory.CONSTRUCT, listOf(SlotKind.ON_CIRCLE_POINT), help = "Click a point that lies on a circle for the tangent there (use Point on circle).") { d, p, _ -> d.tangentAtPointOnCircle(p.elements[0]) },
 

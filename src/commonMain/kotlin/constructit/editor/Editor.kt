@@ -35,8 +35,9 @@ class Editor(
     private var lastScreen = Vec2(0.0, 0.0)
     private val pickedPoints = ArrayList<PointRef>()
     private val pickedElements = ArrayList<Element>()
+    private var filledSlots = 0
 
-    val pendingCount: Int get() = pickedPoints.size + pickedElements.size
+    val pendingCount: Int get() = filledSlots
 
     fun setTool(id: String) {
         toolId = id
@@ -46,7 +47,7 @@ class Editor(
     }
 
     private fun resetPicks() {
-        pickedPoints.clear(); pickedElements.clear(); dragPoint = null; panning = false
+        pickedPoints.clear(); pickedElements.clear(); filledSlots = 0; dragPoint = null; panning = false
     }
 
     /** Set a transient status-bar note (e.g. panel feedback). */
@@ -98,7 +99,7 @@ class Editor(
     private fun runToolClick(screen: Vec2) {
         val tool = Tools.byId(toolId) ?: return
         val world = camera.screenToWorld(screen)
-        val slot = tool.slots[pendingCount]
+        val slot = tool.slots[filledSlots]
         val picked = when (slot) {
             SlotKind.PLACE_POINT -> { pickedPoints.add(doc.freePoint(world.x.mm, world.y.mm)); true }
             SlotKind.POINT -> { pickedPoints.add(pointOrCreate(world)); true }
@@ -108,11 +109,13 @@ class Editor(
             SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
             SlotKind.GEOMETRY -> pickElement(world) { true }
             SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.constraint is OnCircleConstraint }
+            SlotKind.SIDE -> true   // captures the click position only; creates nothing
         }
         // existing-only slots do NOT create anything on a miss — just hint and wait
         if (!picked) { statusHint = tool.help; onChange(); return }
+        filledSlots++
 
-        if (pendingCount == tool.slots.size) {
+        if (filledSlots == tool.slots.size) {
             if (tool.scalar && activeScalar == null) {
                 statusHint = "${tool.label}: select a parameter or measurement in the panel first"
                 resetPicks(); onChange(); return
@@ -121,7 +124,7 @@ class Editor(
             resetPicks()
             statusHint = ""
         } else {
-            statusHint = "${tool.help} (${tool.slots.size - pendingCount} more)"
+            statusHint = "${tool.help} (${tool.slots.size - filledSlots} more)"
         }
         onChange()
     }

@@ -252,6 +252,14 @@ class Document {
     }
     fun parallelThrough(line: Element, p: PointRef) = add(cx.parallelThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
 
+    /** Parallel to [line] offset by [distance]; side chosen by which side of the line [at] is on. */
+    fun parallelAtDistance(line: Element, distance: ScalarRef, at: Vec2): Element {
+        val lineRef = carrierLine(line)
+        val l = (Evaluator().eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
+        val sign = if (l != null && (at - l.line.origin).dot(l.line.dir.perp()) < 0) -1 else 1
+        return add(cx.parallelAtDistance(lineRef, distance, sign), ElementKind.LINE, Styles.CONSTRUCT)
+    }
+
     // ---- transforms (preserve source kind & style) ----
 
     @Suppress("UNCHECKED_CAST")

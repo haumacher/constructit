@@ -222,6 +222,13 @@ class Construction {
             else EvalResult.Ok(LineValue(Line((pa + pb) * 0.5, (pb - pa).perp().normalized())))
         }
 
+    /** Line parallel to [line], offset by [distance] along its normal; [sign] (+1/-1) picks the side. */
+    fun parallelAtDistance(line: LineRef, distance: ScalarRef, sign: Int): LineRef =
+        op(line, distance) {
+            val l = ln(it[0]); val d = sc(it[1]).mm
+            EvalResult.Ok(LineValue(Line(l.origin + l.dir.perp() * (sign * d), l.dir)))
+        }
+
     /** Internal angle bisector at [vertex] of the angle opening toward [a] and [b]. */
     fun angleBisector(a: PointRef, vertex: PointRef, b: PointRef): LineRef =
         op(a, vertex, b) {
