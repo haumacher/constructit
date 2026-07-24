@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400.000" height="300.000" viewBox="0 0 400.000 300.000">
+  <circle cx="80.000" cy="190.000" r="4.000" fill="#1f77b4"/>
+  <circle cx="320.000" cy="110.000" r="4.000" fill="#1f77b4"/>
+  <polyline points="0.000,216.667 400.000,83.333" fill="none" stroke="#333333" stroke-width="1.500"/>
+  <circle cx="200.000" cy="150.000" r="4.000" fill="#1f77b4"/>
+  <circle cx="300.000" cy="150.000" r="4.000" fill="#1f77b4"/>
+  <circle cx="200.000" cy="150.000" r="100.000" fill="none" stroke="#333333" stroke-width="1.500"/>
+</svg>
