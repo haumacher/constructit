@@ -281,14 +281,24 @@ A follow-up genuinely relies on **mesh output** only here:
    (print/render), **not STEP-exportable**.
 2. **Imported meshes** — mesh-*as-source* (scan/download); referenceable, non-analytic,
    non-STEP.
-3. **Global mass properties** — volume/CoM/bbox/thin-wall: easiest from mesh, but **terminal
-   read-outs**; feeding one back to drive an earlier parameter is a **cycle (forbidden, OP-4)**.
+3. **Global mass properties** — volume/CoM/bbox/thin-wall: easiest from mesh. These are
+   **scalars**, so they may drive a **new, independent (non-ancestor) analytic construction**
+   forward (ordinary dataflow); only feeding one **back into the mesh's own ancestors** is a
+   **cycle (forbidden, OP-4)**.
+
+**Geometry vs scalars across the mesh boundary.** The "no mesh→analytic lift" rule is about
+**geometry** only. A **scalar measured from a mesh** is just a number and *may* drive a new,
+independent analytic construction (forward, acyclic). Such a value is **approximate** (inherits
+mesh resolution), which is acceptable exactly where it arises — clearance/play (e.g. a bore
+sized for a rotating axle *wants* tolerance). UI should hint that mesh-derived values are
+approximate, so a precision-critical dimension isn't unknowingly driven from one.
 
 **Operations partition** into *analytic-preserving* (primitives, extrude/revolve/sweep,
 booleans — exact + provenance, measurable, STEP-exportable later) and *mesh-only*
 (offset/shell/hull/minkowski/smoothing, imported meshes — `Mesh` type, print/render-only,
-never lifts back to analytic). The **strong type system (OP-5)** enforces the boundary:
-`Solid`/`Face`/`Edge` (analytic) are distinct from `Mesh`; no mesh→analytic lift.
+never lifts back to analytic *as geometry*). The **strong type system (OP-5)** enforces the
+boundary: `Solid`/`Face`/`Edge` (analytic) are distinct from `Mesh`; no mesh→analytic
+*geometry* lift. (Scalars measured from a mesh may still feed forward — see below.)
 
 ### Representation families considered (background)
 Three broad families (see OP-9 decision above):
@@ -405,3 +415,8 @@ Three broad families (see OP-9 decision above):
   **mesh-is-a-sink rule** and the analytic-preserving vs mesh-only operation partition,
   enforced by the type system (user's framing: mesh is output/rendering only, save for
   mesh-only ops, imported meshes, and terminal mass-property read-outs).
+- **Turn 9** — Refined the mesh boundary (user's correction): "no mesh→analytic lift" applies
+  to **geometry** only. A **scalar measured from a mesh** may drive a **new, independent
+  (non-ancestor) analytic construction** forward (acyclic); only feeding back into the mesh's
+  ancestors is a cycle (OP-4). Such values are **approximate** (mesh resolution) — acceptable
+  where clearance/play is wanted (e.g. bore for a rotating axle); UI should flag them.
