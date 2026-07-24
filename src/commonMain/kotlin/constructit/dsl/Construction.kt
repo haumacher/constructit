@@ -406,6 +406,15 @@ class Construction {
             EvalResult.Ok(CircleValue(Circle(cc, (pt(it[0]) - cc).length())))
         }
 
+    /** Arc from [start] to [end] about [center]; radius = |start-center|, sweeps counter-clockwise. */
+    fun arcCenterStartEnd(center: PointRef, start: PointRef, end: PointRef): ArcRef =
+        op(center, start, end) {
+            val c = pt(it[0]); val s = pt(it[1]); val e = pt(it[2])
+            val r = (s - c).length()
+            if (r < Vec2.EPS) EvalResult.Invalid("start coincides with centre")
+            else EvalResult.Ok(ArcValue(Arc(c, r, (s - c).angle(), (e - c).angle(), ccw = true)))
+        }
+
     /** Arc through three points (from a, through b, to c). */
     fun arc3(a: PointRef, b: PointRef, c: PointRef): ArcRef =
         op(a, b, c) {

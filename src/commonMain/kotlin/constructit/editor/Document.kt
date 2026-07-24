@@ -238,6 +238,7 @@ class Document {
     fun circleCR(center: PointRef, radius: ScalarRef) = add(cx.circleCR(center, radius), ElementKind.CIRCLE, Styles.CURVE)
     fun circle3(a: PointRef, b: PointRef, c: PointRef) = add(cx.circle3(a, b, c), ElementKind.CIRCLE, Styles.CURVE)
     fun arc3(a: PointRef, b: PointRef, c: PointRef) = add(cx.arc3(a, b, c), ElementKind.ARC, Styles.CURVE)
+    fun arcCenterStartEnd(center: PointRef, start: PointRef, end: PointRef) = add(cx.arcCenterStartEnd(center, start, end), ElementKind.ARC, Styles.CURVE)
 
     // ---- relational constructions ----
 

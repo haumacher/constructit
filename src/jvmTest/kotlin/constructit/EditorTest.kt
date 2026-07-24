@@ -1,8 +1,10 @@
 package constructit
 
 import constructit.core.Evaluator
+import constructit.dsl.ArcRef
 import constructit.dsl.CircleRef
 import constructit.dsl.LineRef
+import constructit.dsl.arc
 import constructit.dsl.circle
 import constructit.dsl.line
 import constructit.dsl.point
@@ -234,6 +236,19 @@ class EditorTest {
         assertEquals(1, derived.size, "two segments' carrier lines meet in one point")
         val p = Evaluator().point(derived[0].ref as constructit.dsl.PointRef)
         assertClose(p.x, 0.0); assertClose(p.y, 0.0)
+    }
+
+    @Test
+    fun arcByCentreStartEnd() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(20.0, 0.0)); ed.click(Vec2(0.0, 20.0))
+        ed.setTool(Tools.ARC_CS); ed.click(Vec2(0.0, 0.0)); ed.click(Vec2(20.0, 0.0)); ed.click(Vec2(0.0, 20.0))
+        val a = Evaluator().arc(ed.doc.elements.last { it.kind == ElementKind.ARC }.ref as ArcRef)
+        assertClose(a.radius, 20.0)
+        assertClose(a.center.x, 0.0); assertClose(a.center.y, 0.0)
+        assertClose(a.startAngle, 0.0)                 // start (20,0)
+        assertClose(a.endAngle, kotlin.math.PI / 2)    // end   (0,20)
+        assertTrue(a.ccw)
     }
 
     @Test
