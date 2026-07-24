@@ -16,7 +16,7 @@ fun assertClose(actual: Double, expected: Double, tol: Double = 1e-6, msg: Strin
  * Delete the file to regenerate.
  */
 object Golden {
-    private val dir = File("src/test/resources/golden")
+    private val dir = File("src/jvmTest/resources/golden")
 
     fun check(name: String, svg: String) {
         val file = File(dir, "$name.svg")

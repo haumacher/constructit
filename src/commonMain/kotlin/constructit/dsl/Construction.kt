@@ -31,6 +31,7 @@ import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.DimensionError
 import constructit.units.Quantity
+import kotlin.math.pow
 
 /** A typed handle to a node's output. Compile-time typing over the generic graph (OP-5). */
 class Ref<out V : Value>(val node: Node)
@@ -134,7 +135,7 @@ class Construction {
             val c = (it[0] as PointValue).p
             val r = (it[1] as ScalarValue).q.mm
             val a = (it[2] as ScalarValue).q.requireDim(Dimension.ANGLE, "angle").base
-            EvalResult.Ok(PointValue(c + Vec2(r * Math.cos(a), r * Math.sin(a))))
+            EvalResult.Ok(PointValue(c + Vec2(r * kotlin.math.cos(a), r * kotlin.math.sin(a))))
         }
 
     fun midpoint(a: PointRef, b: PointRef): PointRef =
@@ -246,7 +247,7 @@ class Construction {
     fun pointOnCircle(circle: CircleRef, angle: ScalarRef): PointRef =
         op(circle, angle) {
             val c = cir(it[0]); val a = sc(it[1]).requireDim(Dimension.ANGLE, "angle").base
-            EvalResult.Ok(PointValue(c.center + Vec2(c.radius * Math.cos(a), c.radius * Math.sin(a))))
+            EvalResult.Ok(PointValue(c.center + Vec2(c.radius * kotlin.math.cos(a), c.radius * kotlin.math.sin(a))))
         }
 
     /** Circle by centre and a point it passes through (compass). */
@@ -276,15 +277,15 @@ class Construction {
 
     fun mul(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) { EvalResult.Ok(ScalarValue(sc(it[0]) * sc(it[1]))) }
     fun div(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) { EvalResult.Ok(ScalarValue(sc(it[0]) / sc(it[1]))) }
-    fun absS(a: ScalarRef): ScalarRef = op(a) { EvalResult.Ok(ScalarValue(Quantity(Math.abs(sc(it[0]).base), sc(it[0]).dim))) }
+    fun absS(a: ScalarRef): ScalarRef = op(a) { EvalResult.Ok(ScalarValue(Quantity(kotlin.math.abs(sc(it[0]).base), sc(it[0]).dim))) }
 
     fun minS(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) {
         if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("min of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
-        EvalResult.Ok(ScalarValue(Quantity(Math.min(sc(it[0]).base, sc(it[1]).base), sc(it[0]).dim)))
+        EvalResult.Ok(ScalarValue(Quantity(minOf(sc(it[0]).base, sc(it[1]).base), sc(it[0]).dim)))
     }
     fun maxS(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) {
         if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("max of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
-        EvalResult.Ok(ScalarValue(Quantity(Math.max(sc(it[0]).base, sc(it[1]).base), sc(it[0]).dim)))
+        EvalResult.Ok(ScalarValue(Quantity(maxOf(sc(it[0]).base, sc(it[1]).base), sc(it[0]).dim)))
     }
     fun modS(a: ScalarRef, b: ScalarRef): ScalarRef = op(a, b) {
         if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("mod of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
@@ -293,13 +294,13 @@ class Construction {
 
     fun powS(a: ScalarRef, n: Int): ScalarRef = op(a) {
         val q = sc(it[0])
-        EvalResult.Ok(ScalarValue(Quantity(Math.pow(q.base, n.toDouble()), Dimension(q.dim.length * n, q.dim.angle * n))))
+        EvalResult.Ok(ScalarValue(Quantity(q.base.pow(n.toDouble()), Dimension(q.dim.length * n, q.dim.angle * n))))
     }
     fun sqrtS(a: ScalarRef): ScalarRef = op(a) {
         val q = sc(it[0])
         if (q.dim.length % 2 != 0 || q.dim.angle % 2 != 0) throw DimensionError("sqrt of odd dimension ${q.dim}")
         if (q.base < 0) throw ArithmeticException("sqrt of negative")
-        EvalResult.Ok(ScalarValue(Quantity(Math.sqrt(q.base), Dimension(q.dim.length / 2, q.dim.angle / 2))))
+        EvalResult.Ok(ScalarValue(Quantity(kotlin.math.sqrt(q.base), Dimension(q.dim.length / 2, q.dim.angle / 2))))
     }
 
     fun sinS(a: ScalarRef): ScalarRef = op(a) { EvalResult.Ok(ScalarValue(constructit.units.sin(sc(it[0])))) }
@@ -307,7 +308,7 @@ class Construction {
     fun tanS(a: ScalarRef): ScalarRef = op(a) { EvalResult.Ok(ScalarValue(constructit.units.tan(sc(it[0])))) }
     fun atan2S(y: ScalarRef, x: ScalarRef): ScalarRef = op(y, x) {
         if (sc(it[0]).dim != sc(it[1]).dim) throw DimensionError("atan2 of ${sc(it[0]).dim} and ${sc(it[1]).dim}")
-        EvalResult.Ok(ScalarValue(Quantity.rad(Math.atan2(sc(it[0]).base, sc(it[1]).base))))
+        EvalResult.Ok(ScalarValue(Quantity.rad(kotlin.math.atan2(sc(it[0]).base, sc(it[1]).base))))
     }
 
     // ================= Tier 1: measurements =================
@@ -317,12 +318,12 @@ class Construction {
         op(a, vertex, b) {
             val va = pt(it[0]) - pt(it[1]); val vb = pt(it[2]) - pt(it[1])
             if (va.length() < Vec2.EPS || vb.length() < Vec2.EPS) EvalResult.Invalid("zero-length arm")
-            else EvalResult.Ok(ScalarValue(Quantity.rad(Math.acos((va.dot(vb) / (va.length() * vb.length())).coerceIn(-1.0, 1.0)))))
+            else EvalResult.Ok(ScalarValue(Quantity.rad(kotlin.math.acos((va.dot(vb) / (va.length() * vb.length())).coerceIn(-1.0, 1.0)))))
         }
 
     /** Acute angle between two (undirected) lines, in [0, PI/2]. */
     fun measureAngleLines(l1: LineRef, l2: LineRef): ScalarRef =
-        op(l1, l2) { EvalResult.Ok(ScalarValue(Quantity.rad(Math.acos(Math.abs(ln(it[0]).dir.dot(ln(it[1]).dir)).coerceIn(0.0, 1.0))))) }
+        op(l1, l2) { EvalResult.Ok(ScalarValue(Quantity.rad(kotlin.math.acos(kotlin.math.abs(ln(it[0]).dir.dot(ln(it[1]).dir)).coerceIn(0.0, 1.0))))) }
 
     fun measureLength(segment: SegmentRef): ScalarRef =
         op(segment) { val s = (it[0] as SegmentValue).seg; EvalResult.Ok(ScalarValue(Quantity.mm((s.b - s.a).length()))) }
@@ -343,8 +344,8 @@ class Construction {
             val bis = u1 + u2
             if (bis.length() < Vec2.EPS) return@op EvalResult.Invalid("degenerate corner")
             val bisU = bis.normalized()
-            val half = Math.acos(u1.dot(bisU).coerceIn(-1.0, 1.0))
-            val sinH = Math.sin(half); val tanH = Math.tan(half)
+            val half = kotlin.math.acos(u1.dot(bisU).coerceIn(-1.0, 1.0))
+            val sinH = kotlin.math.sin(half); val tanH = kotlin.math.tan(half)
             if (sinH < Vec2.EPS || tanH < Vec2.EPS) return@op EvalResult.Invalid("degenerate corner angle")
             val center = v + bisU * (r / sinH)
             val t1 = v + u1 * (r / tanH); val t2 = v + u2 * (r / tanH)

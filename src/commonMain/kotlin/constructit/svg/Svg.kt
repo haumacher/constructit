@@ -16,11 +16,11 @@ import constructit.geom.ProfileElement
 import constructit.geom.Ray
 import constructit.geom.Segment
 import constructit.geom.Vec2
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.round
 import kotlin.math.sin
 
 /** One drawable graph output plus its style. */
@@ -34,22 +34,23 @@ data class Drawable(val ref: Ref<*>, val stroke: String = "#1f77b4", val fill: S
 object Svg {
 
     private const val PRECISION = 3
+    private const val SCALE = 1000L // 10^PRECISION
     private const val STROKE_WIDTH = 0.5
     private const val POINT_RADIUS = 1.2
 
-    private val scale10 = Math.pow(10.0, PRECISION.toDouble())
-
+    /** Canonical fixed-precision formatter (multiplatform: no Locale / String.format). */
     private fun fmt(v: Double): String {
-        // Round to PRECISION decimals, then normalize -0.0 -> 0.0 so float dust never prints "-0.000".
-        val rounded = Math.round(v * scale10) / scale10
-        val n = if (rounded == 0.0) 0.0 else rounded
-        return String.format(Locale.ROOT, "%.${PRECISION}f", n)
+        val scaled = round(abs(v) * SCALE).toLong()
+        val neg = v < 0 && scaled != 0L // normalize -0.000 -> 0.000
+        val intPart = scaled / SCALE
+        val frac = (scaled % SCALE).toString().padStart(PRECISION, '0')
+        return (if (neg) "-" else "") + "$intPart.$frac"
     }
 
     private fun screen(v: Vec2) = Vec2(v.x, -v.y)
 
     private fun norm2pi(a: Double): Double {
-        val twoPi = 2 * Math.PI
+        val twoPi = 2 * kotlin.math.PI
         var r = a % twoPi
         if (r < 0) r += twoPi
         return r
@@ -161,7 +162,7 @@ object Svg {
         val p1 = arc.center + Vec2(arc.radius * cos(arc.endAngle), arc.radius * sin(arc.endAngle))
         val s0 = screen(p0); val s1 = screen(p1)
         val sweepAngle = if (arc.ccw) norm2pi(arc.endAngle - arc.startAngle) else norm2pi(arc.startAngle - arc.endAngle)
-        val largeArc = if (sweepAngle > Math.PI) 1 else 0
+        val largeArc = if (sweepAngle > kotlin.math.PI) 1 else 0
         // We emit in screen space (y negated). SVG sweep-flag=1 is increasing screen-angle;
         // negating y flips the sense, so a math-CCW arc is sweep-flag 0 (and math-CW is 1).
         val sweepFlag = if (arc.ccw) 0 else 1

@@ -1,24 +1,42 @@
 plugins {
-    kotlin("jvm") version "1.9.24"
+    kotlin("multiplatform") version "1.9.24"
 }
 
 repositories {
     mavenCentral()
 }
 
-dependencies {
-    testImplementation(kotlin("test"))
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
-}
-
 kotlin {
-    jvmToolchain(17)
+    jvm()
+    js(IR) {
+        browser {
+            binaries.executable()
+            commonWebpackConfig {
+                outputFileName = "constructit.js"
+            }
+        }
+    }
+
+    sourceSets {
+        val commonMain by getting
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
+        val jvmTest by getting {
+            dependencies {
+                implementation("org.junit.jupiter:junit-jupiter:5.10.2")
+            }
+        }
+        val jsMain by getting {
+            dependencies {
+                implementation("org.jetbrains.kotlinx:kotlinx-html-js:0.11.0")
+            }
+        }
+    }
 }
 
-tasks.test {
+tasks.named<Test>("jvmTest") {
     useJUnitPlatform()
-    testLogging {
-        events("passed", "failed", "skipped")
-        showStandardStreams = true
-    }
 }
