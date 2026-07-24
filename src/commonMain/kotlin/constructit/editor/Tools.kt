@@ -52,6 +52,7 @@ object Tools {
     const val CIRCLE = "circle"
     const val CIRCLE_R = "circleR"
     const val ORTHO_PATH = "orthopath"
+    const val WALL = "wall"
     const val CIRCLE_3 = "circle3"
     const val ARC_3 = "arc3"
     const val ARC_CS = "arccs"
@@ -102,6 +103,7 @@ object Tools {
         ToolDef(SEGMENT, "Segment", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to draw a segment.") { d, p, _ -> d.segment(p.points[0], p.points[1]) },
         ToolDef(RAY, "Ray", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click the origin, then a second point, to draw a ray.") { d, p, _ -> d.ray(p.points[0], p.points[1]) },
         ToolDef(ORTHO_PATH, "Ortho path", ToolCategory.CURVES, emptyList(), help = "Click to chain axis-aligned segments (each leg snaps horizontal/vertical, length is a parameter). Esc or double-click to finish.") { _, _, _ -> },
+        ToolDef(WALL, "Wall", ToolCategory.CURVES, emptyList(), scalar = true, help = "Select a thickness, then click to chain an axis-aligned wall centerline; faces + mitred corners are built on finish. Esc or double-click to finish.") { _, _, _ -> },
         ToolDef(CIRCLE, "Circle (centre, point)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click the centre, then a point on the circle.") { d, p, _ -> d.circle(p.points[0], p.points[1]) },
         ToolDef(CIRCLE_R, "Circle (centre, radius)", ToolCategory.CURVES, listOf(SlotKind.POINT), scalar = true, help = "Select a radius parameter, then click the centre.") { d, p, s -> d.circleCR(p.points[0], s!!) },
         ToolDef(CIRCLE_3, "Circle (3 points)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click three points the circle passes through.") { d, p, _ -> d.circle3(p.points[0], p.points[1], p.points[2]) },

@@ -14,6 +14,7 @@ import constructit.dsl.scalar
 import constructit.editor.Editor
 import constructit.editor.Tools
 import constructit.editor.ElementKind
+import constructit.editor.Styles
 import constructit.editor.SvgDrawTarget
 import constructit.geom.Vec2
 import constructit.units.deg
@@ -511,6 +512,32 @@ class EditorTest {
         ed.doc.setParameter(ed.doc.frameAngle(), 90.0.deg)
         val s1c = Evaluator().segment(segs[0].ref as SegmentRef)
         assertClose(s1c.b.x, 0.0, tol = 1e-6); assertClose(s1c.b.y, 10.0, tol = 1e-6)  // +X axis now points +Y
+    }
+
+    @Test
+    fun wallBuildsMiteredOffsetFacesFromACenterline() {
+        val ed = Editor()
+        ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)   // wall thickness
+        ed.setTool(Tools.WALL)
+        ed.click(Vec2(0.0, 0.0))     // start
+        ed.click(Vec2(50.0, 4.0))    // +X -> corner (50,0)
+        ed.click(Vec2(47.0, 40.0))   // +Y -> end (50,40)
+        ed.finishPath()
+
+        val walls = ed.doc.elements.filter { it.kind == ElementKind.SEGMENT && it.style == Styles.WALL }
+        assertEquals(6, walls.size, "2 legs -> 2 face-segments per side + 2 end caps")
+
+        // collect all wall endpoints; the mitred corner at centerline (50,0) with t=10 must appear
+        val ev = Evaluator()
+        val pts = walls.flatMap { val s = ev.segment(it.ref as SegmentRef); listOf(s.a, s.b) }
+        fun has(x: Double, y: Double) = pts.any { kotlin.math.abs(it.x - x) < 1e-6 && kotlin.math.abs(it.y - y) < 1e-6 }
+        assertTrue(has(45.0, 5.0), "inner miter corner")     // offset intersection, not a plain offset
+        assertTrue(has(55.0, -5.0), "outer miter corner")
+
+        // parametric: doubling the thickness moves the miter to (40,10)/(60,-10)
+        ed.doc.setParameter(ed.doc.scalars.first { it.name == "t" }, 20.0.mm)
+        val pts3 = walls.flatMap { val s = Evaluator().segment(it.ref as SegmentRef); listOf(s.a, s.b) }
+        assertTrue(pts3.any { kotlin.math.abs(it.x - 40.0) < 1e-6 && kotlin.math.abs(it.y - 10.0) < 1e-6 }, "miter follows thickness")
     }
 
     @Test

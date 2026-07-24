@@ -47,6 +47,7 @@ class Editor(
     private val pathVertices = ArrayList<PointRef>()
     private var pathActive = false
     private var previewSeg: Pair<Vec2, Vec2>? = null
+    private var pathThickness: constructit.dsl.ScalarRef? = null   // set for the WALL tool
 
     val pendingCount: Int get() = filledSlots
 
@@ -60,7 +61,7 @@ class Editor(
     private fun resetPicks() {
         pickedPoints.clear(); pickedElements.clear(); pickedClicks.clear(); filledSlots = 0
         dragPoint = null; weldTarget = null; attachTarget = null; haloPos = null; panning = false
-        pathVertices.clear(); pathActive = false; previewSeg = null
+        pathVertices.clear(); pathActive = false; previewSeg = null; pathThickness = null
     }
 
     /** Set a transient status-bar note (e.g. panel feedback). */
@@ -86,15 +87,21 @@ class Editor(
             if (hit != null) dragPoint = hit else { panning = true; lastScreen = screen }
             return
         }
-        if (toolId == Tools.ORTHO_PATH) { pathClick(camera.screenToWorld(screen)); return }
+        if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {
+            if (toolId == Tools.WALL && !pathActive && activeScalar == null) {
+                statusHint = "Wall: select a thickness parameter in the panel first"; onChange(); return
+            }
+            pathClick(camera.screenToWorld(screen)); return
+        }
         runToolClick(screen)
     }
 
-    /** One click of the ortho-path tool: start a chain, or append an axis-aligned leg. */
+    /** One click of a path tool (ortho path / wall): start a chain, or append an axis-aligned leg. */
     private fun pathClick(world: Vec2) {
         if (!pathActive) {
             pathVertices.clear(); pathVertices.add(pointOrCreate(world)); pathActive = true
-            statusHint = "Ortho path: click the next point (Esc or double-click to finish)"
+            if (toolId == Tools.WALL) pathThickness = activeScalar?.ref
+            statusHint = "${if (toolId == Tools.WALL) "Wall" else "Ortho path"}: click the next point (Esc or double-click to finish)"
         } else {
             doc.addOrthoLeg(pathVertices.last(), world)?.let { pathVertices.add(it) }
         }
@@ -102,10 +109,12 @@ class Editor(
         onChange()
     }
 
-    /** Finish the current ortho path (Esc / double-click / tool switch). */
+    /** Finish the current path (Esc / double-click / tool switch); for the WALL tool, build faces. */
     fun finishPath() {
         if (!pathActive && pathVertices.isEmpty()) return
-        pathActive = false; pathVertices.clear(); previewSeg = null; statusHint = ""
+        val t = pathThickness
+        if (t != null && pathVertices.size >= 2) doc.buildWall(pathVertices.toList(), t)
+        pathActive = false; pathVertices.clear(); previewSeg = null; pathThickness = null; statusHint = ""
         onChange()
     }
 

@@ -408,6 +408,32 @@ class Document {
         segment(from, ep)
         return ep
     }
+
+    /**
+     * Build a wall of [thickness] along the centerline through [vertices]: two offset faces whose
+     * interior corners are the intersections of adjacent offset lines (miter joints), closed by end
+     * caps. Fully parametric — faces track both the centerline vertices and the thickness. Face
+     * corners are derived points that are *not* retained as elements (only the wall segments are),
+     * so the drawing stays clean; a straight run (collinear legs) yields a parallel-line pair whose
+     * miter is undefined and simply renders invalid.
+     */
+    fun buildWall(vertices: List<PointRef>, thickness: ScalarRef) {
+        if (vertices.size < 2) return
+        val half = cx.scale(thickness, 0.5)
+        val legLines = (0 until vertices.size - 1).map { cx.lineThrough(vertices[it], vertices[it + 1]) }
+        val faces = ArrayList<List<PointRef>>()
+        for (sign in intArrayOf(+1, -1)) {
+            val fl = legLines.map { cx.parallelAtDistance(it, half, sign) }
+            val fv = ArrayList<PointRef>()
+            fv.add(cx.projectToLine(vertices.first(), fl.first()))                       // start cap corner
+            for (j in 1 until fl.size) fv.add(cx.select(cx.intersectLL(fl[j - 1], fl[j]), +1))  // miter
+            fv.add(cx.projectToLine(vertices.last(), fl.last()))                         // end cap corner
+            for (j in 0 until fv.size - 1) add(cx.segment(fv[j], fv[j + 1]), ElementKind.SEGMENT, Styles.WALL)
+            faces.add(fv)
+        }
+        add(cx.segment(faces[0].first(), faces[1].first()), ElementKind.SEGMENT, Styles.WALL)  // start cap
+        add(cx.segment(faces[0].last(), faces[1].last()), ElementKind.SEGMENT, Styles.WALL)    // end cap
+    }
     fun ray(a: PointRef, b: PointRef) = add(cx.ray(a, b), ElementKind.RAY, Styles.CURVE)
     fun circle(center: PointRef, through: PointRef) = add(cx.circleCP(center, through), ElementKind.CIRCLE, Styles.CURVE)
     fun circleCR(center: PointRef, radius: ScalarRef) = add(cx.circleCR(center, radius), ElementKind.CIRCLE, Styles.CURVE)
@@ -506,4 +532,5 @@ object Styles {
     val CONSTRUCT = Style(stroke = "#9467bd", width = 1.2)
     val INVALID = Style(stroke = "#dddddd", width = 1.0)
     val PREVIEW = Style(stroke = "#ff7f0e", width = 1.0)
+    val WALL = Style(stroke = "#333333", width = 2.4)
 }
