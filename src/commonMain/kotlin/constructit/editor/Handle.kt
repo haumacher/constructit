@@ -64,13 +64,18 @@ class HandleField(
     val dim: Dimension,
     private val getter: (Evaluator) -> Quantity?,
     private val setter: (Quantity) -> Unit,
+    /**
+     * Overridable because an ortho coordinate is writable *through* its binding chain: it is bound to
+     * its neighbour's to hold the leg axis-aligned, and writing it means writing the master they both
+     * resolve to. Only a chain ending in derived geometry is truly unwritable.
+     */
+    private val writableWhen: () -> Boolean = { node.boundTo == null },
 ) {
     /**
-     * False when [node] is driven by another node — welded, attached, or shared by a loop closure.
-     * The value is then derived by construction, so it reads but cannot be written (and dragging
-     * the handle along this field's direction is equally inert).
+     * False when the value is derived by construction — welded or attached — so it reads but cannot be
+     * written (and dragging the handle along this field's direction is equally inert).
      */
-    val writable: Boolean get() = node.boundTo == null
+    val writable: Boolean get() = writableWhen()
 
     fun read(ev: Evaluator): Quantity? = getter(ev)
 
@@ -104,14 +109,38 @@ fun quantityOf(
  */
 fun explainImmovable(el: Element): String {
     val handle = el.handle
+    val fields = handle?.fields().orEmpty()
     val dragged = handle?.dragNodes.orEmpty().toSet()
-    val driven = handle?.fields().orEmpty().filter { it.node in dragged && !it.writable }.map { it.label }
+    // Normally the reason is a field the drag would have written. When the drag can write *nothing* —
+    // its whole binding chain ends in derived geometry, so there is no master to name — every
+    // unwritable field is the reason instead.
+    val candidates = fields.filter { it.node in dragged }.ifEmpty { fields }
+    val driven = candidates.filter { !it.writable }.map { it.label }
     if (driven.isEmpty()) return "${el.id} can't be moved: it is fully determined by the construction."
     val verb = if (driven.size == 1) "is" else "are"
-    val editable = handle?.fields().orEmpty().filter { it.writable }.map { it.label }
+    val editable = fields.filter { it.writable }.map { it.label }
     val alternative = if (editable.isEmpty()) "" else " You can still set ${editable.joinToString(", ")} in the panel."
     return "${el.id} has no free direction: ${driven.joinToString(", ")} $verb driven by the construction " +
         "(a welded or attached end, or a closed loop). Move what drives it instead.$alternative"
+}
+
+/**
+ * Where a write to [node] must actually go: the end of its chain of [SourceNode.boundTo] links to
+ * other source nodes.
+ *
+ * An ortho leg is axis-aligned because one endpoint's coordinate is *bound* to the other's, so a value
+ * lives at the end of such a chain and every vertex along it follows. Null when the chain ends in
+ * derived geometry (an attach, a weld) — then the coordinate is determined by construction and no
+ * write is possible at all.
+ */
+fun writableMaster(node: SourceNode): SourceNode? {
+    var n = node
+    var guard = 0
+    while (guard++ < 64) {
+        val next = n.boundTo ?: return n
+        n = next as? SourceNode ?: return null
+    }
+    return null
 }
 
 /** The effective point value of [node] — its literal, or whatever drives it. */
@@ -154,6 +183,23 @@ fun coordField(
     Dimension.LENGTH,
     { ev -> baseOf(node, ev)?.let { Quantity.mm(it) } },
     { q -> node.value = ScalarValue(Quantity.mm(q.mm)) },
+)
+
+/**
+ * A coordinate of an ortho vertex. Reads the value it evaluates to; writes go to the master of its
+ * binding chain, so moving a vertex carries the neighbours whose coordinate is bound to the same node
+ * — which is exactly what keeps their shared leg axis-aligned.
+ */
+fun orthoCoordField(
+    label: String,
+    node: SourceNode,
+) = HandleField(
+    label,
+    node,
+    Dimension.LENGTH,
+    { ev -> baseOf(node, ev)?.let { Quantity.mm(it) } },
+    { q -> writableMaster(node)?.value = ScalarValue(Quantity.mm(q.mm)) },
+    writableWhen = { writableMaster(node) != null },
 )
 
 /** A field over one component of a point-valued source node: [axis] 0 = x, 1 = y. */
@@ -207,8 +253,9 @@ fun lengthField(
         val a = baseOf(anchor, ev) ?: 0.0
         val n = baseOf(node, ev) ?: a
         val dir = if (n < a) -1.0 else 1.0 // keep the direction the leg already runs in
-        node.value = ScalarValue(Quantity.mm(a + dir * q.mm))
+        writableMaster(node)?.value = ScalarValue(Quantity.mm(a + dir * q.mm))
     },
+    writableWhen = { writableMaster(node) != null },
 )
 
 /** Point on a line: the handle's one DOF is the signed distance along the line's direction. */
@@ -227,17 +274,20 @@ class OnLineHandle(private val line: LineRef, private val t: SourceNode) : Handl
 }
 
 /**
- * A corner of an ortho path/wall. The vertex is `pointXY(xNode, yNode)`; each coordinate node is
- * *shared* with one neighbour (a horizontal edge shares y, a vertical edge shares x), so writing the
- * dragged cursor into both nodes moves this vertex and exactly its two neighbours while keeping every
- * edge axis-aligned — no downstream cascade, no solver. A coordinate welded to the start (loop
- * closure) is bound and simply ignores the write.
+ * A corner of an ortho path. The vertex is `pointXY(xNode, yNode)` and owns both nodes; a leg is
+ * axis-aligned because one endpoint's coordinate is **bound** to the other's (a horizontal leg binds
+ * y, a vertical one binds x). Dragging writes the *master* of each chain, so the vertex and exactly the
+ * neighbours resolving to the same node move together, every leg stays axis-aligned by construction,
+ * and nothing downstream cascades — no solver anywhere.
+ *
+ * Binding rather than sharing one node is what makes the topology editable: a binding can be
+ * re-pointed in place, which is what break and join do (OP-19). Loop closure is just another binding.
  */
 class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode) : Handle {
     /** True while this vertex terminates its path (degree 1) — the case that may weld/attach. */
     var isEndpoint: Boolean = true
 
-    /** Which coordinate is this vertex's *own* (not shared with a neighbour): 0 = x, 1 = y — the axis
+    /** Which coordinate this vertex *introduced* (not bound to a neighbour's): 0 = x, 1 = y — the axis
      *  its incoming leg runs along, and so the one its leg length is measured on. */
     var ownCoord: Int = 0
 
@@ -248,26 +298,26 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode) : Handle {
     /** This vertex's own coordinate node — the one its incoming leg runs along. */
     val ownNode: SourceNode get() = if (ownCoord == 0) xNode else yNode
 
-    override val dragNodes: List<SourceNode> get() = listOf(xNode, yNode)
+    override val dragNodes: List<SourceNode> get() = listOfNotNull(writableMaster(xNode), writableMaster(yNode))
 
     override fun drag(
         world: Vec2,
         ev: Evaluator,
     ) {
-        xNode.value = ScalarValue(Quantity.mm(world.x))
-        yNode.value = ScalarValue(Quantity.mm(world.y))
+        writableMaster(xNode)?.value = ScalarValue(Quantity.mm(world.x))
+        writableMaster(yNode)?.value = ScalarValue(Quantity.mm(world.y))
     }
 
     override fun fields(): List<HandleField> =
-        listOf(coordField("x", xNode), coordField("y", yNode)) +
+        listOf(orthoCoordField("x", xNode), orthoCoordField("y", yNode)) +
             (legAnchor?.let { listOf(lengthField("leg length", ownNode, it)) } ?: emptyList())
 }
 
 /**
- * A whole leg of an ortho path. Its two endpoints *share* the coordinate perpendicular to it (that
- * sharing is what keeps the leg axis-aligned), so the leg has exactly one DOF of its own: dragging
- * it writes that one node, moving both endpoints together and stretching the two neighbouring legs.
- * Nothing else in the document moves — the same locality a vertex drag has.
+ * A whole leg of an ortho path. Its two endpoints resolve to the *same* node on the perpendicular
+ * coordinate (one is bound to the other, which is what keeps the leg axis-aligned), so the leg has
+ * exactly one DOF of its own: dragging it writes that master node, moving both endpoints together and
+ * stretching the two neighbouring legs. Nothing else moves — the same locality a vertex drag has.
  *
  * Its [fields] are that perpendicular position plus the leg's **length from either end**. A length
  * spans two vertices, so there is no single write for it: each end is a separate field, labelled by
@@ -277,13 +327,16 @@ class OrthoEdgeHandle(private val path: OrthoPath, private val leg: Element) : H
     /** 0 = horizontal leg (shared coordinate is y), 1 = vertical (shared x), null if detached. */
     val axis: Int? get() = path.legIndexOf(leg).takeIf { it >= 0 }?.let { path.legAxis(it) }
 
-    /** The coordinate node both endpoints share — the leg's own single DOF. */
-    val sharedNode: SourceNode?
+    /** This leg's perpendicular coordinate, as held by its first endpoint (may be bound onward). */
+    private val perpendicular: SourceNode?
         get() {
             val i = path.legIndexOf(leg).takeIf { it >= 0 } ?: return null
             val a = path.legEnds(i).first.corner
             return if (path.legAxis(i) == 0) a.yNode else a.xNode
         }
+
+    /** The node both endpoints resolve to on the perpendicular coordinate — the leg's single DOF. */
+    val sharedNode: SourceNode? get() = perpendicular?.let { writableMaster(it) }
 
     /** The two nodes along the leg, in draw order — their difference is the leg's length. */
     private fun alongNodes(): Pair<SourceNode, SourceNode>? {
@@ -303,8 +356,9 @@ class OrthoEdgeHandle(private val path: OrthoPath, private val leg: Element) : H
     }
 
     override fun fields(): List<HandleField> {
-        val shared = sharedNode ?: return emptyList()
-        val position = coordField(if (axis == 0) "y" else "x", shared)
+        // over the leg's *own* node, not its master: when the chain ends in derived geometry there is
+        // no master, and the leg must still report its position (as unwritable) and its lengths
+        val position = orthoCoordField(if (axis == 0) "y" else "x", perpendicular ?: return emptyList())
         val along = alongNodes() ?: return listOf(position)
         val (start, end) = along
         return listOf(

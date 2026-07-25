@@ -1184,16 +1184,19 @@ carried for later 3D even though invisible in 2D.
 Then 3D walls = extrude + boolean.
 
 ### Implementation status (as built)
-- **Slice 1 — ortho path** (`Tools.ORTHO_PATH`): rectilinear polyline as a **shared-coordinate
-  model** — each vertex is `pointXY(x, y)` and shares one coordinate node with each neighbour
-  (a horizontal edge shares `y`, a vertical edge shares `x`). Consequences, all solver-free:
-  - **Local editing** — dragging a vertex writes its two coordinate nodes; each is shared with
-    exactly one neighbour, so only the vertex and its two neighbours move (no downstream cascade),
-    and edges stay axis-aligned by construction (`OrthoCornerHandle`).
-  - **Closing** is symmetric: the last vertex's own coordinate node is bound to the start's
-    (`SourceNode.boundTo`, so the geometry snaps to fit) *and* its drag handle is redirected to
-    write the start's node — so the vertex before the closing edge keeps 2 DOF like every other
-    corner. Closing is triggered by clicking the start.
+- **Slice 1 — ortho path** (`Tools.ORTHO_PATH`): rectilinear polyline as a **bound-coordinate
+  model** — each vertex is `pointXY(x, y)` and *owns* both nodes; a leg is axis-aligned because one
+  endpoint's coordinate is `boundTo` the other's (a horizontal leg binds `y`, a vertical one binds
+  `x`). Consequences, all solver-free:
+  - **Local editing** — dragging a vertex writes the *master* of each coordinate's binding chain
+    (`writableMaster`), so the vertex and exactly the neighbours resolving to the same node move; no
+    downstream cascade, and edges stay axis-aligned by construction (`OrthoCornerHandle`).
+  - **Closing** is just one more binding: the last vertex's own coordinate is bound to the start's, and
+    because a drag writes the master, the vertex before the closing edge keeps 2 DOF like every other
+    corner — no special drag-redirect handle. Closing is triggered by clicking the start.
+  - Binding rather than sharing one node is what keeps the topology **editable**: a binding can be
+    re-pointed in place, which is what break and join need (OP-19). Sharing could not express a jog at
+    all — see that section.
   - **Immovable is explained, not silent** — connecting a path end binds a coordinate node, and
     because that node is *shared* with the neighbour, the adjacent leg's single DOF goes with it. The
     leg is then immovable by construction, which is correct but invisible, so a dead drag reads as a

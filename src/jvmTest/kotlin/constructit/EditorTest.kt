@@ -1082,6 +1082,32 @@ class EditorTest {
     }
 
     @Test
+    fun aLegIsAxisAlignedByBindingNotBySharingOneNode() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)) // V0
+        ed.click(Vec2(40.0, 3.0)) // V1 — horizontal leg, so y is bound
+        ed.click(Vec2(38.0, 30.0)) // V2 — vertical leg, so x is bound
+        ed.finishPath()
+        val v = ed.doc.orthoPaths.single().vertices
+
+        // each vertex owns its own pair of nodes; alignment is a *binding*, which can be re-pointed in
+        // place — that is what makes breaking and joining a run possible at all (OP-19)
+        assertTrue(v[1].corner.yNode !== v[0].corner.yNode, "not the same node")
+        assertTrue(v[1].corner.yNode.boundTo === v[0].corner.yNode, "V1's y follows V0's")
+        assertTrue(v[2].corner.xNode.boundTo === v[1].corner.xNode, "V2's x follows V1's")
+        assertTrue(v[1].corner.xNode.boundTo == null, "the coordinate a leg introduces stays free")
+
+        // a write resolves along the chain to the node that owns the value
+        assertTrue(constructit.editor.writableMaster(v[1].corner.yNode) === v[0].corner.yNode)
+        assertTrue(constructit.editor.writableMaster(v[0].corner.yNode) === v[0].corner.yNode)
+
+        // and the geometry is unchanged by all that: the leg is still exactly horizontal
+        val ev = Evaluator()
+        assertClose(ev.point(v[0].ref).y, ev.point(v[1].ref).y)
+    }
+
+    @Test
     fun draggingAnOrthoLegMovesOnlyThatLegPerpendicular() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)

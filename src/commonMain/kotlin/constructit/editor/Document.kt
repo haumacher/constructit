@@ -511,9 +511,10 @@ class Document {
             val dir = ((ev.eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line?.dir ?: return false
             // a line crossing every horizontal determines x from y; a horizontal line determines y from x
             val bindsX = abs(dir.y) > Vec2.EPS
-            val bound = if (bindsX) corner.xNode else corner.yNode
+            // bind the *master* of the chain: binding the local node would discard the binding that
+            // holds this leg axis-aligned, and the whole chain must follow the curve anyway
+            val bound = writableMaster(if (bindsX) corner.xNode else corner.yNode) ?: return false
             val free = if (bindsX) corner.yNode else corner.xNode
-            if (bound.boundTo != null) return false // already driven: don't fight the existing connection
             val alongFree = Ref<ScalarValue>(free)
             val cut =
                 if (bindsX) {
@@ -554,8 +555,10 @@ class Document {
         val corner = orthoEndpoint(el) ?: return false
         val tref = target.ref as? PointRef ?: return false
         if (!target.isPoint || target === el || dependsOn(tref.node, el.ref.node, HashSet())) return false
-        corner.xNode.boundTo = cx.measureX(tref).node
-        corner.yNode.boundTo = cx.measureY(tref).node
+        val mx = writableMaster(corner.xNode) ?: return false
+        val my = writableMaster(corner.yNode) ?: return false
+        mx.boundTo = cx.measureX(tref).node
+        my.boundTo = cx.measureY(tref).node
         corner.isEndpoint = false
         return true
     }
@@ -809,8 +812,7 @@ class Document {
     ): OrthoVertex? {
         val last = path.vertices.last()
         if (!path.closed && path.vertices.size >= 2 && stepAxis(last.ref, to) == last.ownAxis) {
-            val node = last.corner.ownNode
-            if (node.boundTo != null) return null
+            val node = writableMaster(last.corner.ownNode) ?: return null
             node.value = ScalarValue(Quantity.mm(if (last.ownAxis == 0) to.x else to.y))
             return last
         }
@@ -855,16 +857,18 @@ class Document {
         val dx = to.x - p.p.x
         val dy = to.y - p.p.y
         if (abs(dx) < Vec2.EPS && abs(dy) < Vec2.EPS) return null
-        // horizontal edge: new x node, share prev's y node (ownAxis 0); vertical: share x, new y (ownAxis 1)
+        // Every vertex owns both coordinates; the leg binds the perpendicular one to the previous
+        // vertex's, which keeps it axis-aligned and — unlike sharing one node — stays re-pointable, so
+        // the topology can later be broken or joined (OP-19).
         val xNode: SourceNode
         val yNode: SourceNode
         val ownAxis: Int
         if (abs(dx) >= abs(dy)) {
             xNode = scalarSource(to.x)
-            yNode = prev.corner.yNode
+            yNode = scalarSource(p.p.y).also { it.boundTo = prev.corner.yNode }
             ownAxis = 0
         } else {
-            xNode = prev.corner.xNode
+            xNode = scalarSource(p.p.x).also { it.boundTo = prev.corner.xNode }
             yNode = scalarSource(to.y)
             ownAxis = 1
         }
@@ -918,24 +922,13 @@ class Document {
         first: OrthoVertex,
         last: OrthoVertex,
     ) {
-        val el = elements.firstOrNull { it.ref === last.ref } ?: return
-        val redirect =
-            when (last.ownAxis) {
-                0 -> {
-                    last.corner.xNode.boundTo = first.corner.xNode // own x -> vertical closing edge
-                    OrthoCornerHandle(first.corner.xNode, last.corner.yNode)
-                }
-                1 -> {
-                    last.corner.yNode.boundTo = first.corner.yNode // own y -> horizontal closing edge
-                    OrthoCornerHandle(last.corner.xNode, first.corner.yNode)
-                }
-                else -> return
-            }
-        redirect.isEndpoint = false
-        redirect.ownCoord = 1 - last.ownAxis // the coordinate the redirect can still write
+        when (last.ownAxis) {
+            0 -> last.corner.xNode.boundTo = first.corner.xNode // own x -> vertical closing edge
+            1 -> last.corner.yNode.boundTo = first.corner.yNode // own y -> horizontal closing edge
+            else -> return
+        }
+        last.corner.isEndpoint = false
         first.corner.isEndpoint = false
-        el.handle = redirect
-        last.corner = redirect // keep the vertex pointing at its live handle
     }
 
     val walls = ArrayList<Wall>()
