@@ -45,7 +45,15 @@ object HitTest {
         ev: Evaluator,
         world: Vec2,
         tol: Double,
-    ): Element? = nearest(doc, ev, world, tol) { it.isCurve && it.handle != null }
+    ): Element? = nearest(doc, ev, world, tol) { it.isCurve && it.hasFreeDof }
+
+    /** Nearest element a pointer can address at all, movable or not — for selecting and explaining. */
+    fun nearestSelectable(
+        doc: Document,
+        ev: Evaluator,
+        world: Vec2,
+        tol: Double,
+    ): Element? = nearest(doc, ev, world, tol) { it.selectable }
 
     /** Nearest point-like element (free, derived, or on-curve), for snapping/reuse. */
     fun nearestAnyPoint(

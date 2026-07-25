@@ -47,9 +47,19 @@ class Element(
     val draggable: Boolean get() =
         when (kind) {
             ElementKind.POINT -> (ref.node as? SourceNode)?.boundTo == null
-            ElementKind.ON_CURVE -> handle?.fields()?.any { it.writable } ?: false
+            ElementKind.ON_CURVE -> hasFreeDof
             else -> false
         }
+
+    /**
+     * True while dragging this element can still change something. Note a leg can be immovable and
+     * yet have editable *lengths*: its drag writes the one coordinate shared by its ends, which the
+     * length fields do not touch — see [Handle.dragNodes] and [explainImmovable].
+     */
+    val hasFreeDof: Boolean get() = handle?.dragMovable ?: false
+
+    /** Anything a pointer can address: a point, or a curve carrying a handle (an ortho leg). */
+    val selectable: Boolean get() = isPoint || handle != null
     val isCurve: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY || kind == ElementKind.ARC
     val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT || kind == ElementKind.ON_CURVE
 

@@ -246,16 +246,23 @@ class Editor(
         if (toolId == Tools.SELECT) {
             val world = camera.screenToWorld(screen)
             // a vertex wins over the legs meeting at it; a leg drags perpendicular (OrthoEdgeHandle)
-            val hit =
+            val movable =
                 HitTest.nearestFreePoint(doc, ev(), world, tolWorld())
                     ?: HitTest.nearestDraggableCurve(doc, ev(), world, tolWorld())
+            // an immovable element is still selectable, so its values can be read and the reason shown
+            val hit = movable ?: HitTest.nearestSelectable(doc, ev(), world, tolWorld())
             selection = hit // a miss clears it, so clicking empty space deselects
-            if (hit != null) {
-                dragTarget = hit
-                dragStart = world
-            } else {
-                panning = true
-                lastScreen = screen
+            when {
+                movable != null -> {
+                    dragTarget = movable
+                    dragStart = world
+                    statusHint = ""
+                }
+                hit != null -> statusHint = explainImmovable(hit)
+                else -> {
+                    panning = true
+                    lastScreen = screen
+                }
             }
             onChange()
             return

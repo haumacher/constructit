@@ -33,6 +33,20 @@ interface Handle {
 
     /** Discrete binding: the numeric views of the very same write. */
     fun fields(): List<HandleField> = emptyList()
+
+    /**
+     * The source nodes [drag] writes. Deliberately not defaulted: a handle that cannot say what its
+     * drag touches cannot be told apart from one whose drag is inert, and an inert drag that still
+     * accepts the grab is indistinguishable from a bug.
+     *
+     * Note this is *not* the union of [fields]' nodes — a field may re-parameterize a different node
+     * than the drag writes. A leg's drag moves it perpendicular (one shared node) while its length
+     * fields write the nodes along it, so a leg can be immovable and still have editable lengths.
+     */
+    val dragNodes: List<SourceNode>
+
+    /** False when every node [drag] would write is driven, making the drag inert. */
+    val dragMovable: Boolean get() = dragNodes.any { it.boundTo == null }
 }
 
 /**
@@ -77,6 +91,27 @@ fun quantityOf(
         Dimension.LENGTH -> Quantity.mm(value)
         else -> Quantity.number(value)
     }
+
+/**
+ * Why grabbing [el] cannot move it, in the user's terms.
+ *
+ * An element with no writable field is immovable *by construction*, not by accident: an attached or
+ * welded end binds a coordinate node, and because that node is **shared** with the neighbour, the
+ * adjacent leg's single DOF goes with it. That is the intended consequence of the connection — but it
+ * is invisible, so a silent dead drag reads as a bug. Name the driven values instead; the inspector
+ * greys out exactly the same ones.
+ */
+fun explainImmovable(el: Element): String {
+    val handle = el.handle
+    val dragged = handle?.dragNodes.orEmpty().toSet()
+    val driven = handle?.fields().orEmpty().filter { it.node in dragged && !it.writable }.map { it.label }
+    if (driven.isEmpty()) return "${el.id} can't be moved: it is fully determined by the construction."
+    val verb = if (driven.size == 1) "is" else "are"
+    val editable = handle?.fields().orEmpty().filter { it.writable }.map { it.label }
+    val alternative = if (editable.isEmpty()) "" else " You can still set ${editable.joinToString(", ")} in the panel."
+    return "${el.id} has no free direction: ${driven.joinToString(", ")} $verb driven by the construction " +
+        "(a welded or attached end, or a closed loop). Move what drives it instead.$alternative"
+}
 
 /** The effective value of [node] in base units — its literal, or whatever drives it. */
 private fun baseOf(
@@ -137,6 +172,8 @@ fun lengthField(
 
 /** Point on a line: the handle's one DOF is the signed distance along the line's direction. */
 class OnLineHandle(private val line: LineRef, private val t: SourceNode) : Handle {
+    override val dragNodes: List<SourceNode> get() = listOf(t)
+
     override fun drag(
         world: Vec2,
         ev: Evaluator,
@@ -169,6 +206,8 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode) : Handle {
 
     /** This vertex's own coordinate node — the one its incoming leg runs along. */
     val ownNode: SourceNode get() = if (ownCoord == 0) xNode else yNode
+
+    override val dragNodes: List<SourceNode> get() = listOf(xNode, yNode)
 
     override fun drag(
         world: Vec2,
@@ -212,6 +251,8 @@ class OrthoEdgeHandle(private val path: OrthoPath, private val leg: Element) : H
         return if (path.legAxis(i) == 0) a.corner.xNode to b.corner.xNode else a.corner.yNode to b.corner.yNode
     }
 
+    override val dragNodes: List<SourceNode> get() = listOfNotNull(sharedNode)
+
     override fun drag(
         world: Vec2,
         ev: Evaluator,
@@ -235,6 +276,8 @@ class OrthoEdgeHandle(private val path: OrthoPath, private val leg: Element) : H
 
 /** Point on a circle: the handle's one DOF is the angle around the centre. */
 class OnCircleHandle(val circle: CircleRef, private val angle: SourceNode) : Handle {
+    override val dragNodes: List<SourceNode> get() = listOf(angle)
+
     override fun drag(
         world: Vec2,
         ev: Evaluator,

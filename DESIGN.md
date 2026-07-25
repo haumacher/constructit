@@ -750,6 +750,13 @@ Then 3D walls = extrude + boolean.
     (`SourceNode.boundTo`, so the geometry snaps to fit) *and* its drag handle is redirected to
     write the start's node — so the vertex before the closing edge keeps 2 DOF like every other
     corner. Closing is triggered by clicking the start.
+  - **Immovable is explained, not silent** — connecting a path end binds a coordinate node, and
+    because that node is *shared* with the neighbour, the adjacent leg's single DOF goes with it. The
+    leg is then immovable by construction, which is correct but invisible, so a dead drag reads as a
+    bug. `Handle.dragNodes` states what a drag writes (deliberately not defaulted, and *not* the union
+    of the fields' nodes — a leg's length fields write the nodes along it, which its perpendicular drag
+    never touches). An element whose drag is inert is still selectable, so its values stay readable,
+    and the status bar names which value is driven.
   - **Axis-locked dragging** — with `Editor.axisLock` (Shift in the browser shell) a drag keeps only
     the component its gesture is dominated by, measured from where the drag began, so one coordinate
     of a corner can be changed without disturbing the other. Filtering the position before dispatch

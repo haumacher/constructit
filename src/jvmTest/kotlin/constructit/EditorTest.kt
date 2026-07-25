@@ -787,6 +787,38 @@ class EditorTest {
     }
 
     @Test
+    fun aLegWhoseSharedCoordinateIsDrivenSaysWhyItCannotMove() {
+        val ed = Editor()
+        ed.setTool(Tools.SEGMENT)
+        ed.click(Vec2(0.0, -60.0))
+        ed.click(Vec2(0.0, 60.0)) // a wall to build off
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.5, 10.0)) // start attached to the wall: pins both of the start's coordinates
+        ed.click(Vec2(80.0, 11.0)) // leg 0 — shares the driven y, so it has no free direction left
+        ed.click(Vec2(81.0, 70.0)) // leg 1 — its x is still free
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+
+        // the immovable leg is still selectable (its values must be readable) but is not dragged, and
+        // the reason is stated instead of the drag silently doing nothing
+        ed.setTool(Tools.SELECT)
+        val before = Evaluator().segment(path.legs[0].ref as SegmentRef)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(40.0, 10.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(40.0, 35.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(40.0, 35.0)))
+        assertTrue(ed.selection === path.legs[0], "an immovable leg can still be selected and inspected")
+        assertClose(Evaluator().segment(path.legs[0].ref as SegmentRef).a.y, before.a.y)
+        assertTrue(ed.statusHint.contains("no free direction"), "got: '${ed.statusHint}'")
+        assertTrue(ed.statusHint.contains("y"), "it should name the driven value; got: '${ed.statusHint}'")
+
+        // the neighbouring leg still moves, so this is a property of that one leg, not of the path
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(80.0, 40.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(110.0, 40.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(110.0, 40.0)))
+        assertClose(Evaluator().segment(path.legs[1].ref as SegmentRef).a.x, 110.0)
+    }
+
+    @Test
     fun aPathBeingDrawnDoesNotSnapToItself() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)
