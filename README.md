@@ -76,6 +76,15 @@ counterbores, pockets, wall openings, stacked storeys — because that case deco
 2D region booleans rather than into mesh surgery: no coplanar-face epsilon, no repair pass, and a
 result that is itself a legal operand of the next boolean. Anything else (a revolve, a future imported
 mesh) is **refused with a reason** rather than approximated; general booleans arrive with Manifold.
+
+The seam runs **both ways**. *Extrude on face* raises an area from a solid's top face — the plan is drawn
+in the same 2D space, so an upper storey or a boss needs no datum-plane UI — and *Section* cuts a solid at a
+height back into ordinary 2D geometry, which is **exact** for a prism (the section *is* the slab there) and
+analytic for a plain extrude (its circles stay circles). A section is an area like any other, so it can be
+dimensioned, measured, or extruded again: storey 2 is built from the section of storey 1, and one drag of a
+ground-floor wall reshapes both. Volume and per-axis extent land in the panel as read-only values that may
+drive *new* construction — forward only, never back into their own solid.
+
 Mesh export is next. See [`DESIGN.md`](DESIGN.md) for the full design record and open questions.
 
 ## Build & run

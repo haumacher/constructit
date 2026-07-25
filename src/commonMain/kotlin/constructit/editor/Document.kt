@@ -36,11 +36,13 @@ import constructit.dsl.SolidRef
 import constructit.dsl.instance
 import constructit.dsl.roundedRect
 import constructit.dsl.valueOf
+import constructit.geom.Axis3
 import constructit.geom.BoolOp
 import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.ProfileElement
 import constructit.geom.Segment
+import constructit.geom.SolidFace
 import constructit.geom.ThickFaces
 import constructit.geom.Vec2
 import constructit.units.Quantity
@@ -2280,6 +2282,51 @@ class Document {
     }
 
     /**
+     * Extrude the area [el] by [depth] **from the top face of the solid [base]** (OP-17 slice 3, through
+     * the OP-8 provenance accessor `facePlane`): an upper storey, a boss, a rib.
+     *
+     * This is the sketch→feature→sketch loop as a gesture, and it needs no new concept in the canvas: the
+     * 2D drawing *is* the plan, so the area is drawn in the same 2D space as the base's own footprint and
+     * this tool only says which face it sits on. The plane is a derived node, not a captured height — raise
+     * the base's depth, cut an opening into it, boolean it with something taller, and the storey above
+     * follows, because `facePlane` recomputes from the feature's parameters (and for a boolean's prism from
+     * its slabs' extent, which is the same construction over the result's own height).
+     *
+     * The new solid depends on the base *and* on the area. That is a second path to the base when the area
+     * is itself derived from it — a [sectionSolid] of the base, the storey-from-a-section case — and a
+     * second path is not a cycle: the DAG's rule is about ancestry, and the base is an ancestor of both.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun extrudeOnFace(
+        base: Element,
+        el: Element,
+        depth: ScalarRef,
+    ): Element? {
+        if (base.kind != ElementKind.SOLID) return null
+        val region = regionOf(el) ?: return null
+        val plane = cx.facePlane(base.ref as SolidRef, SolidFace.TOP)
+        return add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
+    }
+
+    /**
+     * The horizontal **section** of the solid [el] at [height], as an ordinary 2D area (OP-17, downward).
+     *
+     * An `AREA` element like a wall's footprint, so everything the result layer can do it can do: it draws
+     * in plan, it is pickable, it can be dimensioned, and it can be extruded again — including onto the
+     * very solid it was cut from ([extrudeOnFace]). Being derived, it also *follows*: drag the wall the
+     * solid came from and the section reshapes, with no node created and none rebuilt.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun sectionSolid(
+        el: Element,
+        height: ScalarRef,
+    ): Element? {
+        if (el.kind != ElementKind.SOLID) return null
+        // RESULT, not FOOTPRINT: a section is a drawing in its own right, not the plan of a wall
+        return add(cx.sectionAt(el.ref as SolidRef, height), ElementKind.AREA, Styles.RESULT)
+    }
+
+    /**
      * Revolve the area [el] through [angle] about the axis carried by the line element [axis] (OP-17
      * slice 2).
      *
@@ -2873,6 +2920,39 @@ class Document {
         l1: Element,
         l2: Element,
     ) = measurement("angle", cx.measureAngleLines(carrierLine(l1), carrierLine(l2)))
+
+    // ---- 3D measurements (OP-4, forward): a solid's numbers, as panel scalars ----
+    //
+    // The 3D→2D half of the seam that needs no geometry at all (OP-17): a measurement of a solid is an
+    // ordinary read-only scalar entry, so it can drive a *new* 2D construction — which is how a papercraft
+    // net gets its edge lengths from the part it wraps. Forward only: wiring one back into an ancestor of
+    // the same solid is a cycle and is refused where every other wiring is ([wireParameter]).
+
+    /** The volume of the solid [el] (dimension L³) — measured from its mesh, exact for the mesh. */
+    @Suppress("UNCHECKED_CAST")
+    fun measureSolidVolume(el: Element): ScalarEntry? {
+        if (el.kind != ElementKind.SOLID) return null
+        return measurement("vol", cx.measureVolume(el.ref as SolidRef))
+    }
+
+    /**
+     * The extent of the solid [el] along the world [axis] (a length).
+     *
+     * **Which axis is a stored discrete choice, and the tool id is where it is stored** (OP-1's rule
+     * applied to a tool): there are three tools, X, Y and Z, exactly as there are three boolean tools for
+     * `BoolOp` and two tangent tools for inner/outer. The alternative — one tool that reads the axis off
+     * the placing click, the way an angular dimension reads its sector — cannot work here: the choice
+     * includes **Z**, which no click in a plan view can name. And a `tool` step records its id verbatim, so
+     * three ids need no new argument in the file format for a choice that must replay identically (OP-18).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun measureSolidExtent(
+        el: Element,
+        axis: Axis3,
+    ): ScalarEntry? {
+        if (el.kind != ElementKind.SOLID) return null
+        return measurement("ext${axis.name.lowercase()}", cx.measureBBoxExtent(el.ref as SolidRef, axis))
+    }
 
     // ---- dimensions: annotation over an ordinary measurement node (OP-4) ----
     //

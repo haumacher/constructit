@@ -1143,6 +1143,83 @@ object Geom3 {
             is Feature3.Revolution -> null to "a revolved solid has no top or bottom face"
         }
 
+    // ---- sections: the downward half of the seam (OP-17), exact for prisms (OP-22) ----
+
+    /**
+     * The **horizontal cross-section** of [feature] at world height [height] mm, as 2D areas in **world
+     * plan coordinates** — the downward direction of the seam (OP-17: `section(solid, plane) → Region`).
+     *
+     * For a prismatic solid this is not an approximation of anything: a prism *is* a stack of areas over
+     * z-intervals (OP-22), so the section at a height **is** the slab there, corner for corner. A plain
+     * [Feature3.Extrusion] is answered from its own analytic sketch rather than from its prismatic
+     * reading, so a cut through a bored plate keeps its exact circles — the tessellation that a boolean
+     * would force is not needed here.
+     *
+     * **The boundary rule** (a height landing exactly on a slab interface, within [Z_EPS]): the section
+     * shows the material **above** the cut. Stated in the *world*, so it holds for a solid extruded from a
+     * flipped face plane too, whose own axis runs downwards — hence the two cases below. A height at the
+     * solid's very **top** face is therefore outside every slab and refused, as is one below its bottom:
+     * a face is not a section, and saying so is more useful than an empty area (OP-3 — the node is
+     * invalid, hidden, and heals when the height moves back).
+     *
+     * Refused rather than guessed: a revolve (its cross-section is a real analytic problem, cut from this
+     * slice), and a prism whose axis is not vertical (a horizontal cut through it is not one of its
+     * slabs at all).
+     *
+     * The areas come back mapped through the sketch plane's own in-plane frame, so they are in the
+     * coordinates the 2D canvas draws — the *plan* — and not in the sketch's. For the world XY plane and
+     * every plane derived from it by [Plane3.translated] that map is the identity; for a flipped one it is
+     * a reflection, which is why it is applied rather than assumed away.
+     */
+    fun sectionAt(
+        feature: Feature3,
+        height: Double,
+    ): Pair<List<Region>?, String?> {
+        val plane: Plane3
+        val layers: List<Slab>
+        when (feature) {
+            is Feature3.Revolution ->
+                return null to "a revolved solid has no prismatic cross-section; sectioning one needs an analytic revolve section (OP-17)"
+            is Feature3.Extrusion -> {
+                plane = feature.sketch.plane
+                // [Slab] is borrowed here as a plain (interval, areas) carrier and never escapes this
+                // function, so the polygonal-regions convention of a *stored* slab is not at stake — which
+                // is the whole point: these regions are the analytic ones, arcs and all.
+                layers = listOf(Slab(feature.sketch.regions, 0.0, feature.depth))
+            }
+            is Feature3.Prism -> {
+                plane = feature.plane
+                layers = feature.slabs
+            }
+        }
+        val n = plane.normal.normalized()
+        if (abs(abs(n.z) - 1.0) > 1e-9) {
+            return null to "this solid is not extruded vertically, so a horizontal cut is not one of its cross-sections"
+        }
+        // the solid's own axis coordinate of the cut: n is ±Z, so dividing by n.z is multiplying by it
+        val s = (height - plane.origin.z) * n.z
+        val up = n.z > 0.0
+        val hit =
+            layers.firstOrNull {
+                if (up) s >= it.z0 - Z_EPS && s < it.z1 - Z_EPS else s > it.z0 + Z_EPS && s <= it.z1 + Z_EPS
+            }
+        if (hit == null) {
+            val zs = layers.flatMap { listOf(plane.origin.z + n.z * it.z0, plane.origin.z + n.z * it.z1) }
+            return null to "the solid has no material at z = $height mm (it spans ${zs.min()} to ${zs.max()} mm, and its top face is not a section)"
+        }
+        // sketch coordinates -> world plan coordinates: u and v as the columns of a 2D affine, which is
+        // rigid (the frame is orthonormal and its normal is ±Z, so u and v lie in the plan), hence exact.
+        val t = Affine(plane.u.x, plane.u.y, plane.v.x, plane.v.y, plane.origin.x, plane.origin.y)
+        val out =
+            hit.regions.map { r ->
+                Region(
+                    GeomMath.orient(GeomMath.transform(r.outer, t), ccw = true),
+                    r.holes.map { GeomMath.orient(GeomMath.transform(it, t), ccw = false) },
+                )
+            }
+        return out to null
+    }
+
     // ---- measurements (OP-4): scalars, so they may drive new 2D constructions ----
 
     /**

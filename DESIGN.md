@@ -240,7 +240,10 @@ WebGlRenderer3 (jsMain) — one program: position+normal+colour, uniform MVP, he
 - **Cut, deliberately: no picking in the 3D view.** A click there selects nothing, and the status line
   says the drawing tools apply to the 2D view. Picking in 3D needs a ray/mesh intersection *and* an
   answer to "what does selecting a face mean for a construction" — that answer is the sketch-on-face
-  task, and guessing it now would put a second, weaker selection model beside the 2D one.
+  task, and guessing it now would put a second, weaker selection model beside the 2D one. Sketch-on-face
+  has since shipped and answered it **without** 3D picking: a face is named by a *provenance choice*
+  (`facePlane(solid, TOP)`) reached by picking the solid in plan, not by clicking a facet — so the cut
+  stands, and what remains for 3D picking is convenience rather than expressiveness.
 - Consequence handled rather than ignored: a solid's 2D **footprint hint** sits exactly on the area it
   was extruded from, so a canvas click can only reach the topmost of the two. The **element tree**
   therefore selects by name (`Editor.selectElement`). Biasing the pick would merely make the other one
@@ -288,13 +291,19 @@ auto-uniquified so wiring is unambiguous):
 - Construct: Perp/Parallel-through, Perp-bisector, Angle-bisector, Parallel-at-distance,
   Tangent-from-point, Tangent-at-point (1 click), Fillet, Chamfer, Outer/Inner common tangents
 - Transform: Mirror, Rotate, Scale, Translate-by-vector, Linear array, Circular array
-- Measure: Distance, Angle (3pt), Angle (2 lines), Length, Radius, X/Y coordinate
+- Measure: Distance, Angle (3pt), Angle (2 lines), Length, Radius, X/Y coordinate, and of a solid
+  (OP-4 forward): Volume, Extent X/Y/Z (three tools, because the axis is a stored discrete choice and a
+  tool id is where a `tool` step stores one)
 - Solids (the seam, OP-17): Extrude (an area + a depth parameter), Revolve (an area + an in-plane axis
   line + an angle parameter) — see *Implementation status (as built — the seam's tools and the viewport)*
+- Solids, downward (OP-17): Extrude on face (a solid + an area + a depth — the sketch→feature→sketch loop
+  as one gesture, through `facePlane`), Section (a solid + a height → an ordinary 2D area, exact for
+  prisms) — see *Implementation status (as built — the seam downward)*
 - Parameter **wiring** (reduce DOF; equality by shared reference), measurement-as-scalar-input.
 - Any `LINE` slot also accepts a segment/ray (carrier line).
 - An `AREA` slot accepts either result-layer element that bounds an area: a traced `Outline` (one loop,
-  coerced with `region(...)`) or a thick path's footprint (already a region).
+  coerced with `region(...)`) or a thick path's footprint (already a region) — or a **section** of a solid,
+  which is why the downward seam needed no new slot kind.
 
 #### Welding (joining two points) — point-level wiring
 
@@ -718,6 +727,10 @@ against the strong type system (OP-5), which also drives context-sensitive tools
   one-directional. Cycles are impossible by construction (a measurement can only be consumed
   by nodes created after it). A quantity is therefore **driving XOR driven**, never both —
   wanting both is a constraint, which is exactly what we exclude.
+- **A solid is measurable too** (OP-17's cheapest downward path): *Volume* and *Extent X/Y/Z* are
+  `ToolDef`s over a `SOLID` pick, landing read-only panel scalars that drive *new* 2D construction — the
+  papercraft net's dimensions come from the part. Wiring one back into an ancestor of the same solid is
+  refused by the ordinary cycle check, which is where driving-XOR-driven is enforced.
 
 ### freeze / convert
 - **(a) Freeze to constant — IN v1.** Replace a measurement's consumers with an editable
@@ -1357,6 +1370,71 @@ note is about the seam.
   mesh is ready for it — it is a file-format task, not a geometry one); the 2D toolset is inert while
   the 3D view is shown, and says so.
 
+### Implementation status (as built — the seam downward: sections, sketch-on-face, 3D measurements)
+
+The seam's **other direction** ships, which is the half OP-17 called the risky one: `section(solid, …) →
+Region` and the face accessor reached by clicking. The 2D→3D→2D→3D loop is now a gesture sequence with no
+code that knows about it — `SeamDownToolTest.aStoreyBuiltFromTheStoreyBelowIsOneLiveChain` is the
+acceptance test: a drawn wall ring becomes storey 1, storey 1's *section* becomes 2D geometry again, and
+that section extruded on storey 1's own **top face** becomes storey 2.
+
+- **`sectionAt(solid, height) → Region` (`Geom3.sectionAt`, one op node).** For a prism this is **exact and
+  not an approximation of anything**: a prism *is* a stack of areas over z-intervals (OP-22), so the
+  section at a height **is** the slab there, corner for corner. A plain `Extrusion` is answered from its
+  own **analytic sketch** rather than from its prismatic reading, so a cut through a bored plate keeps its
+  exact circles — the tessellation a boolean forces is not needed here. The areas come back mapped through
+  the sketch plane's own in-plane frame, i.e. in **world plan coordinates**, which is the identity for the
+  XY plane and every plane derived from it by translation, and a genuine reflection for a flipped one.
+- **The boundary rule, stated in the world: a cut landing on a slab interface shows the material
+  *above* it.** Consequently a solid's **bottom** face is a section and its **top** face is not — a face is
+  not a cross-section, and refusing is more useful than an empty area. Because the rule is stated in the
+  world and not in the prism's own axis direction, it holds for a solid grown *downwards* from a flipped
+  face plane too (whose local intervals ascend into −z), which is why the implementation has the two cases.
+- **Refused with a reason, and healing (OP-3):** a **revolve** (an analytic revolve section is a real
+  problem, and is cut from this slice); a prism whose **axis is not vertical** (a horizontal cut through it
+  is not one of its slabs at all); a height **outside** the material; and a cut that falls into **several
+  disjoint areas** — the last is *the type* refusing rather than the geometry failing, since a `Region` is
+  one outer boundary with holes, so "the wall at floor level, which the door splits in two" has no
+  single-region answer. The piece count is a **value**, so the node exists either way and heals when the
+  geometry reconnects; nothing about it is structural.
+- **Two new `ToolDef`s, no controller code.** *Extrude on face* = a `SOLID` slot + an `AREA` slot + a depth
+  (`extrude(sketchOn(facePlane(base, TOP), region), depth)`); *Section* = a `SOLID` slot + a height, and it
+  emits an ordinary `AREA` element, so the result draws in plan, is pickable, can be dimensioned and can be
+  **extruded again** by the plain *Extrude* tool. Both ride the generic `tool` step, so save/load/undo/
+  delete came free and the round trip is byte-equal.
+- **The plan is drawn once.** *Extrude on face* needs no plane-choosing UI: the 2D canvas **is** the plan,
+  so an upper storey or a boss is drawn in the same 2D space and the tool only says which solid it is
+  stacked on. `facePlane` works through booleans (a `Prism`'s top is derived from its own slabs' extent), so
+  a storey stacks on a **cut** wall and follows the wall's height parameter through the boolean — asserted.
+  Only `TOP` is offered; the bottom face is a second tool, not built (nothing needs it yet).
+- **A face-based extrusion's footprint hint is at its true plan outline**, so it is pickable where it is
+  drawn — because `facePlane(TOP)` keeps the sketch plane's own `u`/`v` and moves only the origin along z,
+  the sketch coordinates still *are* plan coordinates. That is the caveat recorded in the slice above,
+  discharged for every plane the tools can produce. Still open (and now precise): a **flipped or rotated**
+  sketch plane — reachable only from the DSL today — would need the hint and the 2D pick to apply the same
+  in-plane map `sectionAt` applies, and a *vertical* sketch plane's honest plan projection is a line, which
+  would make such a solid unpickable in plan. So the projection is not attempted rather than half-attempted.
+- **3D measurements as tools (OP-4, forward): *Volume* and *Extent (X/Y/Z)*.** Each is a `SOLID` pick that
+  creates no geometry and lands a read-only scalar in the panel, usable as any other tool's scalar input or
+  as a wiring target — the papercraft flow, asserted: two measured extents become the two coordinates of a
+  point, so a 2D net rectangle *is* the part's size and re-typing the part's parameters moves the drawing.
+  **The axis is a stored discrete choice and the tool id is where it is stored** — three tools, exactly as
+  there are three boolean tools for `BoolOp` and two for inner/outer tangents. The angular-dimension
+  precedent (resolve the choice from the placing click) cannot apply: the choice includes **Z**, which no
+  click in a plan view can name, and a tool step already records its id verbatim, so three ids need no new
+  argument in the format for a choice that must replay identically (OP-18).
+- **Acyclicity, checked rather than assumed.** Extruding a solid's *own section* onto its *own face* makes
+  the new solid depend on the base **twice** — and that is not a cycle: acyclicity is about ancestry, and
+  the base is an ancestor of both paths. No tool can create a cycle at all, because a tool only ever builds
+  *new* op nodes whose inputs are fixed at construction; the only mutating connections are `boundTo`
+  (welding, parameter wiring), and both already refuse a circular one. The honest refusal at this seam is
+  therefore a **wiring** refusal, and it is asserted: a solid's measured extent cannot drive the depth
+  parameter (or the wall thickness) the solid is built from — driving XOR driven, OP-4.
+- **Cuts in this slice:** an analytic **section of a revolve** (refused with a reason); a **multi-piece**
+  section (above); sectioning along a **plane other than horizontal** (a general `section(solid, plane)`
+  wants a plane-valued slot, which wants datum-plane UI); the **bottom** face as a stacking target; and
+  `project(edge, plane)` — the seam's third downward accessor, which nothing has needed yet.
+
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
 **Decision:** an **analytic construction layer is the source of truth**; the mesh is an
@@ -1735,8 +1813,15 @@ Three broad families (see OP-9 decision above):
       (an outline or a footprint), riding the generic `tool` step, plus an orbiting shaded 3D view
       (`Camera3`/`Scene3`/`Painter3`/`Viewport3` in `commonMain`, one WebGL program in `jsMain`). See
       *Implementation status (as built — the seam's tools and the viewport)* and *The 3D viewport*.
-      Cut so far: 3D transforms, 3D picking, any sketch plane other than world XY, and mesh export
-      (STL/3MF). Booleans — the counterbore — are no longer cut: see OP-22.
+      **The downward direction is built too**: `sectionAt(solid, height)` (exact for a prism, analytic for
+      a plain extrude) plus *Extrude on face* and *Section* as `ToolDef`s, and *Volume*/*Extent X/Y/Z* as
+      3D measurements feeding forward — so the 2D→3D→2D→3D loop is a gesture sequence. See
+      *Implementation status (as built — the seam downward)*.
+      Cut so far: 3D transforms, 3D picking, mesh export (STL/3MF), a *general* `section(solid, plane)`
+      (only horizontal cuts, which need no plane-valued slot), an analytic section of a revolve, and
+      `project(edge, plane)`. Sketching on a *chosen* plane is no longer cut for the case that matters —
+      a solid's top face — though a flipped or rotated sketch plane still has no plan projection for its
+      footprint hint. Booleans — the counterbore — are no longer cut: see OP-22.
 - [x] **OP-22 Booleans between solids** — RESOLVED: booleans between prisms **along one axis** are
       computed **exactly**, now; every other boolean is refused with a reason and waits for Manifold
       (OP-9). General mesh CSG cannot honestly keep the watertightness guarantee in floating point

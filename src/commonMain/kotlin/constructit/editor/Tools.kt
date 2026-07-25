@@ -2,6 +2,7 @@ package constructit.editor
 
 import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
+import constructit.geom.Axis3
 import constructit.geom.BoolOp
 import constructit.geom.Vec2
 import constructit.units.Quantity
@@ -122,6 +123,10 @@ object Tools {
     const val EXTRUDE = "extrude"
     const val REVOLVE = "revolve"
 
+    // ...and back down again: a sketch on a solid's face, and a solid's section as 2D geometry
+    const val EXTRUDE_ON_FACE = "extrudeface"
+    const val SECTION = "section"
+
     // Booleans between same-axis prisms (OP-22), and the architectural application of them
     const val UNION = "union"
     const val SUBTRACT = "subtract"
@@ -160,6 +165,14 @@ object Tools {
     const val COORD_X = "mx"
     const val COORD_Y = "my"
     const val ANGLE_LINES = "manglelines"
+
+    // 3D measurements (OP-4 forward): a solid's numbers, free to drive a new 2D construction. The axis of
+    // an extent is a *discrete choice*, and the tool id is what stores it — hence three, not one (see
+    // [Document.measureSolidExtent]).
+    const val VOLUME = "mvolume"
+    const val EXTENT_X = "mextentx"
+    const val EXTENT_Y = "mextenty"
+    const val EXTENT_Z = "mextentz"
 
     // Annotate (OP-4 + OP-14): a dimension *shows* a measurement, and drives nothing
     const val DIM_LINEAR = "dimlinear"
@@ -208,6 +221,12 @@ object Tools {
             // (OP-13) since the 3D view has no picking yet.
             ToolDef(EXTRUDE, "Extrude", ToolCategory.SOLIDS, listOf(SlotKind.AREA), scalars = listOf("depth"), help = "Select a depth parameter, then click an outline or wall footprint: it becomes a solid, shown in the 3D view.") { d, p, s -> d.extrudeSolid(p.elements[0], s[0]) },
             ToolDef(REVOLVE, "Revolve", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.LINE), scalars = listOf("angle"), help = "Select an angle parameter, click an outline or footprint, then a line to spin it about (the profile must not cross the axis).") { d, p, s -> d.revolveSolid(p.elements[0], p.elements[1], s[0]) },
+            // ----- and back down again (OP-17's downward direction). *Extrude on face* is the
+            // sketch->feature->sketch loop as one gesture: the plan is drawn in the same 2D space, and the
+            // tool only says which solid's top face it is stacked on (through `facePlane`, OP-8).
+            // *Section* is the other direction: a solid's cross-section, as an ordinary 2D area.
+            ToolDef(EXTRUDE_ON_FACE, "Extrude on face", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.AREA), scalars = listOf("depth"), help = "Select a depth, click the solid to build on, then the area to raise: it is extruded from that solid's top face (an upper storey, a boss).") { d, p, s -> d.extrudeOnFace(p.elements[0], p.elements[1], s[0]) },
+            ToolDef(SECTION, "Section", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf("height"), help = "Select a height, then click a solid: its cross-section at that height becomes an ordinary 2D area — dimension it, or extrude it again.") { d, p, s -> d.sectionSolid(p.elements[0], s[0]) },
             // ----- Booleans (OP-22): exact for solids extruded along the same axis. Two solid picks and
             // nothing else — the slab algebra is the op node's job, so these are data like every other tool.
             ToolDef(UNION, "Union", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), help = "Click two solids to fuse them into one (they must be extruded along the same axis).") { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.UNION) },
@@ -243,6 +262,12 @@ object Tools {
             ToolDef(COORD_X, "X coordinate", ToolCategory.MEASURE, listOf(SlotKind.POINT), help = "Click a point to read its x coordinate.") { d, p, _ -> d.measureX(p.points[0]) },
             ToolDef(COORD_Y, "Y coordinate", ToolCategory.MEASURE, listOf(SlotKind.POINT), help = "Click a point to read its y coordinate.") { d, p, _ -> d.measureY(p.points[0]) },
             ToolDef(ANGLE_LINES, "Angle (2 lines)", ToolCategory.MEASURE, listOf(SlotKind.LINE, SlotKind.LINE), help = "Click two lines to measure the angle between them.") { d, p, _ -> d.measureAngleLines(p.elements[0], p.elements[1]) },
+            // 3D measurements (OP-4): the solid is picked in plan by its footprint hint, like any other
+            // solid pick, and the number lands in the panel as a read-only scalar — usable downstream.
+            ToolDef(VOLUME, "Volume", ToolCategory.MEASURE, listOf(SlotKind.SOLID), help = "Click a solid to measure its volume.") { d, p, _ -> d.measureSolidVolume(p.elements[0]) },
+            ToolDef(EXTENT_X, "Extent (X)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), help = "Click a solid to measure how far it reaches along X.") { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.X) },
+            ToolDef(EXTENT_Y, "Extent (Y)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), help = "Click a solid to measure how far it reaches along Y.") { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.Y) },
+            ToolDef(EXTENT_Z, "Extent (Z)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), help = "Click a solid to measure its height along Z.") { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.Z) },
             // ----- Annotate: dimensions (OP-4) — the graphic shows a measurement, and drives nothing -----
             ToolDef(DIM_LINEAR, "Linear dimension", ToolCategory.ANNOTATE, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT, SlotKind.SIDE), help = "Click two points, then click where the dimension line should sit (drag it later, or type the offset).") { d, p, _ -> d.linearDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
             ToolDef(DIM_RADIAL, "Radial dimension", ToolCategory.ANNOTATE, listOf(SlotKind.CENTRIC, SlotKind.SIDE), help = "Click a circle or arc, then click where the leader and its radius should sit.") { d, p, _ -> d.radialDimension(p.elements[0], p.at, p.dofs) },

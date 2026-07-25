@@ -157,6 +157,24 @@ class BrowserE2ETest {
                 "the extrude tool should add a solid to the tree",
             )
 
+            // ---- and back down again (OP-17): a section into 2D, and a 3D measurement in the panel ----
+            // Cheap, and only the shell can say it: the section must appear as an ordinary area in the
+            // tree, and the measured height as a read-only row in the measurement list.
+            val areasBefore = page.querySelectorAll("#tree .item").map { it.textContent() }.count { it.startsWith("area") }
+            page.fill("#p-name", "cutz")
+            page.fill("#p-value", "5")
+            page.click("#p-add")
+            page.click("#tool-section")
+            page.mouse().click(wx + 20.0, (wy1 + wy2) / 2) // the solid, by its footprint hint
+            assertTrue(
+                page.querySelectorAll("#tree .item").map { it.textContent() }.count { it.startsWith("area") } == areasBefore + 1,
+                "Section should add one area — a solid's cross-section is ordinary 2D geometry",
+            )
+            page.click("#tool-mextentz")
+            page.mouse().click(wx + 20.0, (wy1 + wy2) / 2)
+            val measured = page.querySelectorAll("#measure-list .mrow").map { it.textContent() }
+            assertTrue(measured.any { it.startsWith("extz") && it.contains("20") }, "the solid's height should read in the panel; got: $measured")
+
             // ---- an opening, then Cut openings (OP-22): the boolean reached from the real shell ----
             page.fill("#p-name", "w")
             page.fill("#p-value", "20")

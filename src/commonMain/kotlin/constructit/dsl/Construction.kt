@@ -1303,6 +1303,39 @@ class Construction {
         }
 
     /**
+     * The **cross-section** of [solid] at world height [height] — the downward half of the seam (OP-17),
+     * and an ordinary 2D [RegionRef] from that moment on: it can be outlined, dimensioned, measured, and
+     * extruded again, because nothing about it remembers where it came from except its inputs.
+     *
+     * Exact for a prism (OP-22) — the section *is* the slab there — and analytic for a plain extrude,
+     * whose arcs survive the cut. A revolve, a non-vertical prism and a height outside the material are
+     * refused with a reason and heal (OP-3); see [Geom3.sectionAt] for the boundary rule.
+     *
+     * A cut that falls into **several** disjoint areas is refused too, and that is the type talking rather
+     * than a limitation of the geometry: a `Region` is one outer boundary with holes, so "the wall at floor
+     * level, which the door splits in two" has no single-region answer. Cutting where the solid is
+     * connected does, and the count of areas is a *value*, so this stays one node either way.
+     */
+    fun sectionAt(
+        solid: SolidRef,
+        height: ScalarRef,
+    ): RegionRef =
+        op(solid, height) {
+            val h = sc(it[1]).requireDim(Dimension.LENGTH, "section height")
+            val (regions, why) = Geom3.sectionAt((it[0] as SolidValue).solid.feature, h.mm)
+            if (regions == null) {
+                EvalResult.Invalid(why ?: "cannot section this solid")
+            } else if (regions.size != 1) {
+                EvalResult.Invalid(
+                    "the section at ${h.mm} mm falls into ${regions.size} separate areas, and an area is one region — " +
+                        "cut at a height where the solid is connected",
+                )
+            } else {
+                EvalResult.Ok(RegionValue(regions[0]))
+            }
+        }
+
+    /**
      * The volume of a solid (OP-4, dimension L³), computed from its mesh by the divergence theorem.
      *
      * A mesh-derived **scalar**, so it is free to drive a *new* construction forward — including a 2D
