@@ -386,10 +386,15 @@ along a curve, or its two coordinates when it is a plain point — with *everyth
 to it. No participant owns the shared freedom, and all of them reach it the same way, through the
 junction's own handle, one structural hop away.
 
-- **Dragging** a coordinate the corner does not own is delegated to the junction. A corner hands over
-  the whole cursor (the junction projects onto its curve, which is what a slider does); a *leg* asks the
-  junction to place one coordinate exactly, so the leg lands under the cursor rather than at a
-  projection of it.
+- **Dragging** a coordinate the corner does not own is delegated to the junction — but only *that
+  coordinate*. A corner with one coordinate of its own asks the junction to place the other; a corner
+  that owns nothing hands over the whole cursor, so the junction follows as closely as its curve allows;
+  a *leg* asks the junction to place one coordinate exactly, so the leg lands under the cursor rather
+  than at a projection of it.
+  - Handing the whole cursor over whenever *either* coordinate was driven was a real stability bug: in a
+    cross of four runs welded at one centre, pulling an outer corner along its own arm dragged the
+    shared centre sideways after it and collapsed the figure. Per-axis delegation makes all four arms
+    behave identically — along the arm lengthens it, across it moves the centre.
 - **Typing** reaches exactly as far (OP-13): `Junction.place` solves for the junction's own parameter in
   closed form per curve kind — a line is affine in it, a circle has two solutions and the nearer is
   kept — so a driven coordinate is derived but *not* read-only.

@@ -321,9 +321,16 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode, private va
         val my = writableMaster(yNode)
         mx?.value = ScalarValue(Quantity.mm(world.x))
         my?.value = ScalarValue(Quantity.mm(world.y))
-        // a coordinate this corner does not own is owned by the junction it meets at; hand the gesture
-        // there rather than dropping it, so every corner at a junction drags the same way (OP-20)
-        if (mx == null || my == null) junction?.handle?.drag(world, ev)
+        // A coordinate this corner does not own belongs to the junction it meets at, so hand the gesture
+        // there rather than dropping it (OP-20) — but **only that coordinate**. Handing over the whole
+        // cursor made the junction jump to the pointer, so dragging an outer corner along its own arm
+        // dragged the shared centre sideways with it and collapsed the figure.
+        val j = junction ?: return
+        when {
+            mx == null && my == null -> j.handle?.drag(world, ev) // owns nothing: follow as closely as it can
+            mx == null -> j.place(0, world.x)
+            my == null -> j.place(1, world.y)
+        }
     }
 
     override fun fields(): List<HandleField> =

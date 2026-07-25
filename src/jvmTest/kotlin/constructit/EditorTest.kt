@@ -1525,6 +1525,74 @@ class EditorTest {
     }
 
     @Test
+    fun outerCornersOfACrossDragSymmetrically() {
+        // reported: in a symmetric cross of four runs welded at one centre, dragging *legs* behaved but
+        // dragging outer corners did not — pulling one along its own arm dragged the shared centre
+        // sideways and collapsed the figure. Delegating a driven coordinate handed the junction the whole
+        // cursor instead of just the axis it owns.
+        val cross =
+            """
+            constructit 1
+            orthostart -80,30 -> e1
+            orthovertex -24.875,30 -> e2,e3
+            orthostart 30,30 -> e4
+            orthovertex -24.875,30 -> e5,e6
+            weldortho e5 e2
+            orthostart -24.875,-21 -> e7
+            orthovertex -24.875,30 -> e8,e9
+            weldortho e8 e5
+            orthostart -24.875,70.25 -> e10
+            orthovertex -24.875,30 -> e11,e12
+            weldortho e11 e8
+            """.trimIndent()
+
+        /** Drag the outer corner at [at] by [by], and report every vertex position afterwards. */
+        fun dragOuter(
+            at: Vec2,
+            by: Vec2,
+        ): List<Vec2> {
+            val ed = Editor(constructit.editor.DocumentFormat.load(cross))
+            ed.pointerDown(ed.camera.worldToScreen(at))
+            ed.pointerMove(ed.camera.worldToScreen(at + by))
+            ed.pointerUp(ed.camera.worldToScreen(at + by))
+            val ev = Evaluator()
+            return ed.doc.orthoPaths.flatMap { p -> p.vertices.map { ev.point(it.ref) } }
+        }
+
+        val left = Vec2(-80.0, 30.0)
+        val right = Vec2(30.0, 30.0)
+        val down = Vec2(-24.875, -21.0)
+        val up = Vec2(-24.875, 70.25)
+        val along = 20.0
+
+        // along its own arm, an outer corner moves alone — the centre must not budge
+        for ((name, at) in listOf("left" to left, "right" to right)) {
+            val after = dragOuter(at, Vec2(along, 0.0))
+            assertClose(after[1].x, -24.875, tol = 1e-6) // the centre, reached from the left arm
+            assertClose(after[1].y, 30.0, tol = 1e-6)
+            assertEquals(1, after.count { kotlin.math.abs(it.x - (at.x + along)) < 1e-6 }, "only $name moved")
+        }
+        for ((name, at) in listOf("down" to down, "up" to up)) {
+            val after = dragOuter(at, Vec2(0.0, along))
+            assertClose(after[1].x, -24.875, tol = 1e-6)
+            assertClose(after[1].y, 30.0, tol = 1e-6)
+            assertEquals(1, after.count { kotlin.math.abs(it.y - (at.y + along)) < 1e-6 }, "only $name moved")
+        }
+
+        // across its arm, it can only move by taking the centre with it — and opposite arms agree exactly
+        val leftAcross = dragOuter(left, Vec2(0.0, along))
+        val rightAcross = dragOuter(right, Vec2(0.0, along))
+        assertClose(leftAcross[1].y, 50.0, tol = 1e-6)
+        assertEquals(leftAcross.map { "${it.x},${it.y}" }, rightAcross.map { "${it.x},${it.y}" }, "left and right agree")
+
+        val downAcross = dragOuter(down, Vec2(along, 0.0))
+        val upAcross = dragOuter(up, Vec2(along, 0.0))
+        assertClose(downAcross[1].x, -4.875, tol = 1e-6)
+        assertClose(downAcross[1].y, 30.0, tol = 1e-6) // the centre moved in x only
+        assertEquals(downAcross.map { "${it.x},${it.y}" }, upAcross.map { "${it.x},${it.y}" }, "down and up agree")
+    }
+
+    @Test
     fun bothRunsAtAJunctionDragTheSameWay() {
         // reported twice: a horizontal run ending on a slanted segment with a vertical run hanging off
         // that junction behaved asymmetrically — first the legs, then the corners. The cause was that
