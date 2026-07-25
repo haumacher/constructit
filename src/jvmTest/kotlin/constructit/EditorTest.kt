@@ -1524,27 +1524,33 @@ class EditorTest {
         assertClose(Evaluator().point(path.vertices.last().ref).y, 40.0)
     }
 
+    /**
+     * A symmetric cross: four runs, each drawn *inward* and welded at the shared centre on arrival. The
+     * first run introduces the centre's y (its own leg is horizontal), which is what makes it the arm
+     * every cycle question is about.
+     */
+    private val cross =
+        """
+        constructit 1
+        orthostart -80,30 -> e1
+        orthovertex -24.875,30 -> e2,e3
+        orthostart 30,30 -> e4
+        orthovertex -24.875,30 -> e5,e6
+        weldortho e5 e2
+        orthostart -24.875,-21 -> e7
+        orthovertex -24.875,30 -> e8,e9
+        weldortho e8 e5
+        orthostart -24.875,70.25 -> e10
+        orthovertex -24.875,30 -> e11,e12
+        weldortho e11 e8
+        """.trimIndent()
+
     @Test
     fun outerCornersOfACrossDragSymmetrically() {
         // reported: in a symmetric cross of four runs welded at one centre, dragging *legs* behaved but
         // dragging outer corners did not — pulling one along its own arm dragged the shared centre
         // sideways and collapsed the figure. Delegating a driven coordinate handed the junction the whole
         // cursor instead of just the axis it owns.
-        val cross =
-            """
-            constructit 1
-            orthostart -80,30 -> e1
-            orthovertex -24.875,30 -> e2,e3
-            orthostart 30,30 -> e4
-            orthovertex -24.875,30 -> e5,e6
-            weldortho e5 e2
-            orthostart -24.875,-21 -> e7
-            orthovertex -24.875,30 -> e8,e9
-            weldortho e8 e5
-            orthostart -24.875,70.25 -> e10
-            orthovertex -24.875,30 -> e11,e12
-            weldortho e11 e8
-            """.trimIndent()
 
         /** Drag the outer corner at [at] by [by], and report every vertex position afterwards. */
         fun dragOuter(
@@ -1590,6 +1596,88 @@ class EditorTest {
         assertClose(downAcross[1].x, -4.875, tol = 1e-6)
         assertClose(downAcross[1].y, 30.0, tol = 1e-6) // the centre moved in x only
         assertEquals(downAcross.map { "${it.x},${it.y}" }, upAcross.map { "${it.x},${it.y}" }, "down and up agree")
+    }
+
+    @Test
+    fun droppingARunEndOntoGeometryItAlreadyDrivesIsRefusedInsteadOfCyclic() {
+        // reported: the cross still "crashed the drawing". Not a wrong position — a *dead* editor. Dragging
+        // the first run's far end anywhere into the figure welded it onto the shared centre, but the centre's
+        // y IS that run's y, so the graph became cyclic and the evaluator recursed until the stack died.
+        //
+        // The cycle guard asked whether the target depended on the dragged *point*. A connection binds the
+        // corner's coordinate **masters**, which sit upstream of that point, so the dependency that closes
+        // the loop was invisible to it. 66 of 154 drop positions for that one arm killed the editor.
+        val left = Vec2(-80.0, 30.0)
+        val centre = Vec2(-24.875, 30.0)
+        val drops =
+            listOf(
+                "the shared centre" to centre,
+                "within the magnet's reach of it" to centre + Vec2(6.0, 6.0),
+                "the far arm's leg" to Vec2(-24.875, 5.0),
+                "the far arm's end" to Vec2(-24.875, 70.25),
+            )
+        for ((what, drop) in drops) {
+            val ed = Editor(constructit.editor.DocumentFormat.load(cross))
+            ed.pointerDown(ed.camera.worldToScreen(left))
+            for (i in 1..4) ed.pointerMove(ed.camera.worldToScreen(left + (drop - left) * (i / 4.0)))
+            ed.pointerUp(ed.camera.worldToScreen(drop))
+
+            // evaluating at all is the assertion: a cyclic graph throws StackOverflowError here
+            val ev = Evaluator()
+            val vertices = ed.doc.orthoPaths.flatMap { p -> p.vertices.map { ev.point(it.ref) } }
+            assertEquals(8, vertices.size, "the four arms survive dropping the first arm's end on $what")
+            assertTrue(vertices.all { it.x.isFinite() && it.y.isFinite() }, "finite after dropping on $what")
+            // refused, so the arm just stands where it was dragged and the junction stays as it was
+            assertEquals(1, ed.doc.junctions.size, "no second junction invented for $what")
+        }
+
+        // and the refusal is visible while dragging, rather than a halo promising a join that never happens
+        val ed = Editor(constructit.editor.DocumentFormat.load(cross))
+        ed.pointerDown(ed.camera.worldToScreen(left))
+        ed.pointerMove(ed.camera.worldToScreen(centre))
+        assertTrue(ed.statusHint.contains("Can't join"), "got: '${ed.statusHint}'")
+
+        // the same loop was reachable while *drawing*: continuing that arm from its dangling end and
+        // clicking the centre welds through the very same funnel (a snapped path vertex links there too)
+        val drawn = Editor(constructit.editor.DocumentFormat.load(cross))
+        drawn.setTool(Tools.ORTHO_PATH)
+        drawn.click(left)
+        drawn.click(centre)
+        drawn.finishPath()
+        val after = Evaluator()
+        assertTrue(
+            drawn.doc.orthoPaths.flatMap { p -> p.vertices.map { after.point(it.ref) } }.all { it.x.isFinite() },
+            "extending the first arm through the centre leaves an evaluable drawing",
+        )
+    }
+
+    @Test
+    fun anEndStillWeldsOntoAPointItDoesNotDrive() {
+        // the other half of the guard: it must reject only what is actually circular. Two unrelated runs
+        // still join, so the fix above is not a blanket "ortho ends never weld".
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(50.0, 0.0))
+        ed.finishPath()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 60.0))
+        ed.click(Vec2(50.0, 60.0))
+        ed.finishPath()
+
+        ed.setTool(Tools.SELECT)
+        val from = Vec2(50.0, 0.0)
+        val onto = Vec2(50.0, 60.0)
+        ed.pointerDown(ed.camera.worldToScreen(from))
+        for (i in 1..4) ed.pointerMove(ed.camera.worldToScreen(from + (onto - from) * (i / 4.0)))
+        ed.pointerUp(ed.camera.worldToScreen(onto))
+
+        assertTrue(ed.statusHint.contains("Joined"), "got: '${ed.statusHint}'")
+        assertEquals(1, ed.doc.junctions.size)
+        val ev = Evaluator()
+        val ends = ed.doc.orthoPaths.map { ev.point(it.vertices.last().ref) }
+        assertClose(ends[0].x, ends[1].x, tol = 1e-6)
+        assertClose(ends[0].y, ends[1].y, tol = 1e-6)
     }
 
     @Test

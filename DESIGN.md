@@ -401,6 +401,15 @@ junction's own handle, one structural hop away.
   kept — so a driven coordinate is derived but *not* read-only.
 - **A junction can own nothing**: welded to a derived point, the meeting place is fixed by construction.
   That is the one honestly immovable case, and it explains itself.
+- **A connection is refused when it would be circular**, and the test asks about *what the connection
+  binds*: for an ortho corner that is the **masters** of its two coordinate chains, not the corner's own
+  point node, which sits downstream of them. Asking about the point let a real cycle through — and a
+  cyclic graph is not a wrong drawing but a dead one, since `Evaluator` recurses until the stack dies. In
+  the cross above, the first arm *introduced* the centre's y, so dropping that arm's far end anywhere near
+  the figure (66 of 154 drop positions) welded it onto a point derived from itself and killed the editor;
+  so did continuing that arm through the centre while drawing. One predicate now serves every path that
+  can bind — weld, attach, path-vertex snap — *and* the drag magnet, so no halo offers a join that release
+  would refuse; instead the status line says which point already follows the one being dragged.
 - Attaching now **projects** the endpoint onto the curve — the same landing spot the drag magnet
   previews — where the old scheme slid it along one axis to meet the curve.
 

@@ -698,6 +698,13 @@ class Editor(
         // one shared search, so a position past a segment's end is as much a miss here as it is when
         // placing geometry — the magnet used to measure to the infinite carrier line and match anyway.
         HitTest.nearest(doc, ev, world, tolWorld()) { it !== dragged && it.isPoint }?.let { point ->
+            // a circular join is refused on release, so it must not be offered here either — and say why,
+            // because a point that lights up for everything else and not for this one reads as a glitch
+            if (doc.joinWouldCycle(dragged, point)) {
+                clearMagnet()
+                statusHint = "Can't join ${dragged.id} onto ${point.id}: ${point.id} already follows ${dragged.id}."
+                return
+            }
             weldTarget = point
             attachTarget = null
             haloPos = (ev.valueOf(point.ref) as? PointValue)?.p

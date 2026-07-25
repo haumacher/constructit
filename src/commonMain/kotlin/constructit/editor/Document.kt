@@ -368,6 +368,45 @@ class Document {
         return false
     }
 
+    /**
+     * The source nodes that connecting [el] — welding or attaching it — would bind.
+     *
+     * For a free point that is the point's own node. For an **ortho corner it is not the corner's point
+     * node at all** but the *masters* of its two coordinate chains, which sit upstream of it: a corner is
+     * `pointXY(x, y)` and a connection re-points what `x` and `y` ultimately resolve to (see
+     * [writableMaster]). Anything asking "would this connection cycle?" has to ask about *these* nodes.
+     */
+    private fun bindableNodes(el: Element): List<SourceNode> {
+        (el.handle as? OrthoCornerHandle)?.let { corner ->
+            return listOfNotNull(writableMaster(corner.xNode), writableMaster(corner.yNode)).distinct()
+        }
+        return listOfNotNull((el.ref.node as? SourceNode)?.takeIf { it.boundTo == null })
+    }
+
+    /**
+     * True when connecting [el] to something driven by [driver] would make the graph cyclic — because
+     * [driver] already depends on a node the connection would bind.
+     *
+     * Testing the *dragged point* instead of what the connection binds let a real cycle through, and a
+     * cyclic DAG is not a wrong drawing but a dead one: [Evaluator] recurses until the stack dies, taking
+     * the whole editor with it. In a cross of four runs welded at one centre, the centre's y *is* the
+     * first run's y (that run introduced it), so dropping that run's far end anywhere near the figure
+     * welded it onto a point derived from itself and killed the drawing.
+     */
+    private fun joinWouldCycle(
+        el: Element,
+        driver: Node,
+    ): Boolean = bindableNodes(el).any { dependsOn(driver, it, HashSet()) }
+
+    /**
+     * True when joining [el] onto [target] would be circular, so neither the magnet may offer it nor a
+     * release perform it — the two must agree, or the halo promises a join that release refuses.
+     */
+    fun joinWouldCycle(
+        el: Element,
+        target: Element,
+    ): Boolean = joinWouldCycle(el, target.ref.node)
+
     /** Wire parameter [e] to track [target]. Rejected on type mismatch or if it would cycle. */
     fun wireParameter(
         e: ScalarEntry,
@@ -430,7 +469,7 @@ class Document {
         if (alias.kind != ElementKind.POINT || node.boundTo != null) return false
         if (!master.isPoint || master === alias) return false
         val masterNode = master.ref.node
-        if (masterNode === node || dependsOn(masterNode, node, HashSet())) return false // no cycles
+        if (masterNode === node || joinWouldCycle(alias, masterNode)) return false // no cycles
         node.boundTo = masterNode
         alias.visible = false
         return true
@@ -480,13 +519,13 @@ class Document {
         return when {
             curve.isLinear -> {
                 val lr = carrierLine(curve)
-                if (dependsOn(lr.node, pt.ref.node, HashSet())) return null
+                if (joinWouldCycle(pt, lr.node)) return null
                 val l = (Evaluator().eval(lr.node) as? EvalResult.Ok)?.value as? LineValue ?: return null
                 l.line.origin + l.line.dir * (p - l.line.origin).dot(l.line.dir)
             }
             curve.kind == ElementKind.CIRCLE -> {
                 val cr = curve.ref as CircleRef
-                if (dependsOn(cr.node, pt.ref.node, HashSet())) return null
+                if (joinWouldCycle(pt, cr.node)) return null
                 val c = (Evaluator().eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue ?: return null
                 val d = p - c.circle.center
                 val len = d.length()
@@ -569,9 +608,20 @@ class Document {
         curve: Element,
     ): Boolean {
         val corner = orthoEndpoint(el) ?: return false
+        // before making the junction, not after: a rejected bind would otherwise leave a stray junction
+        // (and its parameter node) behind in a document that never got the attach it was created for
+        if (joinWouldCycle(el, carrierNodeOf(curve) ?: return false)) return false
         val junction = junctionOnCurve(curve, el.ref.node) ?: return false
         return bindCornerToJunction(corner, junction)
     }
+
+    /** The node a junction on [curve] would ride — its carrier line, or the circle itself. */
+    private fun carrierNodeOf(curve: Element): Node? =
+        when {
+            curve.isLinear -> carrierLine(curve).node
+            curve.kind == ElementKind.CIRCLE -> curve.ref.node
+            else -> null
+        }
 
     /** A junction sliding along [curve], placed where [near] currently is. Null if it would cycle. */
     private fun junctionOnCurve(
@@ -638,6 +688,9 @@ class Document {
     ): Boolean {
         val mx = writableMaster(corner.xNode) ?: return false
         val my = writableMaster(corner.yNode) ?: return false
+        // the definitive cycle test, against the freedom that will actually drive the corner: a weld onto
+        // an *existing* junction binds to that junction's point, which need not be the point clicked
+        if (dependsOn(junction.point.node, mx, HashSet()) || dependsOn(junction.point.node, my, HashSet())) return false
         driveByJunction(mx, junction, junction.point, 0)
         if (my !== mx) driveByJunction(my, junction, junction.point, 1)
         corner.isEndpoint = false
@@ -661,7 +714,7 @@ class Document {
     ): Boolean {
         val corner = orthoEndpoint(el) ?: return false
         val tref = target.ref as? PointRef ?: return false
-        if (!target.isPoint || target === el || dependsOn(tref.node, el.ref.node, HashSet())) return false
+        if (!target.isPoint || target === el || joinWouldCycle(el, tref.node)) return false
         val existing = (target.handle as? OrthoCornerHandle)?.let { junctionOf(it.xNode) ?: junctionOf(it.yNode) }
         // a target with no handle of its own — a derived point such as an intersection — makes a junction
         // that owns nothing: the meeting point is then fixed by construction, and honestly immovable
