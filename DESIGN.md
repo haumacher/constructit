@@ -319,8 +319,9 @@ afterwards. Three consequences fall out of the shared-coordinate model:
    `Element?`), then flat named groups, then **placed groups** (a frame source node; moving a group
    edits the frame, not its points), then relocate-origin / re-parent / constructed frames.
 5. **Result layer (OP-14).** Engine half **done** (trim ops, `Loop`/`Region`, areas — see OP-14's
-   as-built note); remaining is the boundary-tracing *Outline* tool and the scaffolding/result
-   display roles.
+   as-built note). Then, in order: **rework the wall as an output feature** (OP-21 — it needs rework
+   anyway, and it drives regions programmatically with no new UI), then the boundary-tracing *Outline*
+   tool and the scaffolding/result display roles.
 6. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
    tool (OP-6 `Macro` machinery exists in the engine; needs the record/parameterize UI). The
    headline capability of the paradigm. Shares its dialog with group creation (OP-16).
@@ -1056,6 +1057,22 @@ Three broad families (see OP-9 decision above):
       O(N) and touches internal free coordinates). A **constructed** frame is a *mate* — so phase-3
       assemblies need no solver. Group frame ≡ sketch plane (OP-17) one dimension down. Build order:
       multi-select (absent today) → flat group → placed group → relocate/re-parent/mates/macro promotion.
+- [x] **OP-21 A wall is an output feature** — RESOLVED: a wall belongs to the **result layer**
+      (OP-14), and the same description must feed the seam (OP-17), because a floor plan is a route
+      into 3D. The as-built wall needs rework for two independent reasons: it is **regenerated**
+      (`ownedIds` + `elements.removeAll`, so orphaned nodes accumulate and nothing can depend on the
+      wall as a value), and it is **not a pure function of its parameters** (openings are sorted by
+      `evalMm` at graph-construction time, so dragging one opening past another leaves stale
+      structure). General rule extracted: value-dependent work belongs inside a node's `compute`,
+      never in the builder. Deeper correction: **the plan gap is a drawing convention, not a cut** —
+      in plan a wall is unbroken at a window (wall below the sill, wall above the head), so one
+      description projects to **two outputs**: the plan drawing (gaps, jambs, swing arcs as
+      convention) and the solid (`extrude(footprint)` minus a sill→head box per opening). A wall
+      therefore emits `wallFootprint(...) → Region`; a closed centerline yields
+      `Region(outer, [inner])`, so a wall ring *is* OP-14's hole machinery. Junctions are trimmed
+      **by construction** at the neighbour's face line rather than by adding 2D region booleans.
+      Walls lead in 2D (a strong forcing function for the result layer) and follow in 3D (the
+      mechanical triad still exercises more of the seam).
 - [x] **OP-17 The 2D↔3D seam** — RESOLVED: `Sketch = SketchOn(plane, [Region])`; the OP-14 result layer
       *is* the 3D interface. 2D stays abstract 2D and the plane embeds it (so one construction is
       reusable on several planes — OP-6 semantics at the seam); a plane is `(origin, u, v)` derived from
@@ -1199,6 +1216,19 @@ Three broad families (see OP-9 decision above):
   once splines arrive. One design decision worth noting: `loop` chains pieces in the order given but
   *flips* them as needed, because order carries the boundary's identity while a piece's stored
   direction is an accident of how its inputs were picked. 107 jvm tests green.
+- **Session 2 — piece dispatch, then OP-21.** Consolidated `ProfileElement` dispatch into `GeomMath`
+  and removed `Svg`'s `else` on the sealed `Value` dispatch, after establishing (by probe, not
+  assumption) that Kotlin 1.9 makes a non-exhaustive `when` over a sealed type an error in *statement*
+  position too — so the compiler already lists every site a new piece kind must be handled, which is
+  the argument for keeping the sealed hierarchy rather than a `BoundedPiece` interface. Then resolved
+  **OP-21** on the user's prompting: a **wall is an output feature**, not an architectural side-show,
+  so it belongs to the result layer and the same description must reach the seam. Two defects named in
+  the as-built wall (regeneration with orphaned nodes; openings sorted by value at build time, so the
+  wall is not a pure function of its parameters) and one deeper correction: **the plan gap is a drawing
+  convention, not a cut** — in plan a wall is unbroken at a window, so one description projects to a
+  plan drawing *and* a solid. A closed wall centerline turns out to yield `Region(outer, [inner])`,
+  making walls a genuinely good forcing function for OP-14 rather than the niche they were positioned
+  as — while the mechanical triad still leads in 3D, since a wall extrude exercises less of the seam.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -1240,11 +1270,87 @@ emitting two offset faces. The corner problem is solved by existing machinery:
 An opening = **position** (distance along the centerline) + **width**, plus **sill/head heights**
 carried for later 3D even though invisible in 2D.
 - Position *is* a point-on-line on the centerline (reuses the sliding constraint); width is a param.
-- The Wall macro takes a list of openings and produces **segmented faces** (solid / gap / solid …)
-  — 1-D interval subtraction in the wall's own parameter space. Render solids; draw door-swing
-  arcs / window mullions as symbols in the gap.
+- Render the plan gap with door-swing arcs / window mullions as symbols.
 - 3D (later): wall extrudes to a slab; each opening becomes a subtracted box (sill→head) — analytic
   params drive the boolean, matching the "mesh is a sink" plan.
+
+> **Superseded in part by OP-21** (below): the sketch above has the Wall macro produce *segmented
+> faces*, cutting the plan geometry at each opening. That conflates the plan drawing with the solid,
+> and it is one of the two reasons the as-built wall needs rework. See *A wall is an output feature*.
+
+## A wall is an output feature (OP-21 — RESOLVED)
+
+A wall is the first thing in this model that is **not** construction geometry: nobody wants a wall's
+offset lines and mitre intersections in the finished drawing, they want the wall. So a wall belongs to
+the result layer (OP-14) — and because a floor plan is a legitimate route into 3D, the same
+description must also feed the seam (OP-17). That reframing is what the as-built implementation gets
+wrong, in two independent ways.
+
+### Why the as-built wall needs rework
+
+**1. It is regenerated, not computed.** `Document.regenerateWall` deletes the elements it previously
+owned (`ownedIds`) and rebuilds them. Two consequences: the *nodes* behind the removed elements stay
+in the `Construction`, so every opening edit grows the graph monotonically; and the wall is not a
+value anything can depend on, only a bundle of loose `SEGMENT` elements that get replaced.
+
+**2. It is not a pure function of its parameters.** The build sorts each leg's openings with
+`sortedBy { evalMm(it.position) }` — at *graph-construction* time. Structure therefore depends on the
+values held when the wall was built, so dragging one opening past another leaves the faces split in
+the stale order until something regenerates. This is precisely the property the whole model exists to
+guarantee (OP-5), broken by doing value-dependent work in the builder.
+
+**The fix for (2) is the general rule:** anything value-dependent belongs *inside* a node's `compute`,
+never in the code that assembles the graph. Sorting openings inside `compute` is pure and re-sorts
+itself on every pass. Note the count of openings is structural (known when building) while their
+*order* is not — only the latter must move inside.
+
+### The plan gap is a drawing convention, not a cut
+
+The deeper error is treating an opening as a gap in the wall's plan geometry. In plan, a window does
+not interrupt the wall at all — below the sill there is wall, above the head there is wall. Even a
+door leaves a lintel. **The footprint is unbroken** unless an opening is genuinely full-height, which
+is a pass-through, not an opening.
+
+So one parametric description projects to **two different outputs**:
+
+| output | what it is | openings appear as |
+|---|---|---|
+| **plan drawing** | the printed drawing | a *convention*: faces drawn broken, jamb/reveal lines, swing arcs, mullions |
+| **solid** | what extrudes (OP-17) | boolean subtraction boxes, sill→head |
+
+Two outputs, one description — the same "output set at every level" point OP-14 ends on. Conflating
+them is what made openings cut the footprint.
+
+### What a wall emits
+
+- **`wallFootprint(centerline, thickness, justification) → Region`** — the offset faces, mitred
+  corners (`intersectLL` of adjacent face lines, as already designed) and end caps, assembled as a
+  closed oriented `Loop`. An **open** centerline gives a single loop; a **closed** one gives
+  `Region(outer, [inner])` — a wall ring is exactly OP-14's hole machinery, which is why walls are a
+  good forcing function for the result layer rather than a niche.
+- **Openings** stay `(position, width, sill, head)` parameters and do **not** touch the footprint.
+- **3D** is then `extrude(footprint, height)` minus one box per opening — analytic parameters driving
+  the boolean, as OP-9 already prescribes.
+- Accessors per OP-6 (`wall.face(side)`, `wall.corner(i)`) stay, for dimensioning and wall-to-wall
+  snapping.
+
+### Junctions: trim by construction, don't reach for 2D booleans
+Where two walls meet (T or L), the *union* of two footprint regions is the honest description — but
+2D region booleans do not exist here and adding them would be a large, solver-adjacent detour. They
+are not needed: a junction is already expressible **by construction**, trimming each wall's face at
+the neighbour's face line, which is the same `intersectLL` that makes a mitre. Prefer that. (This is
+also consistent with OP-20 owning the freedom where things meet.)
+
+### Ordering — and an honest correction
+Reworking the wall onto the result layer is worth doing **before** the hand-tracing *Outline* tool:
+the wall needs rework regardless, it produces regions programmatically (so it exercises OP-14 with no
+new UI), and it is the driver for the plan→3D story.
+
+This partly revisits OP-17's "first 3D slice is mechanical, not walls". Both hold, on different axes:
+for the **2D output layer** a wall is a strong forcing function (multi-loop regions, rings, holes);
+for the **first 3D slice** the mechanical triad still exercises strictly more of the seam (sketch on a
+face, provenance accessors, the sketch→feature→sketch loop) than a wall extrude does. So walls lead
+in 2D and follow in 3D.
 
 ### Build order (MVP-first)
 1. Directions + project frame + ortho input (fast axis-aligned drawing).
