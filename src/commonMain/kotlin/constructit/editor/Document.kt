@@ -140,6 +140,9 @@ class Document {
         return el
     }
 
+    /** The element displaying [ref], if any — the inverse of the adders below. */
+    fun elementFor(ref: Ref<*>): Element? = elements.lastOrNull { it.ref === ref }
+
     private fun addDerived(ref: PointRef): PointRef {
         add(ref, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
         return ref
@@ -385,6 +388,12 @@ class Document {
      * Attach an ortho path endpoint [el] onto [curve]: both its coordinate nodes are bound to a fresh
      * point-on-curve, so the endpoint — and the neighbour sharing one coordinate — follow the curve,
      * and dragging it now slides along the curve. The ortho analogue of [attachToCurve].
+     *
+     * Where a leg already exists, only the endpoint's *own* coordinate is bound (derived from where
+     * the line crosses the still-free shared one), leaving the neighbour its DOF. A path's **start**
+     * has no leg yet, so it has no own/shared split to exploit: it is pinned to a slider along the
+     * curve, and the first leg drawn from it then shares that driven coordinate — which is what keeps
+     * the leg axis-aligned while the start slides.
      */
     fun attachOrthoEndpointToCurve(
         el: Element,
@@ -396,24 +405,25 @@ class Document {
             val lr = carrierLine(curve)
             if (dependsOn(lr.node, el.ref.node, HashSet())) return false
             val dir = ((ev.eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line?.dir ?: return false
+            val hasLeg = corner.legAnchor != null // false for a path start: nothing shared yet
             // Bind only the OWN coordinate, derived as where the line crosses the (free, shared) one —
             // so the shared coordinate stays writable and the neighbour keeps its DOF. Works while the
             // line isn't parallel to the own axis; otherwise fall back to pinning both onto the line.
-            if (corner.ownCoord == 0 && abs(dir.y) > Vec2.EPS) { // own x from shared y
+            if (hasLeg && corner.ownCoord == 0 && abs(dir.y) > Vec2.EPS) { // own x from shared y
                 val sy = Ref<ScalarValue>(corner.yNode)
                 val cut = cx.lineThrough(cx.pointXY(cx.const(0.0.mm), sy), cx.pointXY(cx.const(1.0.mm), sy))
                 corner.xNode.boundTo = cx.measureX(cx.select(cx.intersectLL(lr, cut), +1)).node
                 corner.isEndpoint = false
                 return true
             }
-            if (corner.ownCoord == 1 && abs(dir.x) > Vec2.EPS) { // own y from shared x
+            if (hasLeg && corner.ownCoord == 1 && abs(dir.x) > Vec2.EPS) { // own y from shared x
                 val sx = Ref<ScalarValue>(corner.xNode)
                 val cut = cx.lineThrough(cx.pointXY(sx, cx.const(0.0.mm)), cx.pointXY(sx, cx.const(1.0.mm)))
                 corner.yNode.boundTo = cx.measureY(cx.select(cx.intersectLL(lr, cut), +1)).node
                 corner.isEndpoint = false
                 return true
             }
-            // edge parallel to the line: the shared coordinate is genuinely pinned — bind both to a slider
+            // no leg yet, or an edge parallel to the line: bind both coordinates to a slider on the line
             val p = (ev.eval(el.ref.node) as EvalResult.Ok).let { (it.value as PointValue).p }
             val l = (ev.eval(lr.node) as EvalResult.Ok).value as LineValue
             val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm((p - l.line.origin).dot(l.line.dir))))

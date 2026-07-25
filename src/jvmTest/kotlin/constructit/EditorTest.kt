@@ -728,6 +728,78 @@ class EditorTest {
     }
 
     @Test
+    fun anOrthoPathStartedOnACurveIsAttachedToIt() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(30.0, -60.0))
+        ed.click(Vec2(30.0, 60.0))
+        ed.setTool(Tools.SEGMENT)
+        ed.click(Vec2(30.0, -60.0))
+        ed.click(Vec2(30.0, 60.0)) // a vertical wall to build off
+
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(28.0, 10.0)) // near the segment: must land on it AND link to it
+        ed.click(Vec2(90.0, 12.0))
+        ed.finishPath()
+
+        val path = ed.doc.orthoPaths.single()
+        val start = Evaluator().point(path.vertices[0].ref)
+        assertClose(start.x, 30.0) // exactly on the segment
+
+        // linked, not merely coincident: move the segment and the path start follows it
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(30.0, -60.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(0.0, -60.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(0.0, -60.0)))
+        val moved = Evaluator().point(path.vertices[0].ref)
+        assertTrue(kotlin.math.abs(moved.x - 30.0) > 1.0, "the start rides the curve it was placed on")
+    }
+
+    @Test
+    fun aPathEndReachingACurveAttachesAndFinishesTheRun() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(120.0, -60.0))
+        ed.click(Vec2(120.0, 60.0))
+        ed.setTool(Tools.SEGMENT)
+        ed.click(Vec2(120.0, -60.0))
+        ed.click(Vec2(120.0, 60.0)) // the wall to run into
+
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(0.0, 40.0)) // a vertical leg
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(118.0, 41.0))) // aim at the wall
+        assertEquals(constructit.editor.SnapKind.ON_CURVE, ed.snapHint?.kind, "later vertices must show the snap too")
+        assertClose(ed.snapHint!!.pos.x, 120.0)
+        assertClose(ed.snapHint!!.pos.y, 40.0) // where the leg meets the wall, not the cursor's projection
+
+        ed.click(Vec2(118.0, 41.0))
+        val path = ed.doc.orthoPaths.single()
+        assertEquals(3, path.vertices.size)
+        val end = Evaluator().point(path.vertices[2].ref)
+        assertClose(end.x, 120.0)
+        assertClose(end.y, 40.0)
+
+        // the run is finished: a further click starts a new path rather than extending this one
+        ed.click(Vec2(200.0, 200.0))
+        assertEquals(2, ed.doc.orthoPaths.size, "reaching the wall ended the run")
+        assertEquals(3, path.vertices.size)
+    }
+
+    @Test
+    fun aPathBeingDrawnDoesNotSnapToItself() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(60.0, 2.0)) // leg 0 along y=0
+
+        // hovering back over the leg just drawn must not offer it as a target — attaching a path to
+        // its own leg could only ever be refused as a cycle
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(30.0, 0.0)))
+        assertEquals(null, ed.snapHint)
+    }
+
+    @Test
     fun anOrthoPathStartedOnAPointIsWeldedToIt() {
         val ed = Editor()
         ed.setTool(Tools.POINT)

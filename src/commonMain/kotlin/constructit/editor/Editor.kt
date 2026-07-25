@@ -60,12 +60,58 @@ class Editor(
     private fun ev() = Evaluator()
 
     /** Resolve a click position through [Snap] (grid included only while the grid is shown). */
-    private fun snap(world: Vec2): SnapResult =
+    private fun snap(
+        world: Vec2,
+        exclude: (Element) -> Boolean = { false },
+    ): SnapResult =
         if (!snapEnabled) {
             SnapResult(world, SnapKind.FREE)
         } else {
-            Snap.resolve(doc, ev(), world, tolWorld(), if (showGrid) SceneRenderer.gridStep(camera.scale) else null)
+            Snap.resolve(doc, ev(), world, tolWorld(), if (showGrid) SceneRenderer.gridStep(camera.scale) else null, exclude)
         }
+
+    /** The geometry of the path being drawn — never a snap target for its own next vertex. */
+    private fun activePathParts(): Set<Element> {
+        val p = activePath ?: return emptySet()
+        return (p.legs + p.vertices.mapNotNull { doc.elementFor(it.ref) }).toSet()
+    }
+
+    /**
+     * Resolve a path click. For a vertex after the first, a curve snap is refined to where the *leg*
+     * meets the curve: the leg can't bend to reach the cursor's projection, it runs on until it hits —
+     * which is also the endpoint the attach then derives, so preview and result agree.
+     */
+    private fun pathSnap(raw: Vec2): SnapResult {
+        val own = activePathParts()
+        val s = snap(raw) { it in own }
+        val last = activePath?.vertices?.lastOrNull() ?: return s
+        if (s.kind != SnapKind.ON_CURVE) return s
+        val from = (ev().valueOf(last.ref) as? PointValue)?.p ?: return s
+        val axis = if (kotlin.math.abs(raw.x - from.x) >= kotlin.math.abs(raw.y - from.y)) 0 else 1
+        val hit = Snap.axisCrossing(ev(), s.target!!, from, axis, raw) ?: return s
+        return SnapResult(hit, SnapKind.ON_CURVE, s.target)
+    }
+
+    /**
+     * Connect a just-placed path vertex to whatever the snap found: weld onto a point (materializing
+     * an intersection first), or attach onto a curve. These are the very operations the drag magnet
+     * performs, so a connection made *while drawing* is the same construction as one made afterwards.
+     */
+    private fun linkPathVertex(
+        vertex: PointRef,
+        s: SnapResult,
+    ): Boolean {
+        val el = doc.elementFor(vertex) ?: return false
+        return when (s.kind) {
+            SnapKind.POINT -> doc.weldOrthoEndpointToPoint(el, s.target!!)
+            SnapKind.INTERSECTION -> {
+                val ip = doc.intersectNear(s.target!!, s.other!!, s.pos) ?: return false
+                doc.elementFor(ip)?.let { doc.weldOrthoEndpointToPoint(el, it) } ?: false
+            }
+            SnapKind.ON_CURVE -> doc.attachOrthoEndpointToCurve(el, s.target!!)
+            else -> false
+        }
+    }
 
     /**
      * The point a placing click should use: reuse the snapped point, materialize the intersection, or
@@ -233,18 +279,22 @@ class Editor(
     /** One click of a path tool (ortho path / wall): start a chain, append a leg, or close the loop. */
     private fun pathClick(raw: Vec2) {
         val path = activePath
-        val s = snap(raw)
+        val s = pathSnap(raw)
         val world = s.pos
+        val what = if (toolId == Tools.WALL) "Wall" else "Ortho path"
         if (path == null) {
-            activePath = doc.startOrthoPath(world)
-            // starting *on* an existing point should mean starting *at* it: weld the start vertex so
-            // the path follows that point rather than merely beginning at its coordinates
-            if (s.kind == SnapKind.POINT) {
-                val startEl = doc.elements.last { it.ref === activePath!!.vertices.first().ref }
-                if (doc.weldOrthoEndpointToPoint(startEl, s.target!!)) statusHint = "Path starts at ${s.target.id}"
-            }
+            val started = doc.startOrthoPath(world)
+            activePath = started
             if (toolId == Tools.WALL) pathThickness = activeScalar?.ref
-            statusHint = "${if (toolId == Tools.WALL) "Wall" else "Ortho path"}: click the next point; click the start to close (Esc/double-click to finish)"
+            // starting *on* something should mean starting *at* it — link, so the path follows that
+            // geometry instead of merely beginning at its coordinates
+            val linked = s.linked && linkPathVertex(started.vertices.first().ref, s)
+            statusHint =
+                if (linked) {
+                    "$what starts on ${s.target?.id} (${s.label}); click the next point"
+                } else {
+                    "$what: click the next point; click the start to close (Esc/double-click to finish)"
+                }
         } else {
             val v0 = (ev().valueOf(path.vertices.first().ref) as? PointValue)?.p
             if (v0 != null && path.vertices.size >= 3 && (world - v0).length() <= tolWorld() * 2) {
@@ -252,7 +302,16 @@ class Editor(
                 finishPath()
                 return // clicked the start -> close the loop
             }
-            doc.addOrthoVertex(path, world)
+            val v = doc.addOrthoVertex(path, world)
+            // reaching other geometry ends the run: connect this end and finish, the open analogue of
+            // closing a loop by clicking the start
+            if (v != null && s.linked && linkPathVertex(v.ref, s)) {
+                snapHint = null
+                finishPath()
+                statusHint = "$what ends on ${s.target?.id} (${s.label})"
+                onChange()
+                return
+            }
         }
         hoverWorld = world
         previewSeg = null
@@ -365,8 +424,10 @@ class Editor(
     fun pointerMove(screen: Vec2) {
         if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {
             val world = camera.screenToWorld(screen)
-            // only the first vertex is free to snap anywhere; later ones are axis-projected from it
-            snapHint = if (activePath == null) snap(world).takeIf { it.linked } else null
+            val s = pathSnap(world)
+            snapHint = s.takeIf { it.linked }
+            // a lingering note would otherwise outrank the snap label, which is about the *next* click
+            if (snapHint != null) statusHint = ""
             hoverWorld = snapHint?.pos ?: world
             refreshPreview()
             onChange()
@@ -374,6 +435,7 @@ class Editor(
         }
         if (placesAPoint()) {
             snapHint = snap(camera.screenToWorld(screen)).takeIf { it.linked }
+            if (snapHint != null) statusHint = ""
             onChange()
             return
         }

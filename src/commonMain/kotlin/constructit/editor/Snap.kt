@@ -61,11 +61,14 @@ object Snap {
         world: Vec2,
         tol: Double,
         gridStep: Double? = null,
-        /** Never snap to these, nor to anything built from them (a point can't attach to itself). */
-        exclude: Element? = null,
+        /**
+         * Geometry to ignore — the thing being placed and anything it is part of. Snapping onto your
+         * own construction could only ever be refused as a cycle, so it must not be offered.
+         */
+        exclude: (Element) -> Boolean = { false },
     ): SnapResult {
         HitTest.nearestAnyPoint(doc, ev, world, tol)?.let { el ->
-            if (el !== exclude) {
+            if (!exclude(el)) {
                 val p = (ev.valueOf(el.ref) as? PointValue)?.p
                 if (p != null) return SnapResult(p, SnapKind.POINT, el)
             }
@@ -74,7 +77,7 @@ object Snap {
         // the attachable curves under the cursor, nearest first
         val near =
             doc.elements
-                .filter { it !== exclude && it.visible && attachable(it) }
+                .filter { !exclude(it) && it.visible && attachable(it) }
                 .mapNotNull { el -> HitTest.distanceTo(ev, el, world)?.let { el to it } }
                 .filter { it.second <= tol }
                 .sortedBy { it.second }
@@ -96,6 +99,31 @@ object Snap {
             if ((g - world).length() <= tol) return SnapResult(g, SnapKind.GRID)
         }
         return SnapResult(world, SnapKind.FREE)
+    }
+
+    /**
+     * Where an axis-aligned leg leaving [from] along [axis] (0 = horizontal, 1 = vertical) meets
+     * [curve], taking the crossing nearest [near].
+     *
+     * This is where an ortho leg genuinely *ends* when snapped to a curve: the leg cannot bend to
+     * reach the cursor's projection, it runs on until it hits — and it is the same endpoint
+     * [Document.attachOrthoEndpointToCurve] then derives, so the preview matches what gets built.
+     */
+    fun axisCrossing(
+        ev: Evaluator,
+        curve: Element,
+        from: Vec2,
+        axis: Int,
+        near: Vec2,
+    ): Vec2? {
+        val axisLine = Line(from, if (axis == 0) Vec2(1.0, 0.0) else Vec2(0.0, 1.0))
+        val points =
+            when (val f = formOf(ev, curve)) {
+                is Line -> GeomMath.intersectLL(axisLine, f).points
+                is Circle -> GeomMath.intersectLC(axisLine, f).points
+                else -> null
+            } ?: return null
+        return points.minByOrNull { (it - near).length() }
     }
 
     /** Lines, segments, rays and circles can carry a point; arcs can't yet (no carrier circle). */

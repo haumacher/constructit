@@ -284,9 +284,21 @@ cursor. Hovering previews the snap (marker + status line) and Alt places freely.
 
 The point is the dependency, not the alignment: coinciding by coordinate alone would come apart the
 moment the other geometry moved, which is what a construction exists to prevent. Hover-time
-intersections are computed with `GeomMath`, so previewing never touches the graph. An ortho path
-started on a point is **welded** to it, so the path follows that point rather than merely beginning at
-its coordinates.
+intersections are computed with `GeomMath`, so previewing never touches the graph.
+
+For an **ortho path**, every vertex links, not just the first — the same weld/attach operations the
+drag magnet performs, so a connection made while drawing is the same construction as one made
+afterwards. Three consequences fall out of the shared-coordinate model:
+
+- A vertex *after* the first cannot bend its leg to reach the cursor's projection, so a curve snap
+  resolves to where the **leg** meets the curve (`Snap.axisCrossing`) — which is also the endpoint
+  `attachOrthoEndpointToCurve` derives, so the preview matches the result.
+- A path's **start** has no leg yet, hence no own/shared coordinate split to exploit: it is pinned to
+  a slider along the curve, and the first leg then shares that driven coordinate, which is what keeps
+  the leg axis-aligned while the start slides.
+- Reaching other geometry **finishes the run** — the open analogue of closing a loop by clicking the
+  start. The path being drawn is excluded from its own snap targets, since attaching a path to its own
+  leg could only ever be refused as a cycle.
 
 **Remaining — build order (all planned; ordered, not deferred):**
 
