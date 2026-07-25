@@ -3,6 +3,7 @@ package constructit.geom
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
@@ -604,6 +605,115 @@ object GeomMath {
     ): List<Vec2> = (0..steps).map { bezierPointAt(b, it.toDouble() / steps) }
 
     const val BEZIER_STEPS = 24
+
+    // ---- world-space tessellation: what the 3D layer consumes (OP-17) ----
+    // The renderer's tessellation is a *presentation* choice (fixed step counts, so SVG goldens do not
+    // depend on curvature). A solid is different: its mesh is geometry, and the error has to be stated
+    // in millimetres, because that is the unit a printed part is wrong by. Both share the samplers
+    // below so the maths exists once — only the step count differs.
+
+    /**
+     * Default chord tolerance for replacing a curved boundary piece by a polyline, in **millimetres**
+     * (OP-17): the greatest distance a chord may fall short of the curve it stands in for.
+     *
+     * 0.02 mm is well under a 3D printer's own resolution (a 0.4 mm nozzle, ~0.1 mm layers) and under a
+     * milled surface finish, while keeping meshes small enough to triangulate in a test. It is a
+     * *documented constant* rather than a parameter because the mesh is a sink (OP-9): nothing
+     * downstream measures it, so a per-feature knob would only add a way for two solids in one document
+     * to disagree.
+     */
+    const val TESS_TOL_MM = 0.02
+
+    /** The angular step at which a circle of [radius] deviates from its chord by at most [tolMm]. */
+    private fun chordStepAngle(
+        radius: Double,
+        tolMm: Double,
+    ): Double {
+        if (radius <= tolMm) return PI
+        return 2.0 * kotlin.math.acos((1.0 - tolMm / radius).coerceIn(-1.0, 1.0))
+    }
+
+    /** How many chords a sweep of [sweep] rad on [radius] needs to stay within [tolMm] (at least 1). */
+    fun chordSteps(
+        radius: Double,
+        sweep: Double,
+        tolMm: Double,
+    ): Int {
+        val step = chordStepAngle(radius, tolMm)
+        if (step <= 0.0) return 1
+        return max(1, ceil(abs(sweep) / step).toInt())
+    }
+
+    /** Points along [arc] at [steps] equal angular steps, both ends included. */
+    fun sampleArc(
+        arc: Arc,
+        steps: Int,
+    ): List<Vec2> {
+        val sw = sweep(arc)
+        return (0..steps).map {
+            val ang = arc.startAngle + sw * it / steps
+            arc.center + Vec2(arc.radius * cos(ang), arc.radius * sin(ang))
+        }
+    }
+
+    /**
+     * Points round a whole [circle] at [steps] steps, starting at angle 0 and closing back onto it
+     * (so the last point repeats the first). [ccw] follows the piece's own orientation (OP-14).
+     */
+    fun sampleCircle(
+        circle: Circle,
+        steps: Int,
+        ccw: Boolean,
+    ): List<Vec2> {
+        val sw = (if (ccw) 2.0 else -2.0) * PI
+        return (0..steps).map {
+            val ang = sw * it / steps
+            circle.center + Vec2(circle.radius * cos(ang), circle.radius * sin(ang))
+        }
+    }
+
+    /**
+     * How many segments a cubic Bézier needs to stay within [tolMm]. From the standard bound
+     * `err ≤ max|B''| / (8n²)`, with `max|B''| = 6·max(|p0−2p1+p2|, |p1−2p2+p3|)` over the control
+     * polygon — a closed-form, deterministic count rather than a recursive subdivision, for the reason
+     * OP-15 gives: determinism is the load-bearing property.
+     */
+    fun bezierSteps(
+        b: Bezier,
+        tolMm: Double,
+    ): Int {
+        val d0 = b.p0 - b.p1 * 2.0 + b.p2
+        val d1 = b.p1 - b.p2 * 2.0 + b.p3
+        val second = 6.0 * max(d0.length(), d1.length())
+        if (second <= 0.0 || tolMm <= 0.0) return 1
+        return max(1, min(1024, ceil(sqrt(second / (8.0 * tolMm))).toInt()))
+    }
+
+    /**
+     * One boundary piece as a polyline in **world millimetres**, within [tolMm] of the true curve —
+     * the single entry point the 3D layer uses, so piece dispatch still lives only here.
+     *
+     * Both ends are included and a closed piece (a whole circle) comes back with its first point
+     * repeated at the end, so a caller assembling a loop can drop each piece's last point uniformly.
+     */
+    fun tessellatePiece(
+        e: ProfileElement,
+        tolMm: Double = TESS_TOL_MM,
+    ): List<Vec2> =
+        when (e) {
+            is ProfileElement.Seg -> listOf(e.segment.a, e.segment.b)
+            is ProfileElement.ArcE -> sampleArc(e.arc, chordSteps(e.arc.radius, sweep(e.arc), tolMm))
+            is ProfileElement.CircleE ->
+                sampleCircle(e.circle, max(3, chordSteps(e.circle.radius, 2.0 * PI, tolMm)), e.ccw)
+            is ProfileElement.BezierE -> tessellateBezier(e.bezier, bezierSteps(e.bezier, tolMm))
+        }
+
+    /**
+     * The renderer's step count for an arc: a **fixed** 64 per full turn, independent of scale and
+     * curvature, because an adaptive count would make every arc-bearing SVG golden depend on the
+     * camera. Kept next to [sampleArc] so the sampling maths itself is not duplicated.
+     */
+    fun renderArcSteps(arc: Arc): Int = max(6, ceil(abs(sweep(arc)) / (2.0 * PI) * 64).toInt())
 
     /**
      * Apply an affine map to a loop, keeping the orientation it had. A reflection reverses the

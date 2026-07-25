@@ -1188,6 +1188,82 @@ Per the testing strategy these double as worked spec examples, extending the exi
 `BoltCircleTest` / `RoundedRectTest` / `ProfileTest` pattern to STL assertions (manifold, volume,
 bbox). **3D walls are a later application of the same machinery, not the proof of concept.**
 
+### Implementation status (as built — 3D engine core)
+
+The engine half of the seam ships (`geom/Geom3.kt`, three value types in `core/Model.kt`, the
+`Tier 5` ops in `dsl/Construction.kt`, `SolidTest`). All three slices are reachable end to end, minus
+the counterbore — booleans are the next task. **No UI, no viewport, no document-format support**: 3D
+tools arrive with the viewport, deliberately, so this slice touches nothing the 2D editor depends on.
+
+- **Types.** `Vec3`; `Plane3(origin, u, v)` (orthonormal, `normal = u×v`, with `translated`/`flipped`);
+  `Sketch3(plane, regions)`; `Feature3.Extrusion` / `Feature3.Revolution` — the *analytic* description;
+  `Mesh3(vertices, triangles)` with `Tri(a,b,c)` indices; `Solid3(feature, mesh)`. Values:
+  `PlaneValue`, `SketchValue`, `SolidValue`. The mesh rides **inside** the solid value because it is
+  derived data, not a second object that could disagree with its parameters — and `SolidValue` stays a
+  distinct type from a future mesh-only value, which is the OP-9 partition the type system must carry.
+- **Ops.** `plane(origin, u, v)` (+ `planeXY/XZ/YZ`, `planeOffset`, `planeFlipped`),
+  `sketchOn(plane, vararg regions)`, `sketchPlane`, `extrude(sketch, depth)`,
+  `revolve(sketch, axisOrigin, axisDir, angle)`, `facePlane(solid, TOP|BOTTOM)`, `measureVolume`,
+  `measureBBoxMin/Max/Extent(solid, axis)`. The revolve axis is an ordinary `PointRef` + `DirectionRef`,
+  so it can be *constructed* (a centreline through two key points) and moves with the profile.
+- **Tessellation tolerance: `GeomMath.TESS_TOL_MM = 0.02` mm**, a chord/sagitta bound in **world**
+  units — the unit a printed part is wrong by. A documented constant rather than a per-feature knob,
+  because the mesh is a sink: nothing downstream measures it, so a knob would only let two solids in
+  one document disagree. The renderer's tessellation is a *separate policy* (a fixed 64 steps per full
+  turn, so SVG goldens do not depend on the camera) but no longer separate *maths*:
+  `GeomMath.sampleArc/sampleCircle/chordSteps/bezierSteps/tessellatePiece` are the single piece-dispatch
+  site (OP-14's rule) and `SceneRenderer.tessellate` now delegates to them with its own step count. A
+  Bézier's count comes from the closed-form bound `err ≤ max|B''|/(8n²)` — deterministic, not adaptive
+  subdivision.
+- **Triangulation — hole bridging + ear clipping, both deterministic.** Holes are spliced into the outer
+  polygon along a bridge traversed twice (turning outer-plus-holes into one weakly-simple polygon), in
+  order of each hole's **rightmost corner** (ties upward, then input order); the bridge partner is the
+  **nearest** merged-polygon corner (ties by index) that the bridge can *see* — crossing no boundary
+  edge, with its midpoint inside the material. Ear clipping then scans from index 0 every pass, drops
+  collinear corners instead of emitting zero-area ears, skips candidate corners *coincident* with the
+  ear's own (which is what makes the doubled bridge vertices harmless), and — if a pass finds no clean
+  ear — clips the most convex corner anyway, so a near-degenerate sliver costs a little accuracy rather
+  than an endless loop. No randomness, no hash-order iteration anywhere; the vertex weld is a
+  `WELD_TOL = 1e-7` mm lattice with a fixed 27-cell scan, and indices are handed out in insertion order.
+- **Watertightness is structural, not repaired.** Caps and side walls are built from the *same*
+  tessellated points, so every wall edge meets exactly one cap edge by construction. A test utility
+  `assertManifold(mesh)` states the requirement as one property — every directed edge occurs exactly
+  once and its reverse exactly once (closed **and** consistently oriented), no degenerate triangle,
+  positive signed volume — and runs on every solid in every test.
+- **Provenance accessors (OP-8): `facePlane(solid, TOP|BOTTOM)` for an extrude.** `TOP` is the sketch
+  plane translated by `depth·normal` and keeps the sketch's own `u`/`v`, so a sketch placed on it uses
+  the same coordinates as the sketch below; `BOTTOM` is the sketch plane flipped. Stability is by
+  construction: `which` is a stored discrete choice (like a `Select` sign, OP-1) and the plane is
+  recomputed from the feature's parameters, so it stays *the top face* across every edit and nothing is
+  ever re-identified from mesh topology. This is what makes slice 3 work — the boss follows the plate
+  when the plate's depth changes.
+- **Measurements (OP-4): `measureVolume` (dimension L³, divergence theorem over the mesh) and
+  `measureBBoxMin/Max/Extent` per `Axis3`.** These are the 3D→2D scalar seam and are unobstructed: a
+  test drives a 2D circle's radius from a solid's thickness. Volume is *exact for the mesh* (hence
+  deterministic) and approximate for the curved solid, by the tessellation tolerance.
+- **Volume assertion tolerances, stated honestly.** Mesh volume equals *tessellated-polygon area ×
+  depth* to `1e-6` mm³ — a prism's volume is its cap area times its depth whatever the triangulation, so
+  this is an exactness check on the kernel. Against the *exact* area the flanged plate is within `1e-3`
+  relative (measured ~1e-4), and **the sign is not determined**: an inscribed corner arc removes a
+  sagitta of material while an inscribed hole fails to remove one, so a plate with holes comes out
+  marginally *heavy*. A purely convex revolution has no such compensation and is strictly light (the
+  stepped shaft: 2.6e-3 under `πr²h`, asserted `< 5e-3` and asserted to be *under*). A diameter across a
+  revolve's axis is short by up to twice the chord tolerance.
+- **Cuts (whole capabilities, refused rather than approximated):**
+  - **Booleans** — the counterbore of slice 1, and therefore slice 1's last step. The next task.
+  - **`facePlane` on a revolve** is refused with a reason: a partial revolve's end caps *are* planes, but
+    they are rotated frames and naming them `TOP`/`BOTTOM` would invent a convention nothing needs yet.
+  - **Negative or zero extrude depth** is refused (a direction flip is a real feature, but it inverts
+    the cap-orientation rule and belongs with a `dir`/`draft` argument, not smuggled in as a sign).
+  - **No 3D transform**: mirroring/rotating a plane, sketch or solid by a 2D affine is refused (node
+    invalid) rather than guessed — a 2D reflection line does not determine a 3D one. It arrives with
+    assemblies.
+  - **No SVG output for 3D values**: a solid's 2D image needs a *chosen projection*, which is a view
+    decision the serializer must not invent. It arrives with the viewport.
+  - Deliberately **not** cut, because the general algorithm covered them: a profile *touching* the axis
+    (the collapsed quads are simply dropped), a partial revolve's two flat end caps, and a revolved
+    region *with a hole* — the toroidal cavity is closed and its volume checks out against `2π²Rr²`.
+
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
 **Decision:** an **analytic construction layer is the source of truth**; the mesh is an
@@ -1390,6 +1466,11 @@ Three broad families (see OP-9 decision above):
       Holes as inner loops for same-depth through-features, boolean once depths differ. First 3D slice
       is **mechanical, not walls** (a wall is a degenerate seam): flanged plate with a counterbore →
       turned part (revolve) → sketch-on-face boss (the actual risk).
+      **Engine core built** (`geom/Geom3.kt`, `SolidTest`): planes, `sketchOn`, extrude, revolve, an
+      indexed watertight mesh sink, `facePlane` provenance accessors and volume/bbox measurements — all
+      three slices run, with deterministic hole-bridged ear clipping and a documented 0.02 mm world
+      tessellation tolerance. See *Implementation status (as built — 3D engine core)*. Cut from this
+      slice: booleans (the counterbore), 3D transforms, any UI/viewport/document-format support.
 
 ## Prior art to keep in mind
 

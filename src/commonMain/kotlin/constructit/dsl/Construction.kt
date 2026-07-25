@@ -11,6 +11,7 @@ import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Node
 import constructit.core.OpNode
+import constructit.core.PlaneValue
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.ProfileValue
@@ -18,24 +19,32 @@ import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.ScalarValue
 import constructit.core.SegmentValue
+import constructit.core.SketchValue
+import constructit.core.SolidValue
 import constructit.core.SourceNode
 import constructit.core.Value
 import constructit.core.transformValue
 import constructit.geom.Affine
 import constructit.geom.Arc
+import constructit.geom.Axis3
 import constructit.geom.Bezier
 import constructit.geom.Circle
 import constructit.geom.Direction
+import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.Line
 import constructit.geom.Loop
+import constructit.geom.Plane3
 import constructit.geom.Profile
 import constructit.geom.ProfileElement
 import constructit.geom.Ray
 import constructit.geom.Region
 import constructit.geom.Segment
+import constructit.geom.Sketch3
+import constructit.geom.SolidFace
 import constructit.geom.Vec2
+import constructit.geom.Vec3
 import constructit.units.Dimension
 import constructit.units.DimensionError
 import constructit.units.Quantity
@@ -61,6 +70,12 @@ typealias RegionRef = Ref<RegionValue>
 
 /** A placed group's coordinate frame (OP-16) — origin + angle, held by one source node. */
 typealias FrameRef = Ref<FrameValue>
+
+// The 2D→3D seam (OP-17): a plane is the embedding frame, a sketch is regions on it, a solid is a
+// feature built from a sketch. Three refs, one per node kind — the seam adds no new machinery.
+typealias PlaneRef = Ref<PlaneValue>
+typealias SketchRef = Ref<SketchValue>
+typealias SolidRef = Ref<SolidValue>
 
 /**
  * Builder for a construction DAG. Generates stable ids; supports macro instantiation with
@@ -1064,6 +1079,180 @@ class Construction {
             }
         }
 
+    // ================= Tier 5: the 2D→3D seam (OP-17) =================
+    // Upward only, and by one node kind at a time: a plane is a frame, a sketch is regions *on* a
+    // frame, a feature is a sketch plus parameters. Nothing here changes 2D geometry — that is the whole
+    // point of the seam being a separate embedding node rather than a coordinate system 2D lives in.
+
+    /**
+     * A sketch plane through [origin] spanned by [u] and [v] (OP-17).
+     *
+     * The two spanning vectors are **orthonormalised** here (`u` normalised, `v` made perpendicular to
+     * it) rather than demanded exact, because a frame derived from real geometry is only orthogonal to
+     * within floating point, and a plane whose axes are slightly skew would quietly shear every sketch
+     * placed on it. Literal geometry: a *parametric* plane comes from [planeOffset] or from a face
+     * accessor ([facePlane]), which is what the sketch→feature→sketch loop uses.
+     */
+    fun plane(
+        origin: Vec3,
+        u: Vec3,
+        v: Vec3,
+    ): PlaneRef =
+        op {
+            val uu = u.normalized()
+            if (uu.length() < Vec3.EPS) return@op EvalResult.Invalid("a plane's first axis has no direction")
+            val vv = (v - uu * v.dot(uu)).normalized()
+            if (vv.length() < Vec3.EPS) return@op EvalResult.Invalid("a plane's axes are parallel")
+            EvalResult.Ok(PlaneValue(Plane3(origin, uu, vv)))
+        }
+
+    /** The canonical XY plane at z = 0 (normal +Z) — the default sketch plane. */
+    fun planeXY(): PlaneRef = plane(Vec3.ZERO, Vec3.X, Vec3.Y)
+
+    /** The canonical XZ plane at y = 0. Its normal is −Y, so sketch v maps to world +Z. */
+    fun planeXZ(): PlaneRef = plane(Vec3.ZERO, Vec3.X, Vec3.Z)
+
+    /** The canonical YZ plane at x = 0 (normal +X). */
+    fun planeYZ(): PlaneRef = plane(Vec3.ZERO, Vec3.Y, Vec3.Z)
+
+    /**
+     * [plane] moved [distance] along its own normal — the parametric datum plane, since the offset is an
+     * ordinary scalar node and may itself be measured, wired or shared.
+     */
+    fun planeOffset(
+        plane: PlaneRef,
+        distance: ScalarRef,
+    ): PlaneRef =
+        op(plane, distance) {
+            EvalResult.Ok(PlaneValue((it[0] as PlaneValue).plane.translated(sc(it[1]).mm)))
+        }
+
+    /** [plane] with its normal reversed (and its in-plane frame mirrored, as it must be). */
+    fun planeFlipped(plane: PlaneRef): PlaneRef =
+        op(plane) { EvalResult.Ok(PlaneValue((it[0] as PlaneValue).plane.flipped())) }
+
+    /**
+     * **The seam** (OP-17): [regions] (OP-14's result layer) embedded on [plane].
+     *
+     * The 2D regions are untouched and unaware — which is what lets the same region be sketched on
+     * several planes, macro-instance semantics (OP-6) applied to the seam.
+     */
+    fun sketchOn(
+        plane: PlaneRef,
+        vararg regions: RegionRef,
+    ): SketchRef =
+        op(plane, *regions) { args ->
+            if (regions.isEmpty()) return@op EvalResult.Invalid("a sketch needs at least one region")
+            val p = (args[0] as PlaneValue).plane
+            EvalResult.Ok(SketchValue(Sketch3(p, args.drop(1).map { (it as RegionValue).region })))
+        }
+
+    /** The plane a sketch is embedded on — the accessor a further datum is offset from. */
+    fun sketchPlane(sketch: SketchRef): PlaneRef =
+        op(sketch) { EvalResult.Ok(PlaneValue((it[0] as SketchValue).sketch.plane)) }
+
+    /**
+     * Extrude [sketch] by [depth] along its plane's normal (OP-17 slice 1).
+     *
+     * One node produces the whole solid — analytic feature *and* mesh — because the mesh is derived
+     * data, not a second object (OP-9): there is no state in which a solid's triangles and its
+     * parameters disagree. A parameter edit recomputes this node; it never rebuilds the graph (OP-21).
+     */
+    fun extrude(
+        sketch: SketchRef,
+        depth: ScalarRef,
+    ): SolidRef =
+        op(sketch, depth) {
+            val d = sc(it[1]).requireDim(Dimension.LENGTH, "extrude depth")
+            val (solid, why) = Geom3.extrude((it[0] as SketchValue).sketch, d.mm)
+            if (solid == null) EvalResult.Invalid(why ?: "cannot extrude") else EvalResult.Ok(SolidValue(solid))
+        }
+
+    /**
+     * Revolve [sketch] through [angle] about the axis through [axisOrigin] in direction [axisDir] —
+     * both **in the sketch plane** (OP-17 slice 2).
+     *
+     * The axis is given by ordinary 2D nodes, so it can be *constructed* (a symmetry line, a
+     * centreline through two key points) and moves with the profile. A profile touching the axis is
+     * legal, a profile crossing it is invalid with a reason and heals (OP-3) — see [Geom3.revolve].
+     */
+    fun revolve(
+        sketch: SketchRef,
+        axisOrigin: PointRef,
+        axisDir: DirectionRef,
+        angle: ScalarRef,
+    ): SolidRef =
+        op(sketch, axisOrigin, axisDir, angle) {
+            val a = sc(it[3]).requireDim(Dimension.ANGLE, "revolve angle").base
+            val (solid, why) =
+                Geom3.revolve(
+                    (it[0] as SketchValue).sketch,
+                    pt(it[1]),
+                    (it[2] as DirectionValue).dir.v,
+                    a,
+                )
+            if (solid == null) EvalResult.Invalid(why ?: "cannot revolve") else EvalResult.Ok(SolidValue(solid))
+        }
+
+    /**
+     * The plane of a solid's named face (OP-8) — enough to **sketch on a face**, which is the slice of
+     * the seam that actually tests it (OP-17).
+     *
+     * An ordinary derived node: `which` is a stored discrete choice (exactly like a `Select` sign,
+     * OP-1) and the plane is recomputed from the feature's parameters, so it stays *the top face*
+     * across every edit. Nothing is re-identified from mesh topology, which is why the
+     * topological-naming problem does not arise here.
+     */
+    fun facePlane(
+        solid: SolidRef,
+        which: SolidFace,
+    ): PlaneRef =
+        op(solid) {
+            val (p, why) = Geom3.facePlane((it[0] as SolidValue).solid.feature, which)
+            if (p == null) EvalResult.Invalid(why ?: "no such face") else EvalResult.Ok(PlaneValue(p))
+        }
+
+    /**
+     * The volume of a solid (OP-4, dimension L³), computed from its mesh by the divergence theorem.
+     *
+     * A mesh-derived **scalar**, so it is free to drive a *new* construction forward — including a 2D
+     * one, which is the 3D→2D half of the seam (a papercraft net's edge lengths will be built this
+     * way). Feeding one back into the solid's own ancestors would be a cycle, and is forbidden (OP-4);
+     * the value is exact for the mesh and approximate for the curved solid, by the tessellation
+     * tolerance.
+     */
+    fun measureVolume(solid: SolidRef): ScalarRef =
+        op(solid) {
+            EvalResult.Ok(ScalarValue(Quantity(Geom3.volume((it[0] as SolidValue).solid.mesh), Dimension.VOLUME)))
+        }
+
+    /** The lower bound of a solid's bounding box along [axis] (OP-4). */
+    fun measureBBoxMin(
+        solid: SolidRef,
+        axis: Axis3,
+    ): ScalarRef = bboxMeasure(solid) { lo, _ -> lo.component(axis) }
+
+    /** The upper bound of a solid's bounding box along [axis] (OP-4). */
+    fun measureBBoxMax(
+        solid: SolidRef,
+        axis: Axis3,
+    ): ScalarRef = bboxMeasure(solid) { _, hi -> hi.component(axis) }
+
+    /** The extent of a solid's bounding box along [axis] (OP-4). */
+    fun measureBBoxExtent(
+        solid: SolidRef,
+        axis: Axis3,
+    ): ScalarRef = bboxMeasure(solid) { lo, hi -> hi.component(axis) - lo.component(axis) }
+
+    private fun bboxMeasure(
+        solid: SolidRef,
+        pick: (Vec3, Vec3) -> Double,
+    ): ScalarRef =
+        op(solid) {
+            val b = Geom3.bounds((it[0] as SolidValue).solid.mesh) ?: return@op EvalResult.Invalid("the solid has no mesh")
+            EvalResult.Ok(ScalarValue(Quantity.mm(pick(b.first, b.second))))
+        }
+
     // ================= sub-entity accessors (provenance-based points on a curve) =================
     // These let *derived* geometry (e.g. a mirrored segment) expose usable points for further
     // construction — the compound-value+accessor principle (OP-6/OP-8).
@@ -1149,5 +1338,11 @@ fun Evaluator.profile(ref: ProfileRef): Profile = (valueOf(ref) as ProfileValue)
 fun Evaluator.loop(ref: LoopRef): Loop = (valueOf(ref) as LoopValue).loop
 
 fun Evaluator.region(ref: RegionRef): Region = (valueOf(ref) as RegionValue).region
+
+fun Evaluator.plane(ref: PlaneRef): Plane3 = (valueOf(ref) as PlaneValue).plane
+
+fun Evaluator.sketch(ref: SketchRef): Sketch3 = (valueOf(ref) as SketchValue).sketch
+
+fun Evaluator.solid(ref: SolidRef): constructit.geom.Solid3 = (valueOf(ref) as SolidValue).solid
 
 fun Evaluator.pointSet(ref: PointSetRef): constructit.geom.PointSet = (valueOf(ref) as PointSetValue).set

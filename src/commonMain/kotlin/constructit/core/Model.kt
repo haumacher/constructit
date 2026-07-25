@@ -6,11 +6,14 @@ import constructit.geom.Circle
 import constructit.geom.Direction
 import constructit.geom.Line
 import constructit.geom.Loop
+import constructit.geom.Plane3
 import constructit.geom.PointSet
 import constructit.geom.Profile
 import constructit.geom.Ray
 import constructit.geom.Region
 import constructit.geom.Segment
+import constructit.geom.Sketch3
+import constructit.geom.Solid3
 import constructit.geom.Vec2
 import constructit.units.Quantity
 
@@ -72,6 +75,23 @@ data class FrameValue(val origin: Vec2, val angle: Double) : Value {
         return Vec2(dx * c + dy * s, -dx * s + dy * c)
     }
 }
+
+/**
+ * A **sketch plane** (OP-17): the frame a 2D construction is embedded on. The same concept as a
+ * placement frame ([FrameValue], OP-16) one dimension up, which is why 2D geometry is not made
+ * plane-resident — one region can be embedded on several planes.
+ */
+data class PlaneValue(val plane: Plane3) : Value
+
+/** **The seam** (OP-17): result-layer regions (OP-14) embedded on a plane. */
+data class SketchValue(val sketch: Sketch3) : Value
+
+/**
+ * A solid: an analytic feature description **plus** its derived mesh (OP-9). A distinct type from a
+ * future mesh-only value — that partition is what the type system has to enforce, since a mesh never
+ * lifts back to analytic geometry while a solid's faces and edges remain exact.
+ */
+data class SolidValue(val solid: Solid3) : Value
 
 /** Result of evaluating a node: valid value or invalid with a reason (OP-3). */
 sealed interface EvalResult {

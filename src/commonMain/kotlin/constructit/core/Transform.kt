@@ -41,4 +41,11 @@ fun transformValue(
         // different operation from mirroring what it carries. Deliberately no rule here rather than a
         // plausible-looking wrong one; the Evaluator turns this into node invalidity (OP-3).
         is FrameValue -> throw IllegalArgumentException("a placement frame cannot be transformed (OP-16 step 3)")
+        // 3D values (OP-17) live in a space this 2D map does not reach. Mirroring a plane or a solid is a
+        // real operation, but it needs a 3D transform, and inventing one from a 2D affine (which axis
+        // does its reflection line become?) would be a plausible-looking wrong answer. Refused, so the
+        // Evaluator turns it into node invalidity (OP-3), until 3D transforms arrive with assemblies.
+        is PlaneValue -> throw IllegalArgumentException("a sketch plane cannot be transformed by a 2D map (OP-17)")
+        is SketchValue -> throw IllegalArgumentException("a sketch cannot be transformed by a 2D map (OP-17)")
+        is SolidValue -> throw IllegalArgumentException("a solid cannot be transformed by a 2D map (OP-17)")
     }

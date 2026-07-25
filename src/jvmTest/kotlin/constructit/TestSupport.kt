@@ -1,5 +1,7 @@
 package constructit
 
+import constructit.geom.Geom3
+import constructit.geom.Mesh3
 import java.io.File
 import kotlin.math.abs
 import kotlin.test.assertEquals
@@ -13,6 +15,56 @@ fun assertClose(
     msg: String = "",
 ) {
     assertTrue(abs(actual - expected) <= tol, "expected $expected but was $actual. $msg")
+}
+
+/**
+ * Watertightness, the hard requirement for a solid (OP-2): the mesh must be a **closed, oriented
+ * 2-manifold**, so it can be printed and its volume means something.
+ *
+ * Three checks, all of them structural rather than approximate:
+ * - no degenerate triangle (repeated corner, or zero area);
+ * - every directed edge occurs exactly once, and its reverse exactly once — which is closedness
+ *   ("every edge has two faces") and consistent orientation ("they disagree on its direction") in one
+ *   statement;
+ * - positive signed volume, i.e. the consistent orientation is the *outward* one.
+ *
+ * Run on every solid in every test: a mesh is a sink (OP-9), so a defect here is invisible until
+ * something downstream — a slicer — refuses the part.
+ */
+fun assertManifold(
+    mesh: Mesh3,
+    what: String = "solid",
+) {
+    assertTrue(mesh.triangles.isNotEmpty(), "$what has no triangles")
+    for ((i, t) in mesh.triangles.withIndex()) {
+        assertTrue(t.a != t.b && t.b != t.c && t.a != t.c, "$what triangle $i repeats a corner: $t")
+        val a = mesh.vertices[t.a]
+        val b = mesh.vertices[t.b]
+        val c = mesh.vertices[t.c]
+        val area = (b - a).cross(c - a).length() / 2.0
+        assertTrue(area > 1e-12, "$what triangle $i is degenerate (area $area mm^2)")
+    }
+    val counts = HashMap<Pair<Int, Int>, Int>()
+    for (t in mesh.triangles) {
+        for (e in listOf(t.a to t.b, t.b to t.c, t.c to t.a)) {
+            counts[e] = (counts[e] ?: 0) + 1
+        }
+    }
+    // Iterate the triangles, not the map: the checks are order-independent, but the *message* should be.
+    for ((i, t) in mesh.triangles.withIndex()) {
+        for (e in listOf(t.a to t.b, t.b to t.c, t.c to t.a)) {
+            val fwd = counts[e] ?: 0
+            val back = counts[e.second to e.first] ?: 0
+            assertEquals(1, fwd, "$what edge ${e.first}->${e.second} (triangle $i) is used $fwd times, expected 1")
+            assertEquals(
+                1,
+                back,
+                "$what edge ${e.first}->${e.second} (triangle $i) has $back opposite uses, expected 1 (open or inconsistently wound)",
+            )
+        }
+    }
+    val vol = Geom3.volume(mesh)
+    assertTrue(vol > 0.0, "$what encloses no positive volume ($vol mm^3) — is it wound inside out?")
 }
 
 /**

@@ -22,7 +22,6 @@ import constructit.geom.Ray
 import constructit.geom.Segment
 import constructit.geom.Vec2
 import kotlin.math.abs
-import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.log10
@@ -242,20 +241,13 @@ object SceneRenderer {
         a: Double,
     ) = Vec2(v.x * cos(a) - v.y * sin(a), v.x * sin(a) + v.y * cos(a))
 
-    private fun norm2pi(a: Double): Double {
-        var r = a % TWO_PI
-        if (r < 0) r += TWO_PI
-        return r
-    }
-
-    fun tessellate(arc: Arc): List<Vec2> {
-        val sweep = if (arc.ccw) norm2pi(arc.endAngle - arc.startAngle) else -norm2pi(arc.startAngle - arc.endAngle)
-        val n = max(6, ceil(abs(sweep) / TWO_PI * 64).toInt())
-        return (0..n).map {
-            val ang = arc.startAngle + sweep * it / n
-            arc.center + Vec2(arc.radius * cos(ang), arc.radius * sin(ang))
-        }
-    }
+    /**
+     * An arc as a screen-ready polyline. The step count is the renderer's own (fixed per full turn, so
+     * goldens do not depend on the camera); the sampling itself is `GeomMath`'s, shared with the
+     * world-space tolerance-driven tessellation the 3D layer needs (OP-17) — one place for the maths,
+     * two policies for how finely to apply it.
+     */
+    fun tessellate(arc: Arc): List<Vec2> = GeomMath.sampleArc(arc, GeomMath.renderArcSteps(arc))
 
     /**
      * Draw a boundary chain (a `Loop`, or a `Region`'s outer/hole loop) piece by piece. Each piece

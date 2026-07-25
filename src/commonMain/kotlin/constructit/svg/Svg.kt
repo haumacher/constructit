@@ -8,6 +8,7 @@ import constructit.core.Evaluator
 import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
+import constructit.core.PlaneValue
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.ProfileValue
@@ -15,6 +16,8 @@ import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.ScalarValue
 import constructit.core.SegmentValue
+import constructit.core.SketchValue
+import constructit.core.SolidValue
 import constructit.dsl.Ref
 import constructit.dsl.valueOf
 import constructit.geom.Bezier
@@ -140,6 +143,14 @@ object Svg {
                 // a placement frame (OP-16) is a coordinate system, not a drawn thing: it is where the
                 // geometry it carries already is, so exporting it would draw nothing twice
                 is FrameValue -> {}
+                // 3D values (OP-17). A plane and a sketch are frames, like the placement frame above.
+                // A solid *has* a 2D image, but only through a chosen projection — a view decision, not
+                // an export one — so drawing one here would be this serializer inventing a camera. It
+                // arrives with the 3D viewport, which owns that choice; nothing puts a solid in a 2D
+                // document in the meantime.
+                is PlaneValue -> {}
+                is SketchValue -> {}
+                is SolidValue -> {}
                 null -> {}
             }
         }
