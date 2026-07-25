@@ -368,6 +368,50 @@ orthovertex 429.25,14.75 -> e5,e6
 A leg *extension* (a step continuing the previous leg's axis) is deliberately **not** a step: it
 changes no topology, only a value, and values already travel with the step that introduced the node.
 
+### Break and join legs — topology by gesture (OP-19 — OPEN, mechanics agreed)
+
+Two editing operations on an ortho path, inverses of each other. *Leg* here means a segment of an
+ortho path, not the architectural `Wall`.
+
+- **Join** — dragging a leg perpendicular until the adjacent perpendicular leg shrinks to roughly zero
+  removes that leg and makes the two legs it separated into one. Applied **live** during the drag, with
+  the collapsed jog kept restorable if the drag moves back past the threshold; only what is on screen
+  at release is committed, so the drawing always looks like the model.
+- **Break** (a tool) — click a leg to split it there, inserting two vertices with a **zero-length
+  perpendicular** leg between them. The jog then opens by dragging either half.
+
+This is the same shape as **drag-to-weld** for points: a threshold-triggered topology edit committed
+by the gesture. It is *not* continuity tracking (which OP-1 rejects for branch choice) — the result is
+recorded structurally and reloads deterministically.
+
+**Why this forces the coordinate representation to change.** Under the shared-coordinate model, a
+maximal straight run shares *one* coordinate node across all of its vertices — that is exactly what
+keeps it straight. Opening a jog means the two halves must hold *different* values, so one side needs
+an independent node; and a vertex's `pointXY` inputs are never rewired (OP-5). Neither existing
+endpoint can therefore acquire a new coordinate, and a newly created vertex cannot help: every leg
+touching an old endpoint is pinned to that endpoint's node. Break is simply not expressible.
+
+The fix is to **bind rather than share**: every vertex owns its own `x` and `y`, and a leg is
+axis-aligned because one endpoint's coordinate is `boundTo` the other's. Geometry is unchanged (a bound
+node evaluates to its master), but a *binding can be re-pointed in place*, which is precisely the
+freedom sharing lacks:
+
+```
+run V0..V3 straight:     V3.y -> V0.y
+break at x = m:          M(y -> V0.y, x = m)      N(x -> M.x, y free = V0.y's value)
+                         V3.y re-pointed: V0.y  =>  N.y      (the jog can now open)
+join (collapse):         V3.y re-pointed: N.y   =>  V0.y     (M, N dropped)
+```
+
+`closeOrthoPath` already works this way — it binds the last vertex's coordinate to the start's and
+redirects the drag to write the master — so unifying on bindings removes the second mechanism rather
+than adding one. Drags then write the master of a binding chain, which is that redirect generalised.
+
+Two things a join has to carry, if the path carries a wall: `Wall` holds a fixed vertex list and must
+derive from its path instead, and openings address their leg by *index* and measure position from the
+leg start — a merged leg starts further back, so an opening on the second half must be re-measured to
+keep its **absolute** position.
+
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
 - Every node has a **validity state** (valid / invalid).
@@ -875,6 +919,10 @@ Three broad families (see OP-9 decision above):
       JavaFX harness, file persistence). Client stack = Kotlin (TL-as-shell a non-requirement,
       so GWT/J2CL not indicated; Flutter would sacrifice the shared engine). TL module and
       server-side 3D compute remain valid non-driving later options.
+- [ ] **OP-19 Break / join legs** — mechanics agreed, not yet built: threshold-triggered topology
+      edits by gesture (join on collapse, break as a tool inserting a zero-length perpendicular).
+      Requires ortho coordinates to move from *shared* nodes to *bound* ones — a binding can be
+      re-pointed in place, which is what makes a jog expressible. See *Break and join legs*.
 - [x] **OP-18 Document format** — RESOLVED: a **construction script** — the sequence of steps that
       built the drawing, replayed on load. Stores no node kinds, nothing synthetic (handles, styles,
       path/wall structure) and no separate values section: a step's literals are written as the
