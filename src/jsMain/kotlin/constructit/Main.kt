@@ -4,6 +4,7 @@ import constructit.core.Evaluator
 import constructit.dsl.scalar
 import constructit.editor.BrowserCanvasDrawTarget
 import constructit.editor.Camera
+import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.Format
 import constructit.editor.ScalarEntry
@@ -21,6 +22,10 @@ import org.w3c.dom.HTMLInputElement
 import org.w3c.dom.HTMLSelectElement
 import org.w3c.dom.events.MouseEvent
 import org.w3c.dom.events.WheelEvent
+import org.w3c.dom.url.URL
+import org.w3c.files.Blob
+import org.w3c.files.BlobPropertyBag
+import org.w3c.files.FileReader
 
 fun main() {
     window.addEventListener("load", { setupApp() })
@@ -166,6 +171,55 @@ private fun setupApp() {
         val v = t.value.toDoubleOrNull() ?: return@addEventListener
         if (!editor.writeSelectionField(idx, v)) editor.note("That value is determined by the construction and can't be set here")
         repaint()
+    })
+
+    // ---- drawing file: the document as a construction script (DocumentFormat) ----
+    val fileNote = document.getElementById("file-note") as HTMLElement
+
+    fun note(
+        message: String,
+        error: Boolean = false,
+    ) {
+        fileNote.textContent = message
+        fileNote.className = if (error) "err" else ""
+    }
+
+    fun loadScript(text: String) {
+        try {
+            val fresh = DocumentFormat.load(text)
+            editor.replaceDocument(fresh)
+            note("Loaded ${fresh.elements.size} element(s)")
+        } catch (e: Throwable) {
+            note(e.message ?: "could not load that file", error = true)
+        }
+        repaint()
+    }
+
+    (document.getElementById("f-copy") as HTMLElement).addEventListener("click", {
+        val text = DocumentFormat.save(editor.doc)
+        window.navigator.clipboard.writeText(text).then(
+            { note("Copied ${text.lines().size - 1} step(s) to the clipboard") },
+            { note("Clipboard refused; use Save instead", error = true) },
+        )
+    })
+    (document.getElementById("f-download") as HTMLElement).addEventListener("click", {
+        val blob = Blob(arrayOf(DocumentFormat.save(editor.doc)), BlobPropertyBag(type = "text/plain"))
+        val a = document.createElement("a") as org.w3c.dom.HTMLAnchorElement
+        a.href = URL.createObjectURL(blob)
+        a.download = "drawing.cit"
+        a.click()
+        URL.revokeObjectURL(a.href)
+        note("Saved drawing.cit")
+    })
+    val filePicker = document.getElementById("f-file") as HTMLInputElement
+    (document.getElementById("f-load") as HTMLElement).addEventListener("click", { filePicker.click() })
+    filePicker.addEventListener("change", {
+        val file = filePicker.files?.item(0)
+        if (file != null) {
+            val reader = FileReader()
+            reader.onload = { _ -> loadScript(reader.result as String) }
+            reader.readAsText(file)
+        }
     })
 
     // a measurement can drive a new construction: click it to make it the active scalar (OP-4)

@@ -14,10 +14,23 @@ import constructit.units.mm
  * No platform APIs — fully headless-testable by simulating gestures.
  */
 class Editor(
-    val doc: Document = Document(),
+    doc: Document = Document(),
     var canvasW: Double = 800.0,
     var canvasH: Double = 600.0,
 ) {
+    var doc: Document = doc
+        private set
+
+    /** Swap in a loaded document, dropping every reference into the old one. */
+    fun replaceDocument(fresh: Document) {
+        doc = fresh
+        selection = null
+        activeScalar = null
+        resetPicks()
+        statusHint = ""
+        onChange()
+    }
+
     var camera: Camera = Camera.centered(canvasW, canvasH)
     var toolId: String = Tools.SELECT
         private set
@@ -409,7 +422,7 @@ class Editor(
             onChange()
             return
         }
-        statusHint = if (doc.addOpeningAt(world, w.ref, tolWorld() * 2)) "Opening added" else "Click on a wall to place an opening"
+        statusHint = if (doc.addOpeningAtRecorded(world, w.ref, tolWorld() * 2)) "Opening added" else "Click on a wall to place an opening"
         onChange()
     }
 
@@ -611,7 +624,8 @@ class Editor(
                 onChange()
                 return
             }
-            tool.build(doc, Picks(pickedPoints.toList(), pickedElements.toList(), world, pickedClicks.toList()), activeScalar?.ref)
+            val picks = Picks(pickedPoints.toList(), pickedElements.toList(), world, pickedClicks.toList())
+            doc.recordingTool(tool.id, picks, activeScalar) { tool.build(doc, picks, activeScalar?.ref) }
             resetPicks()
             statusHint = ""
         } else {

@@ -42,6 +42,11 @@
         .mrow:hover { background: #eef4fb; }
         .mrow.active { background: #e2eefb; outline: 1px solid #1f77b4; }
         .mrow .mval { color: #2ca02c; }
+        #file-actions { display: flex; gap: 4px; }
+        #file-actions button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
+        #file-actions button:hover { background: #f0f0f0; }
+        #file-note { font-size: 11px; color: #999; padding: 4px 4px 0; }
+        #file-note.err { color: #d62728; }
         .frow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; font-size: 12px; }
         .frow .flabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         .frow .fval { width: 58px; }
@@ -63,6 +68,14 @@
         <nav id="palette"></nav>
         <div id="canvas-area"><canvas id="canvas"></canvas></div>
         <aside id="panel">
+            <h3>Drawing</h3>
+            <div id="file-actions">
+                <button id="f-copy" title="Copy the drawing as a construction script">Copy</button>
+                <button id="f-download" title="Download the drawing as a .cit file">Save</button>
+                <button id="f-load" title="Load a construction script">Open…</button>
+                <input id="f-file" type="file" accept=".cit,.txt" hidden>
+            </div>
+            <div id="file-note"></div>
             <h3>Selection</h3>
             <div id="inspector"></div>
             <h3>Parameters</h3>

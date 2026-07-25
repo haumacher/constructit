@@ -306,9 +306,9 @@ afterwards. Three consequences fall out of the shared-coordinate model:
    model beyond a single active scalar), Chamfer (straight bevel between two legs), Rectangle,
    Regular polygon, Rounded-rectangle (expose the existing macro), Area measurement (needs an
    area op).
-2. **Editing & persistence.** Delete (dependency-aware — removing a node invalidates/removes
-   dependents), undo/redo (snapshot source values + element list), save/load — the `Document`
-   is the file-format seam.
+2. **Editing & persistence.** Save/load is **done** (OP-18, see *Document format* below). Remaining:
+   Delete (dependency-aware — removing a node invalidates/removes dependents) and undo/redo, which
+   the journal now makes tractable: an undo step is a prefix of the recorded construction.
 3. **Productivity.** Remaining snap modes — key points of *derived* geometry (endpoint/midpoint/
    quadrant, which need the derived point materialized, not just its coordinate) and arcs (no carrier
    circle yet); drag-to-attach onto **arcs** and onto **derived points** (the two cases the weld
@@ -327,6 +327,45 @@ afterwards. Three consequences fall out of the shared-coordinate model:
    for the 2D technical/architectural-drawing goal.
 8. **Splines (OP-15).** The general `CurveValue` refactor, then control-point Bézier/B-splines with
    *constructed* control points. Independent of 1–7; slot it wherever it fits.
+
+### Document format — the file is a construction script (OP-18 — RESOLVED)
+
+A drawing is saved as **the sequence of steps that built it** (`DocumentFormat`), and loading replays
+them. Not a node dump: because a step re-runs the code that created it, everything derived comes back
+for free, and nothing synthetic is stored —
+
+- **no node kinds.** A step rebuilds its own sub-graph, so no op needs a serialized name or a rebuild
+  path (~50 ops in `Construction` would otherwise each need both).
+- **no handles, styles, or path/wall structure.** All of it is created by the methods that create the
+  geometry, hence recreated by replay. Asking whether handles must be stored is the right question:
+  they must not be, and choosing this format is what makes that true.
+- **no separate values section.** A step's positional literals are written as the *current* value of
+  what that step introduced, so a dragged point is saved where it now is. This keeps the file purely a
+  construction, with no addressing scheme for internal nodes leaking into it. Literals that encode a
+  *choice* rather than a state — which side of a line, which intersection branch — are kept verbatim,
+  since replay must make the same choice.
+
+One `tool <id>` step covers every tool, replayed through the same `ToolDef.build` the click ran, so
+the format needs no per-tool case and new tools round-trip for free. Elements are named
+script-locally (`e1`, `e2`, …) by the step that creates them, so the file does not depend on runtime
+id generation, and a step that creates a different number of elements than the script declares is a
+**load error** rather than a silently different drawing.
+
+The load-bearing test is `save → load → save` byte-equality: it catches a step that fails to replay, a
+literal that was not restated, and any drift in naming, in one assertion.
+
+```
+constructit 1
+point 30,-60 -> e1
+point 30,60 -> e2
+tool segment pts=e1,e2 clicks=30,-60;30,60 -> e3
+orthostart 30,10 -> e4
+attachortho e4 e3
+orthovertex 429.25,14.75 -> e5,e6
+```
+
+A leg *extension* (a step continuing the previous leg's axis) is deliberately **not** a step: it
+changes no topology, only a value, and values already travel with the step that introduced the node.
 
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
@@ -802,6 +841,11 @@ Three broad families (see OP-9 decision above):
       JavaFX harness, file persistence). Client stack = Kotlin (TL-as-shell a non-requirement,
       so GWT/J2CL not indicated; Flutter would sacrifice the shared engine). TL module and
       server-side 3D compute remain valid non-driving later options.
+- [x] **OP-18 Document format** — RESOLVED: a **construction script** — the sequence of steps that
+      built the drawing, replayed on load. Stores no node kinds, nothing synthetic (handles, styles,
+      path/wall structure) and no separate values section: a step's literals are written as the
+      current value of what it introduced. One generic `tool` step covers every tool. See *Document
+      format* under the editor architecture.
 - [x] **OP-13 Dragging vs. numeric entry** — RESOLVED: the **same operation**. One `Handle` per
       grabbable DOF, with a continuous binding (drag) and a discrete one (typed fields); a field
       is a re-parameterization of a single free node, never a new node and never a consumed DOF.

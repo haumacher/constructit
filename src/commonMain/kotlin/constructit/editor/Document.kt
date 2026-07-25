@@ -135,6 +135,65 @@ class Document {
     val scalars = ArrayList<ScalarEntry>()
     private var counter = 0
 
+    /**
+     * The construction steps that built this document, in order — see [DocumentFormat]. Steps are the
+     * save format: replaying them rebuilds the graph *and* everything synthetic around it.
+     */
+    val journal = ArrayList<Step>()
+    private var recordDepth = 0
+
+    /**
+     * Run [body] as one journal step. Nested calls are absorbed into the outermost one, so a tool that
+     * calls several document operations is recorded as the single tool application the user performed —
+     * which is also the only granularity that replays correctly.
+     */
+    private fun <T> recording(
+        kind: String,
+        vararg args: Arg,
+        skipIfEmpty: Boolean = false,
+        body: () -> T,
+    ): T {
+        if (recordDepth > 0) return body()
+        recordDepth++
+        val before = elements.size
+        val scalarsBefore = scalars.size
+        try {
+            val result = body()
+            val created = elements.drop(before)
+            // a tool whose build had no effect is not part of the construction
+            if (skipIfEmpty && created.isEmpty() && scalars.size == scalarsBefore) return result
+            val step = Step(kind, args.toList())
+            step.creates.addAll(created)
+            journal.add(step)
+            return result
+        } finally {
+            recordDepth--
+        }
+    }
+
+    /**
+     * Record [body] as a tool application, so replay re-runs the same [ToolDef] — which is what keeps
+     * the format tool-agnostic: adding a tool needs no work here.
+     */
+    fun <T> recordingTool(
+        toolId: String,
+        picks: Picks,
+        scalar: ScalarEntry?,
+        body: () -> T,
+    ): T =
+        recording(
+            "tool",
+            *listOfNotNull(
+                Arg.Text(toolId),
+                Arg.Keyed("pts", Arg.Els(picks.points.mapNotNull { elementFor(it) })).takeIf { picks.points.isNotEmpty() },
+                Arg.Keyed("els", Arg.Els(picks.elements)).takeIf { picks.elements.isNotEmpty() },
+                Arg.Keyed("clicks", Arg.Positions(picks.clicks)).takeIf { picks.clicks.isNotEmpty() },
+                scalar?.let { Arg.Keyed("scalar", Arg.Sc(it)) },
+            ).toTypedArray(),
+            skipIfEmpty = true,
+            body = body,
+        )
+
     private fun nextId(prefix: String) = "$prefix${++counter}"
 
     val freePoints: List<Element> get() = elements.filter { it.kind == ElementKind.POINT }
@@ -172,9 +231,11 @@ class Document {
         x: Quantity,
         y: Quantity,
     ): PointRef =
-        cx.freePoint("P${counter + 1}", x, y).also { ref ->
-            val el = add(ref, ElementKind.POINT, Styles.FREE_POINT)
-            el.handle = FreePointHandle(ref.node as SourceNode) // its position is a handle field too
+        recording("point", Arg.Pos(Vec2(x.mm, y.mm))) {
+            cx.freePoint("P${counter + 1}", x, y).also { ref ->
+                val el = add(ref, ElementKind.POINT, Styles.FREE_POINT)
+                el.handle = FreePointHandle(ref.node as SourceNode) // its position is a handle field too
+            }
         }
 
     /** Ensure scalar names are unique so the wiring dropdown is never ambiguous. */
@@ -193,6 +254,7 @@ class Document {
         val node = ParameterNode(nextId("pn"), ScalarValue(value))
         val e = ScalarEntry(nextId("s"), uniqueScalarName(name), Ref<ScalarValue>(node), editable = true)
         scalars.add(e)
+        recording("param", Arg.Sc(e), Arg.Text("="), Arg.Num(value)) {}
         return e
     }
 
@@ -240,6 +302,11 @@ class Document {
     fun wireParameter(
         e: ScalarEntry,
         target: ScalarEntry,
+    ): Boolean = recording("wire", Arg.Sc(e), Arg.Text("="), Arg.Sc(target)) { wireParameterNow(e, target) }
+
+    private fun wireParameterNow(
+        e: ScalarEntry,
+        target: ScalarEntry,
     ): Boolean {
         val node = e.ref.node as? ParameterNode ?: return false
         if (target.ref.node === node) return false
@@ -283,6 +350,11 @@ class Document {
     fun weld(
         alias: Element,
         master: Element,
+    ): Boolean = recording("weld", Arg.El(alias), Arg.El(master)) { weldNow(alias, master) }
+
+    private fun weldNow(
+        alias: Element,
+        master: Element,
     ): Boolean {
         val node = alias.ref.node as? SourceNode ?: return false
         if (alias.kind != ElementKind.POINT || node.boundTo != null) return false
@@ -295,7 +367,9 @@ class Document {
     }
 
     /** Un-weld / detach: the point resumes as an independent free point at its current position. */
-    fun unweld(alias: Element) {
+    fun unweld(alias: Element) = recording("unweld", Arg.El(alias)) { unweldNow(alias) }
+
+    private fun unweldNow(alias: Element) {
         val node = alias.ref.node as? SourceNode ?: return
         val cur = (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p }
         node.boundTo = null
@@ -365,6 +439,11 @@ class Document {
     fun attachToCurve(
         pt: Element,
         curve: Element,
+    ): Boolean = recording("attach", Arg.El(pt), Arg.El(curve)) { attachToCurveNow(pt, curve) }
+
+    private fun attachToCurveNow(
+        pt: Element,
+        curve: Element,
     ): Boolean {
         val node = pt.ref.node as? SourceNode ?: return false
         if (attachTargetPos(pt, curve) == null) return false
@@ -408,6 +487,11 @@ class Document {
      * the leg axis-aligned while the start slides.
      */
     fun attachOrthoEndpointToCurve(
+        el: Element,
+        curve: Element,
+    ): Boolean = recording("attachortho", Arg.El(el), Arg.El(curve)) { attachOrthoEndpointToCurveNow(el, curve) }
+
+    private fun attachOrthoEndpointToCurveNow(
         el: Element,
         curve: Element,
     ): Boolean {
@@ -462,6 +546,11 @@ class Document {
 
     /** Weld an ortho path endpoint [el] onto point [target]: its coordinates track the target. */
     fun weldOrthoEndpointToPoint(
+        el: Element,
+        target: Element,
+    ): Boolean = recording("weldortho", Arg.El(el), Arg.El(target)) { weldOrthoEndpointToPointNow(el, target) }
+
+    private fun weldOrthoEndpointToPointNow(
         el: Element,
         target: Element,
     ): Boolean {
@@ -598,6 +687,12 @@ class Document {
         a: Element,
         b: Element,
         near: Vec2,
+    ): PointRef? = recording("intersectnear", Arg.El(a), Arg.El(b), Arg.Pos(near)) { intersectNearNow(a, b, near) }
+
+    private fun intersectNearNow(
+        a: Element,
+        b: Element,
+        near: Vec2,
     ): PointRef? {
         val (set, lineLine) = intersectionSet(a, b) ?: return null
         val ev = Evaluator()
@@ -613,6 +708,11 @@ class Document {
 
     /** A point that slides along [el] at [at] — the on-curve form of a click landing on a curve. */
     fun pointOnCurve(
+        el: Element,
+        at: Vec2,
+    ): PointRef? = recording("pointoncurve", Arg.El(el), Arg.Pos(at)) { pointOnCurveNow(el, at) }
+
+    private fun pointOnCurveNow(
         el: Element,
         at: Vec2,
     ): PointRef? =
@@ -677,16 +777,17 @@ class Document {
     val orthoPaths = ArrayList<OrthoPath>()
 
     /** Start a retained ortho path at [at] with a fresh, draggable vertex owning both coordinates. */
-    fun startOrthoPath(at: Vec2): OrthoPath {
-        val path = OrthoPath()
-        path.vertices.add(orthoVertex(scalarSource(at.x), scalarSource(at.y), -1))
-        orthoPaths.add(path)
-        return path
-    }
+    fun startOrthoPath(at: Vec2): OrthoPath =
+        recording("orthostart", Arg.Pos(at)) {
+            val path = OrthoPath()
+            path.vertices.add(orthoVertex(scalarSource(at.x), scalarSource(at.y), -1))
+            orthoPaths.add(path)
+            path
+        }
 
     /** Forget a path that never got a second vertex (its lone vertex element stays as a free corner). */
     fun discardOrthoPath(path: OrthoPath) {
-        if (path.vertices.size < 2) orthoPaths.remove(path)
+        if (path.vertices.size < 2) recording("orthodiscard") { orthoPaths.remove(path) }
     }
 
     /**
@@ -699,6 +800,13 @@ class Document {
      * vertex's coordinate is driven and cannot be extended.
      */
     fun addOrthoVertex(
+        path: OrthoPath,
+        to: Vec2,
+        // skipIfEmpty: a step that creates nothing here *extended* the previous leg, which changes no
+        // topology — only a value, and values already travel with the step that introduced the node
+    ): OrthoVertex? = recording("orthovertex", Arg.Pos(to), skipIfEmpty = true) { addOrthoVertexNow(path, to) }
+
+    private fun addOrthoVertexNow(
         path: OrthoPath,
         to: Vec2,
     ): OrthoVertex? {
@@ -799,7 +907,9 @@ class Document {
      * so dragging the last vertex moves the start with it (2 DOF, symmetric with every other corner)
      * rather than being pinned. Both vertices stop being endpoints.
      */
-    fun closeOrthoPath(path: OrthoPath): Boolean {
+    fun closeOrthoPath(path: OrthoPath): Boolean = recording("orthoclose") { closeOrthoPathNow(path) }
+
+    private fun closeOrthoPathNow(path: OrthoPath): Boolean {
         if (path.vertices.size < 3 || path.closed) return false
         closeOrthoPath(path.vertices.first(), path.vertices.last())
         path.closed = true // before the leg handle resolves its index, which depends on closure
@@ -857,7 +967,15 @@ class Document {
     fun buildWall(
         path: OrthoPath,
         thickness: ScalarRef,
-    ): Wall? = buildWall(path.vertices.map { it.ref }, thickness, path.closed, path)
+    ): Wall? =
+        recording("wall", Arg.Sc(scalarEntryFor(thickness))) {
+            buildWall(path.vertices.map { it.ref }, thickness, path.closed, path)
+        }
+
+    /** The named entry driving [ref] — every scalar a tool consumes came from the panel. */
+    private fun scalarEntryFor(ref: ScalarRef): ScalarEntry =
+        scalars.firstOrNull { it.ref.node === ref.node }
+            ?: newParameter("v", (Evaluator().eval(ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q } ?: 0.0.mm)
 
     private fun evalMm(ref: ScalarRef): Double =
         (Evaluator().eval(ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.mm } ?: 0.0
@@ -948,6 +1066,12 @@ class Document {
      * position and width are editable and the wall regenerates around them. No-op if no wall leg is
      * within tolerance.
      */
+    fun addOpeningAtRecorded(
+        world: Vec2,
+        width: ScalarRef,
+        tol: Double,
+    ): Boolean = recording("opening", Arg.Pos(world), Arg.Sc(scalarEntryFor(width)), Arg.Num(Quantity.mm(tol))) { addOpeningAt(world, width, tol) }
+
     fun addOpeningAt(
         at: Vec2,
         width: ScalarRef,
