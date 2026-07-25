@@ -6,6 +6,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -325,6 +326,70 @@ object GeomMath {
         val closingGap = (startOf(chained[0]) - cursor).length()
         if (closingGap > JOIN_TOL) return null to "loop does not close (gap $closingGap mm)"
         return Loop(chained) to null
+    }
+
+    // ---- piece-level dispatch lives here, and only here ----
+    // ProfileElement is a sealed hierarchy, so the compiler lists every site that must handle a new
+    // piece kind. That check is worth keeping — but it is only worth *one* set of sites, so nothing
+    // outside GeomMath dispatches on ProfileElement. The single deliberate exception is a renderer
+    // emitting backend-specific markup, which is not a geometric question.
+
+    /**
+     * Conservative axis-aligned bounds of one piece: for anything circular this is the box of the
+     * *whole* circle, not of the swept part.
+     *
+     * Deliberately not tightened. Tightening would shrink the auto-viewBox of every arc-bearing SVG
+     * golden, so it is a behavioural change that belongs in its own commit — not a side effect of
+     * moving this code.
+     */
+    fun bounds(e: ProfileElement): Pair<Vec2, Vec2> =
+        when (e) {
+            is ProfileElement.Seg ->
+                Vec2(min(e.segment.a.x, e.segment.b.x), min(e.segment.a.y, e.segment.b.y)) to
+                    Vec2(max(e.segment.a.x, e.segment.b.x), max(e.segment.a.y, e.segment.b.y))
+            is ProfileElement.ArcE ->
+                e.arc.center - Vec2(e.arc.radius, e.arc.radius) to e.arc.center + Vec2(e.arc.radius, e.arc.radius)
+            is ProfileElement.CircleE ->
+                e.circle.center - Vec2(e.circle.radius, e.circle.radius) to e.circle.center + Vec2(e.circle.radius, e.circle.radius)
+        }
+
+    /** Apply an affine map to an arc, flipping its sweep when the map reflects. */
+    fun transformArc(
+        arc: Arc,
+        t: Affine,
+    ): Arc {
+        val center = t.apply(arc.center)
+        val s0 = t.linear(Vec2(cos(arc.startAngle), sin(arc.startAngle)))
+        val s1 = t.linear(Vec2(cos(arc.endAngle), sin(arc.endAngle)))
+        val flip = t.det < 0
+        return Arc(center, arc.radius * t.scale, atan2(s0.y, s0.x), atan2(s1.y, s1.x), if (flip) !arc.ccw else arc.ccw)
+    }
+
+    /** Apply an affine map to one piece, preserving its kind. */
+    fun transform(
+        e: ProfileElement,
+        t: Affine,
+    ): ProfileElement =
+        when (e) {
+            is ProfileElement.Seg -> ProfileElement.Seg(Segment(t.apply(e.segment.a), t.apply(e.segment.b)))
+            is ProfileElement.ArcE -> ProfileElement.ArcE(transformArc(e.arc, t))
+            is ProfileElement.CircleE ->
+                ProfileElement.CircleE(
+                    Circle(t.apply(e.circle.center), e.circle.radius * t.scale),
+                    if (t.det < 0) !e.ccw else e.ccw,
+                )
+        }
+
+    /**
+     * Apply an affine map to a loop, keeping the orientation it had. A reflection reverses the
+     * traversal direction, which would otherwise silently invert the loop's sign (OP-14).
+     */
+    fun transform(
+        loop: Loop,
+        t: Affine,
+    ): Loop {
+        val wasCcw = signedArea(loop) >= 0.0
+        return orient(Loop(loop.elements.map { transform(it, t) }), wasCcw)
     }
 
     /** Axis-aligned bounding box of a set of points, or null if empty. */

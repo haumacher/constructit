@@ -2,6 +2,7 @@ package constructit.svg
 
 import constructit.core.ArcValue
 import constructit.core.CircleValue
+import constructit.core.DirectionValue
 import constructit.core.Evaluator
 import constructit.core.LineValue
 import constructit.core.LoopValue
@@ -10,9 +11,11 @@ import constructit.core.PointValue
 import constructit.core.ProfileValue
 import constructit.core.RayValue
 import constructit.core.RegionValue
+import constructit.core.ScalarValue
 import constructit.core.SegmentValue
 import constructit.dsl.Ref
 import constructit.dsl.valueOf
+import constructit.geom.GeomMath
 import constructit.geom.Line
 import constructit.geom.ProfileElement
 import constructit.geom.Ray
@@ -50,24 +53,15 @@ object Svg {
 
     private fun screen(v: Vec2) = Vec2(v.x, -v.y)
 
-    /** Add bbox samples for a chain of profile / loop pieces. */
+    /** Add bbox samples for a chain of profile / loop pieces (piece dispatch lives in GeomMath). */
     private fun sampleChain(
         elements: List<ProfileElement>,
         samples: MutableList<Vec2>,
     ) {
-        for (el in elements) when (el) {
-            is ProfileElement.Seg -> {
-                samples.add(el.segment.a)
-                samples.add(el.segment.b)
-            }
-            is ProfileElement.ArcE -> {
-                samples.add(el.arc.center + Vec2(el.arc.radius, el.arc.radius))
-                samples.add(el.arc.center - Vec2(el.arc.radius, el.arc.radius))
-            }
-            is ProfileElement.CircleE -> {
-                samples.add(el.circle.center + Vec2(el.circle.radius, el.circle.radius))
-                samples.add(el.circle.center - Vec2(el.circle.radius, el.circle.radius))
-            }
+        for (el in elements) {
+            val (lo, hi) = GeomMath.bounds(el)
+            samples.add(lo)
+            samples.add(hi)
         }
     }
 
@@ -131,7 +125,12 @@ object Svg {
                     samples.add(p)
                     prepared.add(Prepared("point", d, p))
                 }
-                else -> {} // scalars, directions etc. not drawable
+                // Not drawable — spelled out rather than absorbed by an `else`, so that a new
+                // Value type breaks this build until someone decides whether an export shows it.
+                // An exporter silently omitting what it was handed is the failure worth preventing.
+                is ScalarValue -> {}
+                is DirectionValue -> {}
+                null -> {}
             }
         }
 

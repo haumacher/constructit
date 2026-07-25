@@ -607,6 +607,33 @@ The pure-engine slice ships (`geom/Geom.kt`, `core/Model.kt`, `dsl/Construction.
   `roundedRect` outer + `boltCircle` holes — and asserts the exact known area
   `w·h − (4−π)r² − n·πr_hole²`, plus an SVG golden.
 
+#### Where a new piece kind has to be handled
+`ProfileElement` is a **sealed** hierarchy and Kotlin (1.9) makes a non-exhaustive `when` over one a
+compile **error** — as an expression *and* in statement position. So the compiler, not a convention,
+lists every site that must handle a new piece kind. Adding `CircleE` produced exactly that list; a
+probe adding a fourth kind reproduces it.
+
+That check is worth keeping (it is why nothing silently mishandled circles), which is the argument
+against replacing the hierarchy with a `BoundedPiece`-style interface: sealed types make adding a
+*variant* compiler-guided and adding an *operation* cheap, and here the operation axis is the one that
+grows — `pointAt`/`paramOf`/`length`/`split` all arrive with splines (OP-15). Two rules keep the
+guarantee real:
+
+- **Piece dispatch lives in `GeomMath`, and only there** (`startOf`, `endOf`, `reverse`,
+  `doubleSignedArea`, `bounds`, `transform`). The one deliberate exception is a renderer emitting
+  backend-specific markup, which is not a geometric question. `Transform.kt` and `Svg.kt` therefore
+  delegate rather than re-dispatch.
+- **No `else` on a sealed dispatch that must stay total.** An `else` silently absorbs new variants,
+  which is how `Svg`'s `Value` dispatch would have dropped `Loop`/`Region` from an export without a
+  word — an exporter omitting what it was handed is the failure worth preventing, so the non-drawable
+  cases are now spelled out. `else` stays where openness *is* the semantics: the editor's
+  "no interaction for this kind" (`HitTest`, `Snap`, `SceneRenderer`), coercion predicates answering
+  "is this coercible?", and runtime typing of `Ref<*>` varargs, which varargs cannot express statically.
+
+The one place exhaustiveness is structurally unreachable is `DocumentFormat`, which dispatches on a
+`String` step kind. Its design contains the blast radius: steps are *tool invocations*, not ops, so a
+new tool rides the generic `tool` step instead of adding a kind.
+
 **Deliberately not done here:** containment is not verified (a hole outside the outer boundary, or
 two overlapping holes, are accepted; only holes removing more than the boundary encloses are
 rejected) — real containment needs the point-in-region predicate, which this slice does not need.
