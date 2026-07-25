@@ -126,6 +126,13 @@ object Snap {
         return points.minByOrNull { (it - near).length() }
     }
 
+    /** Where [world] lands on [curve] itself — the point a click on a segment refers to. */
+    fun legPoint(
+        ev: Evaluator,
+        curve: Element,
+        world: Vec2,
+    ): Vec2? = projection(ev, curve, world)
+
     /** Lines, segments, rays and circles can carry a point; arcs can't yet (no carrier circle). */
     private fun attachable(el: Element) = el.isLinear || el.kind == ElementKind.CIRCLE
 

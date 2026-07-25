@@ -1082,6 +1082,68 @@ class EditorTest {
     }
 
     @Test
+    fun breakingALegInsertsAZeroLengthCornerThatCanBePulledIntoAJog() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(100.0, 2.0)) // one horizontal leg, 0..100 at y=0
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+
+        ed.setTool(Tools.BREAK_LEG)
+        ed.click(Vec2(60.0, 1.0)) // click on the leg
+        assertTrue(ed.statusHint.contains("broken"), "got: '${ed.statusHint}'")
+
+        // one leg became three, with the middle one zero-length: the drawing has not changed shape
+        assertEquals(4, path.vertices.size)
+        assertEquals(3, path.legCount)
+        val ev = Evaluator()
+        val p = path.vertices.map { ev.point(it.ref) }
+        assertClose(p[1].x, 60.0)
+        assertClose(p[1].y, 0.0)
+        assertClose(p[2].x, 60.0)
+        assertClose(p[2].y, 0.0) // coincident with its neighbour — the jog starts closed
+        assertClose(p[3].x, 100.0)
+        assertEquals(0, path.legAxis(1).let { 1 - it }, "the inserted leg runs perpendicular to the one broken")
+
+        // pull the far half down: only that half moves, and every leg stays axis-aligned
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(80.0, -25.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(80.0, -25.0)))
+        val q = Evaluator().let { e -> path.vertices.map { e.point(it.ref) } }
+        assertClose(q[0].y, 0.0) // near half untouched
+        assertClose(q[1].y, 0.0)
+        assertClose(q[2].y, -25.0) // far half dropped
+        assertClose(q[3].y, -25.0)
+        assertClose(q[1].x, 60.0) // the jog is vertical: the corner kept its x
+        assertClose(q[2].x, 60.0)
+    }
+
+    @Test
+    fun breakingIsRefusedWhereItWouldBeSubtlyWrong() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(60.0, 3.0))
+        ed.click(Vec2(58.0, 40.0))
+        ed.click(Vec2(0.0, 0.0)) // a closed triangle-ish loop: 3 vertices, 3 legs
+        val path = ed.doc.orthoPaths.single()
+        val legs = path.legCount
+
+        ed.setTool(Tools.BREAK_LEG)
+        ed.click(Vec2(200.0, 200.0)) // nothing there
+        assertTrue(ed.statusHint.contains("Click a segment"), "got: '${ed.statusHint}'")
+        assertEquals(legs, path.legCount)
+
+        // the closing leg is deliberately out of scope: its endpoints' binding runs the other way
+        val closing = path.legs.last()
+        val mid = Evaluator().segment(closing.ref as SegmentRef).let { Vec2((it.a.x + it.b.x) / 2, (it.a.y + it.b.y) / 2) }
+        ed.click(mid)
+        assertEquals(legs, path.legCount, "the closing leg is refused rather than broken wrongly")
+    }
+
+    @Test
     fun aLegIsAxisAlignedByBindingNotBySharingOneNode() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)

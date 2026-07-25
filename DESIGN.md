@@ -368,7 +368,7 @@ orthovertex 429.25,14.75 -> e5,e6
 A leg *extension* (a step continuing the previous leg's axis) is deliberately **not** a step: it
 changes no topology, only a value, and values already travel with the step that introduced the node.
 
-### Break and join legs — topology by gesture (OP-19 — OPEN, mechanics agreed)
+### Break and join legs — topology by gesture (OP-19 — break done, join open)
 
 Two editing operations on an ortho path, inverses of each other. *Leg* here means a segment of an
 ortho path, not the architectural `Wall`.
@@ -377,8 +377,11 @@ ortho path, not the architectural `Wall`.
   removes that leg and makes the two legs it separated into one. Applied **live** during the drag, with
   the collapsed jog kept restorable if the drag moves back past the threshold; only what is on screen
   at release is committed, so the drawing always looks like the model.
-- **Break** (a tool) — click a leg to split it there, inserting two vertices with a **zero-length
-  perpendicular** leg between them. The jog then opens by dragging either half.
+- **Break** (`Tools.BREAK_LEG`, done) — click a leg to split it there, inserting two vertices with a
+  **zero-length perpendicular** leg between them, so the drawing does not change shape. The jog then
+  opens by dragging either half. Refused on a loop's **closing** leg, where the endpoints' binding runs
+  the other way round and the leg-axis bookkeeping (derived from a leg's later vertex) would need
+  reversing too — left out rather than made subtly wrong.
 
 This is the same shape as **drag-to-weld** for points: a threshold-triggered topology edit committed
 by the gesture. It is *not* continuity tracking (which OP-1 rejects for branch choice) — the result is

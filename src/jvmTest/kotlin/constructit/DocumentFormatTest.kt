@@ -157,6 +157,29 @@ class DocumentFormatTest {
     }
 
     @Test
+    fun aBrokenLegRoundTripsWithItsJogWhereverItWasPulled() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(100.0, 2.0))
+        ed.finishPath()
+        ed.setTool(Tools.BREAK_LEG)
+        ed.click(Vec2(60.0, 1.0))
+        // pull the jog open, so the saved script must carry *both* the split position and the offset
+        ed.setTool(Tools.SELECT)
+        ed.drag(Vec2(80.0, 0.0), Vec2(80.0, -25.0))
+
+        val text = DocumentFormat.save(ed.doc)
+        assertTrue(text.contains("orthobreak"), "got:\n$text")
+        val reloaded = assertRoundTrips(ed)
+        val path = reloaded.orthoPaths.single()
+        assertEquals(4, path.vertices.size)
+        val ev = Evaluator()
+        assertClose(ev.point(path.vertices[1].ref).x, 60.0)
+        assertClose(ev.point(path.vertices[2].ref).y, -25.0)
+    }
+
+    @Test
     fun aWallWithAnOpeningRoundTrips() {
         val ed = Editor()
         ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)

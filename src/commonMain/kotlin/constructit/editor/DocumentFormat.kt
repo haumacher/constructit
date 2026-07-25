@@ -96,6 +96,13 @@ object DocumentFormat {
             }
             "point", "orthostart", "orthovertex" ->
                 step.creates.firstOrNull()?.let { posOf(it) }?.let { listOf(Arg.Pos(it)) } ?: step.args
+            // both of a break's positions are state: where the leg was split, and how far the jog has
+            // since been pulled open
+            "orthobreak" -> {
+                val m = step.creates.getOrNull(0)?.let { posOf(it) }
+                val n = step.creates.getOrNull(1)?.let { posOf(it) }
+                if (m == null || n == null) step.args else listOf(step.args[0], Arg.Pos(m), Arg.Pos(n))
+            }
             // a slider's position lives in a hidden parameter the click created; re-read it from the
             // point itself so the slider lands where it is now, not where it was first placed
             "tool" -> {
@@ -173,7 +180,7 @@ object DocumentFormat {
         for ((lineNo, line) in lines.drop(1).withIndex()) {
             val (body, declared) = split(line)
             val words = body.split(' ').filter { it.isNotEmpty() }
-            val before = doc.elements.size
+            val before = doc.elements.toHashSet()
             try {
                 apply(doc, words, byName)
             } catch (e: LoadError) {
@@ -181,7 +188,7 @@ object DocumentFormat {
             } catch (e: Exception) {
                 throw LoadError("line ${lineNo + 2}: ${e.message ?: e.toString()} in '$line'")
             }
-            val created = doc.elements.drop(before)
+            val created = doc.elements.filter { it !in before }
             if (created.size != declared.size) {
                 throw LoadError(
                     "line ${lineNo + 2}: '${words.firstOrNull()}' created ${created.size} element(s) " +
@@ -217,6 +224,10 @@ object DocumentFormat {
             "orthostart" -> doc.startOrthoPath(parsePos(words[1]))
             "orthovertex" -> doc.addOrthoVertex(currentPath(doc), parsePos(words[1]))
             "orthoclose" -> doc.closeOrthoPath(currentPath(doc))
+            "orthobreak" -> {
+                val (path, i) = doc.legOf(el(1)) ?: throw LoadError("'${words[1]}' is not an ortho segment")
+                doc.breakOrthoLeg(path, i, parsePos(words[2]), parsePos(words[3]))
+            }
             "orthodiscard" -> doc.discardOrthoPath(currentPath(doc))
             "wall" -> doc.buildWall(currentPath(doc), scalar(1).ref)
             "opening" -> doc.addOpeningAtRecorded(parsePos(words[1]), scalar(2).ref, parseNum(words[3]))

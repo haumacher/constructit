@@ -155,11 +155,13 @@ class Document {
     ): T {
         if (recordDepth > 0) return body()
         recordDepth++
-        val before = elements.size
+        // an identity snapshot, not a count: a step may *remove* elements too (a break replaces one
+        // leg with three), and then a count would mistake shifted survivors for new ones
+        val before = elements.toHashSet()
         val scalarsBefore = scalars.size
         try {
             val result = body()
-            val created = elements.drop(before)
+            val created = elements.filter { it !in before }
             // a tool whose build had no effect is not part of the construction
             if (skipIfEmpty && created.isEmpty() && scalars.size == scalarsBefore) return result
             val step = Step(kind, args.toList())
@@ -883,6 +885,93 @@ class Document {
             it.corner.legAnchor = if (ownAxis == 0) prev.corner.xNode else prev.corner.yNode
             segment(prev.ref, it.ref)
         }
+    }
+
+    /**
+     * Split leg [legIndex] of [path] at [mPos], inserting two vertices with a **zero-length
+     * perpendicular** leg between them — the break half of OP-19. The jog then opens by dragging
+     * either half; [nPos] carries how far it is already open (equal to [mPos] for a fresh break).
+     *
+     * The two halves must be able to hold *different* perpendicular values, which is exactly what the
+     * bound-coordinate representation buys: the far endpoint's binding is **re-pointed** from the near
+     * endpoint onto the new jog node. Sharing one node could not express this at all.
+     *
+     * Refused on a **closing** leg: there the far endpoint is the one already following the near one,
+     * so the roles reverse, and the leg-axis bookkeeping derives a leg's axis from its later vertex —
+     * which that reversal would invalidate. Left out rather than made subtly wrong.
+     */
+    fun breakOrthoLeg(
+        path: OrthoPath,
+        legIndex: Int,
+        mPos: Vec2,
+        nPos: Vec2,
+    ): Boolean {
+        val leg = path.legs.getOrNull(legIndex) ?: return false
+        return recording("orthobreak", Arg.El(leg), Arg.Pos(mPos), Arg.Pos(nPos)) {
+            breakOrthoLegNow(path, legIndex, mPos, nPos)
+        }
+    }
+
+    private fun breakOrthoLegNow(
+        path: OrthoPath,
+        legIndex: Int,
+        mPos: Vec2,
+        nPos: Vec2,
+    ): Boolean {
+        if (legIndex < 0 || legIndex >= path.legCount) return false
+        if (path.closed && legIndex == path.vertices.size - 1) return false // the closing leg: see above
+        val axis = path.legAxis(legIndex)
+        val (a, b) = path.legEnds(legIndex)
+        val perpA = if (axis == 0) a.corner.yNode else a.corner.xNode
+        val perpB = if (axis == 0) b.corner.yNode else b.corner.xNode
+        // the far endpoint must be the one following the near one, so the near half keeps the existing
+        // master and the far half can be re-pointed onto the jog
+        if (perpB.boundTo !== perpA) return false
+        val along = if (axis == 0) mPos.x else mPos.y
+        val perp = if (axis == 0) nPos.y else nPos.x
+
+        // M introduces the along coordinate at the click and keeps following the master side;
+        // N introduces the jog — free, and equal to the master's value, hence zero length to begin with
+        val mAlong = scalarSource(along)
+        val mPerp = scalarSource(perp).also { it.boundTo = perpA }
+        val nAlong = scalarSource(along).also { it.boundTo = mAlong }
+        val nPerp = scalarSource(perp)
+        val m = if (axis == 0) orthoVertex(mAlong, mPerp, 0) else orthoVertex(mPerp, mAlong, 1)
+        val n = if (axis == 0) orthoVertex(nAlong, nPerp, 1) else orthoVertex(nPerp, nAlong, 0)
+        perpB.boundTo = nPerp // the far half follows the jog instead of the near half
+        m.corner.isEndpoint = false
+        n.corner.isEndpoint = false
+        m.corner.legAnchor = if (axis == 0) a.corner.xNode else a.corner.yNode
+        n.corner.legAnchor = perpA
+        b.corner.legAnchor = nAlong // b's leg now starts at N
+
+        remove(path.legs[legIndex])
+        path.vertices.add(legIndex + 1, m)
+        path.vertices.add(legIndex + 2, n)
+        path.legs[legIndex] = dragLeg(path, segment(a.ref, m.ref))
+        path.legs.add(legIndex + 1, dragLeg(path, segment(m.ref, n.ref)))
+        path.legs.add(legIndex + 2, dragLeg(path, segment(n.ref, b.ref)))
+        return true
+    }
+
+    /** The path and leg index of [el] if it is an ortho leg, else null. */
+    fun legOf(el: Element): Pair<OrthoPath, Int>? {
+        for (path in orthoPaths) {
+            val i = path.legIndexOf(el)
+            if (i >= 0) return path to i
+        }
+        return null
+    }
+
+    /** Break the ortho leg nearest [world] (within [tol]) at that point — see [breakOrthoLeg]. */
+    fun breakOrthoLegNear(
+        world: Vec2,
+        tol: Double,
+    ): Boolean {
+        val leg = HitTest.nearest(this, Evaluator(), world, tol) { legOf(it) != null } ?: return false
+        val (path, i) = legOf(leg) ?: return false
+        val at = Snap.legPoint(Evaluator(), leg, world) ?: world
+        return breakOrthoLeg(path, i, at, at)
     }
 
     /** Where the next leg of [path] would land (rubber-band preview). */

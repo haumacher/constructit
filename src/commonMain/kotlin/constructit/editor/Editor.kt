@@ -293,6 +293,17 @@ class Editor(
             openingClick(camera.screenToWorld(screen))
             return
         }
+        if (toolId == Tools.BREAK_LEG) {
+            val world = camera.screenToWorld(screen)
+            statusHint =
+                if (doc.breakOrthoLegNear(world, tolWorld())) {
+                    "Segment broken — drag either half to open the corner"
+                } else {
+                    "Click a segment of an ortho path (the closing segment of a loop can't be broken yet)"
+                }
+            onChange()
+            return
+        }
         runToolClick(screen)
     }
 
