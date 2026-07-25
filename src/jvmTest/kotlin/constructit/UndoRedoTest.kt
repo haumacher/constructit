@@ -3,11 +3,13 @@ package constructit
 import constructit.core.Evaluator
 import constructit.dsl.PointRef
 import constructit.dsl.point
+import constructit.dsl.scalar
 import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.ElementKind
 import constructit.editor.Tools
 import constructit.geom.Vec2
+import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -169,6 +171,38 @@ class UndoRedoTest {
         assertTrue(ed.undo())
         assertEquals(drawn, save(ed), "the break is one step")
         assertEquals(1, ed.doc.orthoPaths.single().legCount)
+    }
+
+    /**
+     * An interval feature's values are ordinary parameters, so editing one commits and undoes like every
+     * other panel edit. It only works because the interval step *restates* what it introduced (OP-18):
+     * while an opening's position lived in a parameter no step described, the edit was invisible to the
+     * saved script and therefore to undo.
+     */
+    @Test
+    fun anOpeningPositionEditIsOneUndoStep() {
+        val ed = Editor()
+        ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)
+        ed.setTool(Tools.WALL)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(100.0, 3.0))
+        ed.finishPath()
+        ed.activeScalar = ed.doc.newParameter("w", 20.0.mm)
+        ed.setTool(Tools.OPENING)
+        ed.click(Vec2(50.0, 0.0))
+        val placed = save(ed)
+
+        val pos = ed.doc.scalars.first { it.name == "pos" }
+        ed.doc.setParameter(pos, 10.0.mm)
+        ed.checkpoint()
+
+        fun position() = Evaluator().scalar(pos.ref).mm
+        assertClose(position(), 10.0)
+        assertTrue(ed.undo())
+        assertEquals(placed, save(ed), "the position edit is one step")
+        assertClose(Evaluator().scalar(ed.doc.scalars.first { it.name == "pos" }.ref).mm, 40.0)
+        assertTrue(ed.redo())
+        assertClose(Evaluator().scalar(ed.doc.scalars.first { it.name == "pos" }.ref).mm, 10.0)
     }
 
     @Test

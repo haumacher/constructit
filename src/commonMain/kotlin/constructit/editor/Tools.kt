@@ -59,6 +59,9 @@ object Tools {
     const val CIRCLE_R = "circleR"
     const val ORTHO_PATH = "orthopath"
     const val BREAK_LEG = "breakleg"
+
+    // The generic model is a thick path with interval features (OP-21); the *tool* names stay the
+    // domain words the user expects.
     const val WALL = "wall"
     const val OPENING = "opening"
     const val CIRCLE_3 = "circle3"
@@ -116,8 +119,8 @@ object Tools {
             ToolDef(RAY, "Ray", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click the origin, then a second point, to draw a ray.") { d, p, _ -> d.ray(p.points[0], p.points[1]) },
             ToolDef(ORTHO_PATH, "Ortho path", ToolCategory.CURVES, emptyList(), help = "Click to chain axis-aligned segments (each leg snaps horizontal/vertical, length is a parameter). Esc or double-click to finish.") { _, _, _ -> },
             ToolDef(BREAK_LEG, "Break segment", ToolCategory.CURVES, emptyList(), help = "Click a segment of an ortho path to split it there, inserting a zero-length corner you can then pull into a jog.") { _, _, _ -> },
-            ToolDef(WALL, "Wall", ToolCategory.CURVES, emptyList(), scalar = true, help = "Select a thickness, then click to chain an axis-aligned wall centerline; faces + mitred corners are built on finish. Esc or double-click to finish.") { _, _, _ -> },
-            ToolDef(OPENING, "Opening (door/window)", ToolCategory.CURVES, emptyList(), scalar = true, help = "Select a width, then click on a wall to cut a door/window gap there (position & width stay editable).") { _, _, _ -> },
+            ToolDef(WALL, "Wall", ToolCategory.CURVES, emptyList(), scalar = true, help = "Select a thickness, then click to chain an axis-aligned wall centerline; its footprint (mitred corners, end caps) is computed on finish. Esc or double-click to finish.") { _, _, _ -> },
+            ToolDef(OPENING, "Opening (door/window)", ToolCategory.CURVES, emptyList(), scalar = true, help = "Select a width, then click on a wall to place a door/window there (position, width, sill and head stay editable; in plan the gap is a drawing convention, the wall itself stays whole).") { _, _, _ -> },
             ToolDef(CIRCLE, "Circle (centre, point)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click the centre, then a point on the circle.") { d, p, _ -> d.circle(p.points[0], p.points[1]) },
             ToolDef(CIRCLE_R, "Circle (centre, radius)", ToolCategory.CURVES, listOf(SlotKind.POINT), scalar = true, help = "Select a radius parameter, then click the centre.") { d, p, s -> d.circleCR(p.points[0], s!!) },
             ToolDef(CIRCLE_3, "Circle (3 points)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click three points the circle passes through.") { d, p, _ -> d.circle3(p.points[0], p.points[1], p.points[2]) },

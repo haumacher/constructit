@@ -228,8 +228,13 @@ class DocumentFormatTest {
         assertEquals(2, path.vertices.size)
     }
 
+    /**
+     * A thick path and its interval features round-trip as the **description** they are (OP-21): the
+     * carrier's own steps, a thickness, and one line per interval carrying which leg, how far along, how
+     * wide and the two heights. No face geometry is stored, because none of it is stored anywhere.
+     */
     @Test
-    fun aWallWithAnOpeningRoundTrips() {
+    fun aThickPathWithAnOpeningRoundTrips() {
         val ed = Editor()
         ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)
         ed.setTool(Tools.WALL)
@@ -239,11 +244,19 @@ class DocumentFormatTest {
         ed.activeScalar = ed.doc.newParameter("w", 20.0.mm)
         ed.setTool(Tools.OPENING)
         ed.click(Vec2(50.0, 0.0))
+        // a value the user then typed: it must come back, which is why the step records the position
+        // rather than the click that resolved it
+        ed.doc.setParameter(ed.doc.scalars.first { it.name == "pos" }, 25.0.mm)
 
+        val text = DocumentFormat.save(ed.doc)
+        assertTrue(text.contains("opening e4 leg=0 pos=25mm width=\"w\" sill=0mm head=2100mm"), "got:\n$text")
         val reloaded = assertRoundTrips(ed)
-        val wall = reloaded.walls.single()
-        assertEquals(1, wall.openings.size, "the opening is rebuilt, not stored")
-        assertTrue(wall.path === reloaded.orthoPaths.single(), "and so is the wall's link to its spine")
+        val tp = reloaded.thickPaths.single()
+        val interval = tp.intervals.single()
+        assertEquals(0, interval.legIndex)
+        assertClose(Evaluator().scalar(interval.position).mm, 25.0)
+        assertTrue(interval.width.node === reloaded.scalars.first { it.name == "w" }.ref.node, "the width stays shared")
+        assertTrue(tp.carrier === reloaded.orthoPaths.single(), "and so is the link to its carrier")
     }
 
     @Test

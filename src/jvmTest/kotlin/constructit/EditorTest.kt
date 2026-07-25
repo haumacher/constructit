@@ -13,7 +13,6 @@ import constructit.dsl.scalar
 import constructit.dsl.segment
 import constructit.editor.Editor
 import constructit.editor.ElementKind
-import constructit.editor.Styles
 import constructit.editor.SvgDrawTarget
 import constructit.editor.Tools
 import constructit.geom.Vec2
@@ -1961,15 +1960,15 @@ class EditorTest {
     }
 
     @Test
-    fun aWallKeepsItsCenterlinePath() {
+    fun aWallKeepsItsCarrierPath() {
         val ed = Editor()
         ed.setTool(Tools.WALL)
         ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)
         ed.click(Vec2(0.0, 0.0))
         ed.click(Vec2(100.0, 2.0))
         ed.finishPath()
-        val wall = ed.doc.walls.single()
-        assertTrue(wall.path === ed.doc.orthoPaths.single(), "the wall's spine is the retained path")
+        val tp = ed.doc.thickPaths.single()
+        assertTrue(tp.carrier === ed.doc.orthoPaths.single(), "the thick path's carrier is the retained path")
     }
 
     @Test
@@ -2087,111 +2086,8 @@ class EditorTest {
         assertClose(p(2).y, 60.0) // endpoint stayed on the line and slid with it
     }
 
-    @Test
-    fun closedWallLoopMitersEveryCornerWithNoCaps() {
-        val ed = Editor()
-        ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)
-        ed.setTool(Tools.WALL)
-        // a rectangular room, then click the start to close
-        ed.click(Vec2(0.0, 0.0))
-        ed.click(Vec2(60.0, 3.0))
-        ed.click(Vec2(58.0, 40.0))
-        ed.click(Vec2(2.0, 40.0))
-        ed.click(Vec2(0.0, 0.0)) // clicking the start closes the loop and finishes
-
-        val wall = ed.doc.walls.last()
-        assertTrue(wall.closed, "loop should be closed")
-        val walls = ed.doc.elements.count { it.kind == ElementKind.SEGMENT && it.style == Styles.WALL }
-        assertEquals(8, walls, "4 legs x 2 faces, mitred all round, no end caps (an open 4-leg wall would be 10)")
-    }
-
-    @Test
-    fun wallBuildsMiteredOffsetFacesFromACenterline() {
-        val ed = Editor()
-        ed.activeScalar = ed.doc.newParameter("t", 10.0.mm) // wall thickness
-        ed.setTool(Tools.WALL)
-        ed.click(Vec2(0.0, 0.0)) // start
-        ed.click(Vec2(50.0, 4.0)) // +X -> corner (50,0)
-        ed.click(Vec2(47.0, 40.0)) // +Y -> end (50,40)
-        ed.finishPath()
-
-        val walls = ed.doc.elements.filter { it.kind == ElementKind.SEGMENT && it.style == Styles.WALL }
-        assertEquals(6, walls.size, "2 legs -> 2 face-segments per side + 2 end caps")
-
-        // collect all wall endpoints; the mitred corner at centerline (50,0) with t=10 must appear
-        val ev = Evaluator()
-        val pts =
-            walls.flatMap {
-                val s = ev.segment(it.ref as SegmentRef)
-                listOf(s.a, s.b)
-            }
-
-        fun has(
-            x: Double,
-            y: Double,
-        ) = pts.any { kotlin.math.abs(it.x - x) < 1e-6 && kotlin.math.abs(it.y - y) < 1e-6 }
-        assertTrue(has(45.0, 5.0), "inner miter corner") // offset intersection, not a plain offset
-        assertTrue(has(55.0, -5.0), "outer miter corner")
-
-        // parametric: doubling the thickness moves the miter to (40,10)/(60,-10)
-        ed.doc.setParameter(ed.doc.scalars.first { it.name == "t" }, 20.0.mm)
-        val pts3 =
-            walls.flatMap {
-                val s = Evaluator().segment(it.ref as SegmentRef)
-                listOf(s.a, s.b)
-            }
-        assertTrue(pts3.any { kotlin.math.abs(it.x - 40.0) < 1e-6 && kotlin.math.abs(it.y - 10.0) < 1e-6 }, "miter follows thickness")
-    }
-
-    @Test
-    fun openingCutsAParametricGapWithJambsIntoAWall() {
-        val ed = Editor()
-        ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)
-        ed.setTool(Tools.WALL)
-        ed.click(Vec2(0.0, 0.0))
-        ed.click(Vec2(100.0, 3.0)) // one straight leg -> (100,0)
-        ed.finishPath()
-
-        fun wallSegs() = ed.doc.elements.filter { it.kind == ElementKind.SEGMENT && it.style == Styles.WALL }
-        assertEquals(4, wallSegs().size, "straight wall: 1 face seg/side + 2 caps")
-
-        // cut a 20-wide opening near x=50
-        ed.activeScalar = ed.doc.newParameter("w", 20.0.mm)
-        ed.setTool(Tools.OPENING)
-        ed.click(Vec2(50.0, 0.0))
-        assertEquals(8, wallSegs().size, "each face splits in two (+2) plus two jambs (+2)")
-
-        val ev = Evaluator()
-        val segs = wallSegs().map { ev.segment(it.ref as SegmentRef) }
-
-        fun seg(
-            ax: Double,
-            ay: Double,
-            bx: Double,
-            by: Double,
-        ) =
-            segs.any {
-                fun eq(
-                    p: Double,
-                    q: Double,
-                ) = kotlin.math.abs(p - q) < 1e-6
-                (eq(it.a.x, ax) && eq(it.a.y, ay) && eq(it.b.x, bx) && eq(it.b.y, by)) ||
-                    (eq(it.a.x, bx) && eq(it.a.y, by) && eq(it.b.x, ax) && eq(it.b.y, ay))
-            }
-        // opening centred on 50, width 20 -> spans 40..60; jambs span the 10-thick wall at both edges
-        assertTrue(seg(40.0, 5.0, 40.0, -5.0), "jamb at opening start")
-        assertTrue(seg(60.0, 5.0, 60.0, -5.0), "jamb at opening end")
-        assertTrue(seg(0.0, 5.0, 40.0, 5.0), "solid face piece up to the opening")
-        assertTrue(seg(60.0, 5.0, 100.0, 5.0), "solid face piece after the opening")
-
-        // parametric: position is anchored at the start edge (40); widening to 40 extends the end to 80
-        ed.doc.setParameter(ed.doc.scalars.first { it.name == "w" }, 40.0.mm)
-        val segs2 = wallSegs().map { Evaluator().segment(it.ref as SegmentRef) }
-        assertTrue(
-            segs2.any { kotlin.math.abs(it.a.x - 80.0) < 1e-6 && kotlin.math.abs(it.b.x - 80.0) < 1e-6 },
-            "the end jamb follows the width parameter",
-        )
-    }
+    // The thick path's own geometry — mitres, rings, the plan gap at an interval — is pinned in
+    // ThickPathTest, at the model level where it now lives (OP-21).
 
     @Test
     fun draggingAFreePointOntoALineAttachesItAsSlidingOnCurve() {

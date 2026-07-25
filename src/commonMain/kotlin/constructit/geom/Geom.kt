@@ -113,6 +113,44 @@ data class Loop(val elements: List<ProfileElement>)
  */
 data class Region(val outer: Loop, val holes: List<Loop>)
 
+/**
+ * Where a thick path's material sits relative to its carrier (OP-21). "Left" is the +90° side of the
+ * traversal direction, so justification is defined by the carrier's own direction and needs no
+ * reference to inside/outside — which a carrier that is not a closed ring does not have.
+ */
+enum class Justification {
+    CENTER,
+    LEFT,
+    RIGHT,
+    ;
+
+    /** The two signed face offsets for thickness [t], in ascending order. */
+    fun offsets(t: Double): List<Double> =
+        when (this) {
+            CENTER -> listOf(-t / 2.0, t / 2.0)
+            LEFT -> listOf(0.0, t)
+            RIGHT -> listOf(-t, 0.0)
+        }
+}
+
+/**
+ * The offset faces of a thick path (OP-21): [faces]`[side]` is one side's chain of corners — one per
+ * carrier vertex, mitred at interior ones and dropped perpendicular at an open carrier's ends.
+ *
+ * Carrying the [legs] (origin + unit direction) and [offsets] rather than only the corner points is
+ * what makes a *position along the carrier* addressable on either face without re-deriving anything:
+ * see [GeomMath.facePoint]. That is the whole of what an interval feature needs.
+ */
+data class ThickFaces(
+    val faces: List<List<Vec2>>,
+    val legs: List<Line>,
+    val legLengths: List<Double>,
+    val offsets: List<Double>,
+    val closed: Boolean,
+) {
+    val legCount: Int get() = legs.size
+}
+
 /** Geometry math: intersections emit ordered [PointSet]s (OP-1). */
 object GeomMath {
     private const val EPS = Vec2.EPS
@@ -354,6 +392,110 @@ object GeomMath {
         val closingGap = (startOf(chained[0]) - cursor).length()
         if (closingGap > JOIN_TOL) return null to "loop does not close (gap $closingGap mm)"
         return Loop(chained) to null
+    }
+
+    // ---- thick paths: an offset region around a carrier (OP-21) ----
+
+    /**
+     * The offset faces of the polyline [points] at the signed [offsets] (one per side), mitring every
+     * interior corner as the intersection of the adjacent face lines and dropping a perpendicular at an
+     * open carrier's two ends.
+     *
+     * Deliberately a *function of values*, called from inside a node's `compute`: leg directions, the
+     * mitres and (for a ring) which side ends up outermost all depend on where the carrier currently is,
+     * so deriving them while assembling the graph would freeze the shape the carrier had when it was
+     * built. Returns null with a reason instead of throwing (OP-3): two collinear legs have parallel
+     * offsets and hence no mitre at all, which is a *state* the drawing recovers from.
+     */
+    fun thickFaces(
+        points: List<Vec2>,
+        closed: Boolean,
+        offsets: List<Double>,
+    ): Pair<ThickFaces?, String?> {
+        if (points.size < 2) return null to "a thick path needs at least two carrier points"
+        if (closed && points.size < 3) return null to "a closed carrier needs at least three points"
+        if (offsets.size != 2) return null to "a thick path has exactly two faces"
+        if (abs(offsets[1] - offsets[0]) < EPS) return null to "a thick path needs a non-zero thickness"
+        val legCount = if (closed) points.size else points.size - 1
+        val legs = ArrayList<Line>(legCount)
+        val lengths = ArrayList<Double>(legCount)
+        for (i in 0 until legCount) {
+            val a = points[i]
+            val b = points[(i + 1) % points.size]
+            val d = b - a
+            val len = d.length()
+            if (len < EPS) return null to "carrier leg ${i + 1} has zero length"
+            legs.add(Line(a, d * (1.0 / len)))
+            lengths.add(len)
+        }
+        val faces = ArrayList<List<Vec2>>(2)
+        for (off in offsets) {
+            fun faceLine(i: Int) = Line(legs[i].origin + legs[i].dir.perp() * off, legs[i].dir)
+
+            fun mitre(
+                i: Int,
+                j: Int,
+            ): Vec2? = intersectLL(faceLine(i), faceLine(j)).points.firstOrNull()
+
+            val corners = ArrayList<Vec2>(points.size)
+            if (closed) {
+                for (j in 0 until legCount) {
+                    corners.add(mitre((j - 1 + legCount) % legCount, j) ?: return null to "corner ${j + 1} has collinear legs, so no mitre")
+                }
+            } else {
+                corners.add(legs.first().origin + legs.first().dir.perp() * off)
+                for (j in 1 until legCount) {
+                    corners.add(mitre(j - 1, j) ?: return null to "corner ${j + 1} has collinear legs, so no mitre")
+                }
+                corners.add(legs.last().origin + legs.last().dir * lengths.last() + legs.last().dir.perp() * off)
+            }
+            faces.add(corners)
+        }
+        return ThickFaces(faces, legs, lengths, offsets, closed) to null
+    }
+
+    /**
+     * Where the carrier position [dist] along leg [leg] lands on face [side] — the foot of the
+     * perpendicular, which is what an interval's edge is. Pure arithmetic on the leg frame, so an
+     * interval needs no construction of its own.
+     */
+    fun facePoint(
+        f: ThickFaces,
+        leg: Int,
+        dist: Double,
+        side: Int,
+    ): Vec2 = f.legs[leg].origin + f.legs[leg].dir * dist + f.legs[leg].dir.perp() * f.offsets[side]
+
+    /**
+     * The footprint of [f] as a [Region] (OP-21): an **open** carrier gives one loop (both faces plus
+     * the two end caps), a **closed** one gives the ring `Region(outer, [inner])` — which is exactly
+     * OP-14's hole machinery, reached with no new value type.
+     *
+     * Which offset side is the outer boundary of a ring depends on the carrier's own orientation, so it
+     * is decided here by comparing the enclosed areas rather than by a sign convention the caller would
+     * have to keep true as the carrier is edited.
+     */
+    fun thickRegion(f: ThickFaces): Pair<Region?, String?> {
+        if (f.closed) {
+            val a = polygonLoop(f.faces[0]) ?: return null to "a face of the ring is degenerate"
+            val b = polygonLoop(f.faces[1]) ?: return null to "a face of the ring is degenerate"
+            val outer = if (abs(signedArea(a)) >= abs(signedArea(b))) a else b
+            val inner = if (outer === a) b else a
+            return Region(orient(outer, ccw = true), listOf(orient(inner, ccw = false))) to null
+        }
+        // one loop: out along one face, across the end cap, back along the other, across the start cap
+        val ring = f.faces[1] + f.faces[0].reversed()
+        val loop = polygonLoop(ring) ?: return null to "the footprint is degenerate"
+        return Region(orient(loop, ccw = true), emptyList()) to null
+    }
+
+    /** A closed loop of segments through [pts], skipping repeated points; null if fewer than 3 remain. */
+    private fun polygonLoop(pts: List<Vec2>): Loop? {
+        val clean = ArrayList<Vec2>(pts.size)
+        for (p in pts) if (clean.isEmpty() || (p - clean.last()).length() > EPS) clean.add(p)
+        while (clean.size > 1 && (clean.first() - clean.last()).length() <= EPS) clean.removeAt(clean.size - 1)
+        if (clean.size < 3) return null
+        return Loop(clean.indices.map { ProfileElement.Seg(Segment(clean[it], clean[(it + 1) % clean.size])) })
     }
 
     // ---- piece-level dispatch lives here, and only here ----

@@ -4,6 +4,7 @@ import constructit.core.Evaluator
 import constructit.core.PointValue
 import constructit.dsl.PointRef
 import constructit.dsl.valueOf
+import constructit.geom.Justification
 import constructit.geom.Vec2
 import constructit.units.mm
 
@@ -151,6 +152,12 @@ class Editor(
     var dimScaffolding: Boolean = false
 
     /**
+     * Which side of its carrier a new thick path's material sits on (OP-21). A property of the *tool*
+     * rather than of a pick, like the active parameter: the WALL tool has no slot to click it into.
+     */
+    var justification: Justification = Justification.CENTER
+
+    /**
      * While set, a drag is restricted to the single axis its gesture is dominated by, measured from
      * where the drag started — so a corner can be moved in x *or* y without disturbing the other.
      * Read live, so it can be engaged or released mid-drag.
@@ -291,7 +298,7 @@ class Editor(
     val pendingCount: Int get() = filledSlots
 
     fun setTool(id: String) {
-        // an active path is a pending operation: switching tools finishes it (wall faces included)
+        // an active path is a pending operation: switching tools finishes it (its thickness included)
         // rather than silently abandoning half-drawn state that no gesture ever committed
         finishPath()
         toolId = id
@@ -600,7 +607,10 @@ class Editor(
         if (numericEntry.isNotEmpty()) statusHint = "Leg length $numericEntry mm — Enter to place, Esc to cancel"
     }
 
-    /** One click of the opening tool: cut a door/window gap into the wall under the cursor. */
+    /**
+     * One click of the opening tool: add an interval feature to the thick path under the cursor. It adds
+     * a description, not geometry — the footprint stays whole and the plan gap is drawn from it (OP-21).
+     */
     private fun openingClick(world: Vec2) {
         val w = activeScalar
         if (w == null) {
@@ -608,17 +618,17 @@ class Editor(
             onChange()
             return
         }
-        statusHint = if (doc.addOpeningAtRecorded(world, w.ref, tolWorld() * 2)) "Opening added" else "Click on a wall to place an opening"
+        statusHint = if (doc.addIntervalAt(world, w.ref, tolWorld() * 2)) "Opening added" else "Click on a wall to place an opening"
         checkpoint()
         onChange()
     }
 
-    /** Finish the current path (Esc / double-click / close / tool switch); for WALL, build faces. */
+    /** Finish the current path (Esc / double-click / close / tool switch); for WALL, thicken it. */
     fun finishPath() {
         val path = activePath ?: return
         if (pathClosed) doc.closeOrthoPath(path) // snaps the last coordinate to fit, adds the closing leg
         val t = pathThickness
-        if (t != null && path.vertices.size >= 2) doc.buildWall(path, t)
+        if (t != null && path.vertices.size >= 2) doc.buildThickPath(path, t, justification)
         doc.discardOrthoPath(path) // a path that never got a second vertex isn't a path
         activePath = null
         pathAtEnd = true
@@ -626,7 +636,7 @@ class Editor(
         previewSeg = null
         closePreview = emptyList()
         pathThickness = null
-        checkpoint() // the whole path — start, legs, close, wall — commits as one operation
+        checkpoint() // the whole path — start, legs, close, footprint — commits as one operation
         statusHint = ""
         onChange()
     }

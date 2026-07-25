@@ -5,6 +5,7 @@ import constructit.core.Evaluator
 import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.dsl.PointRef
+import constructit.geom.Justification
 import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.Quantity
@@ -33,8 +34,8 @@ sealed interface Arg {
  * One recorded construction step, and the elements it created (in order).
  *
  * Recording *steps* rather than nodes is what makes the whole synthetic layer — handles, styles, path
- * and wall bookkeeping — free: replaying a step runs the same code that built it, so all of that is
- * reconstructed rather than stored.
+ * and thick-path bookkeeping — free: replaying a step runs the same code that built it, so all of that
+ * is reconstructed rather than stored.
  */
 class Step(val kind: String, val args: List<Arg>) {
     val creates = ArrayList<Element>()
@@ -49,8 +50,8 @@ class Step(val kind: String, val args: List<Arg>) {
  *
  * What is deliberately *not* in the file:
  * - **Nodes.** A step rebuilds its own sub-graph, so no op needs a name or a rebuild path.
- * - **Handles, styles, path/wall structure.** All synthetic: created by the same methods that create
- *   the geometry, hence recreated by replay.
+ * - **Handles, styles, path and thick-path structure.** All synthetic: created by the same methods that
+ *   create the geometry, hence recreated by replay.
  * - **A separate values section.** Instead, a step's positional literals are written as the *current*
  *   value of what that step introduced, so the script always describes the drawing as it is now. That
  *   keeps the file purely a construction, with no naming scheme for internal nodes leaking into it.
@@ -113,6 +114,15 @@ object DocumentFormat {
                 val n = step.creates.getOrNull(1)?.let { posOf(it) }
                 if (m == null || n == null) step.args else listOf(step.args[0], Arg.Pos(m), Arg.Pos(n))
             }
+            // an interval feature's position and carried heights live in the parameters the step created,
+            // matched to the argument of the same name (`pos=` <- the "pos"/"pos2"/… entry). They are
+            // state, so a value typed in the panel comes back on reload — which is the whole point of
+            // recording the interval as a description rather than as the click that placed it (OP-21).
+            "opening" ->
+                step.args.map { arg ->
+                    val created = step.createsScalars.firstOrNull { it.name.trimEnd { c -> c.isDigit() } == (arg as? Arg.Keyed)?.key }
+                    if (arg is Arg.Keyed && created != null) Arg.Keyed(arg.key, Arg.Num(value(created, ev))) else arg
+                }
             // a slider's position lives in a hidden parameter the click created; re-read it from the
             // point itself so the slider lands where it is now, not where it was first placed
             "tool" -> {
@@ -243,17 +253,15 @@ object DocumentFormat {
                 val (path, i) = doc.legOf(el(1)) ?: throw LoadError("'${words[1]}' is not an ortho segment")
                 doc.joinCollapsedLeg(path, i)
             }
-            "orthojoin" -> {
-                val (path, i) = doc.legOf(el(1)) ?: throw LoadError("'${words[1]}' is not an ortho segment")
-                doc.joinCollapsedLeg(path, i)
-            }
             "orthobreak" -> {
                 val (path, i) = doc.legOf(el(1)) ?: throw LoadError("'${words[1]}' is not an ortho segment")
                 doc.breakOrthoLeg(path, i, parsePos(words[2]), parsePos(words[3]))
             }
             "orthodiscard" -> doc.discardOrthoPath(currentPath(doc))
-            "wall" -> doc.buildWall(currentPath(doc), scalar(1).ref)
-            "opening" -> doc.addOpeningAtRecorded(parsePos(words[1]), scalar(2).ref, parseNum(words[3]))
+            // the step kinds keep their user-facing names; what they carry is the generic thick path and
+            // its interval features (OP-21) — a pure description, never the geometry it computes
+            "wall" -> doc.buildThickPath(currentPath(doc), scalar(1).ref, justification(words.getOrNull(2)))
+            "opening" -> applyInterval(doc, words, el(1))
             "weld" -> doc.weld(el(1), el(2))
             "attach" -> doc.attachToCurve(el(1), el(2))
             "weldortho" -> doc.weldOrthoEndpointToPoint(el(1), el(2))
@@ -266,6 +274,41 @@ object DocumentFormat {
             else -> throw LoadError("unknown step '$kind'")
         }
     }
+
+    /**
+     * Replay an interval feature onto the thick path whose footprint is [footprint] (OP-21). The step
+     * carries the *description* — which leg, how far along, how wide, sill and head — so nothing about
+     * it has to be re-derived from a click, and the values a user has since typed come straight back.
+     */
+    private fun applyInterval(
+        doc: Document,
+        words: List<String>,
+        footprint: Element,
+    ) {
+        val tp = doc.thickPathOf(footprint) ?: throw LoadError("'${words[1]}' is not a thick path's footprint")
+        val keyed = HashMap<String, String>()
+        for (w in words.drop(2)) {
+            val key = w.substringBefore('=')
+            if (!w.contains('=')) throw LoadError("malformed interval argument '$w'")
+            keyed[key] = w.substringAfter('=')
+        }
+
+        fun need(key: String): String = keyed[key] ?: throw LoadError("interval is missing '$key='")
+        val widthName = unquote(need("width"))
+        val width = doc.scalars.firstOrNull { it.name == widthName } ?: throw LoadError("unknown scalar '$widthName'")
+        val leg = need("leg").toIntOrNull() ?: throw LoadError("malformed leg index '${need("leg")}'")
+        doc.addInterval(tp, leg, quantity(need("pos")), width.ref, quantity(need("sill")), quantity(need("head")))
+            ?: throw LoadError("leg $leg is not a leg of '${words[1]}'")
+    }
+
+    /** A thick path's justification, defaulting to centred for a script written before it was recorded. */
+    private fun justification(word: String?): Justification =
+        when (word) {
+            null -> Justification.CENTER
+            else ->
+                Justification.entries.firstOrNull { it.name.lowercase() == word }
+                    ?: throw LoadError("unknown justification '$word'")
+        }
 
     private fun currentPath(doc: Document): OrthoPath =
         doc.currentOrthoPath ?: doc.orthoPaths.lastOrNull() ?: throw LoadError("no path is being drawn")

@@ -10,6 +10,7 @@ import constructit.editor.Format
 import constructit.editor.ScalarEntry
 import constructit.editor.Tools
 import constructit.editor.quantityOf
+import constructit.geom.Justification
 import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.Quantity
@@ -222,6 +223,12 @@ private fun setupApp() {
 
     (document.getElementById("v-dim") as HTMLInputElement).addEventListener("change", { e ->
         editor.dimScaffolding = (e.target as HTMLInputElement).checked
+        repaint()
+    })
+    // which side of the centerline a new wall's thickness sits on — a thick path's justification (OP-21)
+    (document.getElementById("v-just") as HTMLSelectElement).addEventListener("change", { e ->
+        val picked = (e.target as HTMLSelectElement).value
+        editor.justification = Justification.entries.first { it.name.lowercase() == picked }
         repaint()
     })
     (document.getElementById("f-copy") as HTMLElement).addEventListener("click", {

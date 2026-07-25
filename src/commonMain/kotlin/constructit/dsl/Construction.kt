@@ -26,6 +26,7 @@ import constructit.geom.Bezier
 import constructit.geom.Circle
 import constructit.geom.Direction
 import constructit.geom.GeomMath
+import constructit.geom.Justification
 import constructit.geom.Line
 import constructit.geom.Loop
 import constructit.geom.Profile
@@ -67,7 +68,19 @@ class Construction {
 
     private val scopes = ArrayDeque<Scope>().apply { addLast(Scope("", 0)) }
 
+    /**
+     * How many nodes this construction has ever handed out an id to.
+     *
+     * Not bookkeeping for its own sake: it is the one observable that separates *computing* a feature
+     * from *regenerating* it (OP-21). A parameter edit must recompute through the existing graph and
+     * therefore leave this untouched; a feature that rebuilds its geometry on every edit grows it
+     * monotonically, leaving the replaced nodes behind. A test asserts the former.
+     */
+    var nodesCreated: Int = 0
+        private set
+
     private fun freshId(hint: String? = null): String {
+        nodesCreated++
         val scope = scopes.last()
         val local = hint ?: "n${++scope.counter}"
         val path = scopes.filter { it.prefix.isNotEmpty() }.joinToString("/") { it.prefix }
@@ -959,6 +972,37 @@ class Construction {
             val o = GeomMath.orient((args[0] as LoopValue).loop, ccw = true)
             val h = args.drop(1).map { GeomMath.orient((it as LoopValue).loop, ccw = false) }
             EvalResult.Ok(RegionValue(Region(o, h)))
+        }
+
+    /**
+     * The footprint of a **thick path** (OP-21): the offset region of [thickness] around the carrier
+     * polyline through [vertices], justified by [justification], mitred at every interior corner and
+     * capped at the ends of an open carrier. One node, one [RegionValue] — so the footprint is a value
+     * things can depend on, not a bundle of loose face segments that has to be rebuilt.
+     *
+     * All of the geometry happens **inside** `compute` — the rule the first wall implementation broke:
+     * leg directions, mitres and (for a ring) which face is the outer boundary are functions of where the
+     * carrier currently is, so deriving them while assembling the graph freezes the shape the carrier had
+     * at build time. Only the *count* of carrier vertices is structural, and that is what the input list
+     * carries.
+     *
+     * Interval features along the path (openings) are deliberately **not** inputs: in plan an opening
+     * does not interrupt the material — below a sill and above a head there is wall, and even a door
+     * leaves a lintel — so the footprint is unbroken and the gap is a drawing convention (OP-21).
+     */
+    fun thickFootprint(
+        vertices: List<PointRef>,
+        thickness: ScalarRef,
+        closed: Boolean,
+        justification: Justification,
+    ): RegionRef =
+        op(*(vertices + thickness).toTypedArray()) { args ->
+            val pts = args.dropLast(1).map { (it as PointValue).p }
+            val t = (args.last() as ScalarValue).q.mm
+            val (faces, why) = GeomMath.thickFaces(pts, closed, justification.offsets(t))
+            if (faces == null) return@op EvalResult.Invalid(why ?: "no footprint")
+            val (region, reason) = GeomMath.thickRegion(faces)
+            if (region == null) EvalResult.Invalid(reason ?: "no footprint") else EvalResult.Ok(RegionValue(region))
         }
 
     /** Enclosed area of a loop (OP-4 measurement, dimension L²). Exact for segments and arcs. */

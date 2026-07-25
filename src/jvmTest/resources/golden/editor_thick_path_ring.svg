@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300.000" height="240.000" viewBox="0 0 300.000 240.000">
+  <circle cx="60.000" cy="180.000" r="4.000" fill="#ff7f0e"/>
+  <circle cx="240.000" cy="180.000" r="4.000" fill="#ff7f0e"/>
+  <polyline points="60.000,180.000 240.000,180.000" fill="none" stroke="#333333" stroke-width="1.500"/>
+  <circle cx="240.000" cy="60.000" r="4.000" fill="#ff7f0e"/>
+  <polyline points="240.000,180.000 240.000,60.000" fill="none" stroke="#333333" stroke-width="1.500"/>
+  <circle cx="60.000" cy="60.000" r="4.000" fill="#ff7f0e"/>
+  <polyline points="240.000,60.000 60.000,60.000" fill="none" stroke="#333333" stroke-width="1.500"/>
+  <polyline points="60.000,60.000 60.000,180.000" fill="none" stroke="#333333" stroke-width="1.500"/>
+  <polyline points="45.000,195.000 120.000,195.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="180.000,195.000 255.000,195.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="255.000,195.000 255.000,45.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="255.000,45.000 45.000,45.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="45.000,45.000 45.000,195.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="75.000,165.000 120.000,165.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="180.000,165.000 225.000,165.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="225.000,165.000 225.000,75.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="225.000,75.000 75.000,75.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="75.000,75.000 75.000,165.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="120.000,195.000 120.000,165.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+  <polyline points="180.000,195.000 180.000,165.000" fill="none" stroke="#333333" stroke-width="2.400"/>
+</svg>

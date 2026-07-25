@@ -26,6 +26,9 @@ import constructit.dsl.ScalarRef
 import constructit.dsl.SegmentRef
 import constructit.dsl.valueOf
 import constructit.geom.GeomMath
+import constructit.geom.Justification
+import constructit.geom.Segment
+import constructit.geom.ThickFaces
 import constructit.geom.Vec2
 import constructit.units.Quantity
 import constructit.units.mm
@@ -177,23 +180,44 @@ class Junction(val point: PointRef, val handle: Handle?, val curve: Element?) {
     var place: (axis: Int, value: Double) -> Boolean = { _, _ -> false }
 }
 
-/** A gap in a wall leg: [position] = distance from the leg start, [width] along the leg. */
-class Opening(val legIndex: Int, val position: ScalarRef, val width: ScalarRef)
+/**
+ * A parametric interval along a thick path's carrier (OP-21) — what the UI calls an *opening*.
+ *
+ * [position] is the distance from leg [legIndex]'s start and [width] the extent along it; [sill] and
+ * [head] are the two heights the interval carries for the solid (OP-17), which the plan drawing does
+ * not use. Nothing here cuts the footprint: an interval is a *description*, and the plan gap it
+ * produces is a drawing convention.
+ */
+class PathInterval(
+    val legIndex: Int,
+    val position: ScalarRef,
+    val width: ScalarRef,
+    val sill: ScalarRef,
+    val head: ScalarRef,
+)
 
 /**
- * A retained wall: a centerline through [vertices] with a [thickness], plus [openings]. Its face /
- * cap / jamb geometry is derived and regenerated (into [ownedIds]) whenever openings change — the
- * centerline and its length parameters live outside the wall, so editing them reshapes it too.
+ * A retained **thick path** (OP-21): the offset region of [thickness] around a carrier polyline,
+ * justified by [justification], with parametric [intervals] along it. A wall is one use of this and
+ * gives the tool its name; the model deliberately says nothing about walls.
+ *
+ * The geometry is a single [footprint] element over one `Region` node, so editing an interval or the
+ * thickness **recomputes** rather than regenerates: no element is replaced, no node is orphaned, and
+ * the carrier's own vertices and legs are untouched (they stay draggable exactly as any ortho path).
  */
-class Wall(
+class ThickPath(
     val vertices: List<PointRef>,
     val thickness: ScalarRef,
-    val closed: Boolean = false,
-    /** The centerline path this wall was built from, when it came from the ortho-path tool. */
-    val path: OrthoPath? = null,
+    val justification: Justification,
+    val closed: Boolean,
+    /** The carrier path this was built from, when it came from the ortho-path tool. */
+    val carrier: OrthoPath?,
+    /** The one displayable output: the footprint region (OP-14). */
+    val footprint: Element,
 ) {
-    val openings = ArrayList<Opening>()
-    val ownedIds = HashSet<String>()
+    val intervals = ArrayList<PathInterval>()
+
+    val legCount: Int get() = if (closed) vertices.size else vertices.size - 1
 }
 
 /**
@@ -315,10 +339,13 @@ class Document {
      *   a path's topology steps chain: dropping one drops the rest of that path's steps. Per-vertex
      *   surgery is deliberately not attempted — replay coalesces a straight-on step into the previous
      *   leg and a wall's face count follows the leg count, so removing one topology step changes how
-     *   many elements later steps create, which the loader rejects as a count mismatch;
-     * - **wall regeneration** — an opening step's created elements are the wall's *regenerated* faces,
-     *   whose count depends on every opening already in the wall: dropping any wall or opening step
-     *   therefore drops every later opening step.
+     *   many elements later steps create, which the loader rejects as a count mismatch.
+     *
+     * There used to be a third: an opening *regenerated* the wall's faces, and their count depended on
+     * every opening already there, so dropping any wall or opening step forced dropping every later
+     * opening step. With the thick path (OP-21) an interval creates no geometry, names the footprint it
+     * belongs to as an argument, and is independent of its siblings — so the explicit rule covers it and
+     * the special case is gone. Deleting one opening now leaves the others alone.
      */
     fun dependentSteps(root: Step): Set<Step> {
         // one drawn path; mirrors the loader's "current path" resolution so the chain matches replay
@@ -329,7 +356,6 @@ class Document {
         val dropped = LinkedHashSet<Step>()
         val droppedEls = HashSet<Element>()
         val droppedScalars = HashSet<ScalarEntry>()
-        var wallFamilyDropped = false
 
         fun drop(
             step: Step,
@@ -338,11 +364,9 @@ class Document {
             dropped.add(step)
             droppedEls.addAll(step.creates)
             droppedScalars.addAll(step.createsScalars)
-            when (step.kind) {
-                // a wall or opening can go without taking its centerline path down with it
-                "wall", "opening" -> wallFamilyDropped = true
-                else -> group?.dropped = true
-            }
+            // a thick path can go without taking its carrier path down with it — the dependency runs the
+            // other way. Every other step belonging to a path's group takes that group's future with it.
+            if (step.kind != "wall") group?.dropped = true
         }
 
         var current: Group? = null
@@ -367,7 +391,6 @@ class Document {
             if (!seenRoot) continue
             val depends =
                 group?.dropped == true ||
-                    (step.kind == "opening" && wallFamilyDropped) ||
                     els.any { it in droppedEls } ||
                     referencedScalars(step).any { it in droppedScalars }
             if (depends) drop(step, group)
@@ -1553,7 +1576,8 @@ class Document {
         first.corner.isEndpoint = false
     }
 
-    val walls = ArrayList<Wall>()
+    /** The retained thick paths (OP-21) — a *wall* is one use of the concept, not the concept. */
+    val thickPaths = ArrayList<ThickPath>()
 
     // ---- the result layer (OP-14) ----
 
@@ -1735,33 +1759,35 @@ class Document {
     }
 
     /**
-     * Build a retained wall of [thickness] along the centerline through [vertices]: two offset faces
-     * whose interior corners are the intersections of adjacent offset lines (miter joints), closed
-     * by end caps. Fully parametric — faces track the centerline vertices and the thickness. Returns
-     * the [Wall] so openings can be added later. A straight run (collinear legs) yields parallel
-     * offsets whose miter is undefined and simply renders invalid.
+     * Build a retained thick path of [thickness] around the carrier [path] (OP-21). One node computes
+     * the whole footprint region — offset faces, mitred corners, end caps — so this creates exactly one
+     * element and never has to be rebuilt: editing the carrier, the thickness or any interval simply
+     * recomputes it. The carrier stays a plain ortho path, draggable and typeable as before.
      */
-    fun buildWall(
-        vertices: List<PointRef>,
-        thickness: ScalarRef,
-        closed: Boolean = false,
-        path: OrthoPath? = null,
-    ): Wall? {
-        if (vertices.size < 2) return null
-        val w = Wall(vertices.toList(), thickness, closed && vertices.size >= 3, path)
-        walls.add(w)
-        regenerateWall(w)
-        return w
-    }
-
-    /** Build a wall along the centerline of [path], keeping the path as the wall's editable spine. */
-    fun buildWall(
+    fun buildThickPath(
         path: OrthoPath,
         thickness: ScalarRef,
-    ): Wall? =
-        recording("wall", Arg.Sc(scalarEntryFor(thickness))) {
-            buildWall(path.vertices.map { it.ref }, thickness, path.closed, path)
+        justification: Justification = Justification.CENTER,
+    ): ThickPath? =
+        recording("wall", Arg.Sc(scalarEntryFor(thickness)), Arg.Text(justification.name.lowercase())) {
+            buildThickPathNow(path.vertices.map { it.ref }, thickness, justification, path.closed, path)
         }
+
+    private fun buildThickPathNow(
+        vertices: List<PointRef>,
+        thickness: ScalarRef,
+        justification: Justification,
+        closed: Boolean,
+        carrier: OrthoPath?,
+    ): ThickPath? {
+        if (vertices.size < 2) return null
+        val ring = closed && vertices.size >= 3
+        val ref = cx.thickFootprint(vertices, thickness, ring, justification)
+        val el = add(ref, ElementKind.AREA, Styles.FOOTPRINT)
+        val tp = ThickPath(vertices.toList(), thickness, justification, ring, carrier, el)
+        thickPaths.add(tp)
+        return tp
+    }
 
     /** The named entry driving [ref] — every scalar a tool consumes came from the panel. */
     private fun scalarEntryFor(ref: ScalarRef): ScalarEntry =
@@ -1771,139 +1797,156 @@ class Document {
     private fun evalMm(ref: ScalarRef): Double =
         (Evaluator().eval(ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.mm } ?: 0.0
 
-    /** The face point at centerline distance [dist] from leg [legI]'s start, on face line [faceLine]. */
-    private fun facePointAt(
-        legLine: LineRef,
-        legStart: PointRef,
-        dist: ScalarRef,
-        faceLine: LineRef,
-    ): PointRef =
-        cx.projectToLine(cx.pointAlongLine(legLine, legStart, dist, +1), faceLine)
+    /** The thick path [el] is the footprint of, if any. */
+    fun thickPathOf(el: Element): ThickPath? = thickPaths.firstOrNull { it.footprint === el }
 
-    /** (Re)build a wall's face/cap/jamb geometry from its centerline, thickness and openings. */
-    fun regenerateWall(w: Wall) {
-        elements.removeAll { it.id in w.ownedIds }
-        w.ownedIds.clear()
+    /** The carrier vertex positions and offset faces of [tp] as they are now, or null if degenerate. */
+    private fun facesOf(
+        tp: ThickPath,
+        ev: Evaluator,
+    ): ThickFaces? {
+        val pts = tp.vertices.map { ((ev.eval(it.node) as? EvalResult.Ok)?.value as? PointValue)?.p ?: return null }
+        return GeomMath.thickFaces(pts, tp.closed, tp.justification.offsets(scalarMm(tp.thickness, ev))).first
+    }
 
-        fun own(ref: SegmentRef) {
-            w.ownedIds.add(add(ref, ElementKind.SEGMENT, Styles.WALL).id)
+    /**
+     * The **plan drawing** of [tp] (OP-21): its footprint faces broken at every interval, plus a jamb
+     * (reveal) line across the path at each interval edge, plus end caps for an open carrier.
+     *
+     * A drawing convention, not a cut — the footprint region itself stays whole, which is what a plan
+     * actually shows (below a sill and above a head there is material). Derived here, per render pass,
+     * from evaluated values only: the intervals are sorted **by their current position**, so dragging one
+     * past another re-sorts the drawing with no rebuild anywhere. That ordering is precisely the work
+     * that must not happen while assembling the graph.
+     */
+    fun planOf(
+        tp: ThickPath,
+        ev: Evaluator,
+    ): List<Segment>? {
+        val f = facesOf(tp, ev) ?: return null
+        val perLeg = (0 until f.legCount).map { intervalsOnLeg(tp, it, ev) }
+        val out = ArrayList<Segment>()
+
+        fun emit(
+            a: Vec2,
+            b: Vec2,
+        ) {
+            if ((b - a).length() > Vec2.EPS) out.add(Segment(a, b))
         }
-
-        val v = w.vertices
-        val closed = w.closed && v.size >= 3
-        val legCount = if (closed) v.size else v.size - 1
-        val half = cx.scale(w.thickness, 0.5)
-        val legLines = (0 until legCount).map { cx.lineThrough(v[it], v[(it + 1) % v.size]) }
-        val flBySide = intArrayOf(+1, -1).map { s -> legLines.map { cx.parallelAtDistance(it, half, s) } }
-
-        // corner points per side: closed -> one miter per vertex (wraps); open -> start cap, miters, end cap
-        val cornersBySide =
-            flBySide.map { fl ->
-                val c = ArrayList<PointRef>()
-                if (closed) {
-                    for (j in 0 until legCount) c.add(cx.select(cx.intersectLL(fl[(j - 1 + legCount) % legCount], fl[j]), +1))
-                } else {
-                    c.add(cx.projectToLine(v.first(), fl.first()))
-                    for (j in 1 until legCount) c.add(cx.select(cx.intersectLL(fl[j - 1], fl[j]), +1))
-                    c.add(cx.projectToLine(v.last(), fl.last()))
-                }
-                c
-            }
-
-        // face pieces per side, split by the openings on each leg
         for (side in 0..1) {
-            val fl = flBySide[side]
-            val corners = cornersBySide[side]
-            for (legI in 0 until legCount) {
-                val ops = w.openings.filter { it.legIndex == legI }.sortedBy { evalMm(it.position) }
-                var prev = corners[legI]
-                for (op in ops) {
-                    val js = facePointAt(legLines[legI], v[legI], op.position, fl[legI])
-                    val je = facePointAt(legLines[legI], v[legI], cx.add(op.position, op.width), fl[legI])
-                    own(cx.segment(prev, js))
-                    prev = je // solid piece then gap
+            val corners = f.faces[side]
+            for (i in 0 until f.legCount) {
+                var cursor = corners[i]
+                for ((pos, width) in perLeg[i]) {
+                    emit(cursor, GeomMath.facePoint(f, i, pos, side))
+                    cursor = GeomMath.facePoint(f, i, pos + width, side) // solid piece, then the gap
                 }
-                own(cx.segment(prev, corners[if (closed) (legI + 1) % legCount else legI + 1]))
+                emit(cursor, corners[(i + 1) % corners.size])
             }
         }
-        // end caps only for an open wall (a closed loop has none)
-        if (!closed) {
-            own(cx.segment(cornersBySide[0].first(), cornersBySide[1].first()))
-            own(cx.segment(cornersBySide[0].last(), cornersBySide[1].last()))
+        if (!tp.closed) {
+            emit(f.faces[0].first(), f.faces[1].first())
+            emit(f.faces[0].last(), f.faces[1].last())
         }
-        // jambs (reveal lines) across the wall at each opening edge
-        for (op in w.openings) {
-            val leg = legLines[op.legIndex]
-            val start = v[op.legIndex]
-            val sEnd = cx.add(op.position, op.width)
-            own(
-                cx.segment(
-                    facePointAt(leg, start, op.position, flBySide[0][op.legIndex]),
-                    facePointAt(leg, start, op.position, flBySide[1][op.legIndex]),
-                ),
-            )
-            own(
-                cx.segment(
-                    facePointAt(leg, start, sEnd, flBySide[0][op.legIndex]),
-                    facePointAt(leg, start, sEnd, flBySide[1][op.legIndex]),
-                ),
-            )
+        for (i in 0 until f.legCount) {
+            for ((pos, width) in perLeg[i]) {
+                for (d in listOf(pos, pos + width)) {
+                    emit(GeomMath.facePoint(f, i, d, 0), GeomMath.facePoint(f, i, d, 1))
+                }
+            }
+        }
+        return out
+    }
+
+    /** [tp]'s intervals on leg [i] as (position, width), **ordered by their current position**. */
+    private fun intervalsOnLeg(
+        tp: ThickPath,
+        i: Int,
+        ev: Evaluator,
+    ): List<Pair<Double, Double>> =
+        tp.intervals
+            .filter { it.legIndex == i }
+            .map { scalarMm(it.position, ev) to scalarMm(it.width, ev) }
+            .sortedBy { it.first }
+
+    private fun scalarMm(
+        ref: ScalarRef,
+        ev: Evaluator,
+    ): Double = ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm ?: 0.0
+
+    /**
+     * Add an interval feature to leg [legIndex] of [tp] (the UI's door/window opening) at [position]
+     * along it, spanning [width], carrying [sill] and [head] for the solid (OP-17).
+     *
+     * Position and the two heights become named parameters, so every value of an interval is a typed
+     * field (OP-13); the width is shared with whatever the tool was given, which is how two openings
+     * are made the same size *by construction* rather than by a constraint. Nothing is regenerated —
+     * the footprint node is not even touched, and the plan drawing re-derives itself.
+     */
+    fun addInterval(
+        tp: ThickPath,
+        legIndex: Int,
+        position: Quantity,
+        width: ScalarRef,
+        sill: Quantity,
+        head: Quantity,
+    ): PathInterval? {
+        if (legIndex < 0 || legIndex >= tp.legCount) return null
+        return recording(
+            "opening",
+            Arg.El(tp.footprint),
+            Arg.Keyed("leg", Arg.Text(legIndex.toString())),
+            Arg.Keyed("pos", Arg.Num(position)),
+            Arg.Keyed("width", Arg.Sc(scalarEntryFor(width))),
+            Arg.Keyed("sill", Arg.Num(sill)),
+            Arg.Keyed("head", Arg.Num(head)),
+        ) {
+            PathInterval(
+                legIndex,
+                newParameter("pos", position).ref,
+                width,
+                newParameter("sill", sill).ref,
+                newParameter("head", head).ref,
+            ).also { tp.intervals.add(it) }
         }
     }
 
     /**
-     * Add an opening (door/window gap) of width [width] to whichever wall leg is nearest [at]. The
-     * opening is positioned by a new parameter (distance along the leg from its start), so both its
-     * position and width are editable and the wall regenerates around them. No-op if no wall leg is
-     * within tolerance.
+     * Add an interval of width [width] to whichever thick-path leg is nearest [at], centred on the
+     * click. Resolving the click is the *tool's* job; what gets recorded is the resolved description
+     * (which leg, how far along), so a replay never re-guesses. No-op if nothing is within tolerance.
      */
-    fun addOpeningAtRecorded(
-        world: Vec2,
-        width: ScalarRef,
-        tol: Double,
-    ): Boolean = recording("opening", Arg.Pos(world), Arg.Sc(scalarEntryFor(width)), Arg.Num(Quantity.mm(tol))) { addOpeningAt(world, width, tol) }
-
-    fun addOpeningAt(
+    fun addIntervalAt(
         at: Vec2,
         width: ScalarRef,
         tol: Double,
     ): Boolean {
         val ev = Evaluator()
-        var best: Wall? = null
+        var best: ThickPath? = null
         var bestLeg = -1
         var bestPos = 0.0
+        var bestLen = 0.0
         var bestD = Double.MAX_VALUE
-        for (w in walls) {
-            val threshold = tol + evalMm(w.thickness) / 2 // clicking anywhere on the wall body counts
-            for (i in 0 until w.vertices.size - 1) {
-                val a = (ev.eval(w.vertices[i].node) as? EvalResult.Ok)?.value as? PointValue ?: continue
-                val b = (ev.eval(w.vertices[i + 1].node) as? EvalResult.Ok)?.value as? PointValue ?: continue
-                val ab = b.p - a.p
-                val len = ab.length()
-                if (len < Vec2.EPS) continue
-                val t = ((at - a.p).dot(ab) / (len * len)).coerceIn(0.0, 1.0)
-                val d = (at - (a.p + ab * t)).length()
+        for (tp in thickPaths) {
+            val threshold = tol + evalMm(tp.thickness) / 2 // clicking anywhere on the body counts
+            val f = facesOf(tp, ev) ?: continue
+            for (i in 0 until f.legCount) {
+                val leg = f.legs[i]
+                val along = (at - leg.origin).dot(leg.dir).coerceIn(0.0, f.legLengths[i])
+                val d = (at - (leg.origin + leg.dir * along)).length()
                 if (d <= threshold && d < bestD) {
                     bestD = d
-                    best = w
+                    best = tp
                     bestLeg = i
-                    bestPos = t * len
+                    bestPos = along
+                    bestLen = f.legLengths[i]
                 }
             }
         }
-        val w = best ?: return false
+        val tp = best ?: return false
         val widthVal = evalMm(width)
-        val legLen =
-            run {
-                val a = (ev.eval(w.vertices[bestLeg].node) as EvalResult.Ok).value as PointValue
-                val b = (ev.eval(w.vertices[bestLeg + 1].node) as EvalResult.Ok).value as PointValue
-                (b.p - a.p).length()
-            }
-        val pos = (bestPos - widthVal / 2).coerceIn(0.0, maxOf(0.0, legLen - widthVal)) // centre on the click
-        val posRef = newParameter("op", pos.mm).ref
-        w.openings.add(Opening(bestLeg, posRef, width))
-        regenerateWall(w)
-        return true
+        val pos = (bestPos - widthVal / 2).coerceIn(0.0, maxOf(0.0, bestLen - widthVal)) // centre on the click
+        return addInterval(tp, bestLeg, pos.mm, width, 0.0.mm, DEFAULT_HEAD.mm) != null
     }
 
     fun ray(
@@ -2090,6 +2133,9 @@ class Document {
     ) = measurement("angle", cx.measureAngleLines(carrierLine(l1), carrierLine(l2)))
 }
 
+/** Head height a new interval carries by default (mm) — a door; the sill defaults to the floor. */
+private const val DEFAULT_HEAD = 2100.0
+
 /** Default element styles. */
 object Styles {
     val FREE_POINT = Style(stroke = "#1f77b4", width = 1.0)
@@ -2099,7 +2145,9 @@ object Styles {
     val CONSTRUCT = Style(stroke = "#9467bd", width = 1.2)
     val INVALID = Style(stroke = "#dddddd", width = 1.0)
     val PREVIEW = Style(stroke = "#ff7f0e", width = 1.0)
-    val WALL = Style(stroke = "#333333", width = 2.4)
+
+    /** A thick path's footprint (OP-21) — heavier than a construction curve, being a drawing. */
+    val FOOTPRINT = Style(stroke = "#333333", width = 2.4)
 
     /** The result layer (OP-14): the drawing itself, weighted so it reads above its scaffolding. */
     val RESULT = Style(stroke = "#111111", width = 2.6)

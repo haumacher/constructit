@@ -437,7 +437,7 @@ probing at all.
 ### Break and join legs — topology by gesture (OP-19 — RESOLVED)
 
 Two editing operations on an ortho path, inverses of each other. *Leg* here means a segment of an
-ortho path, not the architectural `Wall`.
+ortho path, not the architectural wall (a `ThickPath` built over one).
 
 - **Join** (done) — dragging a leg perpendicular until the adjacent perpendicular leg shrinks to
   roughly zero removes that leg and makes the two legs it separated into one. Committed **on release**,
@@ -498,10 +498,11 @@ rather than join two legs — a different edit — and the closing leg of a loop
 above. Repeating the pair leaves both steps in the journal, which replays correctly: the break rebuilds
 the jog and the join collapses it again.
 
-Two things a join has to carry, if the path carries a wall: `Wall` holds a fixed vertex list and must
-derive from its path instead, and openings address their leg by *index* and measure position from the
-leg start — a merged leg starts further back, so an opening on the second half must be re-measured to
-keep its **absolute** position.
+Two things a join has to carry, if the carrier feeds a thick path: `ThickPath` holds a fixed vertex
+list and must derive from its carrier instead, and intervals address their leg by *index* and measure
+position from the leg start — a merged leg starts further back, so an interval on the second half must be
+re-measured to keep its **absolute** position. Neither is done; a join on a thickened carrier is
+therefore not yet supported.
 
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
@@ -1130,16 +1131,18 @@ Three broad families (see OP-9 decision above):
       multi-select (absent today) → flat group → placed group → relocate/re-parent/mates/macro promotion.
 - [x] **OP-21 A wall is an output feature** — RESOLVED: a wall belongs to the **result layer**
       (OP-14), and the same description must feed the seam (OP-17), because a floor plan is a route
-      into 3D. The as-built wall needs rework for two independent reasons: it is **regenerated**
-      (`ownedIds` + `elements.removeAll`, so orphaned nodes accumulate and nothing can depend on the
-      wall as a value), and it is **not a pure function of its parameters** (openings are sorted by
-      `evalMm` at graph-construction time, so dragging one opening past another leaves stale
-      structure). General rule extracted: value-dependent work belongs inside a node's `compute`,
-      never in the builder. Deeper correction: **the plan gap is a drawing convention, not a cut** —
+      into 3D. The first wall implementation needed rework for two independent reasons: it was
+      **regenerated** (`ownedIds` + `elements.removeAll`, so orphaned nodes accumulated and nothing
+      could depend on the wall as a value), and it was **not a pure function of its parameters**
+      (openings were sorted by `evalMm` at graph-construction time, so dragging one opening past
+      another left stale structure). General rule extracted: value-dependent work belongs inside a
+      node's `compute`, never in the builder. **Built** as the generic `ThickPath` + `PathInterval`
+      (the model says nothing about walls — session-3 directive (a)); see that section's
+      implementation status. Deeper correction: **the plan gap is a drawing convention, not a cut** —
       in plan a wall is unbroken at a window (wall below the sill, wall above the head), so one
       description projects to **two outputs**: the plan drawing (gaps, jambs, swing arcs as
       convention) and the solid (`extrude(footprint)` minus a sill→head box per opening). A wall
-      therefore emits `wallFootprint(...) → Region`; a closed centerline yields
+      therefore emits `thickFootprint(...) → Region`; a closed carrier yields
       `Region(outer, [inner])`, so a wall ring *is* OP-14's hole machinery. Junctions are trimmed
       **by construction** at the neighbour's face line rather than by adding 2D region booleans.
       Walls lead in 2D (a strong forcing function for the result layer) and follow in 3D (the
@@ -1329,6 +1332,25 @@ Three broad families (see OP-9 decision above):
   may exist informally. (e) Gear: a **sampled involute** (deterministic approximation at tolerance)
   in a macro — OP-15 proceeds independently, not as a gate. (f) Ordering of the editor baseline is
   delegated, with one rule: **deliver nothing half-done**.
+- **Session 3 — the wall becomes a thick path (OP-21).** Reworked the wall end to end into a generic
+  output feature and, in doing so, closed both defects OP-21 named. Five things worth recording.
+  (1) The fix for *"not a pure function of its parameters"* is a **placement** rule, not an algorithm:
+  the opening sort moved from the builder into the computation, and the property came back for free.
+  The count of intervals is structural, their order is not — only the latter may move inside.
+  (2) Making the footprint **one node** rather than a bundle of face segments is what removed
+  regeneration: with one `Region` value there is nothing to delete and rebuild, so an interval edit
+  cannot orphan anything. `Construction.nodesCreated` exists only to let a test assert that.
+  (3) The **plan gap is a drawing convention** — moving it to `SceneRenderer` is what let the footprint
+  stay unbroken, and it is why the same description will feed the solid.
+  (4) Recording the interval as a *description* (`opening e4 leg=0 pos=25mm width="w" …`) rather than as
+  the click that placed it paid three ways at once: a typed position now survives a reload (it silently
+  did not), delete's dependency walk catches intervals through the ordinary explicit-reference rule, and
+  the wall/opening special case in `dependentSteps` disappeared. A step that names what it belongs to
+  needs no bespoke cascade.
+  (5) The **name mattered**: calling it `ThickPath`/`PathInterval` (with *Wall*/*Opening* surviving as
+  tool labels) is what made justification, sill and head fall out as ordinary properties instead of
+  wall-specific extras. 178 headless tests pass, plus two new plan goldens; verified in a real browser
+  (screenshots under `tmp/`).
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -1386,17 +1408,19 @@ the result layer (OP-14) — and because a floor plan is a legitimate route into
 description must also feed the seam (OP-17). That reframing is what the as-built implementation gets
 wrong, in two independent ways.
 
-### Why the as-built wall needs rework
+### Why the first wall implementation needed rework
+*(Both defects are fixed — see* Implementation status *below. The diagnosis is kept because the rule it
+yielded applies to every feature, not just this one.)*
 
-**1. It is regenerated, not computed.** `Document.regenerateWall` deletes the elements it previously
-owned (`ownedIds`) and rebuilds them. Two consequences: the *nodes* behind the removed elements stay
-in the `Construction`, so every opening edit grows the graph monotonically; and the wall is not a
-value anything can depend on, only a bundle of loose `SEGMENT` elements that get replaced.
+**1. It was regenerated, not computed.** `Document.regenerateWall` deleted the elements it previously
+owned (`ownedIds`) and rebuilt them. Two consequences: the *nodes* behind the removed elements stayed
+in the `Construction`, so every opening edit grew the graph monotonically; and the wall was not a
+value anything could depend on, only a bundle of loose `SEGMENT` elements that got replaced.
 
-**2. It is not a pure function of its parameters.** The build sorts each leg's openings with
-`sortedBy { evalMm(it.position) }` — at *graph-construction* time. Structure therefore depends on the
-values held when the wall was built, so dragging one opening past another leaves the faces split in
-the stale order until something regenerates. This is precisely the property the whole model exists to
+**2. It was not a pure function of its parameters.** The build sorted each leg's openings with
+`sortedBy { evalMm(it.position) }` — at *graph-construction* time. Structure therefore depended on the
+values held when the wall was built, so dragging one opening past another left the faces split in
+the stale order until something regenerated. This is precisely the property the whole model exists to
 guarantee (OP-5), broken by doing value-dependent work in the builder.
 
 **The fix for (2) is the general rule:** anything value-dependent belongs *inside* a node's `compute`,
@@ -1423,12 +1447,14 @@ them is what made openings cut the footprint.
 
 ### What a wall emits
 
-- **`wallFootprint(centerline, thickness, justification) → Region`** — the offset faces, mitred
+- **`thickFootprint(carrier, thickness, justification) → Region`** — the offset faces, mitred
   corners (`intersectLL` of adjacent face lines, as already designed) and end caps, assembled as a
-  closed oriented `Loop`. An **open** centerline gives a single loop; a **closed** one gives
+  closed oriented `Loop`. An **open** carrier gives a single loop; a **closed** one gives
   `Region(outer, [inner])` — a wall ring is exactly OP-14's hole machinery, which is why walls are a
-  good forcing function for the result layer rather than a niche.
-- **Openings** stay `(position, width, sill, head)` parameters and do **not** touch the footprint.
+  good forcing function for the result layer rather than a niche. The name is deliberately not
+  "wall": this is the generic **thick path**, and a wall is one use of it (session-3 directive (a)).
+- **Interval features** — the UI's openings — stay `(position, width, sill, head)` parameters and do
+  **not** touch the footprint.
 - **3D** is then `extrude(footprint, height)` minus one box per opening — analytic parameters driving
   the boolean, as OP-9 already prescribes.
 - Accessors per OP-6 (`wall.face(side)`, `wall.corner(i)`) stay, for dimensioning and wall-to-wall
@@ -1451,6 +1477,53 @@ for the **2D output layer** a wall is a strong forcing function (multi-loop regi
 for the **first 3D slice** the mechanical triad still exercises strictly more of the seam (sketch on a
 face, provenance accessors, the sketch→feature→sketch loop) than a wall extrude does. So walls lead
 in 2D and follow in 3D.
+
+### Implementation status (as built — the thick path)
+
+The rework ships as one generic feature. **`ThickPath`** (`editor/Document.kt`) is a carrier polyline +
+`thickness` + `Justification` + a list of **`PathInterval`**s (`position`, `width`, `sill`, `head`); the
+UI still says *Wall* and *Opening* and nothing in the model does.
+
+- **One node, one element.** `Construction.thickFootprint(vertices, thickness, closed, justification)`
+  emits a single `RegionValue`, displayed by one `AREA` element. Editing the carrier, the thickness or
+  any interval **recomputes** it: no element is replaced and no node is orphaned. `Construction`
+  counts the ids it has handed out (`nodesCreated`) purely so a test can assert that — it is the one
+  observable that separates computing a feature from regenerating it.
+- **The geometry lives in `compute`.** `GeomMath.thickFaces` / `thickRegion` are functions of *values*:
+  leg directions, the mitres, and (for a ring) which offset side is the outer boundary — decided by
+  comparing enclosed areas, so it survives a carrier being reshaped or reversed. Only the *count* of
+  carrier vertices is structural, and that is what the node's input list carries. A collinear pair of
+  legs, a zero-length leg or a zero thickness make the node invalid **with a reason**, and it heals
+  (OP-3).
+- **Interval order is read per pass.** `Document.planOf` sorts each leg's intervals by their *current*
+  position while producing the plan, so moving one past another needs no rebuild at all — the headline
+  regression test asserts the plan re-sorts while the node count, the element list and the footprint
+  value are all untouched.
+- **The plan gap is a drawing convention.** The footprint region stays whole; `SceneRenderer` draws a
+  thick path's footprint as broken faces + jamb (reveal) lines + end caps, derived at render time from
+  the footprint and the intervals. Two goldens cover it (open run, closed ring with a door).
+- **Justification** center/left/right is implemented, recorded in the file, and selectable in the
+  browser panel ("Wall side"). It is defined by the carrier's own traversal direction (left = +90°), so
+  it needs no inside/outside — which an open carrier does not have.
+- **Every DOF stayed reachable (OP-13).** An interval's position, width, sill and head are named
+  parameters, hence typed fields; the width is *shared* with whatever the tool was given, so two equal
+  openings are equal **by construction**. The carrier is a plain ortho path, dragged and typed exactly
+  as before. Sill/head are new: they were designed-in but previously unreachable.
+- **The file records the description** (OP-18): `wall "t" center` and
+  `opening e4 leg=0 pos=25mm width="w" sill=0mm head=2100mm`. Because the interval step *names the
+  footprint it belongs to* and restates the values it introduced, three things follow — a typed
+  position now survives a reload (it silently did not before), delete's dependency walk catches
+  intervals through the ordinary explicit rule, and `Document.dependentSteps` lost its wall/opening
+  special case entirely. Deleting one opening no longer drops the later ones.
+
+**Deliberately not done here.** Wall-to-wall **junction trimming** (T/L merges) stays future work: two
+thick paths meeting still overlap, which is visible and known. Per OP-6 **accessors** on the footprint
+(`face(side)`, `corner(i)`) are not built — nothing consumes them yet, and they are what dimensioning
+and wall-to-wall snapping will need. One capability was traded away with the loose face segments: a
+wall face is no longer a `SEGMENT` element, so it cannot be snapped or attached to. That is the correct
+direction (OP-21's whole point is that offset lines are not the drawing), and the replacement is those
+accessors, not the old bundle. **3D** (`extrude(footprint, height)` minus one box per interval, sill→head)
+is untouched — the description it needs is now in place.
 
 ### Build order (MVP-first)
 1. Directions + project frame + ortho input (fast axis-aligned drawing).
@@ -1497,7 +1570,7 @@ Then 3D walls = extrude + boolean.
     numeric form of every drag is reachable without any per-tool UI code.
   - The path is retained as an `OrthoPath` (vertices in draw order + a segment element per leg), so
     legs are addressable — which is what lets a leg's length find the neighbour supplying its other
-    end. A `Wall` keeps a reference to the centerline path it was built from.
+    end. A `ThickPath` (OP-21) keeps a reference to the carrier path it was built over.
   - **Direct distance entry** — while a leg is previewed the mouse supplies its *direction* and the
     keyboard its *length*: type digits, Enter places the leg at exactly that length (Backspace edits,
     Esc cancels the entry before it finishes the path). The preview shows the typed length, and the
@@ -1517,13 +1590,16 @@ Then 3D walls = extrude + boolean.
     the leg into that corner *already aligned* plus the closing leg, rather than a band reaching for the
     start that promises a different shape. The drawing no longer appears to jump on close.
   - Rubber-band preview; Esc / double-click / click-start to finish.
-- **Slice 2 — walls** (`Tools.WALL`, `Document.buildWall`): centerline + thickness → two offset
-  faces with `intersectLL` miter corners + end caps; retained as a `Wall` so it can be regenerated.
-  Wall corners are the same draggable ortho vertices, so walls edit like paths.
-- **Slice 3 — openings** (`Tools.OPENING`, `Document.addOpeningAt`/`regenerateWall`): click a wall
-  to cut a door/window gap; position (distance-from-leg-start) + width are editable parameters;
-  regenerates the wall with gapped faces + jamb reveal lines. Position is anchored at the start
-  edge; width extends the end.
+- **Slice 2 — thick paths** (`Tools.WALL`, `Document.buildThickPath`): carrier + thickness +
+  justification → **one** `Region` node (offset faces, `intersectLL` mitre corners, end caps), retained
+  as a `ThickPath` and displayed as a single `AREA` element. Nothing is regenerated; the wall corners
+  are the same draggable ortho vertices, so walls edit like paths. See *A wall is an output feature*
+  (OP-21) for the model and why the earlier face-bundle version was replaced.
+- **Slice 3 — interval features** (`Tools.OPENING`, `Document.addInterval`): click a wall to place a
+  door/window; position (distance-from-leg-start), width, sill and head are editable parameters.
+  Position is anchored at the start edge; width extends the end. The footprint stays **whole** — the
+  plan gap (broken faces + jamb reveal lines) is drawn from the footprint and the intervals at render
+  time, because in plan an opening does not interrupt the material.
 - **Endpoint connections**: an **open** path's end vertices (`OrthoCornerHandle.isEndpoint`)
   take part in the weld/attach magnet — drag an end onto a point to **weld** it, or onto a
   line/circle to **attach** it. Attaching to a line binds exactly one coordinate: **the one the line
@@ -1563,7 +1639,9 @@ Then 3D walls = extrude + boolean.
   axis now *extends* that leg instead of creating a collinear pair with an undefined miter, and a
   fully driven vertex is no longer grabbable (dragging it was inert while it stole the grab from the
   geometry that drives it).
-- **Next (architectural):** wall-to-wall junction cleanup (T/L merges), opening sill/head heights
-  (for 3D), and 3D walls (extrude + boolean-subtract openings). Note the ordering decision in OP-17:
+- **Next (architectural):** wall-to-wall junction cleanup (T/L merges — two thick paths meeting still
+  overlap), footprint accessors for dimensioning and wall-to-wall snapping (OP-6), and 3D walls
+  (extrude + boolean-subtract each interval, sill→head; the parameters are already carried). Note the
+  ordering decision in OP-17:
   3D walls are a *later application* of the seam, not its proof of concept — the first 3D slices are
   mechanical parts, because a wall exercises only the degenerate half of the seam.

@@ -33,8 +33,11 @@ first-class goal and the current implementation focus.
 - **Parameter wiring** — reduce degrees of freedom by binding one parameter (or point) to another;
   equality by shared reference, with cycle checks.
 - **Architectural layer** — a rectilinear **ortho-path** (shared-coordinate model: local vertex
-  editing, axis-aligned by construction, closeable loops), parametric **walls** (offset faces with
-  mitred corners), and **openings** (doors/windows as parametric gaps with jambs).
+  editing, axis-aligned by construction, closeable loops) and parametric **walls**: a *thick path*,
+  i.e. one offset region around the path (mitred corners, end caps, a ring where the path closes),
+  with **openings** (doors/windows) as parametric intervals carrying position, width, sill and head.
+  In plan the wall stays whole and the gap is drawn as the convention it is — faces broken, jambs
+  shown — so the same description also feeds a solid later.
 - **Browser canvas** — an interactive HTML5-canvas editor; the engine is pure Kotlin shared between
   the JVM and the browser.
 
