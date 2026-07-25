@@ -2,6 +2,7 @@ package constructit.editor
 
 import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
+import constructit.geom.BoolOp
 import constructit.geom.Vec2
 import constructit.units.Quantity
 
@@ -11,8 +12,11 @@ import constructit.units.Quantity
  * AREA is the 2D→3D seam's slot (OP-17): it takes a result-layer element that *bounds an area* — a
  * traced `Outline` (one loop) or a thick path's footprint (a region with holes). One slot for both,
  * because the difference is a coercion the document performs (`Document.regionOf`), not a different pick.
+ *
+ * SOLID is the boolean slot (OP-22). A solid is already pickable in the 2D canvas by its footprint hint,
+ * so this needs no new picking machinery — only a filter, which is what a slot kind is.
  */
-enum class SlotKind { PLACE_POINT, POINT, EXISTING_POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT, SIDE, CENTRIC, AREA }
+enum class SlotKind { PLACE_POINT, POINT, EXISTING_POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT, SIDE, CENTRIC, AREA, SOLID }
 
 enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, ANNOTATE, RESULT, SOLIDS }
 
@@ -118,6 +122,15 @@ object Tools {
     const val EXTRUDE = "extrude"
     const val REVOLVE = "revolve"
 
+    // Booleans between same-axis prisms (OP-22), and the architectural application of them
+    const val UNION = "union"
+    const val SUBTRACT = "subtract"
+
+    // not `INTERSECT`: that name is the point-intersection tool's, and a tool id is what the file
+    // records (OP-18), so the solid one gets its own word rather than shadowing it
+    const val INTERSECT_SOLIDS = "intersectsolids"
+    const val CUT_OPENINGS = "cutopenings"
+
     // Construct
     const val PERP_BISECTOR = "perpbis"
     const val ANGLE_BISECTOR = "anglebis"
@@ -195,6 +208,12 @@ object Tools {
             // (OP-13) since the 3D view has no picking yet.
             ToolDef(EXTRUDE, "Extrude", ToolCategory.SOLIDS, listOf(SlotKind.AREA), scalars = listOf("depth"), help = "Select a depth parameter, then click an outline or wall footprint: it becomes a solid, shown in the 3D view.") { d, p, s -> d.extrudeSolid(p.elements[0], s[0]) },
             ToolDef(REVOLVE, "Revolve", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.LINE), scalars = listOf("angle"), help = "Select an angle parameter, click an outline or footprint, then a line to spin it about (the profile must not cross the axis).") { d, p, s -> d.revolveSolid(p.elements[0], p.elements[1], s[0]) },
+            // ----- Booleans (OP-22): exact for solids extruded along the same axis. Two solid picks and
+            // nothing else — the slab algebra is the op node's job, so these are data like every other tool.
+            ToolDef(UNION, "Union", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), help = "Click two solids to fuse them into one (they must be extruded along the same axis).") { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.UNION) },
+            ToolDef(SUBTRACT, "Subtract", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), help = "Click the solid to keep, then the one to remove from it (a counterbore, a pocket, an opening).") { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.SUBTRACT) },
+            ToolDef(INTERSECT_SOLIDS, "Intersect solids", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), help = "Click two solids to keep only what they have in common.") { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.INTERSECT) },
+            ToolDef(CUT_OPENINGS, "Cut openings", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), help = "Click a solid extruded from a wall footprint: every opening on that wall becomes a subtracted box, sill to head. Openings added later need the tool again.") { d, p, _ -> d.cutOpenings(p.elements[0]) },
             // ----- Construct -----
             ToolDef(PERP_BISECTOR, "Perp. bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points for their perpendicular bisector.") { d, p, _ -> d.perpBisector(p.points[0], p.points[1]) },
             ToolDef(ANGLE_BISECTOR, "Angle bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click a point, the vertex, then another point.") { d, p, _ -> d.angleBisector(p.points[0], p.points[1], p.points[2]) },

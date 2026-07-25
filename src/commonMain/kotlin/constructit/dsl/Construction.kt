@@ -28,6 +28,7 @@ import constructit.geom.Affine
 import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.Bezier
+import constructit.geom.BoolOp
 import constructit.geom.Circle
 import constructit.geom.Direction
 import constructit.geom.Geom3
@@ -98,12 +99,21 @@ class Construction {
     var nodesCreated: Int = 0
         private set
 
+    private val issuedIds = HashSet<String>()
+
     private fun freshId(hint: String? = null): String {
         nodesCreated++
         val scope = scopes.last()
         val local = hint ?: "n${++scope.counter}"
         val path = scopes.filter { it.prefix.isNotEmpty() }.joinToString("/") { it.prefix }
-        return if (path.isEmpty()) local else "$path/$local"
+        val base = if (path.isEmpty()) local else "$path/$local"
+        // Evaluation memoizes by id (OP-5), so two nodes sharing one id silently alias each other —
+        // a caller's name hint must therefore be uniquified, never trusted. Deterministic: the same
+        // build order yields the same suffixes, which is what macro path-ids (OP-6) rely on.
+        var id = base
+        var n = 2
+        while (!issuedIds.add(id)) id = "${base}_${n++}"
+        return id
     }
 
     /** Run [body] inside a macro instance namespace, so its nodes get ids `instanceId/nk` (OP-6). */
@@ -1061,6 +1071,52 @@ class Construction {
             if (region == null) EvalResult.Invalid(reason ?: "no footprint") else EvalResult.Ok(RegionValue(region))
         }
 
+    /**
+     * The footprint of **one interval feature** of a thick path (OP-21/OP-22): the rectangle spanning
+     * [width] from [position] along leg [legIndex] of the carrier through [vertices], across the whole
+     * [thickness] of the path.
+     *
+     * This is the plan shape of the box that a *3D* opening subtracts — the plan drawing still shows no
+     * cut (OP-21: the gap is a convention). Everything is computed inside `compute` from the carrier's
+     * current geometry, exactly as [thickFootprint] is, so dragging a wall corner or typing a new
+     * position moves the cut instead of rebuilding it. The two faces are the wall's own faces, so the
+     * subtraction's side walls are *coplanar* with the wall's — the degenerate case the 2D kernel is
+     * built to handle honestly.
+     */
+    fun intervalFootprint(
+        vertices: List<PointRef>,
+        thickness: ScalarRef,
+        closed: Boolean,
+        justification: Justification,
+        legIndex: Int,
+        position: ScalarRef,
+        width: ScalarRef,
+    ): RegionRef =
+        op(*(vertices + listOf(thickness, position, width)).toTypedArray()) { args ->
+            val pts = args.dropLast(3).map { (it as PointValue).p }
+            val t = (args[args.size - 3] as ScalarValue).q.requireDim(Dimension.LENGTH, "thickness").mm
+            val pos = (args[args.size - 2] as ScalarValue).q.requireDim(Dimension.LENGTH, "position").mm
+            val w = (args[args.size - 1] as ScalarValue).q.requireDim(Dimension.LENGTH, "width").mm
+            if (w <= 0.0) return@op EvalResult.Invalid("an opening needs a positive width")
+            val (faces, why) = GeomMath.thickFaces(pts, closed, justification.offsets(t))
+            if (faces == null) return@op EvalResult.Invalid(why ?: "no footprint")
+            if (legIndex < 0 || legIndex >= faces.legCount) return@op EvalResult.Invalid("leg ${legIndex + 1} is not a leg of this path")
+            val a = GeomMath.facePoint(faces, legIndex, pos, 0)
+            val b = GeomMath.facePoint(faces, legIndex, pos + w, 0)
+            val c = GeomMath.facePoint(faces, legIndex, pos + w, 1)
+            val d = GeomMath.facePoint(faces, legIndex, pos, 1)
+            val loop =
+                Loop(
+                    listOf(
+                        ProfileElement.Seg(Segment(a, b)),
+                        ProfileElement.Seg(Segment(b, c)),
+                        ProfileElement.Seg(Segment(c, d)),
+                        ProfileElement.Seg(Segment(d, a)),
+                    ),
+                )
+            EvalResult.Ok(RegionValue(Region(GeomMath.orient(loop, ccw = true), emptyList())))
+        }
+
     /** Enclosed area of a loop (OP-4 measurement, dimension L²). Exact for segments and arcs. */
     fun loopArea(l: LoopRef): ScalarRef =
         op(l) {
@@ -1192,6 +1248,40 @@ class Construction {
                     a,
                 )
             if (solid == null) EvalResult.Invalid(why ?: "cannot revolve") else EvalResult.Ok(SolidValue(solid))
+        }
+
+    // ---- booleans between prismatic solids (OP-22) ----
+    // One op node each; the slab algebra lives inside `compute`, which is where value-dependent work
+    // belongs (OP-21's rule). The operands are ordinary solid nodes, so a boolean's result is an operand
+    // of the next boolean — prisms are closed under these three operations, which is the point.
+
+    /** Everything in either [a] or [b] (OP-22). */
+    fun union(
+        a: SolidRef,
+        b: SolidRef,
+    ): SolidRef = booleanOf(a, b, BoolOp.UNION)
+
+    /** [a] with [b] removed — the counterbore, and the wall opening (OP-22). */
+    fun subtract(
+        a: SolidRef,
+        b: SolidRef,
+    ): SolidRef = booleanOf(a, b, BoolOp.SUBTRACT)
+
+    /** Only what is in both [a] and [b] (OP-22). */
+    fun intersect(
+        a: SolidRef,
+        b: SolidRef,
+    ): SolidRef = booleanOf(a, b, BoolOp.INTERSECT)
+
+    private fun booleanOf(
+        a: SolidRef,
+        b: SolidRef,
+        kind: BoolOp,
+    ): SolidRef =
+        op(a, b) {
+            val (solid, why) =
+                Geom3.boolean(kind, (it[0] as SolidValue).solid, (it[1] as SolidValue).solid)
+            if (solid == null) EvalResult.Invalid(why ?: "cannot combine these solids") else EvalResult.Ok(SolidValue(solid))
         }
 
     /**

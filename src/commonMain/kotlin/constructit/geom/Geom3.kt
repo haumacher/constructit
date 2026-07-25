@@ -111,6 +111,17 @@ data class Mesh3(val vertices: List<Vec3>, val triangles: List<Tri>) {
 }
 
 /**
+ * One layer of a **prismatic** solid (OP-22): the area [regions] occupies between heights [z0] and [z1],
+ * measured along the prism's own axis from its plane's origin.
+ *
+ * The regions are **polygonal** — a slab only ever comes out of a boolean, and a boolean tessellates its
+ * operands first (OP-22, the 2D analog of OP-15's approximated-curve rule).
+ */
+data class Slab(val regions: List<Region>, val z0: Double, val z1: Double) {
+    val height: Double get() = z1 - z0
+}
+
+/**
  * The analytic description of a solid: which feature made it, from which sketch, with which
  * parameters (OP-9 — the analytic layer is the source of truth).
  *
@@ -118,18 +129,48 @@ data class Mesh3(val vertices: List<Vec3>, val triangles: List<Tri>) {
  * the *feature*, not the triangles.
  */
 sealed interface Feature3 {
-    val sketch: Sketch3
+    /**
+     * The 2D areas this feature's *plan* shows: what the canvas draws as a footprint hint and picks a
+     * solid by (OP-17). An accessor rather than a field, because what "the plan" is differs per feature —
+     * the sketch for a swept one, the stack of slabs for a prismatic one — and every caller wants the
+     * same answer to the same question.
+     */
+    val footprint: List<Region>
 
     /** A prism: [sketch] swept [depth] mm along its plane's normal. */
-    data class Extrusion(override val sketch: Sketch3, val depth: Double) : Feature3
+    data class Extrusion(val sketch: Sketch3, val depth: Double) : Feature3 {
+        override val footprint: List<Region> get() = sketch.regions
+    }
 
     /** [sketch] swept [angle] rad about the in-plane axis through [axisOrigin] along [axisDir]. */
     data class Revolution(
-        override val sketch: Sketch3,
+        val sketch: Sketch3,
         val axisOrigin: Vec2,
         val axisDir: Vec2,
         val angle: Double,
-    ) : Feature3
+    ) : Feature3 {
+        override val footprint: List<Region> get() = sketch.regions
+    }
+
+    /**
+     * A **prismatic solid** (OP-22): a stack of [slabs] along [plane]'s normal, each a polygonal area
+     * over its own height range, the ranges disjoint and ascending.
+     *
+     * This is the form same-axis booleans are **closed** under, which is the whole reason it exists: an
+     * extrusion is the one-slab case, and the result of subtracting/uniting/intersecting two prisms is
+     * another prism, so results compose without ever leaving the exact algebra. A plain extrude keeps its
+     * analytic [Extrusion] form instead (its arcs are still exact circles); the conversion happens only
+     * when a boolean needs it — see [Geom3.prismatic].
+     *
+     * Which solids were combined is *not* recorded here: that is the op node's input list, and in this
+     * model identity is the node (OP-8). The feature carries geometry, not history.
+     */
+    data class Prism(val plane: Plane3, val slabs: List<Slab>) : Feature3 {
+        override val footprint: List<Region> get() = slabs.flatMap { it.regions }
+
+        val minZ: Double get() = slabs.minOf { it.z0 }
+        val maxZ: Double get() = slabs.maxOf { it.z1 }
+    }
 }
 
 /**
@@ -518,8 +559,16 @@ object Geom3 {
     }
 
     /**
-     * Does any other corner of the ring fall strictly inside the candidate ear? Corners *coincident*
-     * with the ear's own corners are skipped, which is what makes the doubled bridge vertices harmless.
+     * Does any other corner of the ring fall inside the candidate ear — **its boundary included**?
+     * Corners *coincident* with the ear's own corners are skipped, which is what makes the doubled bridge
+     * vertices harmless.
+     *
+     * The boundary counts, and that is not fastidiousness. A corner sitting exactly *on* the ear's
+     * diagonal makes the diagonal a T-junction: the neighbouring triangle stops at that corner while this
+     * one runs past it, so the cap has a crack in it — and the polygon left after the clip touches itself
+     * there, which the clipper then triangulates into overlapping garbage. It went unnoticed until
+     * booleans started producing such polygons routinely (a plus-shaped union has one), and it is a defect
+     * of the triangulator rather than of them: `extrude` had it too.
      */
     private fun containsAnotherCorner(
         poly: List<Vec2>,
@@ -534,7 +583,7 @@ object Geom3 {
             val s1 = (b - a).cross(p - a)
             val s2 = (c - b).cross(p - b)
             val s3 = (a - c).cross(p - c)
-            if (s1 > AREA_EPS && s2 > AREA_EPS && s3 > AREA_EPS) return true
+            if (s1 >= -AREA_EPS && s2 >= -AREA_EPS && s3 >= -AREA_EPS) return true
         }
         return false
     }
@@ -684,6 +733,383 @@ object Geom3 {
         return Solid3(Feature3.Revolution(sketch, axisOrigin, axis, angle), mb.build()) to null
     }
 
+    // ---- exact prismatic booleans (OP-22) ----
+    // A boolean between two solids extruded along the SAME axis decomposes into z-breakpoints times 2D
+    // region booleans, and is therefore *exact* — no BSP split, no coplanar-face heuristic, no repair
+    // pass. Anything else is refused and waits for Manifold (OP-9).
+
+    /** Heights closer together than this (mm) are one level of the stack. */
+    const val Z_EPS = 1e-7
+
+    private const val NOT_PRISMATIC =
+        "this solid is not a prism, so it has no same-axis boolean; general booleans arrive with Manifold (OP-9)"
+
+    /**
+     * The **prismatic reading** of a feature (OP-22), or null with a reason.
+     *
+     * An extrusion becomes one slab — its curved boundary pieces tessellated, which is where the
+     * exactness of the *analytic* circle is traded for the exactness of the *algebra* (OP-15's
+     * approximated-curve rule, one dimension down). A prism is already one. A revolve is refused rather
+     * than approximated: its faces are not vertical, so nothing here can describe it, and guessing would
+     * be exactly the leaky general CSG this whole design avoids.
+     */
+    fun prismatic(
+        feature: Feature3,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<Feature3.Prism?, String?> =
+        when (feature) {
+            is Feature3.Prism -> feature to null
+            is Feature3.Revolution -> null to NOT_PRISMATIC
+            is Feature3.Extrusion -> oneSlab(feature, tolMm)
+        }
+
+    private fun oneSlab(
+        feature: Feature3.Extrusion,
+        tolMm: Double,
+    ): Pair<Feature3.Prism?, String?> {
+        if (feature.depth <= WELD_TOL) return null to "extrude depth must be positive"
+        val (rings, why) = RegionBool.ringsOf(feature.sketch.regions, tolMm)
+        if (rings == null) return null to why
+        val (regions, why2) = RegionBool.regionsOf(RegionBool.canonical(rings))
+        if (regions == null) return null to why2
+        return Feature3.Prism(feature.sketch.plane, listOf(Slab(regions, 0.0, feature.depth))) to null
+    }
+
+    /**
+     * [kind] applied to two solids (OP-22). Both must be prismatic **along a common axis**; the result is
+     * a prism, so booleans compose.
+     *
+     * The algebra: take every slab boundary of either operand as a z-breakpoint, and on each resulting
+     * z-interval apply the 2D kernel ([RegionBool]) to the two operands' areas there. Adjacent output
+     * slabs whose areas come out identical are merged back, so a union of two storeys with the same
+     * footprint is one shaft with no seam in it rather than two boxes touching.
+     *
+     * An **empty** result is refused with a reason rather than returned as a solid with no material: it
+     * is an ordinary invalid node, hidden and healing when a parameter moves back (OP-3).
+     */
+    fun boolean(
+        kind: BoolOp,
+        a: Solid3,
+        b: Solid3,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<Solid3?, String?> {
+        val (pa, whyA) = prismatic(a.feature, tolMm)
+        if (pa == null) return null to (whyA ?: NOT_PRISMATIC)
+        val (pb, whyB) = prismatic(b.feature, tolMm)
+        if (pb == null) return null to (whyB ?: NOT_PRISMATIC)
+        val (slabsB, whyM) = onAxisOf(pb, pa.plane)
+        if (slabsB == null) return null to (whyM ?: NOT_PRISMATIC)
+        val slabsA = pa.slabs
+
+        val levels = levelsOf(slabsA + slabsB)
+        val out = ArrayList<Slab>()
+        for (i in 0 until levels.size - 1) {
+            val z0 = levels[i]
+            val z1 = levels[i + 1]
+            if (z1 - z0 <= Z_EPS) continue
+            val (rings, why) = RegionBool.combine(ringsBetween(slabsA, z0, z1), ringsBetween(slabsB, z0, z1), kind)
+            if (rings == null) return null to (why ?: "the boolean failed on the slice $z0..$z1 mm")
+            if (rings.isEmpty()) continue
+            val (regions, why2) = RegionBool.regionsOf(rings)
+            if (regions == null) return null to (why2 ?: "the boolean produced an area that does not nest")
+            out.add(Slab(regions, z0, z1))
+        }
+        val merged = mergeSlabs(out)
+        if (merged.isEmpty()) return null to "the boolean leaves nothing of the solid"
+        val prism = Feature3.Prism(pa.plane, merged)
+        val (mesh, whyMesh) = prismMesh(prism, tolMm)
+        if (mesh == null) return null to (whyMesh ?: "cannot build the boolean's mesh")
+        return Solid3(prism, mesh) to null
+    }
+
+    /**
+     * [prism]'s slabs re-expressed in the frame [ref] — the step that makes "same axis" concrete.
+     *
+     * The two prisms must have **parallel** normals (either direction); everything else about the frames
+     * may differ, because the map from one in-plane frame to the other is then a rigid motion of the 2D
+     * coordinates and therefore preserves the polygons exactly. An anti-parallel normal reverses both the
+     * height direction and the in-plane orientation, so the heights are swapped and every ring is
+     * reversed — which is why this is worth doing properly rather than demanding identical frames: a
+     * solid extruded from a *flipped* face plane is a perfectly ordinary operand.
+     */
+    private fun onAxisOf(
+        prism: Feature3.Prism,
+        ref: Plane3,
+    ): Pair<List<Slab>?, String?> {
+        val n = ref.normal.normalized()
+        val nb = prism.plane.normal.normalized()
+        val dot = n.dot(nb)
+        if (abs(abs(dot) - 1.0) > 1e-9) {
+            return null to "the two solids are not extruded along a common axis; general booleans arrive with Manifold (OP-9)"
+        }
+        val flip = dot < 0.0
+        val base = (prism.plane.origin - ref.origin).dot(n)
+        val slabs = ArrayList<Slab>(prism.slabs.size)
+        for (s in prism.slabs) {
+            val (rings, why) = RegionBool.ringsOf(s.regions)
+            if (rings == null) return null to why
+            val mapped =
+                rings.map { ring ->
+                    val moved =
+                        ring.map { p ->
+                            val w = prism.plane.toWorld(p)
+                            Vec2((w - ref.origin).dot(ref.u), (w - ref.origin).dot(ref.v))
+                        }
+                    if (flip) moved.reversed() else moved
+                }
+            val (regions, why2) = RegionBool.regionsOf(RegionBool.canonical(mapped))
+            if (regions == null) return null to why2
+            val za = base + if (flip) -s.z0 else s.z0
+            val zb = base + if (flip) -s.z1 else s.z1
+            slabs.add(Slab(regions, min(za, zb), max(za, zb)))
+        }
+        return slabs.sortedBy { it.z0 } to null
+    }
+
+    /** Every slab boundary of [slabs], ascending, with heights within [Z_EPS] welded into one level. */
+    private fun levelsOf(slabs: List<Slab>): List<Double> {
+        val all = (slabs.map { it.z0 } + slabs.map { it.z1 }).sorted()
+        val out = ArrayList<Double>(all.size)
+        for (z in all) if (out.isEmpty() || z - out.last() > Z_EPS) out.add(z)
+        return out
+    }
+
+    /**
+     * The rings of the one slab of [slabs] spanning the whole interval [z0]..[z1], or none.
+     *
+     * Because the interval comes from the *combined* breakpoints, a slab either covers it entirely or
+     * misses it — which is what makes the boolean a plain 2D operation per slice with no clipping.
+     */
+    private fun ringsBetween(
+        slabs: List<Slab>,
+        z0: Double,
+        z1: Double,
+    ): List<List<Vec2>> {
+        val slab = slabs.firstOrNull { it.z0 <= z0 + Z_EPS && it.z1 >= z1 - Z_EPS } ?: return emptyList()
+        return RegionBool.ringsOf(slab.regions).first ?: emptyList()
+    }
+
+    /** Adjacent slabs with identical areas merged into one — the interface between them is not a face. */
+    private fun mergeSlabs(slabs: List<Slab>): List<Slab> {
+        val out = ArrayList<Slab>(slabs.size)
+        for (s in slabs) {
+            val last = out.lastOrNull()
+            if (last != null && abs(last.z1 - s.z0) <= Z_EPS && sameArea(last.regions, s.regions)) {
+                out[out.size - 1] = Slab(last.regions, last.z0, s.z1)
+            } else {
+                out.add(s)
+            }
+        }
+        return out
+    }
+
+    /**
+     * Whether two areas are the same shape. A structural comparison of the canonical rings
+     * ([RegionBool.canonical]) rather than a shape match: the kernel is deterministic, so two slices that
+     * *are* the same area come out of it corner for corner.
+     */
+    private fun sameArea(
+        a: List<Region>,
+        b: List<Region>,
+    ): Boolean {
+        val ra = RegionBool.canonical(RegionBool.ringsOf(a).first ?: return false)
+        val rb = RegionBool.canonical(RegionBool.ringsOf(b).first ?: return false)
+        if (ra.size != rb.size) return false
+        for (i in ra.indices) {
+            if (ra[i].size != rb[i].size) return false
+            for (j in ra[i].indices) if ((ra[i][j] - rb[i][j]).length() > RegionBool.EPS) return false
+        }
+        return true
+    }
+
+    /**
+     * The mesh of a prismatic solid (OP-22): side walls per slab, horizontal caps at every level.
+     *
+     * The two halves and why they close:
+     * - **Caps.** At each level the up-facing faces are `areaBelow − areaAbove` and the down-facing ones
+     *   `areaAbove − areaBelow`, both by the 2D kernel. The counterbore's annular shoulder is not a case
+     *   here — it is what that subtraction *is*. Where the areas agree the difference is empty and there
+     *   is no face at all, which is how two storeys with one footprint become a single shaft.
+     * - **Walls.** A quad strip along every slab boundary, in the loop's own direction.
+     *
+     * Watertightness needs one thing beyond that, and it is the only subtlety in this file: a horizontal
+     * boundary may **cross** a vertical one (a boss overhanging the plate it sits on), which puts a cap
+     * corner in the middle of a wall edge — a T-junction, i.e. a hole in the shell that no triangle
+     * count would reveal. So every polygon is made to *conform* to one global corner set: wall edges are
+     * split at it ([conform]), and cap triangles are subdivided at it ([splitToRequired]) — the latter
+     * after triangulation, because the triangulator legitimately drops collinear corners and would
+     * otherwise undo the very split that is needed.
+     */
+    fun prismMesh(
+        prism: Feature3.Prism,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<Mesh3?, String?> {
+        val slabs = prism.slabs
+        if (slabs.isEmpty()) return null to "a prism needs at least one slab"
+        for (s in slabs) if (s.height <= WELD_TOL) return null to "a slab of the prism has no height"
+        for (i in 0 until slabs.size - 1) {
+            if (slabs[i].z1 > slabs[i + 1].z0 + Z_EPS) return null to "the prism's slabs overlap"
+        }
+        val slabRings = ArrayList<List<List<Vec2>>>(slabs.size)
+        for (s in slabs) {
+            val (rings, why) = RegionBool.ringsOf(s.regions, tolMm)
+            if (rings == null) return null to why
+            slabRings.add(rings)
+        }
+
+        val caps = ArrayList<Triple<Double, List<List<Vec2>>, Boolean>>()
+        for (z in levelsOf(slabs)) {
+            val below = slabs.indexOfFirst { abs(it.z1 - z) <= Z_EPS }.let { if (it < 0) emptyList() else slabRings[it] }
+            val above = slabs.indexOfFirst { abs(it.z0 - z) <= Z_EPS }.let { if (it < 0) emptyList() else slabRings[it] }
+            val (up, whyUp) = RegionBool.combine(below, above, BoolOp.SUBTRACT)
+            if (up == null) return null to whyUp
+            val (down, whyDown) = RegionBool.combine(above, below, BoolOp.SUBTRACT)
+            if (down == null) return null to whyDown
+            if (up.isNotEmpty()) caps.add(Triple(z, up, true))
+            if (down.isNotEmpty()) caps.add(Triple(z, down, false))
+        }
+
+        // the one global corner set every polygon is made to agree with
+        val required = (slabRings.flatten() + caps.flatMap { it.second }).flatten().distinct()
+
+        val mb = MeshBuilder()
+        val n = prism.plane.normal.normalized()
+
+        fun world(
+            p: Vec2,
+            z: Double,
+        ): Vec3 = prism.plane.toWorld(p) + n * z
+        for ((si, rings) in slabRings.withIndex()) {
+            val z0 = slabs[si].z0
+            val z1 = slabs[si].z1
+            for (ring in rings) {
+                val poly = conform(ring, required)
+                for (i in poly.indices) {
+                    val p = poly[i]
+                    val q = poly[(i + 1) % poly.size]
+                    mb.triangle(world(p, z0), world(q, z0), world(q, z1))
+                    mb.triangle(world(p, z0), world(q, z1), world(p, z1))
+                }
+            }
+        }
+        for ((z, rings, up) in caps) {
+            val (regions, whyR) = RegionBool.regionsOf(rings)
+            if (regions == null) return null to whyR
+            for (r in regions) {
+                val (tess, why) = tessellateRegion(r, tolMm)
+                if (tess == null) return null to why
+                val (tris, why2) = triangulate(tess)
+                if (tris == null) return null to why2
+                val (split, why3) = splitToRequired(tris, required)
+                if (split == null) return null to why3
+                for (t in split) {
+                    if (up) {
+                        mb.triangle(world(t.a, z), world(t.b, z), world(t.c, z))
+                    } else {
+                        mb.triangle(world(t.a, z), world(t.c, z), world(t.b, z))
+                    }
+                }
+            }
+        }
+        return mb.build() to null
+    }
+
+    /** [ring] with every corner of [required] that lies in the interior of one of its edges inserted. */
+    private fun conform(
+        ring: List<Vec2>,
+        required: List<Vec2>,
+    ): List<Vec2> {
+        val out = ArrayList<Vec2>(ring.size)
+        for (i in ring.indices) {
+            val a = ring[i]
+            val b = ring[(i + 1) % ring.size]
+            out.add(a)
+            val d = b - a
+            val len = d.length()
+            if (len <= RegionBool.EPS) continue
+            val inner = ArrayList<Pair<Double, Vec2>>()
+            for (p in required) {
+                val t = (p - a).dot(d) / (len * len)
+                if (t * len <= RegionBool.EPS || (1.0 - t) * len <= RegionBool.EPS) continue
+                if (abs(d.cross(p - a)) / len > RegionBool.EPS) continue
+                inner.add(t to p)
+            }
+            inner.sortWith(compareBy({ it.first }, { it.second.x }, { it.second.y }))
+            var last = a
+            for ((_, p) in inner) {
+                if ((p - last).length() > RegionBool.EPS) {
+                    out.add(p)
+                    last = p
+                }
+            }
+        }
+        return out
+    }
+
+    /**
+     * [tris] subdivided until no corner of [required] lies in the interior of a triangle edge.
+     *
+     * A point on an edge splits its triangle in two through the opposite corner; both halves keep the
+     * winding, the new interior edge is shared by exactly those two, and each split consumes one point —
+     * so this terminates and stays manifold. A [required] point on an *interior* diagonal is split on
+     * both sides, because the test is a function of the edge alone. The budget is a guard, not a policy:
+     * exceeding it refuses the mesh (OP-3) rather than emitting one with a T-junction in it.
+     */
+    private fun splitToRequired(
+        tris: List<Tri3>,
+        required: List<Vec2>,
+    ): Pair<List<Tri3>?, String?> {
+        val out = ArrayList<Tri3>(tris.size)
+        val pending = ArrayDeque<Tri3>()
+        pending.addAll(tris)
+        var budget = 4 * (tris.size + 1) * (required.size + 1)
+        while (pending.isNotEmpty()) {
+            val t = pending.removeFirst()
+            val hit = firstInteriorPoint(t, required)
+            if (hit == null) {
+                out.add(t)
+                continue
+            }
+            if (budget-- <= 0) return null to "a cap of the prism cannot be split to meet its neighbours"
+            val (edge, p) = hit
+            when (edge) {
+                0 -> {
+                    pending.addLast(Tri3(t.a, p, t.c))
+                    pending.addLast(Tri3(p, t.b, t.c))
+                }
+                1 -> {
+                    pending.addLast(Tri3(t.b, p, t.a))
+                    pending.addLast(Tri3(p, t.c, t.a))
+                }
+                else -> {
+                    pending.addLast(Tri3(t.c, p, t.b))
+                    pending.addLast(Tri3(p, t.a, t.b))
+                }
+            }
+        }
+        return out to null
+    }
+
+    /** The first (edge index, point) of [t] with a [required] corner strictly inside that edge. */
+    private fun firstInteriorPoint(
+        t: Tri3,
+        required: List<Vec2>,
+    ): Pair<Int, Vec2>? {
+        val ends = listOf(t.a to t.b, t.b to t.c, t.c to t.a)
+        for ((k, e) in ends.withIndex()) {
+            val d = e.second - e.first
+            val len = d.length()
+            if (len <= RegionBool.EPS) continue
+            for (p in required) {
+                val u = (p - e.first).dot(d) / (len * len)
+                if (u * len <= RegionBool.EPS || (1.0 - u) * len <= RegionBool.EPS) continue
+                if (abs(d.cross(p - e.first)) / len > RegionBool.EPS) continue
+                return k to p
+            }
+        }
+        return null
+    }
+
     // ---- provenance accessors (OP-8) ----
 
     /**
@@ -703,6 +1129,13 @@ object Geom3 {
                 when (which) {
                     SolidFace.TOP -> feature.sketch.plane.translated(feature.depth) to null
                     SolidFace.BOTTOM -> feature.sketch.plane.flipped() to null
+                }
+            // A prism's named faces are the same construction over its own extent (OP-22): the accessor
+            // survives a boolean, so a boss can still be sketched on a counterbored plate's top face.
+            is Feature3.Prism ->
+                when (which) {
+                    SolidFace.TOP -> feature.plane.translated(feature.maxZ) to null
+                    SolidFace.BOTTOM -> feature.plane.translated(feature.minZ).flipped() to null
                 }
             // Deliberately refused rather than guessed: a revolve's end caps are planes too, but they
             // are *rotated* frames, and naming them TOP/BOTTOM would invent a convention this slice has

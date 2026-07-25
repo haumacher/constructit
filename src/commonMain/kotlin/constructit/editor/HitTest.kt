@@ -124,7 +124,7 @@ object HitTest {
             // same geometry, so what looks pickable is pickable. Its mesh is not consulted: there is no
             // 3D picking in this slice, and a 2D distance to a projected mesh would depend on the 3D camera.
             is SolidValue ->
-                v.solid.feature.sketch.regions
+                v.solid.feature.footprint
                     .flatMap { r -> r.outer.elements + r.holes.flatMap { it.elements } }
                     .minOfOrNull { distToPiece(world, it) }
             else -> null
@@ -225,7 +225,7 @@ object HitTest {
                     v.region.holes.any { h -> h.elements.any { pieceMeets(it, lo, hi) } }
             // the same footprint hint the pick uses, so a marquee takes what it visibly covers
             is SolidValue ->
-                v.solid.feature.sketch.regions.any { r ->
+                v.solid.feature.footprint.any { r ->
                     r.outer.elements.any { pieceMeets(it, lo, hi) } ||
                         r.holes.any { h -> h.elements.any { pieceMeets(it, lo, hi) } }
                 }

@@ -45,7 +45,8 @@ first-class goal and the current implementation focus.
   i.e. one offset region around the path (mitred corners, end caps, a ring where the path closes),
   with **openings** (doors/windows) as parametric intervals carrying position, width, sill and head.
   In plan the wall stays whole and the gap is drawn as the convention it is — faces broken, jambs
-  shown — so the same description also feeds a solid later.
+  shown — while *Cut openings* turns the same description into the 3D cut: one subtracted box per
+  opening, sill to head, following the parameters live.
 - **Browser canvas** — an interactive HTML5-canvas editor; the engine is pure Kotlin shared between
   the JVM and the browser.
 
@@ -69,8 +70,13 @@ contributes only the GL calls, using the very same projection matrices.
 Solids are built by construction too: an outline or a wall footprint plus a depth or a sweep angle
 gives a watertight, manifold mesh, which is a terminal **sink** — render/print/export only, never
 lifted back to analytic geometry, while measurements taken *from* it may drive new construction.
-Mesh booleans (Manifold) and mesh export are next. See [`DESIGN.md`](DESIGN.md) for the full design
-record and open questions.
+
+**Booleans** (union / subtract / intersect) are **exact** for solids extruded along the same axis —
+counterbores, pockets, wall openings, stacked storeys — because that case decomposes into a stack of
+2D region booleans rather than into mesh surgery: no coplanar-face epsilon, no repair pass, and a
+result that is itself a legal operand of the next boolean. Anything else (a revolve, a future imported
+mesh) is **refused with a reason** rather than approximated; general booleans arrive with Manifold.
+Mesh export is next. See [`DESIGN.md`](DESIGN.md) for the full design record and open questions.
 
 ## Build & run
 
@@ -102,9 +108,9 @@ local vertex dragging, closeable rectilinear loops, and path endpoints that weld
 attach to lines — all solver-free. 72 headless tests pass and every feature was verified live
 in-browser.
 
-Planned next: wall-to-wall junction cleanup, edge-length readouts, dimensions/annotations,
-delete + undo/redo + save/load, a user-defined macro (custom-tool) UI, and the 3D layer
-(extrude/revolve → mesh booleans).
+Planned next: wall-to-wall junction cleanup, footprint accessors for dimensioning and snapping, a
+user-defined macro (custom-tool) UI, mesh export (STL/3MF), and the showcases that drive the rest
+(gear, floor plan → house, spare part, papercraft net).
 
 ## Documentation
 

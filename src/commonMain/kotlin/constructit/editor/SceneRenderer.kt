@@ -107,11 +107,11 @@ object SceneRenderer {
                     }
                 }
                 // A solid's home is the 3D view; in plan it leaves a **footprint hint** — the boundary
-                // of the sketch it was made from, drawn light (OP-17). Not a projection of the mesh: a
+                // of the areas its feature shows in plan, drawn light (OP-17). Not a projection of the mesh: a
                 // shaded or hidden-line view is a *chosen* projection, which is the 3D view's job, and
                 // the hint is what makes the solid pickable here — hence selectable and deletable in
                 // the one view that has picking.
-                is SolidValue -> drawSketchHint(v, cam, target, style)
+                is SolidValue -> drawFootprintHint(v, cam, target, style)
                 is PointSetValue -> v.set.points.forEach { target.dot(cam.worldToScreen(it), POINT_PX, style.stroke) }
                 // a dimension's value is a scalar (OP-4), so what is drawn is the graphic it prescribes
                 is ScalarValue -> el.annotation?.let { drawDimension(it, ev, cam, target, style) }
@@ -194,20 +194,22 @@ object SceneRenderer {
     }
 
     /**
-     * A solid's footprint hint: the loops of the sketch it was extruded or revolved from.
+     * A solid's footprint hint: the loops of whatever its feature shows in plan (`Feature3.footprint`) —
+     * the sketch it was swept from, or, for a boolean, the outline of every slab of the prism, so a
+     * counterbore and a cut opening are visible in plan without inventing a projection (OP-22).
      *
      * The sketch's own 2D coordinates are used directly, which is exact **because the sketch plane is
      * the world XY plane** in this slice (OP-17) — the only plane the extrude/revolve tools offer. When
      * sketch-on-face lands, this becomes a projection through the plane and the hint stops being the
      * region itself; the cut is recorded in DESIGN.md.
      */
-    private fun drawSketchHint(
+    private fun drawFootprintHint(
         v: SolidValue,
         cam: Camera,
         target: DrawTarget,
         style: Style,
     ) {
-        for (region in v.solid.feature.sketch.regions) {
+        for (region in v.solid.feature.footprint) {
             drawChain(region.outer.elements, cam, target, style)
             for (h in region.holes) drawChain(h.elements, cam, target, style)
         }

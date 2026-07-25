@@ -32,9 +32,11 @@ import constructit.dsl.RegionRef
 import constructit.dsl.RoundedRectArgs
 import constructit.dsl.ScalarRef
 import constructit.dsl.SegmentRef
+import constructit.dsl.SolidRef
 import constructit.dsl.instance
 import constructit.dsl.roundedRect
 import constructit.dsl.valueOf
+import constructit.geom.BoolOp
 import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.ProfileElement
@@ -2296,6 +2298,76 @@ class Document {
         val line = carrierLine(axis)
         val ref = cx.revolve(cx.sketchOn(cx.planeXY(), region), cx.lineOrigin(line), cx.lineDirection(line), angle)
         return add(ref, ElementKind.SOLID, Styles.SOLID)
+    }
+
+    // ---- booleans between solids (OP-22) ----
+
+    /**
+     * Combine the solids [a] and [b] with [kind] into one new solid (OP-22).
+     *
+     * One op node, two solid inputs: the result is an ordinary dependent of both operands, so deleting
+     * either takes it with them, and it is itself a legal operand of the next boolean. Whether the two
+     * are actually prismatic along a common axis is *not* checked here — it is a question about values,
+     * so it belongs inside `compute`, where a revolve operand makes the node invalid **with a reason**
+     * that names Manifold (OP-9) and heals if the geometry changes (OP-3).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun combineSolids(
+        a: Element,
+        b: Element,
+        kind: BoolOp,
+    ): Element? {
+        if (a.kind != ElementKind.SOLID || b.kind != ElementKind.SOLID || a === b) return null
+        val ra = a.ref as SolidRef
+        val rb = b.ref as SolidRef
+        val ref =
+            when (kind) {
+                BoolOp.UNION -> cx.union(ra, rb)
+                BoolOp.SUBTRACT -> cx.subtract(ra, rb)
+                BoolOp.INTERSECT -> cx.intersect(ra, rb)
+            }
+        return add(ref, ElementKind.SOLID, Styles.SOLID)
+    }
+
+    /**
+     * Cut every opening of a wall out of the solid [solidEl] (OP-21's 3D half, by way of OP-22): one box
+     * per interval — width and position along the leg, the wall's full thickness across it, sill to head
+     * in z — subtracted in one chain, giving **one** new solid.
+     *
+     * Each box is wired to the interval's own live parameters, so dragging or typing a position, a width,
+     * a sill or a head moves the cut; the wall's carrier does too. What is *structural* is how many
+     * openings there are: the count decides how many nodes exist, exactly as an array's count does, so an
+     * opening added afterwards does not retro-cut and the tool is simply run again (see *Structural count*
+     * in DESIGN.md). Deleting an opening does take the cut with it — a delete replays the surviving
+     * script, so the chain is rebuilt with one box fewer.
+     *
+     * The **first** thick path the solid depends on is the one cut, which is the whole of it for a solid
+     * extruded from one wall. A solid fused from two walls would only get the first wall's openings — run
+     * the tool on each wall's own solid before fusing them, which is also the cheaper construction.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun cutOpenings(solidEl: Element): Element? {
+        if (solidEl.kind != ElementKind.SOLID) return null
+        val tp =
+            thickPaths.firstOrNull { dependsOn(solidEl.ref.node, it.footprint.ref.node, HashSet()) }
+                ?: return null
+        if (tp.intervals.isEmpty()) return null
+        var cut = solidEl.ref as SolidRef
+        for (iv in tp.intervals) {
+            val region =
+                cx.intervalFootprint(
+                    tp.vertices,
+                    tp.thickness,
+                    tp.closed,
+                    tp.justification,
+                    iv.legIndex,
+                    iv.position,
+                    iv.width,
+                )
+            val box = cx.extrude(cx.sketchOn(cx.planeOffset(cx.planeXY(), iv.sill), region), cx.sub(iv.head, iv.sill))
+            cut = cx.subtract(cut, box)
+        }
+        return add(cut, ElementKind.SOLID, Styles.SOLID)
     }
 
     /** The named entry driving [ref] — every scalar a tool consumes came from the panel. */

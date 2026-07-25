@@ -1240,9 +1240,10 @@ bbox). **3D walls are a later application of the same machinery, not the proof o
 ### Implementation status (as built — 3D engine core)
 
 The engine half of the seam ships (`geom/Geom3.kt`, three value types in `core/Model.kt`, the
-`Tier 5` ops in `dsl/Construction.kt`, `SolidTest`). All three slices are reachable end to end, minus
-the counterbore — booleans are the next task. At the time this was written there was no UI; the tools
-and the viewport followed in the next slice (below), so nothing here had to be revisited.
+`Tier 5` ops in `dsl/Construction.kt`, `SolidTest`). All three slices are reachable end to end; the
+counterbore that completes slice 1 followed with the booleans (OP-22, *Exact prismatic booleans*) and
+`PrismBooleanTest` builds it. At the time this was written there was no UI; the tools and the viewport
+followed in the next slice (below), so nothing here had to be revisited.
 
 - **Types.** `Vec3`; `Plane3(origin, u, v)` (orthonormal, `normal = u×v`, with `translated`/`flipped`);
   `Sketch3(plane, regions)`; `Feature3.Extrusion` / `Feature3.Revolution` — the *analytic* description;
@@ -1299,7 +1300,9 @@ and the viewport followed in the next slice (below), so nothing here had to be r
   stepped shaft: 2.6e-3 under `πr²h`, asserted `< 5e-3` and asserted to be *under*). A diameter across a
   revolve's axis is short by up to twice the chord tolerance.
 - **Cuts (whole capabilities, refused rather than approximated):**
-  - **Booleans** — the counterbore of slice 1, and therefore slice 1's last step. The next task.
+  - **Booleans** — since resolved and built for the same-axis prismatic case, which is what the
+    counterbore needed: see **OP-22**. General booleans still wait for Manifold (OP-9), and a
+    non-prismatic operand is refused with a reason that says so.
   - **`facePlane` on a revolve** is refused with a reason: a partial revolve's end caps *are* planes, but
     they are rotated frames and naming them `TOP`/`BOTTOM` would invent a convention nothing needs yet.
   - **Negative or zero extrude depth** is refused (a direction flip is a real feature, but it inverts
@@ -1408,6 +1411,171 @@ booleans — exact + provenance, measurable, STEP-exportable later) and *mesh-on
 never lifts back to analytic *as geometry*). The **strong type system (OP-5)** enforces the
 boundary: `Solid`/`Face`/`Edge` (analytic) are distinct from `Mesh`; no mesh→analytic
 *geometry* lift. (Scalars measured from a mesh may still feed forward — see below.)
+
+### Exact prismatic booleans (OP-22 — RESOLVED)
+
+**Decision: booleans between solids extruded along the *same axis* are computed here and now, and
+**exactly**; every other boolean is refused with a reason and waits for Manifold (OP-9).**
+
+The reasoning is the mirror image of OP-9's. General mesh CSG — BSP splitting, then a stitch — *cannot
+honestly keep the watertightness guarantee* in floating point: coplanar faces have to be classified by an
+epsilon, and every split leaves T-junction candidates behind, so a "manifold" result is a hope with a
+repair pass behind it. That difficulty is exactly why Manifold exists and why OP-9 already names it as
+the production engine. But what the showcases need *now* is a narrow and very common case:
+
+| need | operands |
+|---|---|
+| **counterbore / pocket / bore** (OP-17 slice 1) | a cylinder into a plate |
+| **wall openings** (OP-21's 3D half) | a box through a wall |
+| **storey and boss stacking** | prisms at different heights |
+
+All three are booleans between prisms **along one axis**. For those there is nothing to approximate: the
+answer decomposes into a stack of 2D problems, and the 2D problems are polygon booleans.
+
+#### The prismatic solid — the form that is closed under the operation
+An extrusion generalises to a **prism**: `Prism(plane, slabs)` with `Slab(regions, z0, z1)`, the height
+ranges disjoint and ascending along the plane's normal. A plain extrude is the one-slab case. The point of
+the generalisation is **closure**: the union, intersection or difference of two same-axis prisms is another
+prism, so a boolean's result is an operand of the next one and a counterbored, pocketed, lidded part is
+just a chain of ordinary nodes.
+
+A plain `extrude` nevertheless keeps its **analytic** `Extrusion` form (its arcs are exact circles); the
+prismatic reading is derived only when a boolean asks for it. That is where the tessellation happens, and
+it is deliberate — see *Where the exactness ends*.
+
+#### The slab algebra
+1. Take every slab boundary of **either** operand as a z-breakpoint (welded at `Z_EPS`).
+2. On each resulting z-interval, each operand contributes exactly one slab or none — because the
+   breakpoints are the *combined* ones, a slab either spans the whole interval or misses it. Apply the 2D
+   kernel to those two areas. This is the whole boolean.
+3. Adjacent output slabs whose areas come out **identical** merge back. Two storeys with one footprint are
+   therefore a single shaft with no floor slab inside it, not two boxes touching.
+4. Mesh: side walls per slab from its region boundaries; horizontal caps at every level, where the
+   up-facing faces are `areaBelow − areaAbove` and the down-facing ones `areaAbove − areaBelow`. **The
+   counterbore's annular shoulder is not a case in this code** — it is what that subtraction comes to.
+   Where the two areas agree the difference is empty and there is no face at all.
+
+"Same axis" means **parallel normals**, either direction; the frames are otherwise free, because the map
+from one in-plane frame to the other is then a rigid motion of the 2D coordinates and preserves the
+polygons exactly (an anti-parallel normal swaps the heights and mirrors the rings). So a pocket sketched
+on a *flipped* face plane is an ordinary operand.
+
+#### The 2D kernel — an arrangement, then a winding classification
+`geom/RegionBool.kt`. Not Greiner-Hormann (it fails on shared edges) and not a Martinez-Rueda sweep
+(whose status flags are precisely the part that is hard to get right in the degenerate cases): instead the
+brute-force form of the same idea, in four deterministic passes.
+
+1. **Weld** every input vertex into one table on an `EPS` lattice, so "the same point" is one integer.
+2. **Arrange**: split every edge wherever another crosses or touches it, collinear overlaps included, into
+   *fragments* whose interiors meet nothing. Each **undirected** fragment is kept once however many
+   operands contributed it — which is what makes a shared edge behave instead of leaving a zero-width slit.
+3. **Classify** each fragment by asking which side is material, per operand, at a probe point *provably
+   inside a face of the arrangement*: offset from the fragment's midpoint by less than half the distance to
+   the nearest non-collinear edge. Inside-ness is the **nonzero winding rule**, which is exactly OP-14's
+   convention (outer counter-clockwise, holes clockwise). A fragment survives iff the operation's result
+   differs across it, oriented material-on-the-left. No probe is ever taken *on* a boundary.
+4. **Chain**: at a vertex, the next fragment is the first met rotating **clockwise** from the reverse of the
+   arrival direction. That separates a pinch point into two loops rather than one figure-eight — which
+   matters downstream, since a self-touching loop is what makes a triangulated cap leak. Loops then nest
+   into `Region(outer, holes)` by containment, tested at an *edge midpoint* (two loops of a valid area may
+   share isolated points but never a stretch of edge, so no tolerance is needed).
+
+#### T-junctions: the one subtlety, and a defect it uncovered
+A horizontal boundary may **cross** a vertical one — a boss overhanging the plate it sits on — which puts a
+cap corner in the middle of a wall edge. That is a T-junction: a hole in the shell that no triangle count
+reveals. So every polygon is made to **conform** to one global corner set: wall edges are split at it, and
+cap triangles are subdivided at it *after* triangulation (a point on a triangle edge splits that triangle
+through the opposite corner; both halves keep the winding and the new interior edge is shared by exactly
+those two).
+
+Doing this uncovered a real defect in the existing triangulator: `earClip` accepted an ear whose **diagonal
+passed through another corner**, which both leaves a T-junction and makes the remaining polygon touch
+itself, after which the clipper produces overlapping garbage. It had gone unnoticed because no test region
+had a corner on a diagonal — a plus-shaped union has one immediately. `extrude` had the same bug; the fix
+(count the ear triangle's *boundary* as containing a corner) is in the triangulator, not in the booleans.
+
+#### Epsilons, stated
+- **`RegionBool.EPS = 1e-7 mm`** — welding, collinearity, "does this point lie on that edge". Five orders
+  of magnitude below the 0.02 mm tessellation tolerance, so it can never merge two genuinely distinct
+  tessellation points, and far above the ~1e-13 mm noise of a line-line intersection on drawing-sized
+  coordinates, so a crossing computed twice from two different edges lands on one vertex.
+- **`RegionBool.PARALLEL_SIN = 1e-9`** — below this sine of the angle between two edges they are read as
+  parallel. The positional error of an intersection grows like `noise / sin`, so at 1e-9 a crossing is
+  still located to about one `EPS`. Two boundaries crossing at a *shallower* angle are not split; that is
+  the one honest hole in the arrangement, and it surfaces as a refusal, never as a leak.
+- **`Geom3.Z_EPS = 1e-7 mm`** — heights closer than this are one level of the stack.
+- Predicates are written in **millimetres** (distance to a segment, distance along an edge), never as a
+  threshold on a raw cross product, so no epsilon silently changes meaning with the size of the drawing.
+  The classification probe offset is *derived from the local geometry* rather than being a constant.
+- Determinism: insertion-ordered vertex ids, explicit sorts, a canonical output form (each ring rotated to
+  its lexicographically smallest corner, rings then sorted). Nothing iterates a hash map for anything that
+  reaches the result — which is also what makes the slab merge a structural comparison rather than a shape
+  match.
+
+#### Degenerate classes — covered, and refused
+**Covered** (each with its own test): shared/collinear edges (side-by-side squares unite with no slit);
+touching corners (two loops, not a figure-eight); a hole created by subtraction; a cut reaching the
+boundary, which is a notch and not a hole; a cut right through, giving two disjoint regions; an operand
+that already has a hole; an area minus itself (empty); coplanar interfaces (a boss on a plate's top face);
+a horizontal boundary crossing a vertical one; and a counterbore whose deeper radius swallows the bore's.
+
+**Refused with a reason** (OP-3: the node is invalid, hidden, and heals) — never approximated:
+- an operand that is **not prismatic** (a revolve today, an imported mesh later): *"…general booleans
+  arrive with Manifold (OP-9)"*;
+- two prisms with **no common axis**;
+- a result that is **empty** — subtracting everything leaves no solid, and saying so is more useful than a
+  solid with no material in it;
+- an arrangement that comes out **inconsistent** (an unbalanced vertex, a chain that will not close, a hole
+  belonging to no boundary, two boundaries closer together than `EPS`, a cap that cannot be split to meet
+  its neighbours). These are the failure modes of the epsilons above, and each one refuses rather than
+  emitting a shell with a crack in it.
+
+#### Where the exactness ends
+Curved pieces are tessellated **before** the kernel runs, so a boolean's boundary is an *approximated*
+curve from then on — the 2D analog of the mesh-is-a-sink rule, exactly as OP-15 records for spline offsets.
+An exact analytic circle stays exact until it meets a boolean. What "exact" means for the boolean itself is
+therefore precise: the result is the exact boolean of the *tessellated* operands, and a prism's volume is
+its cap area times its height to the last bit. Tests assert both — against the polygons the mesh is made
+of (1e-6 mm³) and against the analytic part (within what the 0.02 mm chord tolerance explains, and in the
+direction it must err: an inscribed bore removes slightly too little, so a bored part comes out heavy).
+
+### Implementation status (as built — booleans, and the openings they cut)
+
+- **The kernel**: `geom/RegionBool.kt` (`BoolOp`, `combine`, `regionsOf`, `windingAt`, `canonical`) with
+  `RegionBoolTest` naming one degenerate class per test. **The solid algebra**: `Slab`, `Feature3.Prism`,
+  `Geom3.prismatic/boolean/prismMesh` plus the conforming passes, with `PrismBooleanTest`.
+- **Three ops, one node each**: `union`, `subtract`, `intersect` in `dsl/Construction.kt` Tier 5. All of the
+  value-dependent work is inside `compute` (OP-21's rule), so a parameter edit recomputes and creates
+  nothing — asserted, as everywhere else, through `Construction.nodesCreated`.
+- **`Feature3.footprint`** replaced the three places that reached into `feature.sketch.regions`: a prism has
+  no single sketch, but every feature can say what its plan shows, which is what the 2D pick, the marquee
+  and the footprint hint actually want. A boolean's hint is the outline of *every* slab, so the cut is
+  visible in plan without inventing a projection.
+- **Four `ToolDef`s, no controller code**: *Union*, *Subtract*, *Intersect solids* (two `SOLID` picks each —
+  one new `SlotKind`, which is only a filter since solids were already pickable by their footprint hint) and
+  *Cut openings*. They ride the generic `tool` step, so save/load/undo/delete came free and
+  `BooleanToolTest` asserts the byte-equal round trip. `facePlane` works through a boolean, so
+  sketch-on-face composes with it (the counterbore's plane is *the plate's top face, lowered*).
+- **Cut openings** (OP-21's 3D half): click a solid extruded from a thick path's footprint and every
+  interval on that path becomes a subtracted box — position and width along the leg, the wall's **full
+  thickness** across it (so the box's side faces are *coplanar* with the wall's, the degenerate case the
+  kernel is built for), sill to head in z — chained into **one** new solid. Every box is wired to the
+  interval's own parameters, so dragging or typing a position, width, sill or head moves the cut, and the
+  wall's carrier does too.
+  - The **number of openings is structural** (the array rule): it decides how many nodes exist, so an
+    opening added afterwards does not retro-cut and the tool is simply run again. Deleting one *does* take
+    its box with it, because a delete drops the step and replays the surviving script (OP-18) — the chain
+    is rebuilt with one box fewer, with no special case anywhere.
+- **Cuts in this slice**: no non-axis booleans (above); no fillets/chamfers in 3D (OP-9 has them as explicit
+  constructions — sweep a profile along a provenance-known edge, then boolean, which needs sweeps first); no
+  mesh export yet; the boolean's own faces are not nameable (`facePlane` gives a prism its top and bottom,
+  but there is no accessor for "the shoulder"), and the tessellation of a boolean's operand is not shared
+  between two booleans over the same solid — each recomputes it.
+- **Known cost**: the 2D arrangement is **O(E²)** in boundary edges (a plain double loop), which is
+  immeasurable at the sizes this engine produces — a bored plate is a few hundred edges — but would matter
+  for a thousand-edge operand such as a tessellated involute gear cut into a plate. A sweep-line version
+  fits behind the same signature; the brute-force one was chosen because the degenerate-case honesty above
+  is the part that is hard, and it is much easier to get right without a sweep's status flags.
 
 ### Representation families considered (background)
 Three broad families (see OP-9 decision above):
@@ -1567,8 +1735,22 @@ Three broad families (see OP-9 decision above):
       (an outline or a footprint), riding the generic `tool` step, plus an orbiting shaded 3D view
       (`Camera3`/`Scene3`/`Painter3`/`Viewport3` in `commonMain`, one WebGL program in `jsMain`). See
       *Implementation status (as built — the seam's tools and the viewport)* and *The 3D viewport*.
-      Cut so far: booleans (the counterbore), 3D transforms, 3D picking, any sketch plane other than
-      world XY, and mesh export (STL/3MF).
+      Cut so far: 3D transforms, 3D picking, any sketch plane other than world XY, and mesh export
+      (STL/3MF). Booleans — the counterbore — are no longer cut: see OP-22.
+- [x] **OP-22 Booleans between solids** — RESOLVED: booleans between prisms **along one axis** are
+      computed **exactly**, now; every other boolean is refused with a reason and waits for Manifold
+      (OP-9). General mesh CSG cannot honestly keep the watertightness guarantee in floating point
+      (coplanar faces classified by epsilon, T-junctions after every split), which is why Manifold
+      exists — but the counterbore (OP-17 slice 1), the wall opening (OP-21) and storey/boss stacking
+      are all same-axis, and for those the answer decomposes into z-breakpoints × **2D region
+      booleans** with nothing left to approximate. An extrusion generalises to a `Prism(plane, slabs)`,
+      the form that is **closed** under the operation, so results compose; horizontal caps are the
+      region difference between the slabs above and below (the counterbore's shoulder is not a case in
+      the code, it is what that subtraction *is*). The 2D kernel is an **arrangement + nonzero-winding
+      classification + clockwise chaining**, deterministic, with epsilons stated in millimetres; every
+      degenerate class it cannot resolve is **refused**, never leaked. Curves are tessellated first, so
+      a boolean's boundary is an *approximated* curve — OP-15's rule, one dimension down. See *Exact
+      prismatic booleans*.
 
 ## Prior art to keep in mind
 
@@ -1766,6 +1948,33 @@ Three broad families (see OP-9 decision above):
   tool labels) is what made justification, sill and head fall out as ordinary properties instead of
   wall-specific extras. 178 headless tests pass, plus two new plan goldens; verified in a real browser
   (screenshots under `tmp/`).
+- **Session 3 — exact prismatic booleans (OP-22).** Resolved and built the boolean layer by *narrowing
+  the problem until it stopped being approximate*: general mesh CSG cannot keep the watertightness
+  guarantee honestly (which is why OP-9 names Manifold), but every boolean the showcases need — a
+  counterbore, a wall opening, a storey stack — is between prisms on one axis, and that case is exact.
+  Six things worth recording. (1) The right move was choosing the **representation**, not the algorithm:
+  once an extrusion generalises to a stack of slabs, prisms are *closed* under the operation and the
+  boolean is z-breakpoints × 2D region booleans. Nothing in the code special-cases a counterbore; its
+  annular shoulder is simply what "the area below minus the area above" comes to at that level. (2) The
+  2D kernel wanted **brute force over cleverness**: an arrangement plus a winding test at a probe point
+  provably inside a face classifies every degenerate configuration uniformly — shared edges, touching
+  corners, a hole reaching the boundary — where a sweep's status flags are exactly the part that is hard
+  to get right. (3) The one genuine subtlety is **T-junctions**, and it is not in the booleans: a
+  horizontal boundary crossing a vertical one puts a cap corner in the middle of a wall edge. Making
+  every polygon conform to one global corner set fixed it — and uncovered a **latent defect in the
+  existing ear clipper** (it accepted an ear whose diagonal passed through another corner, which
+  `extrude` had suffered from too, unnoticed because no test region had a corner on a diagonal).
+  (4) Epsilons are stated in **millimetres** and reasoned about, not tuned: 1e-7 mm for "the same point"
+  (five orders below the tessellation tolerance, four above intersection noise), 1e-9 for the sine below
+  which two edges read as parallel — and every configuration those thresholds cannot resolve **refuses**
+  with a reason instead of emitting a shell with a crack in it. (5) *Cut openings* made OP-21's 3D half
+  fall out with no new concepts: one box per interval, wired to the interval's live parameters, with the
+  opening **count** structural (the array rule) — and because a delete replays the surviving script,
+  deleting an opening rebuilds the chain with one box fewer, needing no cascade of its own.
+  (6) One design note that reads backwards but is right: the 2D kernel now exists, and wall-to-wall
+  **junctions still should not use it** — a boolean is the honest answer for a solid, while a unioned
+  footprint is an opaque area whose corners the user can no longer grab (OP-20). 362 headless tests
+  green (35 new), and the browser E2E now cuts an opening in a real Chrome.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -1882,6 +2091,13 @@ are not needed: a junction is already expressible **by construction**, trimming 
 the neighbour's face line, which is the same `intersectLL` that makes a mitre. Prefer that. (This is
 also consistent with OP-20 owning the freedom where things meet.)
 
+> **Correction (OP-22):** a 2D region boolean kernel now *does* exist — the 3D booleans needed one, and
+> it turned out to be the small part of that work rather than a solver-adjacent detour. The preference
+> above still stands for a *junction*, and for the same reason as before: trimming by construction keeps
+> the corner's freedom addressable (OP-20) and the drawing editable, whereas a unioned footprint is one
+> opaque area whose corners nothing can grab. A boolean is the honest answer for a **solid**, not for a
+> plan the user still has to edit.
+
 ### Ordering — and an honest correction
 Reworking the wall onto the result layer is worth doing **before** the hand-tracing *Outline* tool:
 the wall needs rework regardless, it produces regions programmatically (so it exercises OP-14 with no
@@ -1937,8 +2153,9 @@ thick paths meeting still overlap, which is visible and known. Per OP-6 **access
 and wall-to-wall snapping will need. One capability was traded away with the loose face segments: a
 wall face is no longer a `SEGMENT` element, so it cannot be snapped or attached to. That is the correct
 direction (OP-21's whole point is that offset lines are not the drawing), and the replacement is those
-accessors, not the old bundle. **3D** (`extrude(footprint, height)` minus one box per interval, sill→head)
-is untouched — the description it needs is now in place.
+accessors, not the old bundle. **3D is now built** (OP-22): the *Cut openings* tool turns each interval
+into a subtracted box, sill→head, over the wall's full thickness, wired to the interval's own parameters —
+`extrude(footprint, height)` minus one box per interval, exactly as designed here.
 
 ### Build order (MVP-first)
 1. Directions + project frame + ortho input (fast axis-aligned drawing).
@@ -2055,8 +2272,8 @@ Then 3D walls = extrude + boolean.
   fully driven vertex is no longer grabbable (dragging it was inert while it stole the grab from the
   geometry that drives it).
 - **Next (architectural):** wall-to-wall junction cleanup (T/L merges — two thick paths meeting still
-  overlap), footprint accessors for dimensioning and wall-to-wall snapping (OP-6), and 3D walls
-  (extrude + boolean-subtract each interval, sill→head; the parameters are already carried). Note the
-  ordering decision in OP-17:
-  3D walls are a *later application* of the seam, not its proof of concept — the first 3D slices are
-  mechanical parts, because a wall exercises only the degenerate half of the seam.
+  overlap) and footprint accessors for dimensioning and wall-to-wall snapping (OP-6). **3D walls are
+  done** — extrude plus a boolean-subtracted box per interval, sill→head (OP-22, the *Cut openings*
+  tool). Note the ordering decision in OP-17: 3D walls were a *later application* of the seam, not its
+  proof of concept — the first 3D slices are mechanical parts, because a wall exercises only the
+  degenerate half of the seam.

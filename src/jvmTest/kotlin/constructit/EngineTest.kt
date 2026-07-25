@@ -3,12 +3,14 @@ package constructit
 import constructit.core.Evaluator
 import constructit.dsl.Construction
 import constructit.dsl.isValid
+import constructit.dsl.point
 import constructit.dsl.scalar
 import constructit.units.cm
 import constructit.units.deg
 import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /** Core engine behaviours: units/dimensions (OP-7), measurements (OP-4), invalid propagation (OP-3). */
 class EngineTest {
@@ -55,5 +57,21 @@ class EngineTest {
         val pt = c.select(pair, +1)
         assertFalse(Evaluator().isValid(circle))
         assertFalse(Evaluator().isValid(pt), "invalidity must propagate transitively (OP-3)")
+    }
+
+    /**
+     * Regression: evaluation memoizes by node id (OP-5), so a repeated name hint used to alias two
+     * nodes — a parameter named like an existing free point evaluated to the point's cached value
+     * (a PointValue where a ScalarValue was needed). Ids must be unique no matter what callers name
+     * things.
+     */
+    @Test
+    fun aRepeatedNameHintDoesNotAliasNodes() {
+        val c = Construction()
+        val p = c.freePoint("dp", 1.mm, 2.mm)
+        val s = c.parameter("dp", 20.mm)
+        assertTrue(p.node.id != s.node.id, "same hint, distinct ids")
+        assertClose(Evaluator().scalar(s).mm, 20.0)
+        assertClose(Evaluator().point(p).x, 1.0)
     }
 }

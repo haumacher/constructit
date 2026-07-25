@@ -157,6 +157,19 @@ class BrowserE2ETest {
                 "the extrude tool should add a solid to the tree",
             )
 
+            // ---- an opening, then Cut openings (OP-22): the boolean reached from the real shell ----
+            page.fill("#p-name", "w")
+            page.fill("#p-value", "20")
+            page.click("#p-add")
+            page.click("#tool-opening")
+            page.mouse().click(wx + 2.0, (wy1 + wy2) / 2) // on the wall itself
+            page.click("#tool-cutopenings")
+            page.mouse().click(wx + 20.0, (wy1 + wy2) / 2) // the solid, by its footprint hint
+            assertTrue(
+                page.querySelectorAll("#tree .item").map { it.textContent() }.count { it.startsWith("solid") } == 2,
+                "Cut openings should add one more solid: the wall with its opening subtracted",
+            )
+
             page.click("#v-3d")
             page.waitForSelector("#canvas3:visible")
             val blank = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String

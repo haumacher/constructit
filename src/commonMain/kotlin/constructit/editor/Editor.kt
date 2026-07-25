@@ -1440,6 +1440,8 @@ class Editor(
                 // the seam's slot (OP-17): a traced outline or a thick path's footprint, both of which
                 // bound an area — the coercion between them is the document's, not the pick's
                 SlotKind.AREA -> pickElement(world) { it.isArea }
+                // the boolean slot (OP-22): a solid, picked in 2D by the footprint hint it draws
+                SlotKind.SOLID -> pickElement(world) { it.kind == ElementKind.SOLID }
                 SlotKind.SIDE -> true // captures the click position only; creates nothing
             }
         // existing-only slots do NOT create anything on a miss — just hint and wait
