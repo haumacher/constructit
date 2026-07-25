@@ -87,23 +87,34 @@ class OrthoVertex(val ref: PointRef, var corner: OrthoCornerHandle, val ownAxis:
 class OrthoPath {
     val vertices = ArrayList<OrthoVertex>()
     val legs = ArrayList<Element>()
+
+    /**
+     * Axis per leg, kept beside [legs]. Held explicitly rather than derived from a vertex's introduced
+     * coordinate: that derivation assumed every leg was drawn forward, which a break does not honour
+     * when the leg's endpoints follow each other the other way round (a loop's closing leg).
+     */
+    val legAxes = ArrayList<Int>()
     var closed: Boolean = false
 
     /** One leg per vertex when closed, one fewer when open. */
     val legCount: Int get() = if (closed) vertices.size else (vertices.size - 1).coerceAtLeast(0)
 
-    /**
-     * Axis of leg [i] (from `vertices[i]` toward the next): 0 = horizontal, 1 = vertical. A vertex's
-     * own coordinate is the one its incoming leg introduced, so that leg's axis *is* the axis of
-     * that coordinate; the closing leg runs along the other axis.
-     */
-    fun legAxis(i: Int): Int = if (closed && i == vertices.size - 1) 1 - vertices.last().ownAxis else vertices[i + 1].ownAxis
+    /** Axis of leg [i] (from `vertices[i]` toward the next): 0 = horizontal, 1 = vertical. */
+    fun legAxis(i: Int): Int = legAxes[i]
 
     /** The vertex at each end of leg [i], in draw order. */
     fun legEnds(i: Int): Pair<OrthoVertex, OrthoVertex> = vertices[i] to vertices[(i + 1) % vertices.size]
 
     /** Index of the leg drawn as [el], or -1. */
     fun legIndexOf(el: Element): Int = legs.indexOfFirst { it === el }
+
+    /** The legs either side of leg [i], wrapping around a closed loop. */
+    fun neighbourLegs(i: Int): List<Int> =
+        if (closed) {
+            listOf((i - 1 + legCount) % legCount, (i + 1) % legCount).filter { it != i }
+        } else {
+            listOf(i - 1, i + 1).filter { it in 0 until legCount }
+        }
 }
 
 /** A gap in a wall leg: [position] = distance from the leg start, [width] along the leg. */
@@ -822,6 +833,7 @@ class Document {
         val v = addOrthoVertex(last, to) ?: return null
         path.vertices.add(v)
         path.legs.add(dragLeg(path, lastSegment()))
+        path.legAxes.add(v.ownAxis) // a leg drawn forward runs along the coordinate its far vertex introduced
         return v
     }
 
@@ -897,9 +909,10 @@ class Document {
      * bound-coordinate representation buys: the far endpoint's binding is **re-pointed** from the near
      * endpoint onto the new jog node. Sharing one node could not express this at all.
      *
-     * Refused on a **closing** leg: there the far endpoint is the one already following the near one,
-     * so the roles reverse, and the leg-axis bookkeeping derives a leg's axis from its later vertex —
-     * which that reversal would invalidate. Left out rather than made subtly wrong.
+     * Works in either binding direction, which is what makes a loop's **closing** leg breakable too:
+     * there the *near* endpoint is the one following, so the jog is introduced on that side instead and
+     * the roles simply mirror. (Leg axes are stored per leg for the same reason — deriving them from a
+     * vertex's introduced coordinate assumed every leg was drawn forward.)
      */
     fun breakOrthoLeg(
         path: OrthoPath,
@@ -920,31 +933,38 @@ class Document {
         nPos: Vec2,
     ): Boolean {
         if (legIndex < 0 || legIndex >= path.legCount) return false
-        if (path.closed && legIndex == path.vertices.size - 1) return false // the closing leg: see above
         val axis = path.legAxis(legIndex)
         val (a, b) = path.legEnds(legIndex)
         val perpA = if (axis == 0) a.corner.yNode else a.corner.xNode
         val perpB = if (axis == 0) b.corner.yNode else b.corner.xNode
-        // the far endpoint must be the one following the near one, so the near half keeps the existing
-        // master and the far half can be re-pointed onto the jog
-        if (perpB.boundTo !== perpA) return false
+        // One endpoint follows the other; the jog is introduced on the *following* side, so that side's
+        // binding can be re-pointed onto it while the followed side keeps whatever it already follows.
+        val farFollows = perpB.boundTo === perpA
+        if (!farFollows && perpA.boundTo !== perpB) return false
         val along = if (axis == 0) mPos.x else mPos.y
         val perp = if (axis == 0) nPos.y else nPos.x
 
-        // M introduces the along coordinate at the click and keeps following the master side;
-        // N introduces the jog — free, and equal to the master's value, hence zero length to begin with
-        val mAlong = scalarSource(along)
-        val mPerp = scalarSource(perp).also { it.boundTo = perpA }
-        val nAlong = scalarSource(along).also { it.boundTo = mAlong }
-        val nPerp = scalarSource(perp)
-        val m = if (axis == 0) orthoVertex(mAlong, mPerp, 0) else orthoVertex(mPerp, mAlong, 1)
-        val n = if (axis == 0) orthoVertex(nAlong, nPerp, 1) else orthoVertex(nPerp, nAlong, 0)
-        perpB.boundTo = nPerp // the far half follows the jog instead of the near half
+        // the vertex on the followed side keeps that binding and introduces the along coordinate at the
+        // click; the one on the following side introduces the jog — free, and equal to the followed
+        // value, hence zero length to begin with
+        val keeper = scalarSource(along) // introduces along
+        val keeperPerp = scalarSource(perp).also { it.boundTo = if (farFollows) perpA else perpB }
+        val jog = scalarSource(perp) // introduces the perpendicular freedom
+        val jogAlong = scalarSource(along).also { it.boundTo = keeper }
+
+        fun vertex(
+            alongNode: SourceNode,
+            perpNode: SourceNode,
+            ownAxis: Int,
+        ) = if (axis == 0) orthoVertex(alongNode, perpNode, ownAxis) else orthoVertex(perpNode, alongNode, ownAxis)
+        val m = if (farFollows) vertex(keeper, keeperPerp, axis) else vertex(jogAlong, jog, 1 - axis)
+        val n = if (farFollows) vertex(jogAlong, jog, 1 - axis) else vertex(keeper, keeperPerp, axis)
+        if (farFollows) perpB.boundTo = jog else perpA.boundTo = jog
         m.corner.isEndpoint = false
         n.corner.isEndpoint = false
         m.corner.legAnchor = if (axis == 0) a.corner.xNode else a.corner.yNode
-        n.corner.legAnchor = perpA
-        b.corner.legAnchor = nAlong // b's leg now starts at N
+        n.corner.legAnchor = if (farFollows) perpA else perpB
+        if (b.ownAxis == axis) b.corner.legAnchor = if (axis == 0) n.corner.xNode else n.corner.yNode
 
         remove(path.legs[legIndex])
         path.vertices.add(legIndex + 1, m)
@@ -952,69 +972,106 @@ class Document {
         path.legs[legIndex] = dragLeg(path, segment(a.ref, m.ref))
         path.legs.add(legIndex + 1, dragLeg(path, segment(m.ref, n.ref)))
         path.legs.add(legIndex + 2, dragLeg(path, segment(n.ref, b.ref)))
+        path.legAxes[legIndex] = axis
+        path.legAxes.add(legIndex + 1, 1 - axis) // the inserted jog runs across the leg it splits
+        path.legAxes.add(legIndex + 2, axis)
         return true
     }
 
     /**
-     * The interior leg of [path] shorter than [tol], if any — a jog the user has just dragged shut.
-     * Only interior legs qualify: collapsing an end leg would shorten the path rather than join two
-     * legs, which is a different edit.
+     * Whether leg [i] of [path] is a jog that has been flattened and can be joined away: shorter than
+     * [tol], interior (collapsing an end leg would shorten the path — a different edit), clear of a
+     * loop's closing leg, and separating two legs of one run.
      */
-    fun collapsedLegIndex(
+    fun canJoinLeg(
         path: OrthoPath,
+        i: Int,
         tol: Double,
-    ): Int? {
-        val ev = Evaluator()
-        for (i in 1 until path.legCount - 1) {
-            if (path.closed && i + 1 == path.legCount - 1) continue // would involve the closing leg
-            val seg = (ev.eval(path.legs[i].ref.node) as? EvalResult.Ok)?.value as? SegmentValue ?: continue
-            if ((seg.seg.b - seg.seg.a).length() <= tol) return i
-        }
-        return null
+    ): Boolean {
+        if (i < 1 || i + 1 >= path.legCount) return false
+        if (path.legAxis(i - 1) != path.legAxis(i + 1)) return false
+        val seg = (Evaluator().eval(path.legs[i].ref.node) as? EvalResult.Ok)?.value as? SegmentValue ?: return false
+        return (seg.seg.b - seg.seg.a).length() <= tol
+    }
+
+    /**
+     * The legs a drag of [el] can flatten: the perpendicular legs at the **ends of the dragged leg**,
+     * or the legs meeting at the dragged vertex.
+     *
+     * Only those. Dragging anything on a path used to consider every interior leg, so a jog left flat
+     * on purpose — a fresh break not yet pulled open — was joined away by an unrelated drag elsewhere
+     * on the same path.
+     */
+    fun collapseCandidates(el: Element): List<Pair<OrthoPath, Int>> {
+        legOf(el)?.let { (path, i) -> return path.neighbourLegs(i).map { path to it } }
+        val path = pathOf(el) ?: return emptyList()
+        val vi = path.vertices.indexOfFirst { it.ref === el.ref }
+        if (vi < 0) return emptyList()
+        return path.neighbourLegs(vi + 1).map { path to it }
     }
 
     /**
      * Collapse the zero-length leg [legIndex] of [path], joining the two legs it separated into one —
      * the join half of OP-19, and the exact inverse of [breakOrthoLeg]: the far endpoint's binding is
      * re-pointed off the jog and back onto what the near half already follows. Returns the merged leg.
+     *
+     * [keepPerp] is the perpendicular value the joined run should end up at — the **stationary** half's,
+     * so the section the user dragged snaps to what it was aimed at rather than dragging the untouched
+     * half over to meet it. Null keeps whatever the surviving node already holds.
      */
     fun joinCollapsedLeg(
         path: OrthoPath,
         legIndex: Int,
+        keepPerp: Double? = null,
     ): Element? {
         val leg = path.legs.getOrNull(legIndex) ?: return null
-        return recording("orthojoin", Arg.El(leg)) { joinCollapsedLegNow(path, legIndex) }
+        return recording("orthojoin", Arg.El(leg)) { joinCollapsedLegNow(path, legIndex, keepPerp) }
     }
 
     private fun joinCollapsedLegNow(
         path: OrthoPath,
         legIndex: Int,
+        keepPerp: Double?,
     ): Element? {
         if (legIndex < 1 || legIndex + 1 >= path.legCount) return null
-        if (path.closed && legIndex + 1 == path.legCount - 1) return null
         val axis = path.legAxis(legIndex - 1)
         if (path.legAxis(legIndex + 1) != axis) return null // not two legs of one run separated by a jog
         val a = path.vertices[legIndex - 1]
         val m = path.vertices[legIndex]
         val n = path.vertices[legIndex + 1]
-        val b = path.vertices[legIndex + 2]
+        val b = path.vertices[(legIndex + 2) % path.vertices.size] // wraps when the jog abuts the closing leg
         val perpOf = { c: OrthoCornerHandle -> if (axis == 0) c.yNode else c.xNode }
         val mPerp = perpOf(m.corner)
         val nPerp = perpOf(n.corner)
+        val aPerp = perpOf(a.corner)
         val bPerp = perpOf(b.corner)
-        val master = mPerp.boundTo ?: return null // the near half must already follow something
-        if (bPerp.boundTo !== nPerp) return null // the far half must follow the jog
-
-        bPerp.boundTo = master // the far half rejoins the near half's run; the jog is now unreferenced
+        // mirror of the break: whichever outer endpoint follows the jog is re-pointed at what the other
+        // side of the jog follows
+        val master: Node
+        if (bPerp.boundTo === nPerp && mPerp.boundTo != null) {
+            master = mPerp.boundTo!!
+            bPerp.boundTo = master
+        } else if (aPerp.boundTo === mPerp && nPerp.boundTo != null) {
+            master = nPerp.boundTo!!
+            aPerp.boundTo = master
+        } else {
+            return null
+        }
         b.corner.legAnchor = if (axis == 0) a.corner.xNode else a.corner.yNode
+        // land the joined run on the stationary half's value, so the dragged section moves to it. The
+        // binding direction alone would decide this, which is arbitrary: it happens to be right when the
+        // dragged half is the follower and wrong when it is the one being followed.
+        if (keepPerp != null) (master as? SourceNode)?.let { writableMaster(it)?.value = ScalarValue(Quantity.mm(keepPerp)) }
 
         listOf(path.legs[legIndex - 1], path.legs[legIndex], path.legs[legIndex + 1]).forEach { remove(it) }
         elementFor(m.ref)?.let { remove(it) }
         elementFor(n.ref)?.let { remove(it) }
         repeat(3) { path.legs.removeAt(legIndex - 1) }
+        repeat(3) { path.legAxes.removeAt(legIndex - 1) }
         repeat(2) { path.vertices.removeAt(legIndex) }
         val merged = dragLeg(path, segment(a.ref, b.ref))
         path.legs.add(legIndex - 1, merged)
+        path.legAxes.add(legIndex - 1, axis)
         return merged
     }
 
@@ -1072,6 +1129,7 @@ class Document {
         closeOrthoPath(path.vertices.first(), path.vertices.last())
         path.closed = true // before the leg handle resolves its index, which depends on closure
         path.legs.add(dragLeg(path, segment(path.vertices.last().ref, path.vertices.first().ref)))
+        path.legAxes.add(1 - path.vertices.last().ownAxis) // the closing leg runs across the last one
         return true
     }
 

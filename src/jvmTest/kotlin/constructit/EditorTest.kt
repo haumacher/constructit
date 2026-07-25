@@ -1186,26 +1186,159 @@ class EditorTest {
     }
 
     @Test
-    fun breakingIsRefusedWhereItWouldBeSubtlyWrong() {
+    fun breakingNeedsASegmentButAnyOfThemWillDo() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)
         ed.click(Vec2(0.0, 0.0))
-        ed.click(Vec2(60.0, 3.0))
-        ed.click(Vec2(58.0, 40.0))
-        ed.click(Vec2(0.0, 0.0)) // a closed triangle-ish loop: 3 vertices, 3 legs
+        ed.click(Vec2(100.0, 3.0))
+        ed.click(Vec2(98.0, 60.0))
+        ed.click(Vec2(0.0, 0.0)) // closed loop: 3 vertices, 3 legs
         val path = ed.doc.orthoPaths.single()
-        val legs = path.legCount
 
         ed.setTool(Tools.BREAK_LEG)
-        ed.click(Vec2(200.0, 200.0)) // nothing there
+        ed.click(Vec2(300.0, 300.0)) // nothing there
         assertTrue(ed.statusHint.contains("Click a segment"), "got: '${ed.statusHint}'")
-        assertEquals(legs, path.legCount)
+        assertEquals(3, path.legCount)
 
-        // the closing leg is deliberately out of scope: its endpoints' binding runs the other way
+        // reported: the closing segment could not be broken. Its endpoints follow each other the other
+        // way round, which used to be refused; now the jog is introduced on that side instead.
         val closing = path.legs.last()
-        val mid = Evaluator().segment(closing.ref as SegmentRef).let { Vec2((it.a.x + it.b.x) / 2, (it.a.y + it.b.y) / 2) }
-        ed.click(mid)
-        assertEquals(legs, path.legCount, "the closing leg is refused rather than broken wrongly")
+        val seg = Evaluator().segment(closing.ref as SegmentRef)
+        ed.click(Vec2((seg.a.x + seg.b.x) / 2, (seg.a.y + seg.b.y) / 2))
+        assertEquals(5, path.vertices.size, "the closing segment breaks like any other: got '${ed.statusHint}'")
+        assertEquals(5, path.legCount)
+        assertTrue(path.closed, "and the loop is still closed")
+
+        // the inserted corner opens like any other, and the loop stays rectilinear
+        ed.setTool(Tools.SELECT)
+        val mid = Evaluator().segment(path.legs[3].ref as SegmentRef)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2((mid.a.x + mid.b.x) / 2, (mid.a.y + mid.b.y) / 2)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(-30.0, (mid.a.y + mid.b.y) / 2)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(-30.0, (mid.a.y + mid.b.y) / 2)))
+        val ev = Evaluator()
+        for (i in 0 until path.legCount) {
+            val l = ev.segment(path.legs[i].ref as SegmentRef)
+            val horizontal = kotlin.math.abs(l.b.y - l.a.y) < 1e-6
+            val vertical = kotlin.math.abs(l.b.x - l.a.x) < 1e-6
+            assertTrue(horizontal || vertical, "leg $i is still axis-aligned")
+        }
+    }
+
+    @Test
+    fun aFlatJogElsewhereOnThePathSurvivesAnUnrelatedDrag() {
+        // reported: break one side twice and another side once, pull a section of the first side out,
+        // and the third break point vanished — an unrelated flat jog was being joined away
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(100.0, 3.0)) // leg 0, bottom
+        ed.click(Vec2(98.0, 60.0)) // leg 1, right
+        ed.click(Vec2(2.0, 58.0)) // leg 2, top
+        ed.click(Vec2(0.0, 0.0)) // close
+        val path = ed.doc.orthoPaths.single()
+
+        ed.setTool(Tools.BREAK_LEG)
+        ed.click(Vec2(30.0, 0.0)) // break the bottom twice
+        ed.click(Vec2(70.0, 0.0))
+        ed.click(Vec2(50.0, 60.0)) // and the top once
+        assertEquals(10, path.vertices.size)
+        assertEquals(10, path.legCount)
+
+        // pull a section of the bottom out; the top's flat jog must be left alone
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(50.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(50.0, -30.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(50.0, -30.0)))
+        assertEquals(10, path.vertices.size, "the untouched break point on the top must survive")
+        assertEquals(10, path.legCount)
+    }
+
+    @Test
+    fun revertingADoubleBreakoutJoinsBothEndsInOneDrag() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(120.0, 3.0))
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+
+        ed.setTool(Tools.BREAK_LEG)
+        ed.click(Vec2(40.0, 0.0))
+        ed.click(Vec2(80.0, 0.0)) // two breaks -> a middle section between two flat jogs
+        assertEquals(5, path.legCount)
+
+        // pull the middle section out, then push it straight back: *both* jogs flatten, and one drag
+        // must join both of them
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(60.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(60.0, -35.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(60.0, -35.0)))
+        assertEquals(5, path.legCount, "pulled out")
+
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(60.0, -35.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(60.0, 0.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(60.0, 0.0)))
+        assertEquals(1, path.legCount, "both flattened corners join in the one drag")
+        assertEquals(2, path.vertices.size)
+    }
+
+    @Test
+    fun theDraggedSectionSnapsToTheStationaryOneNotViceVersa() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(100.0, 2.0))
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+        ed.setTool(Tools.BREAK_LEG)
+        ed.click(Vec2(60.0, 0.0))
+
+        // pull the *near* half up, so the half being dragged is the one others follow
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(30.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(30.0, 30.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(30.0, 30.0)))
+
+        // drag it back to *nearly* level: the join must land on the stationary half's y (0), not on the
+        // dragged half's y (-1) — the section fits to what it was aimed at, not the other way round
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(30.0, 30.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(30.0, -1.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(30.0, -1.0)))
+        assertEquals(1, path.legCount)
+        val ev = Evaluator()
+        assertClose(ev.point(path.vertices[0].ref).y, 0.0)
+        assertClose(ev.point(path.vertices[1].ref).y, 0.0)
+    }
+
+    @Test
+    fun altKeepsAFlattenedCornerInsteadOfJoiningIt() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(100.0, 2.0))
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+        ed.setTool(Tools.BREAK_LEG)
+        ed.click(Vec2(60.0, 0.0))
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(80.0, -30.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(80.0, -30.0)))
+
+        ed.snapEnabled = false // Alt: leave the model as I put it
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(80.0, -30.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
+        assertFalse(ed.statusHint.contains("Release to join"), "no join is offered while Alt is held")
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
+        assertEquals(3, path.legCount, "the flattened corner is kept")
+
+        // and releasing Alt makes the very same drag join again
+        ed.snapEnabled = true
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(80.0, 1.0)))
+        assertTrue(ed.statusHint.contains("Release to join"), "got: '${ed.statusHint}'")
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(80.0, 1.0)))
+        assertEquals(1, path.legCount)
     }
 
     @Test

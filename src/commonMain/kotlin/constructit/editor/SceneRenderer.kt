@@ -40,6 +40,8 @@ object SceneRenderer {
 
     private val snapStyle = Style("#d62728", 1.5)
 
+    private val joinStyle = Style("#9467bd", 2.0)
+
     private val selectionStyle = Style("#1f77b4", 3.0)
     private val selectionRing = Style("#1f77b4", 1.5)
 
@@ -55,6 +57,7 @@ object SceneRenderer {
         preview: Pair<Vec2, Vec2>? = null,
         selected: Element? = null,
         snap: Vec2? = null,
+        joins: List<Vec2> = emptyList(),
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
@@ -90,6 +93,14 @@ object SceneRenderer {
                 listOf(Vec2(c.x - r, c.y - r), Vec2(c.x + r, c.y - r), Vec2(c.x + r, c.y + r), Vec2(c.x - r, c.y + r), Vec2(c.x - r, c.y - r)),
                 snapStyle,
             )
+        }
+        // corners a release would join away: crossed out, because that is what happens to them
+        for (j in joins) {
+            val c = cam.worldToScreen(j)
+            val r = 6.0
+            target.polyline(listOf(Vec2(c.x - r, c.y - r), Vec2(c.x + r, c.y + r)), joinStyle)
+            target.polyline(listOf(Vec2(c.x - r, c.y + r), Vec2(c.x + r, c.y - r)), joinStyle)
+            target.circle(c, r + 3.0, joinStyle)
         }
         // weld magnet: a double ring around the point a dragged point will snap/join onto
         highlight?.let {

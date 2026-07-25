@@ -84,7 +84,7 @@ private fun setupApp() {
         if (key == "Alt" && editor.snapEnabled) {
             e.preventDefault() // Alt alone would otherwise reach the browser menu bar
             editor.snapEnabled = false
-            editor.note("Snapping off: clicks place at the cursor (release Alt to snap again)")
+            editor.note("Alt: clicks place at the cursor and flattened corners are kept (release to resume)")
             repaint()
         }
     })

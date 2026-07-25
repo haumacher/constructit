@@ -147,7 +147,7 @@ class Editor(
     // transient state
     private var dragTarget: Element? = null // a point, or a whole ortho leg
     private var dragStart: Vec2? = null // where the drag began, in world space — the axis-lock origin
-    private var pendingJoin: Pair<OrthoPath, Int>? = null // a jog this drag has flattened
+    private var joinHints: List<Vec2> = emptyList() // corners this drag has flattened, marked on canvas
     private var weldTarget: Element? = null // a point to weld onto
     private var attachTarget: Element? = null // a curve to attach onto
     private var haloPos: Vec2? = null // where the magnet ring is drawn
@@ -189,7 +189,7 @@ class Editor(
         filledSlots = 0
         dragTarget = null
         dragStart = null
-        pendingJoin = null
+        joinHints = emptyList()
         weldTarget = null
         attachTarget = null
         haloPos = null
@@ -246,7 +246,7 @@ class Editor(
     }
 
     fun render(target: DrawTarget) {
-        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selection, snapHint?.pos)
+        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selection, snapHint?.pos, joinHints)
     }
 
     fun wheel(
@@ -301,7 +301,7 @@ class Editor(
                 if (doc.breakOrthoLegNear(world, tolWorld())) {
                     "Segment broken — drag either half to open the corner"
                 } else {
-                    "Click a segment of an ortho path (the closing segment of a loop can't be broken yet)"
+                    "Click a segment of an ortho path"
                 }
             onChange()
             return
@@ -479,10 +479,14 @@ class Editor(
                 el.handle?.drag(world, ev())
                 // a free point and an open path end can connect on release; nothing else can
                 if (canConnect(el)) updateMagnet(el, world) else clearMagnet()
-                // a jog dragged shut is *visually* already a single wall, so nothing needs to change
-                // yet — but say that releasing will clean the model up to match (OP-19)
-                pendingJoin = doc.pathOf(el)?.let { p -> doc.collapsedLegIndex(p, tolWorld())?.let { p to it } }
-                if (pendingJoin != null) statusHint = "Release to join these segments — the flattened corner will be removed"
+                // a jog dragged shut is *visually* already a single leg, so nothing needs to change
+                // yet — but mark the corners that releasing will remove, and say so (OP-19)
+                val flattened = flattenedEnds(el)
+                joinHints = flattened.mapNotNull { (path, i) -> legPoint(path.legs[i]) }
+                if (flattened.isNotEmpty()) {
+                    val n = flattened.size
+                    statusHint = "Release to join — ${if (n == 1) "the flattened corner" else "$n flattened corners"} will be removed (Alt to keep)"
+                }
                 onChange()
             }
             panning -> {
@@ -499,10 +503,9 @@ class Editor(
         val dragged = dragTarget
         val weld = weldTarget
         val attach = attachTarget
-        val join = pendingJoin
         dragTarget = null
         dragStart = null
-        pendingJoin = null
+        joinHints = emptyList()
         clearMagnet() // clear before rendering so the magnet halo doesn't linger
         panning = false
         if (dragged != null) {
@@ -521,14 +524,10 @@ class Editor(
                 }
             }
         }
-        if (join != null) {
-            val (path, legIndex) = join
-            // re-check: the drag may have moved on since the hint was set
-            val collapsed = doc.collapsedLegIndex(path, tolWorld()) ?: legIndex
-            val merged = doc.joinCollapsedLeg(path, collapsed)
-            if (merged != null) {
-                selection = merged
-                statusHint = "Joined into ${merged.id} — the flattened corner is gone"
+        if (dragged != null) {
+            joinFlattenedEnds(dragged)?.let {
+                selection = it
+                statusHint = "Joined into ${it.id} — the flattened corner is gone"
                 onChange()
             }
         }
@@ -551,6 +550,48 @@ class Editor(
             Vec2(start.x, world.y)
         }
     }
+
+    /**
+     * The flattened jogs at [el]'s own ends — see [Document.collapseCandidates]. Both ends can be
+     * flattened by one drag (reverting a section that was broken out twice), so this is a list.
+     * Suppressed while [snapEnabled] is off: Alt means "leave the model as I put it".
+     */
+    private fun flattenedEnds(el: Element): List<Pair<OrthoPath, Int>> =
+        if (!snapEnabled) emptyList() else doc.collapseCandidates(el).filter { (path, i) -> doc.canJoinLeg(path, i, tolWorld()) }
+
+    /**
+     * Join away the jogs the drag flattened, at the dragged segment's own ends only. A leg has two
+     * ends, so at most two joins; each one replaces the dragged leg with the merged one, which is then
+     * what the other end is checked against.
+     */
+    private fun joinFlattenedEnds(dragged: Element): Element? {
+        var target = dragged
+        var merged: Element? = null
+        var guard = 0
+        while (guard++ < 2) {
+            val (path, i) = flattenedEnds(target).firstOrNull() ?: break
+            // keep the value of the half that did *not* move, so the dragged section snaps to it
+            val draggedLeg = doc.legOf(target)?.second
+            val stationary = listOf(i - 1, i + 1).firstOrNull { it != draggedLeg && it in 0 until path.legCount }
+            val m = doc.joinCollapsedLeg(path, i, if (draggedLeg == null) null else stationary?.let { legPerp(path, it) }) ?: break
+            merged = m
+            target = m
+        }
+        return merged
+    }
+
+    /** Leg [i]'s perpendicular coordinate — the value a join keeps when this is the stationary half. */
+    private fun legPerp(
+        path: OrthoPath,
+        i: Int,
+    ): Double? {
+        val seg = (ev().valueOf(path.legs[i].ref) as? constructit.core.SegmentValue)?.seg ?: return null
+        return if (path.legAxis(i) == 0) seg.a.y else seg.a.x
+    }
+
+    /** Where a (possibly zero-length) leg sits, for marking it on the canvas. */
+    private fun legPoint(el: Element): Vec2? =
+        (ev().valueOf(el.ref) as? constructit.core.SegmentValue)?.seg?.let { Vec2((it.a.x + it.b.x) / 2, (it.a.y + it.b.y) / 2) }
 
     /** Whether dropping [el] can join it to something: a free point, or an open path end. */
     private fun canConnect(el: Element): Boolean =

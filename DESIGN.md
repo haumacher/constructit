@@ -376,6 +376,16 @@ ortho path, not the architectural `Wall`.
 - **Join** (done) — dragging a leg perpendicular until the adjacent perpendicular leg shrinks to
   roughly zero removes that leg and makes the two legs it separated into one. Committed **on release**,
   with a status hint while the jog is flat.
+  - Only the **dragged segment's own ends** are considered. Scanning the whole path meant a jog left
+    flat on purpose — a fresh break not yet pulled open — was joined away by an unrelated drag
+    elsewhere on the same path. Both ends can flatten in one drag (reverting a section broken out
+    twice), so up to two joins happen per release.
+  - The joined run lands on the **stationary** half's value, so the dragged section fits to what it was
+    aimed at. Left to the binding direction alone this was arbitrary: right when the dragged half
+    happened to be the follower, wrong when it was the one being followed.
+  - Feedback while dragging: the corners a release would remove are crossed out on the canvas and
+    counted in the status bar, and **Alt** suppresses the join (the same modifier that places clicks
+    raw — in both cases it means "leave the model as I put it").
   - Live merging was the plan, to keep the drawing looking like the model. It turns out there is
     nothing to fix: a **zero-length jog is already visually identical to a joined run**, so the drawing
     never shows anything the model is about to stop being. Merging mid-drag would in fact make the
@@ -385,9 +395,10 @@ ortho path, not the architectural `Wall`.
     no restore-the-jog state at all.
 - **Break** (`Tools.BREAK_LEG`, done) — click a leg to split it there, inserting two vertices with a
   **zero-length perpendicular** leg between them, so the drawing does not change shape. The jog then
-  opens by dragging either half. Refused on a loop's **closing** leg, where the endpoints' binding runs
-  the other way round and the leg-axis bookkeeping (derived from a leg's later vertex) would need
-  reversing too — left out rather than made subtly wrong.
+  opens by dragging either half. Works in either binding direction, so a loop's **closing** leg breaks
+  like any other: there the *near* endpoint is the one following, so the jog is introduced on that side
+  and the roles mirror. Leg axes are stored per leg (`OrthoPath.legAxes`) rather than derived from a
+  vertex's introduced coordinate, because that derivation assumed every leg was drawn forward.
 
 This is the same shape as **drag-to-weld** for points: a threshold-triggered topology edit committed
 by the gesture. It is *not* continuity tracking (which OP-1 rejects for branch choice) — the result is
