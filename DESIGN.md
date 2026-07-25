@@ -315,11 +315,18 @@ afterwards. Three consequences fall out of the shared-coordinate model:
    magnet doesn't yet cover — see *Welding*); Arrays — linear (repeat N along a vector) and circular
    (around a centre), the interactive generalization of the bolt-circle/hole-pattern macros
    (needs a count input).
-4. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
+4. **Selection & grouping (OP-16).** Multi-select (absent — `Editor.selection` is a single
+   `Element?`), then flat named groups, then **placed groups** (a frame source node; moving a group
+   edits the frame, not its points), then relocate-origin / re-parent / constructed frames.
+5. **Result layer (OP-14).** Trim ops + `Loop`/`Region` + the boundary-tracing *Outline* tool —
+   what separates the drawing from its scaffolding, and the interface the 3D layer consumes.
+6. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
    tool (OP-6 `Macro` machinery exists in the engine; needs the record/parameterize UI). The
-   headline capability of the paradigm.
-5. **Dimensions & annotations.** Dimension lines/leaders showing a measured length/angle —
+   headline capability of the paradigm. Shares its dialog with group creation (OP-16).
+7. **Dimensions & annotations.** Dimension lines/leaders showing a measured length/angle —
    for the 2D technical/architectural-drawing goal.
+8. **Splines (OP-15).** The general `CurveValue` refactor, then control-point Bézier/B-splines with
+   *constructed* control points. Independent of 1–7; slot it wherever it fits.
 
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
@@ -445,10 +452,235 @@ against the strong type system (OP-5), which also drives context-sensitive tools
   revolve/sweep, fillet/chamfer, STL/3MF export, topological identity.
 - **Phase 3+** — assemblies, drawings-from-3D, standard-part macro libraries.
 
+## Result layer — construction vs. output (OP-14 — RESOLVED)
+
+Most elements of a construction are **technical scaffolding** and should not appear in the final
+drawing. The obvious fix — a `construction: Boolean` flag per element, as in SolidWorks reference
+geometry — is **not sufficient**, because the result is usually *not a subset of the construction
+elements*: a drawn line is infinite, but the outline needs *the piece between two intersection
+points*; a circle is whole, but the outline needs *one arc of it*.
+
+**Decision: the result is not marked, it is constructed.** Two additions, both ordinary pure nodes:
+
+1. **Trim ops** — `segmentBetween(curve, P, Q)`, `arcBetween(circle, P, Q, side)`, generally
+   `subCurve(curve, tFrom, tTo)`. The first genuinely *result-shaped* nodes; no solver.
+2. **A closed-loop value.** `Profile` (`geom/Geom.kt`) exists but is a passive chain. Promote it:
+   - `Loop` — closed, **oriented** chain of trimmed curve pieces.
+   - `Region(outer: Loop, holes: List<Loop>)` — with a fixed orientation convention (CCW outer).
+
+The result is then a small set of `Region`/curve nodes, and everything else reads as scaffolding
+**because nothing consumes it** — a graph property, not a flag.
+
+### The Outline tool
+Boundary tracing: click around the intended contour; each adjacent pick pair emits a trim node,
+auto-intersecting neighbours. One tool converts a field of construction lines into a result.
+
+### Rejected: region detection by interior seed point
+Paint-bucket / planar-map region finding is tempting and **excluded**: the loop's identity would be
+*discovered* rather than constructed, which re-imports the topological-naming problem (OP-8) into 2D
+through the back door — drag a parameter and the region re-detects differently, so the model stops
+being a pure function of its parameters. A `Loop` therefore stores **which curve nodes, in which
+order** (stable node identity); only the trim parameters recompute. A loop that stops closing becomes
+**invalid**, hides, and auto-heals (OP-3) — the correct behaviour, and free.
+
+### Three orthogonal concepts — do not merge them
+
+| concept | nature | mechanism |
+|---|---|---|
+| result vs. scaffolding | **semantic** | is it consumed by an output node |
+| dimmed / hidden | presentation | per-element flag |
+| layer (walls, dimensions, annotation) | organizational | named bucket + visibility |
+
+### One idea, three levels
+Every level of the model needs an explicit **output set**: which 2D curves are the drawing, which
+regions are the sketch (OP-17), which solids get exported to STL (OP-9). This was the concept
+missing from the model.
+
+## General curves & splines (OP-15 — RESOLVED)
+
+The vocabulary: the family is **splines**. Drawing applications mean **cubic Bézier curves**
+(Illustrator/Inkscape/SVG paths — control handles); CAD means **B-splines** (piecewise, local
+control) and **NURBS** (rational B-splines with weights — what STEP speaks). Sketchers offer two
+flavours: **control-point spline** vs. **spline-through-points** (a *fit*/interpolating spline;
+Catmull-Rom is the cheap version). Relatives: **clothoids** (curvature-linear; roads, rails) and
+subdivision curves.
+
+**Decision: splines are in, and they fit the paradigm natively rather than by concession** — a
+spline is *already a pure function of its control points*. `bspline(P1..Pn, degree, knots) → Curve`
+needs no solver. The payoff is that each control point may itself be **constructed** — an
+intersection, a tangent point, a point-on-circle, a point offset along a shared `Direction`. That is
+the missing bridge from technical construction to smooth "drawing-application" geometry, and no other
+CAD paradigm expresses it this directly. (Prior art: Grasshopper — the strongest external support for
+the whole thesis.)
+
+### Continuity by construction, not by constraint
+"Make this spline tangent to that line" is a constraint in every sketcher. Constructively: place the
+first control leg *on* the tangent line — `P0 = endpoint`, `P1 = P0 + t·dir` with `dir` a **shared**
+`Direction` reference. G1 then cannot be violated. G2 is equally reachable: the end curvature of a
+cubic Bézier is a closed-form function of `P0,P1,P2`, so `P2` is *constructed* on the locus achieving
+a target curvature — an ordinary derived point. A showcase example for the paradigm.
+
+### A linear solve is not "a solver"
+An interpolating spline through N points needs a tridiagonal solve: closed-form, deterministic,
+non-iterative — **not** a breach of the no-solver stance. Likewise curve–curve intersection with
+splines goes numeric: *approximate but deterministic*, so purity, undo/reload and SVG goldens all
+survive. **Determinism is the load-bearing property, not closed form.**
+
+### The 2D analog of the mesh-is-a-sink rule
+Offsetting a spline does not yield a spline, only an approximation; nor does a general fillet between
+two splines. So the 2D layer partitions exactly as the 3D layer already does (OP-9):
+- **Exact analytic curves** — line / arc / conic / NURBS: measurable, STEP-exportable later.
+- **Approximated curves** — offsets, general fillets: render/export-only, never claimed exact.
+
+Same principle covering both layers, enforced by the type system (OP-5). This matters for the
+architectural layer: `parallelAtDistance` on a spline centerline is an *approximation*, and the type
+must say so.
+
+### Consequences
+- A general **`CurveValue`** with `pointAt(t)` / `tangentAt(t)` / `curvatureAt(t)`; `Line`, `Circle`,
+  `Arc` become instances of it. This is the largest refactor on the roadmap — do it deliberately.
+- **Canonical ordering generalized (OP-1):** for parametric curves, order solutions **by parameter
+  along the first operand** — exactly what line–circle already does ("order along the line's own
+  direction"). Circle–circle's side-of-line rule remains the special case it is.
+- **Handles (OP-13) apply unchanged:** every control point is a handle with coordinate fields, so a
+  spline exposes no DOF reachable by mouse but not by number.
+- **Build order:** control-point Bézier/B-spline first (pure, trivial, immediately useful) →
+  fit-through-points → **NURBS weights last**, since weights mainly buy exact conics and exact
+  circles already exist analytically.
+
+## Groups, frames & placement (OP-16 — RESOLVED)
+
+Two different needs hide under "group", and separating them dissolves most of the problem:
+**selection grouping** (organizational) and the **semantic group** (a real node). Likewise "move"
+has two legitimate meanings — a *construction* transform (new derived geometry, what the
+`MIRROR`/`ROTATE`/`SCALE`/`TRANSLATE_V` tools build today) and an *edit* transform (relocate what is
+already there).
+
+### Moving means moving the frame — not transforming the points
+**Decision: a group carries its own coordinate frame; its internal geometry is defined in local
+coordinates; moving the group edits the frame.** `place(frame, localConstruction)`, where `frame` is
+a **`SourceNode` holding (origin, angle)**. Consequences:
+
+- Moving a group is a **literal edit on one source node** — structurally identical to dragging a free
+  point. O(1) instead of O(N), one undo entry, internals untouched and still readable.
+- Rejected alternative: applying a transform to every point of the construction (O(N) writes, N
+  derived nodes, or a bulk literal rewrite) — correct results, wrong model.
+- The frame is a **`Handle`** (OP-13) with x / y / angle fields, so a group is movable by drag *and*
+  by typed number for free. A frame-local point's drag inverse-maps the world position into local
+  coordinates — again a `Handle`, nothing asserted and solved.
+
+### Grouping an existing construction is a refactoring
+Free sources hold absolute literals today, so making them frame-relative is a one-time,
+DOF-preserving, invertible rewrite. Once in that form, the three operations are **one code path with
+three different invariants**:
+
+| operation | frame | internal locals | invariant |
+|---|---|---|---|
+| **move** | edited | untouched | locals fixed |
+| **relocate origin** (refactoring) | rewritten | rewritten | *world output* fixed |
+| **re-parent** into another group | recomposed | untouched | world output fixed |
+
+Relocate-origin is the only one that is O(N) and the only one that touches internal free coordinates.
+Framing it as "the world-invariant variant of move" makes clear why it is a refactoring rather than an
+edit — and gives it a trivial test: geometry before ≡ geometry after.
+
+### A constructed frame is a mate — without a solver
+The frame need not be free. `frameAt(point, direction)`, with the point and direction taken from
+*other* geometry, makes the group follow its host. This is the constructive answer to assembly
+mating, so **phase-3 assemblies need no solver either** — worth recording now, while it is cheap.
+
+### A group frame and a sketch plane are one concept
+`place(frame, local2D)` and `SketchOn(plane, regions)` (OP-17) are the same idea — local construction
+plus placement — at two dimensions. Building group frames in 2D therefore **prototypes the 3D seam**.
+
+### Rules and consequences
+- **DOF accounting:** a frame *adds* 3 DOF in 2D (6 in 3D) and removes none. The same world position
+  becomes reachable two ways (via the frame or via internals) — harmless for purity (still a pure
+  function), but the UI must be clear about which handle was grabbed.
+- **Boundary attachment makes a group non-rigid, correctly.** If a member point is welded or attached
+  to something *outside* the group, its `boundTo` leaves the group, so it is not one of the group's
+  free DOF: the frame does not move it and the group deforms. This falls straight out of existing
+  `boundTo` semantics (no special-casing) but must be *visible*.
+- **Membership = closure or inputs?** Selecting an intersection point raises the question whether its
+  ancestor circles join the group or become its inputs — the same question macro-definition-by-example
+  asks (OP-6). So **group creation and macro definition are one dialog with a different default**,
+  which folds the macro-record UI in rather than duplicating it. Group → macro is the promotion path.
+- **Honest failure mode:** a group moves independently only if the free ancestors in its closure are
+  not shared with non-members. When they are, report it concretely ("P3, P7 are also used by e12 —
+  include them, or this group cannot move independently"). That is a real modelling ambiguity, not a
+  bug to paper over.
+- **Ortho-path bonus:** retrofitting a path under a frame turns its shared coordinate nodes into
+  *local* coordinates, so axis-alignment becomes alignment to the group's own axes. That is precisely
+  the rotated **project frame** sketched in the architectural layer — delivered as a side effect.
+
+### Build order
+0. **Multi-select.** Does not exist: `Editor.selection` is a single `Element?`. Prerequisite for
+   everything, and independently useful (bulk style / hide / delete).
+1. **Flat group** — a named set. No frame, no closure analysis. Buys select-together, naming, tree
+   structure; the container everything else attaches to.
+2. **Placed group** — frame + the frame-relative retrofit of free sources in the closure.
+3. **Relocate-origin, re-parent, constructed frames (mates), group → macro promotion.**
+
 ## Going to 3D
 
 - Sketch → feature → sketch loop (sketch on datum plane → extrude/revolve/sweep → derive
   datum from a solid face → sketch again). DAG spans 2D constructions, 3D features, datums.
+
+### The 2D↔3D seam — sketches on frames (OP-17 — RESOLVED)
+
+What 2D hands to 3D, concretely:
+
+```
+Loop      = closed, oriented chain of trimmed curve pieces          (2D, OP-14)
+Region    = outer Loop + inner Loops (holes), fixed orientation     (2D, OP-14)
+Sketch    = SketchOn(plane, [Region])                               <- the seam
+Solid     = extrude(sketch, depth, dir, draft) | revolve(sketch, axis, angle)
+          | sweep(sketch, path) | loft(s1, s2) | boolean(...)
+```
+
+Note that `Loop`/`Region` are exactly what the result layer (OP-14) produces: **the result layer *is*
+the 3D interface.** OP-14 is therefore a prerequisite for this seam, not an independent nicety.
+
+**Decision: 2D constructions stay in abstract 2D space; a separate `SketchOn(plane, regions)` node
+does the embedding.** 2D geometry is deliberately *not* made intrinsically plane-resident. This keeps
+`commonMain`'s 2D engine untouched, keeps 2D a first-class standalone deliverable (OP-2), and — the
+real payoff — lets **one 2D construction be embedded on several planes**, which is macro-instance
+semantics (OP-6) applied to the seam. A plane is `(origin: Point3, u: Dir3, v: Dir3)`, derived from a
+face plus an edge so the frame is *stable* rather than arbitrary. This is the same concept as a group
+frame (OP-16), one dimension up.
+
+**The seam is a two-way type conversion but a one-way dataflow.** Upward: `SketchOn`. Downward:
+`section(solid, plane) → Region`, `project(edge, plane) → Curve`, `face.plane → Plane` (OP-8
+provenance accessors). Both directions are analytic, so the mesh-is-a-sink rule is untouched — but the
+acyclicity rule of OP-4 applies verbatim: a 2D construction consuming a projected edge must not be an
+ancestor of that solid. No new semantics.
+
+**Holes: inner loop or boolean?** Both are needed. An inner `Loop` of the region handles same-depth
+through-features analytically with no boolean at all (cheap, exact). The moment depths differ — a
+**counterbore or countersink**, which mechanical work reaches immediately — the feature must become a
+separate extrude plus a boolean subtract.
+
+#### First 3D slice: mechanical, not walls
+A wall is a **degenerate case of the seam** — one sketch, one extrude, no back-flow, no face-derived
+datum — so extruding walls would validate the easy half and leave the risky half untested. The target
+is general 3D mechanical engineering, so the first slices are mechanical parts, built on macros that
+already exist (`roundedRect`, `boltCircle`, `holePattern` in `dsl/Shapes.kt`):
+
+1. **Flanged plate.** `roundedRect` outer + `boltCircle` holes → `Region(outer, holes)` → extrude →
+   STL. Exercises multi-loop regions, orientation conventions, watertightness. Ends with **one
+   counterbored hole**, deliberately — that drags the boolean path (and Manifold) in on the first
+   slice instead of the fourth.
+2. **Turned part.** Revolve a profile about an axis (stepped shaft / pulley). A different feature
+   type: profile orientation, axis handling, and the open-vs-closed profile rule (a revolve profile
+   may be open where it touches the axis — a genuine OP-3 validity case).
+3. **Sketch on a face.** A boss or rib on the plate's top face. The slice that matters: the only one
+   exercising OP-8 provenance accessors (`plate.topFace → Plane`), the sketch→feature→sketch loop, and
+   acyclicity at the seam. If the seam is wrong, it is wrong here.
+
+Per the testing strategy these double as worked spec examples, extending the existing
+`BoltCircleTest` / `RoundedRectTest` / `ProfileTest` pattern to STL assertions (manifold, volume,
+bbox). **3D walls are a later application of the same machinery, not the proof of concept.**
+
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
 **Decision:** an **analytic construction layer is the source of truth**; the mesh is an
@@ -576,6 +808,36 @@ Three broad families (see OP-9 decision above):
       A quantity spanning two vertices (a leg length) therefore has one field *per end* — the
       field belongs to the handle that moves, which is what makes "which end moves?" unambiguous
       without an anchor picker. See *Handles* under the editor architecture.
+- [x] **OP-14 Result layer (construction vs. output)** — RESOLVED: the result is **constructed, not
+      flagged**, because it is not a subset of the construction elements (an outline needs *trimmed*
+      pieces). Adds trim ops (`segmentBetween`/`arcBetween`/`subCurve`) and `Loop`/`Region` values;
+      scaffolding reads as scaffolding because nothing consumes it. Boundary-tracing *Outline* tool.
+      Interior-seed region detection **rejected** (discovered identity re-imports OP-8 into 2D).
+      Result-vs-scaffolding (semantic) / hidden (presentation) / layer (organizational) kept distinct.
+- [x] **OP-15 General curves & splines** — RESOLVED: splines are in and fit natively — a spline is a
+      pure function of its control points, and those control points may themselves be *constructed*
+      (the bridge from technical construction to smooth geometry). Continuity by construction (G1 via a
+      shared `Direction`, G2 via the closed-form end-curvature locus), never by constraint. A linear
+      (tridiagonal) solve is **not** a solver; numeric curve intersection is approximate but
+      deterministic — determinism is load-bearing, not closed form. Adds a general `CurveValue`
+      (largest refactor) and a **2D analog of the mesh-is-a-sink rule**: exact analytic curves vs.
+      approximated curves (spline offsets, general fillets). Order: Bézier/B-spline → fit-through-points
+      → NURBS weights last.
+- [x] **OP-16 Groups, frames & placement** — RESOLVED: a group carries its **own coordinate frame**;
+      internals are local; **moving a group edits the frame** (one literal write, O(1)) rather than
+      transforming every point. The frame is a `Handle` (OP-13), so groups move by drag and by number.
+      Grouping an existing construction is a DOF-preserving retrofit to frame-relative form; **move /
+      relocate-origin / re-parent** are one code path with three invariants (only relocate-origin is
+      O(N) and touches internal free coordinates). A **constructed** frame is a *mate* — so phase-3
+      assemblies need no solver. Group frame ≡ sketch plane (OP-17) one dimension down. Build order:
+      multi-select (absent today) → flat group → placed group → relocate/re-parent/mates/macro promotion.
+- [x] **OP-17 The 2D↔3D seam** — RESOLVED: `Sketch = SketchOn(plane, [Region])`; the OP-14 result layer
+      *is* the 3D interface. 2D stays abstract 2D and the plane embeds it (so one construction is
+      reusable on several planes — OP-6 semantics at the seam); a plane is `(origin, u, v)` derived from
+      face + edge for stability. Two-way type conversion, **one-way dataflow** (OP-4 acyclicity).
+      Holes as inner loops for same-depth through-features, boolean once depths differ. First 3D slice
+      is **mechanical, not walls** (a wall is a degenerate seam): flanged plate with a counterbore →
+      turned part (revolve) → sketch-on-face boss (the actual risk).
 
 ## Prior art to keep in mind
 
@@ -685,6 +947,23 @@ Three broad families (see OP-9 decision above):
 - **End of session 1.** Pushed to `github.com/haumacher/constructit` (README added). 72 jvm tests
   green; every feature verified live in-browser via Playwright. The 2D engine + interactive editor
   + an architectural drawing layer are working; 3D remains designed-but-unbuilt.
+- **Session 2, design turn — result layer, curves, groups & the 2D↔3D seam.** Resolved four coupled
+  open points raised by the user: most construction elements are technical and should not be part of
+  the result (OP-14), constructions should be able to drive smooth "drawing-application" geometry
+  (OP-15), there is no grouping mechanism and transforms only touch one element (OP-16), and the 2D
+  output should drive a follow-up 3D construction (OP-17). Three of the four turned out to be the same
+  missing concept — an explicit **output set / compound value** — and OP-14 is a hard prerequisite for
+  OP-17 because `Loop`/`Region` *are* the 3D interface. Two user corrections shaped the outcome:
+  (a) extruding **walls** is the wrong first 3D slice — architecture is a niche, the target is general
+  mechanical engineering, and a wall is besides a *degenerate* seam (no back-flow, no face datum), so
+  the first slice became the flanged-plate → turned-part → sketch-on-face triad; (b) **moving a group
+  should move its coordinate frame**, not apply a transform to every point — which made the frame a
+  first-class source node (an O(1) literal write, a `Handle` per OP-13), and made "relocate a group's
+  origin" the *world-invariant* variant of the same operation, the one case that legitimately rewrites
+  internal free coordinates. Two spin-offs worth recording: a **constructed** frame is an assembly
+  *mate*, so phase-3 assemblies need no solver either; and the group frame is the same concept as the
+  sketch plane, so 2D frames prototype the 3D seam. Agreed build order: multi-select → flat groups →
+  frames/placement → result layer + trim → 2D↔3D seam → splines.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -802,4 +1081,6 @@ Then 3D walls = extrude + boolean.
   fully driven vertex is no longer grabbable (dragging it was inert while it stole the grab from the
   geometry that drives it).
 - **Next (architectural):** wall-to-wall junction cleanup (T/L merges), opening sill/head heights
-  (for 3D), and 3D walls (extrude + boolean-subtract openings).
+  (for 3D), and 3D walls (extrude + boolean-subtract openings). Note the ordering decision in OP-17:
+  3D walls are a *later application* of the seam, not its proof of concept — the first 3D slices are
+  mechanical parts, because a wall exercises only the degenerate half of the seam.
