@@ -71,6 +71,35 @@ class BrowserE2ETest {
 
             // dragging must not create/destroy elements
             assertTrue(page.querySelectorAll(".item").size == itemsBuilt, "drag must not change element count")
+
+            // Space+drag pans (OP-16): the shell's own key mapping, so only a real browser can check it.
+            // A drag from empty space *without* Space would rubber-band and change nothing on release, so
+            // a canvas that differs afterwards means the view moved.
+            val emptyX = box.x + box.width * 0.08
+            val emptyY = box.y + box.height * 0.9
+            val before = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            page.keyboard().down("Space")
+            page.mouse().move(emptyX, emptyY)
+            page.mouse().down()
+            page.mouse().move(emptyX + 60.0, emptyY - 30.0)
+            page.mouse().up()
+            page.keyboard().up("Space")
+            val after = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            assertTrue(before != after, "Space+drag should pan the view")
+            assertTrue(page.querySelectorAll(".item").size == itemsBuilt, "panning must not change the drawing")
+
+            // marquee + grouping through the panel, end to end: a box across the whole canvas takes
+            // everything, and the Group button turns that selection into a named group (OP-16)
+            page.mouse().move(box.x + box.width * 0.05, box.y + box.height * 0.95)
+            page.mouse().down()
+            page.mouse().move(box.x + box.width * 0.95, box.y + box.height * 0.05)
+            page.mouse().up()
+            page.fill("#g-name", "shell")
+            page.click("#g-add")
+            assertTrue(page.querySelectorAll("#groups-list .grow").size == 1, "the group should appear in the panel")
+            val note = page.querySelector("#status").textContent()
+            assertTrue(note == "Grouped $itemsBuilt elements as shell", "got: $note")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/04-grouped.png")))
             browser.close()
         }
     }

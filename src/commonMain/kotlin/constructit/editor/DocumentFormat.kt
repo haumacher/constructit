@@ -22,6 +22,9 @@ sealed interface Arg {
 
     class Text(val s: String) : Arg
 
+    /** A quoted user-given name (a group's), so it stays one word and cannot read as a keyword. */
+    class Label(val s: String) : Arg
+
     class Els(val els: List<Element>) : Arg
 
     class Positions(val ps: List<Vec2>) : Arg
@@ -71,7 +74,7 @@ object DocumentFormat {
         val names = HashMap<String, String>() // element id -> script name
         val out = StringBuilder(HEADER).append('\n')
         for (step in doc.journal) {
-            val args = restate(step, ev, present).joinToString(" ") { encode(it, names) }
+            val args = restate(step, ev, present, names).joinToString(" ") { encode(it, names) }
             val created = step.creates.map { el -> "e${names.size + 1}".also { names[el.id] = it } }
             out.append(step.kind)
             if (args.isNotEmpty()) out.append(' ').append(args)
@@ -93,6 +96,7 @@ object DocumentFormat {
         step: Step,
         ev: Evaluator,
         present: Set<Element>,
+        names: Map<String, String>,
     ): List<Arg> {
         fun posOf(el: Element): Vec2? = ((ev.eval(el.ref.node) as? EvalResult.Ok)?.value as? PointValue)?.p
         // A step whose creations have since been *removed* — by a join collapsing a jog — keeps its
@@ -101,6 +105,15 @@ object DocumentFormat {
         // has something to collapse. What survives the join is described by the steps that still own it.
         if (step.creates.any { it !in present }) return step.args
         return when (step.kind) {
+            // membership is state (OP-16): a member whose creating step is gone is simply not written,
+            // so a delete leaves a consistent group and one whose members are all gone leaves no step
+            // at all — [Document.dependentSteps] drops it. Naming, not presence, is the test: a script
+            // can only refer to what an earlier step declared.
+            "group" ->
+                step.args.map { arg ->
+                    val els = (arg as? Arg.Keyed)?.value as? Arg.Els
+                    if (arg is Arg.Keyed && els != null) Arg.Keyed(arg.key, Arg.Els(els.els.filter { it.id in names })) else arg
+                }
             "param" -> {
                 val e = (step.args[0] as Arg.Sc).entry
                 listOf(step.args[0], Arg.Text("="), Arg.Num(value(e, ev)))
@@ -158,6 +171,7 @@ object DocumentFormat {
             is Arg.Positions -> arg.ps.joinToString(";") { pos(it) }
             is Arg.Num -> num(arg.q)
             is Arg.Text -> arg.s
+            is Arg.Label -> quote(arg.s)
             is Arg.Keyed -> "${arg.key}=" + encode(arg.value, names)
         }
 
@@ -271,6 +285,7 @@ object DocumentFormat {
             "intersectnear" -> doc.intersectNear(el(1), el(2), parsePos(words[3]))
             "pointoncurve" -> doc.pointOnCurve(el(1), parsePos(words[2]))
             "tool" -> applyTool(doc, words, byName)
+            "group" -> applyGroup(doc, words, byName)
             else -> throw LoadError("unknown step '$kind'")
         }
     }
@@ -299,6 +314,23 @@ object DocumentFormat {
         val leg = need("leg").toIntOrNull() ?: throw LoadError("malformed leg index '${need("leg")}'")
         doc.addInterval(tp, leg, quantity(need("pos")), width.ref, quantity(need("sill")), quantity(need("head")))
             ?: throw LoadError("leg $leg is not a leg of '${words[1]}'")
+    }
+
+    /**
+     * Replay a flat group (OP-16): membership by element name, so nothing about the group depends on
+     * runtime ids and a member the script no longer declares is simply not in it.
+     */
+    private fun applyGroup(
+        doc: Document,
+        words: List<String>,
+        byName: Map<String, Element>,
+    ) {
+        val arg = words.drop(2).firstOrNull { it.startsWith("els=") } ?: throw LoadError("group is missing 'els='")
+        val members =
+            arg.removePrefix("els=").split(',').filter { it.isNotEmpty() }
+                .map { byName[it] ?: throw LoadError("unknown element '$it'") }
+        doc.createGroup(unquote(words.getOrElse(1) { throw LoadError("group is missing a name") }), members)
+            ?: throw LoadError("group '${unquote(words[1])}' has no members, or one of them is already grouped")
     }
 
     /** A thick path's justification, defaulting to centred for a script written before it was recorded. */

@@ -330,9 +330,11 @@ afterwards. Three consequences fall out of the shared-coordinate model:
    magnet doesn't yet cover — see *Welding*); Arrays — linear (repeat N along a vector) and circular
    (around a centre), the interactive generalization of the bolt-circle/hole-pattern macros
    (needs a count input).
-4. **Selection & grouping (OP-16).** Multi-select (absent — `Editor.selection` is a single
-   `Element?`), then flat named groups, then **placed groups** (a frame source node; moving a group
-   edits the frame, not its points), then relocate-origin / re-parent / constructed frames.
+4. **Selection & grouping (OP-16).** **Multi-select and flat named groups are done** — a selection
+   set with a primary element, a marquee (panning moved to middle/Space+drag), bulk hide/delete, and
+   `group` steps that survive save/load and stay consistent when a member is deleted. Remaining:
+   **placed groups** (a frame source node; moving a group edits the frame, not its points), then
+   relocate-origin / re-parent / constructed frames.
 5. **Result layer (OP-14) — done end to end.** Trim ops, `Loop`/`Region`, areas, the *Outline* tool,
    derived scaffolding + a dim toggle, and cubic Béziers (OP-15) taking part in a boundary. Remaining
    here: **rework the wall as an output feature** (OP-21), regions with holes from traced outlines
@@ -383,6 +385,11 @@ orthovertex 429.25,14.75 -> e5,e6
 
 A leg *extension* (a step continuing the previous leg's axis) is deliberately **not** a step: it
 changes no topology, only a value, and values already travel with the step that introduced the node.
+
+A step need not create geometry: `group "kitchen" els=e1,e3` records flat-group membership (OP-16) by
+element name and declares nothing. Membership is *state*, so the step is written with the members the
+script still declares — which is how deleting a member leaves a consistent group, and how a group whose
+members are all gone leaves no step at all.
 
 ### Junctions own the freedom at a meeting point (OP-20 — RESOLVED)
 
@@ -891,12 +898,59 @@ plus placement — at two dimensions. Building group frames in 2D therefore **pr
   the rotated **project frame** sketched in the architectural layer — delivered as a side effect.
 
 ### Build order
-0. **Multi-select.** Does not exist: `Editor.selection` is a single `Element?`. Prerequisite for
-   everything, and independently useful (bulk style / hide / delete).
-1. **Flat group** — a named set. No frame, no closure analysis. Buys select-together, naming, tree
-   structure; the container everything else attaches to.
+0. **Multi-select — DONE.** A set with a primary element; prerequisite for everything, and
+   independently useful (bulk hide / delete).
+1. **Flat group — DONE.** A named set. No frame, no closure analysis. Buys select-together, naming,
+   tree structure; the container everything else attaches to.
 2. **Placed group** — frame + the frame-relative retrofit of free sources in the closure.
 3. **Relocate-origin, re-parent, constructed frames (mates), group → macro promotion.**
+
+### Implementation status (as built — multi-select & flat groups)
+
+**Selection is a set with a primary element.** `Editor.selection` still names *one* element — the
+primary, what the inspector addresses — and the set beside it is what delete, hide and Group act on.
+That split is the whole design: a handle field writes one node (OP-13), so with several elements
+selected the inspector shows nothing rather than something averaged, while every *bulk* operation has
+a well-defined subject. Click replaces the set, Shift+click toggles one member, Escape and a click on
+empty space clear it, and every kind is highlighted on canvas (not just points and segments, which is
+all a single selection ever needed).
+
+**The empty-space drag became the marquee, so panning became a button.** `pointerDown` gained
+`button: PointerButton` and `additive: Boolean`, both defaulted so existing call sites and gestures are
+unchanged. Panning now runs on MIDDLE — handled before any tool dispatch, so it works *in every tool*,
+which dragging empty space never did — and the browser shell reports Space+drag as MIDDLE, keeping the
+key mapping out of the pure controller. The marquee takes what its rectangle *meets*, not what it
+contains (`HitTest.within`, a slab clip per kind mirroring `distanceTo`): rubber-banding a room has to
+grab the walls crossing the box. One existing test encoded pan-on-empty-drag and was deliberately
+rewritten (`wheelZoomsAndMiddleDragPans`).
+
+**Shift is two things and they do not collide.** Shift means axis lock during a drag and toggle on a
+click, so the toggle is applied *on release* and only when the gesture did not move: a Shift-drag
+reshapes geometry and leaves the selection untouched.
+
+**A group is membership and nothing else.** `Document.groups` is a list of `Group(name, members)` with
+no frame, no transform and no node of its own — grouping provably cannot change geometry or handles.
+Clicking a member selects the whole group; **clicking it again reaches the member alone** (and again
+returns to the group), which is the one mechanism chosen for reaching a member and is stated in the
+status line. Alt was rejected for it: Alt already means "place freely / keep flattened corners" mid-
+gesture. An element is in **at most one** group, which is not a simplification for its own sake but
+what the format enforces — membership lives in a recorded step's argument list, and recorded arguments
+are never rewritten.
+
+**Persistence: a `group "name" els=e1,e3` step** (OP-18), replayed through the same `createGroup` the
+button calls. Member deletion stays consistent through exactly two rules in one place each: a `group`
+step is **exempt** from the "references a dropped element" cascade and goes only when *all* its members
+are dropped, and `save` writes only the members the script still declares. Because they are the same
+rules, live delete and replay cannot drift — and `save → load → save` byte-equality is the test. A bulk
+delete therefore computes **one** step-closure over all roots (`dependentSteps(Set<Step>)`) rather than
+a union of per-root closures: two members dropped by two different roots empty a group that neither
+root empties alone.
+
+**Deliberate omissions at this step.** Visibility is a *view* state — hiding is neither saved nor an
+undo step, because the file is a construction and has no viewing section; a welded alias stays hidden
+because it is hidden by construction. A marquee takes elements, not groups (it selects exactly what it
+covers). No bulk *move*: that is the frame (step 2), and doing it by rewriting N literals is the model
+this design rejects.
 
 ## Going to 3D
 
@@ -1128,7 +1182,10 @@ Three broad families (see OP-9 decision above):
       relocate-origin / re-parent** are one code path with three invariants (only relocate-origin is
       O(N) and touches internal free coordinates). A **constructed** frame is a *mate* — so phase-3
       assemblies need no solver. Group frame ≡ sketch plane (OP-17) one dimension down. Build order:
-      multi-select (absent today) → flat group → placed group → relocate/re-parent/mates/macro promotion.
+      multi-select → flat group → placed group → relocate/re-parent/mates/macro promotion. **Steps 0–1
+      built**: a selection set with a primary element, a marquee (panning moved to the middle button),
+      bulk hide/delete, and flat named groups recorded as a `group` step; see that section's
+      implementation status. Remaining: the frame itself and everything that hangs off it.
 - [x] **OP-21 A wall is an output feature** — RESOLVED: a wall belongs to the **result layer**
       (OP-14), and the same description must feed the seam (OP-17), because a floor plan is a route
       into 3D. The first wall implementation needed rework for two independent reasons: it was

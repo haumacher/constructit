@@ -11,11 +11,22 @@ import constructit.units.mm
 /** Undo depth bound: snapshots are whole scripts, so the stack must not grow with the session. */
 private const val UNDO_CAP = 100
 
+/** Below this screen distance a press-and-release is a *click*, not a drag. */
+private const val CLICK_SLOP_PX = 3.0
+
 /**
- * Pure interaction controller. In SELECT mode it drags free points (live recompute) or pans;
- * otherwise it runs the active [ToolDef] as a generic slot-collector, picking existing
- * geometry or creating points per click, and consuming the active parameter for scalar slots.
- * No platform APIs — fully headless-testable by simulating gestures.
+ * Which button a pointer gesture uses. In SELECT mode they mean different things (OP-16): PRIMARY
+ * picks, rubber-bands a marquee and drags geometry; MIDDLE pans, in *every* tool — panning is a
+ * button, not a mode, so the view can be moved without putting the tool down. The browser shell
+ * reports MIDDLE for Space+drag as well, so a one-button mouse can still pan.
+ */
+enum class PointerButton { PRIMARY, MIDDLE }
+
+/**
+ * Pure interaction controller. In SELECT mode it drags free points (live recompute), rubber-bands a
+ * selection, or pans on the middle button; otherwise it runs the active [ToolDef] as a generic
+ * slot-collector, picking existing geometry or creating points per click, and consuming the active
+ * parameter for scalar slots. No platform APIs — fully headless-testable by simulating gestures.
  */
 class Editor(
     doc: Document = Document(),
@@ -39,7 +50,7 @@ class Editor(
     /** Swap [fresh] in, resetting every transient reference into the old document (selection, picks). */
     private fun adopt(fresh: Document) {
         doc = fresh
-        selection = null
+        clearSelection()
         activeScalar = null
         resetPicks()
     }
@@ -101,22 +112,33 @@ class Editor(
     }
 
     /**
-     * Delete the selection at the granularity of the step that created it (OP-18): that step is
-     * dropped together with every later step depending on what the dropped steps made, and the
-     * remaining script is replayed into a fresh document — so what survives is exactly what still
-     * constructs, never a graph with holes in it.
+     * Delete the whole selection at the granularity of the steps that created it (OP-18): each
+     * selected element's creating step is dropped together with every later step depending on what the
+     * dropped steps made, and the remaining script is replayed into a fresh document — so what
+     * survives is exactly what still constructs, never a graph with holes in it.
+     *
+     * A multi-selection is **one** closure over all those steps (not a union of per-element closures —
+     * see [Document.dependentSteps]), dropped and replayed once, so it is one operation and one undo
+     * step. All-or-nothing: if any selected element has no step to remove, the delete is refused rather
+     * than half-performed, and says which element that was.
      */
     fun deleteSelection(): Boolean {
-        val sel = selection ?: return false
-        val root = doc.creatingStep(sel)
-        if (root == null) {
-            statusHint = "${sel.id} has no construction step to remove"
-            onChange()
-            return false
+        val targets = selectedElements
+        if (targets.isEmpty()) return false
+        val roots = ArrayList<Step>()
+        for (el in targets) {
+            val root = doc.creatingStep(el)
+            if (root == null) {
+                statusHint = "${el.id} has no construction step to remove"
+                onChange()
+                return false
+            }
+            roots.add(root)
         }
-        val droppedSteps = doc.dependentSteps(root)
+        // one closure over all the roots at once — see [Document.dependentSteps]
+        val droppedSteps = doc.dependentSteps(roots.toHashSet())
         val removed = droppedSteps.flatMapTo(HashSet()) { it.creates }
-        val dependents = removed.count { it !== sel && it in doc.elements }
+        val dependents = removed.count { r -> targets.none { it === r } && r in doc.elements }
         val journalBefore = doc.journal.toList()
         doc.journal.removeAll(droppedSteps)
         val fresh =
@@ -129,10 +151,10 @@ class Editor(
                 onChange()
                 return false
             }
-        val deletedId = sel.id
+        val what = if (targets.size == 1) targets[0].id else "${targets.size} elements"
         adopt(fresh)
         checkpoint()
-        statusHint = if (dependents == 0) "Deleted $deletedId" else "Deleted $deletedId and $dependents dependent${if (dependents == 1) "" else "s"}"
+        statusHint = if (dependents == 0) "Deleted $what" else "Deleted $what and $dependents dependent${if (dependents == 1) "" else "s"}"
         onChange()
         return true
     }
@@ -175,13 +197,42 @@ class Editor(
     var snapHint: SnapResult? = null
         private set
 
+    // ---- selection: a set with a primary element (OP-16 step 0) ----
+    //
+    // A set, because bulk delete / hide / grouping all operate on "what is selected"; a *primary*,
+    // because the inspector addresses exactly one handle (OP-13) and a click has to say which one it
+    // meant. Click replaces the set, Shift+click toggles one member, a marquee replaces it wholesale.
+    private val selected = LinkedHashSet<Element>()
+
     /**
-     * The element last picked in SELECT mode. Selecting is what makes a handle's numeric fields
-     * addressable: the drag is on the canvas, the typed form is in the inspector, and both write the
-     * same nodes (OP-13).
+     * The primary element of the selection — the one a click landed on, hence the one whose handle the
+     * inspector addresses: the drag is on the canvas, the typed form is in the inspector, and both
+     * write the same nodes (OP-13). Null when nothing is selected.
      */
     var selection: Element? = null
         private set
+
+    /** Everything selected, in pick order. */
+    val selectedElements: List<Element> get() = selected.toList()
+    val selectionCount: Int get() = selected.size
+
+    fun isSelected(el: Element): Boolean = el in selected
+
+    /** Replace the selection with [els], making [primary] the inspector's subject. */
+    private fun select(
+        els: Collection<Element>,
+        primary: Element?,
+    ) {
+        selected.clear()
+        selected.addAll(els)
+        selection = primary?.takeIf { it in selected } ?: selected.firstOrNull()
+    }
+
+    fun clearSelection() {
+        selected.clear()
+        selection = null
+    }
+
     var statusHint: String = ""
         private set
 
@@ -273,6 +324,11 @@ class Editor(
     private var haloPos: Vec2? = null // where the magnet ring is drawn
     private var panning = false
     private var lastScreen = Vec2(0.0, 0.0)
+    private var downScreen: Vec2? = null // where the press landed, so a release can tell click from drag
+    private var pendingToggle: Element? = null // Shift+click's toggle, applied on release (see [pointerUp])
+    private var marqueeFrom: Vec2? = null // rubber-band origin in world coordinates
+    private var marqueeTo: Vec2? = null
+    private var marqueeAdds = false // Shift+marquee adds to the selection instead of replacing it
     private val pickedPoints = ArrayList<PointRef>()
     private val pickedElements = ArrayList<Element>()
     private val pickedClicks = ArrayList<Vec2>()
@@ -320,6 +376,11 @@ class Editor(
         attachTarget = null
         haloPos = null
         panning = false
+        downScreen = null
+        pendingToggle = null
+        marqueeFrom = null
+        marqueeTo = null
+        marqueeAdds = false
         activePath = null
         pathAtEnd = true
         pathClosed = false
@@ -331,11 +392,16 @@ class Editor(
         snapHint = null
     }
 
-    /** The typed views of the selection's handle — the same writes its drag performs (OP-13). */
-    fun selectionFields(): List<HandleField> = selection?.handle?.fields() ?: emptyList()
+    /**
+     * The typed views of the selection's handle — the same writes its drag performs (OP-13). Only for a
+     * selection of *one*: a field addresses one node, and with several elements selected there is no
+     * single answer to show (nor to write back), so the inspector stays empty.
+     */
+    fun selectionFields(): List<HandleField> = if (selected.size == 1) selection?.handle?.fields() ?: emptyList() else emptyList()
 
     /** Short name for the selection, for the inspector header. */
     fun selectionLabel(): String {
+        if (selected.size > 1) return "${selected.size} elements"
         val el = selection ?: return ""
         val kind =
             when (el.handle) {
@@ -345,6 +411,90 @@ class Editor(
             }
         return "$kind ${el.id}"
     }
+
+    /**
+     * Hide or show the selected elements. Visibility is a **view** state: the saved file is a
+     * construction (OP-18) and has no viewing section, so hiding is deliberately neither persisted nor
+     * an undo step. A welded alias stays hidden — it is hidden *by construction*, and showing it would
+     * draw a second point on top of its master.
+     */
+    fun setSelectionVisible(visible: Boolean): Int {
+        var n = 0
+        for (el in selected) {
+            if (visible && doc.isWelded(el)) continue
+            if (el.visible != visible) {
+                el.visible = visible
+                n++
+            }
+        }
+        statusHint = if (n == 0) "Nothing to ${if (visible) "show" else "hide"}" else "${if (visible) "Shown" else "Hidden"} $n element${if (n == 1) "" else "s"}"
+        onChange()
+        return n
+    }
+
+    // ---- flat named groups (OP-16 step 1) ----
+
+    /**
+     * Group the selection under [name] (auto-numbered when blank). Organizational only: no geometry,
+     * no node and no handle changes — a member drags exactly as it did before.
+     */
+    fun groupSelection(name: String = ""): Group? {
+        if (selected.isEmpty()) {
+            statusHint = "Select the elements to group first (Shift+click to add, or drag a box)"
+            onChange()
+            return null
+        }
+        val clash = selected.firstNotNullOfOrNull { el -> doc.groupOf(el)?.let { el to it } }
+        if (clash != null) {
+            statusHint = "${clash.first.id} is already in group ${clash.second.name} — an element is in at most one group; ungroup it first"
+            onChange()
+            return null
+        }
+        val g = doc.createGroup(name, selectedElements)
+        if (g == null) {
+            statusHint = "Could not group that selection"
+            onChange()
+            return null
+        }
+        checkpoint()
+        statusHint = "Grouped ${g.members.size} elements as ${g.name}"
+        onChange()
+        return g
+    }
+
+    /** Dissolve [g] — its elements stay, and stay selected. */
+    fun ungroup(g: Group): Boolean {
+        val n = doc.groupMembers(g).size
+        if (!doc.ungroup(g)) return false
+        checkpoint()
+        statusHint = "Ungrouped ${g.name} — its $n element${if (n == 1) "" else "s"} stay"
+        onChange()
+        return true
+    }
+
+    /** Select every member of [g] — what clicking a member on the canvas does. */
+    fun selectGroup(g: Group) {
+        val members = doc.groupMembers(g)
+        select(members, members.firstOrNull())
+        statusHint = "Group ${g.name}: ${members.size} element${if (members.size == 1) "" else "s"} selected"
+        onChange()
+    }
+
+    /** Hide/show a whole group. A view state like [setSelectionVisible], and not persisted either. */
+    fun setGroupVisible(
+        g: Group,
+        visible: Boolean,
+    ) {
+        for (el in doc.groupMembers(g)) {
+            if (visible && doc.isWelded(el)) continue
+            el.visible = visible
+        }
+        statusHint = "Group ${g.name} ${if (visible) "shown" else "hidden"}"
+        onChange()
+    }
+
+    /** Whether every live member of [g] is currently drawn — the panel's toggle state. */
+    fun isGroupVisible(g: Group): Boolean = doc.groupMembers(g).all { it.visible || doc.isWelded(it) }
 
     /**
      * Write [value] (in the display unit of the field's dimension) into selection field [index].
@@ -376,9 +526,10 @@ class Editor(
 
     fun render(target: DrawTarget) {
         SceneRenderer.render(
-            doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selection,
+            doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selected,
             snapHint?.pos, joinHints, closePreview,
             dimmed = if (dimScaffolding) doc.scaffoldingElements().toHashSet() else emptySet(),
+            marquee = marqueeFrom?.let { f -> marqueeTo?.let { t -> f to t } },
         )
     }
 
@@ -390,7 +541,24 @@ class Editor(
         onChange()
     }
 
-    fun pointerDown(screen: Vec2) {
+    /**
+     * Press. [additive] is Shift held: in SELECT mode it makes the *click* toggle one element's
+     * membership — which is why the toggle is applied on release and not here, since Shift held during
+     * a drag means axis lock and must leave the selection alone.
+     */
+    fun pointerDown(
+        screen: Vec2,
+        button: PointerButton = PointerButton.PRIMARY,
+        additive: Boolean = false,
+    ) {
+        downScreen = screen
+        pendingToggle = null
+        // panning is a button, not a mode: it works in every tool, and the shell reports Space+drag here
+        if (button == PointerButton.MIDDLE) {
+            panning = true
+            lastScreen = screen
+            return
+        }
         if (toolId == Tools.SELECT) {
             val world = camera.screenToWorld(screen)
             // a vertex wins over the legs meeting at it; a leg drags perpendicular (OrthoEdgeHandle)
@@ -399,23 +567,27 @@ class Editor(
                     ?: HitTest.nearestDraggableCurve(doc, ev(), world, tolWorld())
             // an immovable element is still selectable, so its values can be read and the reason shown
             val hit = movable ?: HitTest.nearestSelectable(doc, ev(), world, tolWorld())
-            selection = hit // a miss clears it, so clicking empty space deselects
-            when {
-                movable != null -> {
-                    dragTarget = movable
-                    // drag by the *offset* from where the grab landed, not to the cursor outright:
-                    // picking has a tolerance, so writing the cursor position made the geometry jump to
-                    // it on the first move and then follow from there
-                    val anchor = grabAnchor(movable, world)
-                    grabOffset = world - anchor
-                    dragStart = anchor
-                    statusHint = ""
-                }
-                hit != null -> statusHint = explainImmovable(hit)
-                else -> {
-                    panning = true
-                    lastScreen = screen
-                }
+            // a press on nothing starts a rubber band; what it covers is selected on release (OP-16)
+            if (hit == null) {
+                marqueeFrom = world
+                marqueeTo = world
+                marqueeAdds = additive
+                onChange()
+                return
+            }
+            var note = ""
+            if (additive) pendingToggle = hit else note = pickOnCanvas(hit)
+            if (movable != null) {
+                dragTarget = movable
+                // drag by the *offset* from where the grab landed, not to the cursor outright:
+                // picking has a tolerance, so writing the cursor position made the geometry jump to
+                // it on the first move and then follow from there
+                val anchor = grabAnchor(movable, world)
+                grabOffset = world - anchor
+                dragStart = anchor
+                statusHint = note
+            } else {
+                statusHint = explainImmovable(hit)
             }
             onChange()
             return
@@ -549,6 +721,13 @@ class Editor(
                 onChange()
                 true
             }
+            // with nothing pending, Escape is "select nothing" — the keyboard form of clicking empty space
+            key == "Escape" && !pathActive && selected.isNotEmpty() -> {
+                clearSelection()
+                statusHint = "Selection cleared"
+                onChange()
+                true
+            }
             key == "Escape" || key == "Enter" -> {
                 finishPath()
                 true
@@ -641,7 +820,55 @@ class Editor(
         onChange()
     }
 
+    /**
+     * A plain click's selection semantics, returning the note for the status bar.
+     *
+     * A grouped element selects **its whole group** (OP-16), with the clicked element as primary — that
+     * is what a group is for. **Clicking it again reaches the member alone**, so its fields stay
+     * addressable and no degree of freedom becomes unreachable through grouping (OP-13); a further
+     * click goes back to the group. One mechanism, no modifier, and the status line says so — Alt was
+     * rejected here because it already means "place freely / keep flattened corners" during a gesture.
+     */
+    private fun pickOnCanvas(hit: Element): String {
+        val group = doc.groupOf(hit)
+        if (group == null) {
+            select(listOf(hit), hit)
+            return ""
+        }
+        val members = doc.groupMembers(group)
+        if (selection === hit && selected.size > 1) {
+            select(listOf(hit), hit)
+            return "${hit.id} alone (of group ${group.name}) — click again for the whole group"
+        }
+        select(members, hit)
+        return "Group ${group.name}: ${members.size} elements — click ${hit.id} again to reach it alone"
+    }
+
+    /** Take everything the rubber band covers (OP-16); Shift adds it to what was already selected. */
+    private fun finishMarquee(
+        from: Vec2,
+        to: Vec2,
+    ) {
+        val hits = HitTest.within(doc, ev(), from, to)
+        val kept = if (marqueeAdds) selectedElements else emptyList()
+        select(kept + hits.filter { it !in kept }, hits.lastOrNull() ?: selection)
+        statusHint =
+            when {
+                selected.isEmpty() -> "Nothing in the box"
+                selected.size == 1 -> selectionLabel() + " selected"
+                else -> "${selected.size} elements selected"
+            }
+    }
+
     fun pointerMove(screen: Vec2) {
+        // panning first: it is a button, so it works under every tool — including the ones whose own
+        // move handler returns early to show a preview
+        if (panning) {
+            camera = camera.pan(screen.x - lastScreen.x, screen.y - lastScreen.y)
+            lastScreen = screen
+            onChange()
+            return
+        }
         if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {
             val world = camera.screenToWorld(screen)
             val s = pathSnap(world)
@@ -676,17 +903,30 @@ class Editor(
                 }
                 onChange()
             }
-            panning -> {
-                camera = camera.pan(screen.x - lastScreen.x, screen.y - lastScreen.y)
-                lastScreen = screen
+            marqueeFrom != null -> {
+                marqueeTo = camera.screenToWorld(screen)
                 onChange()
             }
         }
     }
 
-    fun pointerUp(
-        @Suppress("UNUSED_PARAMETER") screen: Vec2,
-    ) {
+    fun pointerUp(screen: Vec2) {
+        val from = marqueeFrom
+        marqueeFrom = null
+        marqueeTo = null
+        if (from != null) {
+            // a press-and-release on empty space is a click, and a plain click on nothing deselects —
+            // a Shift+click there adds nothing and so leaves the selection alone
+            when {
+                movedSince(screen) -> finishMarquee(from, camera.screenToWorld(screen))
+                !marqueeAdds -> clearSelection()
+            }
+            downScreen = null
+            onChange()
+            return
+        }
+        val toggle = pendingToggle
+        pendingToggle = null
         val dragged = dragTarget
         val weld = weldTarget
         val attach = attachTarget
@@ -695,6 +935,20 @@ class Editor(
         joinHints = emptyList()
         clearMagnet() // clear before rendering so the magnet halo doesn't linger
         panning = false
+        // Shift+click toggles membership — but only when the gesture was a *click*: the same Shift is
+        // axis lock, so a Shift-drag reshapes geometry and leaves the selection exactly as it was
+        if (toggle != null && !movedSince(screen)) {
+            if (toggle in selected) {
+                selected.remove(toggle)
+                if (selection === toggle) selection = selected.lastOrNull()
+            } else {
+                selected.add(toggle)
+                selection = toggle
+            }
+            statusHint = if (selected.isEmpty()) "Nothing selected" else "${selected.size} element${if (selected.size == 1) "" else "s"} selected"
+            onChange() // a release otherwise repaints only when the drag changed the model
+        }
+        downScreen = null
         if (dragged != null) {
             val ortho = dragged.handle is OrthoCornerHandle
             if (weld != null) {
@@ -713,7 +967,7 @@ class Editor(
         }
         if (dragged != null) {
             joinFlattenedEnds(dragged)?.let {
-                selection = it
+                select(listOf(it), it)
                 statusHint = "Joined into ${it.id} — the flattened corner is gone"
                 onChange()
             }
@@ -721,6 +975,9 @@ class Editor(
             checkpoint()
         }
     }
+
+    /** Whether the pointer travelled far enough since the press for the gesture to count as a drag. */
+    private fun movedSince(screen: Vec2): Boolean = downScreen?.let { (screen - it).length() > CLICK_SLOP_PX } ?: false
 
     /**
      * Apply [axisLock]: keep only the component the gesture is dominated by, relative to where the

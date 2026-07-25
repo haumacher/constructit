@@ -37,7 +37,9 @@ class ToolDef(
 
 object Tools {
     const val SELECT = "select"
-    const val SELECT_HELP = "Drag a point to reshape the construction; drag empty space to pan; wheel to zoom."
+    const val SELECT_HELP =
+        "Drag a point to reshape the construction; drag empty space for a selection box; Shift+click to add or remove; " +
+            "click a grouped element again to reach it alone; middle-drag or Space+drag to pan; wheel to zoom."
 
     // Points
     const val POINT = "point"

@@ -112,6 +112,23 @@ class Element(
 class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val editable: Boolean)
 
 /**
+ * A **flat named group** of elements (OP-16, build order step 1): organizational only — no frame, no
+ * transform, no closure analysis, and no effect whatsoever on geometry, nodes or handles. It buys
+ * select-together, naming and bulk visibility; the frame (step 2) attaches to this container later.
+ *
+ * An element is in **at most one** group at this step. That is the simplest honest rule here and it
+ * falls out of the save format: membership lives in the recorded `group` step's argument list, and a
+ * recorded step's arguments are never rewritten — so an element cannot be moved between groups
+ * without ungrouping first.
+ */
+class Group(val id: String, var name: String) {
+    val members = ArrayList<Element>()
+
+    /** The journal step that recorded this group — what [Document.ungroup] drops again. */
+    internal var step: Step? = null
+}
+
+/**
  * A vertex of an ortho path, carrying the two coordinate source nodes so drags/closure can write
  * them. [ownAxis] is the coordinate introduced by the edge that created it (0 = x, 1 = y, -1 = the
  * start, which owns both) — the safe one to bind when closing a loop. [corner] is a `var` because
@@ -347,9 +364,17 @@ class Document {
      * belongs to as an argument, and is independent of its siblings — so the explicit rule covers it and
      * the special case is gone. Deleting one opening now leaves the others alone.
      */
-    fun dependentSteps(root: Step): Set<Step> {
+    fun dependentSteps(root: Step): Set<Step> = dependentSteps(setOf(root))
+
+    /**
+     * The same closure for a *set* of roots — a bulk delete (OP-16). Deliberately not the union of the
+     * per-root closures: whether a step survives can depend on what the others took. A `group` step
+     * whose members are dropped by two different roots is exactly that case — each root alone leaves it
+     * a member, together they leave it none.
+     */
+    fun dependentSteps(roots: Set<Step>): Set<Step> {
         // one drawn path; mirrors the loader's "current path" resolution so the chain matches replay
-        class Group {
+        class PathChain {
             var dropped = false
         }
 
@@ -359,41 +384,49 @@ class Document {
 
         fun drop(
             step: Step,
-            group: Group?,
+            chain: PathChain?,
         ) {
             dropped.add(step)
             droppedEls.addAll(step.creates)
             droppedScalars.addAll(step.createsScalars)
             // a thick path can go without taking its carrier path down with it — the dependency runs the
-            // other way. Every other step belonging to a path's group takes that group's future with it.
-            if (step.kind != "wall") group?.dropped = true
+            // other way. Every other step belonging to a path's chain takes that chain's future with it.
+            if (step.kind != "wall") chain?.dropped = true
         }
 
-        var current: Group? = null
-        val groupOfEl = HashMap<Element, Group>()
+        var current: PathChain? = null
+        val chainOfEl = HashMap<Element, PathChain>()
         var seenRoot = false
         for (step in journal) {
             val els = referencedElements(step)
-            val group: Group? =
+            val chain: PathChain? =
                 when (step.kind) {
-                    "orthostart" -> Group().also { current = it }
-                    "orthoresume" -> (els.firstNotNullOfOrNull { groupOfEl[it] } ?: current).also { current = it }
-                    "orthojoin", "orthobreak" -> els.firstNotNullOfOrNull { groupOfEl[it] } ?: current
+                    "orthostart" -> PathChain().also { current = it }
+                    "orthoresume" -> (els.firstNotNullOfOrNull { chainOfEl[it] } ?: current).also { current = it }
+                    "orthojoin", "orthobreak" -> els.firstNotNullOfOrNull { chainOfEl[it] } ?: current
                     "orthovertex", "orthoprepend", "orthoclose", "orthodiscard", "wall" -> current
                     else -> null
                 }
-            if (group != null) step.creates.forEach { groupOfEl[it] = group }
-            if (step === root) {
-                drop(step, group)
+            if (chain != null) step.creates.forEach { chainOfEl[it] = chain }
+            if (roots.any { it === step }) {
+                drop(step, chain)
                 seenRoot = true
                 continue
             }
             if (!seenRoot) continue
+            // a `group` step (OP-16) *names* its members but is not built from them, so losing some of
+            // them must not take the group with it: it goes only once nothing is left to group. This is
+            // the one place the member-deletion rule lives — [groups] hides an all-dead group live, and
+            // [DocumentFormat] writes only the surviving members, so replay and delete agree.
+            if (step.kind == "group") {
+                if (els.isNotEmpty() && els.all { it in droppedEls }) drop(step, chain)
+                continue
+            }
             val depends =
-                group?.dropped == true ||
+                chain?.dropped == true ||
                     els.any { it in droppedEls } ||
                     referencedScalars(step).any { it in droppedScalars }
-            if (depends) drop(step, group)
+            if (depends) drop(step, chain)
         }
         return dropped
     }
@@ -480,6 +513,66 @@ class Document {
     ) {
         require(e.editable) { "not an editable parameter" }
         (e.ref.node as ParameterNode).literal = ScalarValue(value)
+    }
+
+    // ---- flat named groups (OP-16 step 1): organizational membership, nothing geometric ----
+
+    private val allGroups = ArrayList<Group>()
+
+    // a counter of its own, so grouping does not shift the element ids the rest of the UI shows
+    private var groupCounter = 0
+
+    /**
+     * The groups that still exist. A group with no surviving member **is** gone — filtering here rather
+     * than deleting the object is what makes live delete and replay agree without either side knowing
+     * about the other (see the `group` case in [dependentSteps]).
+     */
+    val groups: List<Group> get() = allGroups.filter { groupMembers(it).isNotEmpty() }
+
+    /** [g]'s members that are still in the document — a join can retire an element under a group. */
+    fun groupMembers(g: Group): List<Element> = g.members.filter { m -> elements.any { it === m } }
+
+    /** The group [el] belongs to, or null. At most one at this step — see [Group]. */
+    fun groupOf(el: Element): Group? = groups.firstOrNull { g -> g.members.any { it === el } }
+
+    /** Names are unique so the panel is unambiguous; blank auto-numbers ("group1", "group2", …). */
+    private fun uniqueGroupName(base: String): String {
+        // one word, since a step's arguments are split on spaces (as for scalar names)
+        val b = base.trim().replace(Regex("\\s+"), "-")
+        if (b.isNotEmpty() && allGroups.none { it.name == b }) return b
+        val stem = b.ifEmpty { "group" }
+        // an unnamed group is "group1"; a name that clashes becomes "kitchen2", as for scalars
+        var i = if (b.isEmpty()) 1 else 2
+        while (allGroups.any { it.name == "$stem$i" }) i++
+        return "$stem$i"
+    }
+
+    /**
+     * Group [members] under [name] (auto-numbered when blank), recorded as a `group` step so the
+     * membership survives save/load. Refused when a member is already grouped or the set is empty —
+     * the caller says which, since only it knows how to phrase it.
+     */
+    fun createGroup(
+        name: String,
+        members: List<Element>,
+    ): Group? {
+        if (members.isEmpty() || members.any { groupOf(it) != null }) return null
+        val g = Group("g${++groupCounter}", uniqueGroupName(name))
+        g.members.addAll(members)
+        recording("group", Arg.Label(g.name), Arg.Keyed("els", Arg.Els(members))) { allGroups.add(g) }
+        // the step is appended by [recording] itself, so it can only be picked up afterwards
+        g.step = journal.lastOrNull()?.takeIf { it.kind == "group" }
+        return g
+    }
+
+    /**
+     * Dissolve [g]; its elements stay. The recorded step is dropped outright — a `group` step creates
+     * no geometry, so unlike a delete (OP-18) nothing has to be replayed for the script to stay valid.
+     */
+    fun ungroup(g: Group): Boolean {
+        if (!allGroups.remove(g)) return false
+        g.step?.let { s -> journal.removeAll { it === s } }
+        return true
     }
 
     // ---- wiring: reduce a parameter's DOF by binding it to another scalar (equality by reference) ----

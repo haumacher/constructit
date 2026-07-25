@@ -13,6 +13,7 @@ import constructit.dsl.scalar
 import constructit.dsl.segment
 import constructit.editor.Editor
 import constructit.editor.ElementKind
+import constructit.editor.PointerButton
 import constructit.editor.SvgDrawTarget
 import constructit.editor.Tools
 import constructit.geom.Vec2
@@ -138,8 +139,12 @@ class EditorTest {
         assertEquals(2, ed.doc.freePoints.size, "should reuse the nearby point, not duplicate it")
     }
 
+    /**
+     * Panning moved from "drag empty space" to the middle button when the marquee took that gesture
+     * over (OP-16) — and gained reach in exchange: it now works in *every* tool, not just SELECT.
+     */
     @Test
-    fun wheelZoomsAndEmptyDragPans() {
+    fun wheelZoomsAndMiddleDragPans() {
         val ed = Editor()
         val s0 = ed.camera.scale
         ed.wheel(Vec2(400.0, 300.0), -1.0)
@@ -147,10 +152,18 @@ class EditorTest {
 
         ed.setTool(Tools.SELECT)
         val panBefore = ed.camera.panX
-        ed.pointerDown(Vec2(400.0, 300.0)) // empty -> pan
+        ed.pointerDown(Vec2(400.0, 300.0), PointerButton.MIDDLE)
         ed.pointerMove(Vec2(415.0, 300.0))
         ed.pointerUp(Vec2(415.0, 300.0))
         assertClose(ed.camera.panX, panBefore + 15.0)
+
+        // and while a drawing tool is in hand, where it used to be impossible
+        ed.setTool(Tools.LINE)
+        ed.pointerDown(Vec2(400.0, 300.0), PointerButton.MIDDLE)
+        ed.pointerMove(Vec2(390.0, 300.0))
+        ed.pointerUp(Vec2(390.0, 300.0))
+        assertClose(ed.camera.panX, panBefore + 5.0)
+        assertTrue(ed.doc.elements.isEmpty(), "a middle-drag must not place geometry")
     }
 
     @Test

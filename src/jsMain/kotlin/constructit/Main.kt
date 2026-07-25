@@ -7,6 +7,7 @@ import constructit.editor.Camera
 import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.Format
+import constructit.editor.PointerButton
 import constructit.editor.ScalarEntry
 import constructit.editor.Tools
 import constructit.editor.quantityOf
@@ -36,12 +37,14 @@ private fun setupApp() {
     val canvas = document.getElementById("canvas") as HTMLCanvasElement
     val ctx = canvas.getContext("2d") as CanvasRenderingContext2D
 
-    fun fitCanvas() {
+    fun fit(): Boolean {
         val area = canvas.parentElement as HTMLElement
+        if (canvas.width == area.clientWidth && canvas.height == area.clientHeight) return false
         canvas.width = area.clientWidth
         canvas.height = area.clientHeight
+        return true
     }
-    fitCanvas()
+    fit()
 
     val editor = Editor(canvasW = canvas.width.toDouble(), canvasH = canvas.height.toDouble())
     editor.showGrid = true
@@ -51,6 +54,13 @@ private fun setupApp() {
     buildPalette()
 
     fun repaint() {
+        // the drawing buffer must match the element's CSS size on *every* paint, not only on window
+        // resize: panel content or a wrapping status line changes the canvas box too, and a stale buffer
+        // is silently scaled by CSS — which offsets every hit test from what the user sees
+        if (fit()) {
+            editor.canvasW = canvas.width.toDouble()
+            editor.canvasH = canvas.height.toDouble()
+        }
         editor.render(target)
         renderPanel(editor)
     }
@@ -61,7 +71,17 @@ private fun setupApp() {
         val r = canvas.getBoundingClientRect()
         return Vec2(e.clientX - r.left, e.clientY - r.top)
     }
-    canvas.addEventListener("mousedown", { editor.pointerDown(pos(it as MouseEvent)) })
+    // Space held turns a primary drag into a pan, which the controller sees as the middle button —
+    // so the shell keeps the key mapping and the pure controller keeps knowing only buttons (OP-16)
+    var spaceDown = false
+
+    fun button(e: MouseEvent): PointerButton =
+        if (e.button.toInt() == 1 || spaceDown) PointerButton.MIDDLE else PointerButton.PRIMARY
+    canvas.addEventListener("mousedown", {
+        val e = it as MouseEvent
+        if (e.button.toInt() == 1) e.preventDefault() // no middle-click autoscroll
+        editor.pointerDown(pos(e), button(e), additive = e.shiftKey)
+    })
     canvas.addEventListener("mousemove", { editor.pointerMove(pos(it as MouseEvent)) })
     canvas.addEventListener("mouseup", { editor.pointerUp(pos(it as MouseEvent)) })
     canvas.addEventListener("mouseleave", { editor.pointerUp(pos(it as MouseEvent)) })
@@ -99,6 +119,12 @@ private fun setupApp() {
             editor.note("Axis lock: the drag is restricted to one axis (release Shift to free it)")
             repaint()
         }
+        if (key == " " && !spaceDown) {
+            spaceDown = true
+            e.preventDefault() // Space would otherwise scroll the page
+            editor.note("Space: drag to pan (release to resume selecting)")
+            repaint()
+        }
         if (key == "Alt" && editor.snapEnabled) {
             e.preventDefault() // Alt alone would otherwise reach the browser menu bar
             editor.snapEnabled = false
@@ -113,6 +139,11 @@ private fun setupApp() {
             editor.note("")
             repaint()
         }
+        if (key == " " && spaceDown) {
+            spaceDown = false
+            editor.note("")
+            repaint()
+        }
         if (key == "Alt" && !editor.snapEnabled) {
             editor.snapEnabled = true
             editor.note("")
@@ -124,6 +155,24 @@ private fun setupApp() {
     (document.getElementById("e-undo") as HTMLElement).addEventListener("click", { editor.undo() })
     (document.getElementById("e-redo") as HTMLElement).addEventListener("click", { editor.redo() })
     (document.getElementById("e-delete") as HTMLElement).addEventListener("click", { editor.deleteSelection() })
+
+    // ---- selection: bulk visibility and flat groups (OP-16). The DOM only routes; the Editor decides ----
+    (document.getElementById("s-hide") as HTMLElement).addEventListener("click", { editor.setSelectionVisible(false) })
+    (document.getElementById("s-show") as HTMLElement).addEventListener("click", { editor.setSelectionVisible(true) })
+    val groupName = document.getElementById("g-name") as HTMLInputElement
+    (document.getElementById("g-add") as HTMLElement).addEventListener("click", {
+        if (editor.groupSelection(groupName.value) != null) groupName.value = ""
+    })
+    (document.getElementById("groups-list") as HTMLElement).addEventListener("click", {
+        val t = it.target as? HTMLElement ?: return@addEventListener
+        val row = t.closest(".grow") ?: return@addEventListener
+        val g = editor.doc.groups.firstOrNull { g -> g.id == row.getAttribute("data-gid") } ?: return@addEventListener
+        when {
+            t.className.contains("gvis") -> editor.setGroupVisible(g, !editor.isGroupVisible(g))
+            t.className.contains("gdrop") -> editor.ungroup(g)
+            else -> editor.selectGroup(g)
+        }
+    })
 
     // ---- palette (tool selection via delegation) ----
     (document.getElementById("palette") as HTMLElement).addEventListener("click", {
@@ -265,12 +314,7 @@ private fun setupApp() {
         repaint()
     })
 
-    window.addEventListener("resize", {
-        fitCanvas()
-        editor.canvasW = canvas.width.toDouble()
-        editor.canvasH = canvas.height.toDouble()
-        repaint()
-    })
+    window.addEventListener("resize", { repaint() })
 
     repaint()
 }
@@ -312,6 +356,11 @@ private fun renderPanel(editor: Editor) {
     insp.innerHTML =
         if (editor.selection == null) {
             "<div class=\"hint\">Click a corner or a leg to read and set its values.</div>"
+        } else if (editor.selectionCount > 1) {
+            // fields address one handle (OP-13), so a multi-selection shows none — but it is what
+            // delete, hide and Group act on, hence the count
+            "<div class=\"selname\">${editor.selectionLabel()}</div>" +
+                "<div class=\"hint\">Delete, Hide and Group act on all of them. Click one element for its values.</div>"
         } else {
             "<div class=\"selname\">${editor.selectionLabel()}</div>" +
                 fields.withIndex().joinToString("") { (i, f) ->
@@ -325,6 +374,18 @@ private fun renderPanel(editor: Editor) {
                         "</div>"
                 } +
                 if (fields.isEmpty()) "<div class=\"hint\">No editable values — this element is fully derived.</div>" else ""
+        }
+
+    // groups: a flat named set (OP-16 step 1) — click to select its members, ◉ to hide/show, × to dissolve
+    val glist = document.getElementById("groups-list") as HTMLElement
+    glist.innerHTML =
+        editor.doc.groups.joinToString("") { g ->
+            "<div class=\"grow\" data-gid=\"${g.id}\">" +
+                "<span class=\"gname\">${g.name}</span>" +
+                "<span class=\"gcount\">${editor.doc.groupMembers(g).size}</span>" +
+                "<button class=\"gvis\" title=\"Hide or show every member\">${if (editor.isGroupVisible(g)) "◉" else "○"}</button>" +
+                "<button class=\"gdrop\" title=\"Dissolve the group — its elements stay\">×</button>" +
+                "</div>"
         }
 
     // parameters (editable)

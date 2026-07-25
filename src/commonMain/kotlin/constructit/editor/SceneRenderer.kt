@@ -50,6 +50,8 @@ object SceneRenderer {
     private val selectionStyle = Style("#1f77b4", 3.0)
     private val selectionRing = Style("#1f77b4", 1.5)
 
+    private val marqueeStyle = Style("#1f77b4", 1.0)
+
     fun render(
         doc: Document,
         ev: Evaluator,
@@ -60,11 +62,12 @@ object SceneRenderer {
         grid: Boolean = false,
         highlight: Vec2? = null,
         preview: Pair<Vec2, Vec2>? = null,
-        selected: Element? = null,
+        selected: Set<Element> = emptySet(),
         snap: Vec2? = null,
         joins: List<Vec2> = emptyList(),
         closing: List<Pair<Vec2, Vec2>> = emptyList(),
         dimmed: Set<Element> = emptySet(),
+        marquee: Pair<Vec2, Vec2>? = null,
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
@@ -98,13 +101,34 @@ object SceneRenderer {
                 else -> {}
             }
         }
-        // the selection, redrawn on top: what the inspector's numeric fields refer to
-        if (selected != null && selected.visible) {
-            when (val v = ev.valueOf(selected.ref)) {
+        // the selection, redrawn on top: what delete removes and — when it is a single element — what
+        // the inspector's numeric fields refer to. Every kind is highlighted, since a marquee (OP-16)
+        // takes whatever it covers and a selection that shows only its points would be unreadable.
+        for (el in selected) {
+            if (!el.visible) continue
+            when (val v = ev.valueOf(el.ref)) {
                 is PointValue -> target.circle(cam.worldToScreen(v.p), 7.0, selectionRing)
                 is SegmentValue -> target.polyline(listOf(cam.worldToScreen(v.seg.a), cam.worldToScreen(v.seg.b)), selectionStyle)
+                is LineValue ->
+                    clipLine(v.line, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), selectionStyle) }
+                is RayValue ->
+                    clipRay(v.ray, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), selectionStyle) }
+                is CircleValue -> target.circle(cam.worldToScreen(v.circle.center), v.circle.radius * cam.scale, selectionStyle)
+                is ArcValue -> target.polyline(tessellate(v.arc).map { cam.worldToScreen(it) }, selectionStyle)
+                is BezierValue -> target.polyline(GeomMath.tessellateBezier(v.bezier).map { cam.worldToScreen(it) }, selectionStyle)
+                is LoopValue -> drawChain(v.loop.elements, cam, target, selectionStyle)
+                is RegionValue -> {
+                    drawChain(v.region.outer.elements, cam, target, selectionStyle)
+                    for (h in v.region.holes) drawChain(h.elements, cam, target, selectionStyle)
+                }
                 else -> {}
             }
+        }
+        // rubber band of a marquee in progress — the rectangle whose contents the release will select
+        marquee?.let { (a, b) ->
+            val p = cam.worldToScreen(a)
+            val q = cam.worldToScreen(b)
+            target.polyline(listOf(p, Vec2(q.x, p.y), q, Vec2(p.x, q.y), p), marqueeStyle)
         }
         // rubber-band preview of the next ortho-path leg
         preview?.let { target.polyline(listOf(cam.worldToScreen(it.first), cam.worldToScreen(it.second)), previewStyle) }

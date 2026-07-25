@@ -6,7 +6,9 @@ import constructit.core.CircleValue
 import constructit.core.Evaluator
 import constructit.core.LineValue
 import constructit.core.LoopValue
+import constructit.core.PointSetValue
 import constructit.core.PointValue
+import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.SegmentValue
 import constructit.dsl.valueOf
@@ -123,6 +125,122 @@ object HitTest {
         world: Vec2,
         tol: Double,
     ): Element? = nearest(doc, ev, world, tol) { it.isCurve }
+
+    // ---- marquee: pick everything a rectangle meets (OP-16) ----
+
+    /**
+     * Every visible element whose geometry meets the world rectangle spanned by [a] and [b] — what a
+     * rubber-band drag in SELECT mode selects. *Meets*, not *contains*: an architect rubber-bands over
+     * a room to grab the walls crossing it, and requiring full containment would drop every one of them.
+     */
+    fun within(
+        doc: Document,
+        ev: Evaluator,
+        a: Vec2,
+        b: Vec2,
+    ): List<Element> {
+        val lo = Vec2(kotlin.math.min(a.x, b.x), kotlin.math.min(a.y, b.y))
+        val hi = Vec2(kotlin.math.max(a.x, b.x), kotlin.math.max(a.y, b.y))
+        return doc.elements.filter { it.visible && meetsRect(ev, it, lo, hi) }
+    }
+
+    /**
+     * Whether [el]'s geometry meets the axis-aligned rectangle [lo]..[hi]. The dispatch mirrors
+     * [distanceTo] — the same kinds, the same approximations: a Bézier or an arc is measured against the
+     * polyline the renderer draws, so what the marquee visibly covers is what it takes.
+     */
+    private fun meetsRect(
+        ev: Evaluator,
+        el: Element,
+        lo: Vec2,
+        hi: Vec2,
+    ): Boolean =
+        when (val v = ev.valueOf(el.ref)) {
+            is PointValue -> inRect(v.p, lo, hi)
+            is SegmentValue -> spanMeets(v.seg.a, v.seg.b - v.seg.a, lo, hi, 0.0, 1.0)
+            is LineValue -> spanMeets(v.line.origin, v.line.dir, lo, hi, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY)
+            is RayValue -> spanMeets(v.ray.origin, v.ray.dir, lo, hi, 0.0, Double.POSITIVE_INFINITY)
+            is CircleValue -> circleMeets(v.circle.center, v.circle.radius, lo, hi)
+            is ArcValue -> polyMeets(SceneRenderer.tessellate(v.arc), lo, hi)
+            is BezierValue -> polyMeets(GeomMath.tessellateBezier(v.bezier), lo, hi)
+            is LoopValue -> v.loop.elements.any { pieceMeets(it, lo, hi) }
+            is RegionValue ->
+                v.region.outer.elements.any { pieceMeets(it, lo, hi) } ||
+                    v.region.holes.any { h -> h.elements.any { pieceMeets(it, lo, hi) } }
+            is PointSetValue -> v.set.points.any { inRect(it, lo, hi) }
+            else -> false
+        }
+
+    private fun inRect(
+        p: Vec2,
+        lo: Vec2,
+        hi: Vec2,
+    ): Boolean = p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y
+
+    /**
+     * Slab clip of the span `origin + t*dir`, `t` in [tLo]..[tHi], against the rectangle: a segment
+     * (0..1), a ray (0..inf) and a line (-inf..inf) differ only in that range.
+     */
+    private fun spanMeets(
+        origin: Vec2,
+        dir: Vec2,
+        lo: Vec2,
+        hi: Vec2,
+        tLo: Double,
+        tHi: Double,
+    ): Boolean {
+        var tMin = tLo
+        var tMax = tHi
+        for (axis in 0..1) {
+            val d = if (axis == 0) dir.x else dir.y
+            val o = if (axis == 0) origin.x else origin.y
+            val l = if (axis == 0) lo.x else lo.y
+            val h = if (axis == 0) hi.x else hi.y
+            if (abs(d) < Vec2.EPS) {
+                if (o < l || o > h) return false
+            } else {
+                val t1 = (l - o) / d
+                val t2 = (h - o) / d
+                tMin = kotlin.math.max(tMin, kotlin.math.min(t1, t2))
+                tMax = kotlin.math.min(tMax, kotlin.math.max(t1, t2))
+            }
+        }
+        return tMin <= tMax
+    }
+
+    /**
+     * A circle *outline* meets the rectangle when the rectangle reaches the circle and is not swallowed
+     * by it: the nearest point of the rectangle is no further than the radius, the farthest no nearer.
+     */
+    private fun circleMeets(
+        center: Vec2,
+        radius: Double,
+        lo: Vec2,
+        hi: Vec2,
+    ): Boolean {
+        val near = Vec2(center.x.coerceIn(lo.x, hi.x), center.y.coerceIn(lo.y, hi.y))
+        val far =
+            listOf(lo, Vec2(hi.x, lo.y), hi, Vec2(lo.x, hi.y)).maxOf { (it - center).length() }
+        return (near - center).length() <= radius && far >= radius
+    }
+
+    private fun polyMeets(
+        pts: List<Vec2>,
+        lo: Vec2,
+        hi: Vec2,
+    ): Boolean = pts.zipWithNext().any { (a, b) -> spanMeets(a, b - a, lo, hi, 0.0, 1.0) }
+
+    private fun pieceMeets(
+        e: ProfileElement,
+        lo: Vec2,
+        hi: Vec2,
+    ): Boolean =
+        when (e) {
+            is ProfileElement.Seg -> spanMeets(e.segment.a, e.segment.b - e.segment.a, lo, hi, 0.0, 1.0)
+            is ProfileElement.ArcE -> polyMeets(SceneRenderer.tessellate(e.arc), lo, hi)
+            is ProfileElement.CircleE -> circleMeets(e.circle.center, e.circle.radius, lo, hi)
+            is ProfileElement.BezierE -> polyMeets(GeomMath.tessellateBezier(e.bezier), lo, hi)
+        }
 
     /** Distance to one boundary piece, so an outline is pickable as a whole. */
     private fun distToPiece(

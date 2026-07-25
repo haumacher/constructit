@@ -12,7 +12,8 @@
         #edit-actions button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
         #edit-actions button:hover:enabled { background: #f0f0f0; }
         #edit-actions button:disabled { color: #bbb; border-color: #e5e5e5; cursor: default; }
-        #status { font-size: 12px; color: #888; }
+        /* one line, always: a wrapping status bar would change the canvas box under the cursor */
+        #status { font-size: 12px; color: #888; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         #main { display: flex; flex: 1; min-height: 0; }
 
         /* left palette (scales with the tool registry) */
@@ -57,6 +58,16 @@
         .frow .funit { width: 18px; color: #999; }
         #inspector .selname { font-size: 12px; color: #1f77b4; padding: 0 4px 2px; }
         #inspector .hint { font-size: 11px; color: #999; padding: 0 4px; }
+        #sel-actions, #groups-form { display: flex; gap: 4px; margin: 4px 0 6px; }
+        #sel-actions button, #groups-form button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff;
+            border-radius: 6px; cursor: pointer; }
+        #sel-actions button:hover, #groups-form button:hover { background: #f0f0f0; }
+        #groups-form input { flex: 1; min-width: 0; font-size: 12px; padding: 2px 4px; }
+        .grow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .grow:hover { background: #eef4fb; }
+        .grow .gname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        .grow .gcount { color: #999; }
+        .grow button { border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; font-size: 11px; line-height: 1; padding: 2px 4px; }
         #tree .item { font-size: 12px; padding: 2px 4px; border-radius: 4px; }
         #tree .item .eid { color: #bbb; float: right; }
     </style>
@@ -101,6 +112,16 @@
             </div>
             <h3>Selection</h3>
             <div id="inspector"></div>
+            <div id="sel-actions">
+                <button id="s-hide" title="Hide the selected elements (a view state, not part of the drawing)">Hide</button>
+                <button id="s-show" title="Show the selected elements again">Show</button>
+            </div>
+            <h3>Groups</h3>
+            <div id="groups-form">
+                <input id="g-name" placeholder="name">
+                <button id="g-add" title="Group the selected elements (OP-16)">Group</button>
+            </div>
+            <div id="groups-list"></div>
             <h3>Parameters</h3>
             <div id="params-form">
                 <input id="p-name" placeholder="name" value="r">
