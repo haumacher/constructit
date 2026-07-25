@@ -53,9 +53,38 @@ class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val edit
 /**
  * A vertex of an ortho path, carrying the two coordinate source nodes so drags/closure can write
  * them. [ownAxis] is the coordinate introduced by the edge that created it (0 = x, 1 = y, -1 = the
- * start, which owns both) — the safe one to bind when closing a loop.
+ * start, which owns both) — the safe one to bind when closing a loop. [corner] is a `var` because
+ * closing a loop replaces the live handle (see [Document.closeOrthoPath]).
  */
-class OrthoVertex(val ref: PointRef, val corner: OrthoCornerConstraint, val ownAxis: Int)
+class OrthoVertex(val ref: PointRef, var corner: OrthoCornerConstraint, val ownAxis: Int)
+
+/**
+ * A retained rectilinear path: [vertices] in draw order plus the [legs] between them (the closing
+ * leg last when [closed]). Retaining the topology is what makes a *leg* addressable: a leg's length
+ * is the difference of two consecutive nodes in one coordinate chain, so a handle can only offer
+ * that length as a numeric field if it can find the neighbour that supplies the other end.
+ */
+class OrthoPath {
+    val vertices = ArrayList<OrthoVertex>()
+    val legs = ArrayList<Element>()
+    var closed: Boolean = false
+
+    /** One leg per vertex when closed, one fewer when open. */
+    val legCount: Int get() = if (closed) vertices.size else (vertices.size - 1).coerceAtLeast(0)
+
+    /**
+     * Axis of leg [i] (from `vertices[i]` toward the next): 0 = horizontal, 1 = vertical. A vertex's
+     * own coordinate is the one its incoming leg introduced, so that leg's axis *is* the axis of
+     * that coordinate; the closing leg runs along the other axis.
+     */
+    fun legAxis(i: Int): Int = if (closed && i == vertices.size - 1) 1 - vertices.last().ownAxis else vertices[i + 1].ownAxis
+
+    /** The vertex at each end of leg [i], in draw order. */
+    fun legEnds(i: Int): Pair<OrthoVertex, OrthoVertex> = vertices[i] to vertices[(i + 1) % vertices.size]
+
+    /** Index of the leg drawn as [el], or -1. */
+    fun legIndexOf(el: Element): Int = legs.indexOfFirst { it === el }
+}
 
 /** A gap in a wall leg: [position] = distance from the leg start, [width] along the leg. */
 class Opening(val legIndex: Int, val position: ScalarRef, val width: ScalarRef)
@@ -65,7 +94,13 @@ class Opening(val legIndex: Int, val position: ScalarRef, val width: ScalarRef)
  * cap / jamb geometry is derived and regenerated (into [ownedIds]) whenever openings change — the
  * centerline and its length parameters live outside the wall, so editing them reshapes it too.
  */
-class Wall(val vertices: List<PointRef>, val thickness: ScalarRef, val closed: Boolean = false) {
+class Wall(
+    val vertices: List<PointRef>,
+    val thickness: ScalarRef,
+    val closed: Boolean = false,
+    /** The centerline path this wall was built from, when it came from the ortho-path tool. */
+    val path: OrthoPath? = null,
+) {
     val openings = ArrayList<Opening>()
     val ownedIds = HashSet<String>()
 }
@@ -567,8 +602,34 @@ class Document {
         return OrthoVertex(ref, corner, ownAxis)
     }
 
-    /** Start an ortho path at [at] with a fresh, draggable vertex owning both coordinates. */
-    fun startOrthoVertex(at: Vec2): OrthoVertex = orthoVertex(scalarSource(at.x), scalarSource(at.y), -1)
+    val orthoPaths = ArrayList<OrthoPath>()
+
+    /** Start a retained ortho path at [at] with a fresh, draggable vertex owning both coordinates. */
+    fun startOrthoPath(at: Vec2): OrthoPath {
+        val path = OrthoPath()
+        path.vertices.add(orthoVertex(scalarSource(at.x), scalarSource(at.y), -1))
+        orthoPaths.add(path)
+        return path
+    }
+
+    /** Forget a path that never got a second vertex (its lone vertex element stays as a free corner). */
+    fun discardOrthoPath(path: OrthoPath) {
+        if (path.vertices.size < 2) orthoPaths.remove(path)
+    }
+
+    /** Append a leg to [path] toward [to] (see the [prev]-based overload); records the leg segment. */
+    fun addOrthoVertex(
+        path: OrthoPath,
+        to: Vec2,
+    ): OrthoVertex? {
+        val v = addOrthoVertex(path.vertices.last(), to) ?: return null
+        path.vertices.add(v)
+        path.legs.add(lastSegment())
+        return v
+    }
+
+    /** The most recently added segment element — the leg [addOrthoVertex] just drew. */
+    private fun lastSegment(): Element = elements.last { it.kind == ElementKind.SEGMENT }
 
     /**
      * Append an axis-aligned vertex from [prev] toward [to]: the dominant delta picks a horizontal or
@@ -605,6 +666,12 @@ class Document {
         return orthoVertex(xNode, yNode, ownAxis).also { segment(prev.ref, it.ref) }
     }
 
+    /** Where the next leg of [path] would land (rubber-band preview). */
+    fun orthoLegPreview(
+        path: OrthoPath,
+        to: Vec2,
+    ): Pair<Vec2, Vec2>? = orthoLegPreview(path.vertices.last().ref, to)
+
     /** Where an ortho leg from [from] toward [to] lands (rubber-band preview): snapped to H or V. */
     fun orthoLegPreview(
         from: PointRef,
@@ -622,6 +689,14 @@ class Document {
      * so dragging the last vertex moves the start with it (2 DOF, symmetric with every other corner)
      * rather than being pinned. Both vertices stop being endpoints.
      */
+    fun closeOrthoPath(path: OrthoPath): Boolean {
+        if (path.vertices.size < 3 || path.closed) return false
+        closeOrthoPath(path.vertices.first(), path.vertices.last())
+        path.legs.add(segment(path.vertices.last().ref, path.vertices.first().ref)) // the closing leg
+        path.closed = true
+        return true
+    }
+
     fun closeOrthoPath(
         first: OrthoVertex,
         last: OrthoVertex,
@@ -640,8 +715,10 @@ class Document {
                 else -> return
             }
         redirect.isEndpoint = false
+        redirect.ownCoord = 1 - last.ownAxis // the coordinate the redirect can still write
         first.corner.isEndpoint = false
         el.constraint = redirect
+        last.corner = redirect // keep the vertex pointing at its live handle
     }
 
     val walls = ArrayList<Wall>()
@@ -657,13 +734,20 @@ class Document {
         vertices: List<PointRef>,
         thickness: ScalarRef,
         closed: Boolean = false,
+        path: OrthoPath? = null,
     ): Wall? {
         if (vertices.size < 2) return null
-        val w = Wall(vertices.toList(), thickness, closed && vertices.size >= 3)
+        val w = Wall(vertices.toList(), thickness, closed && vertices.size >= 3, path)
         walls.add(w)
         regenerateWall(w)
         return w
     }
+
+    /** Build a wall along the centerline of [path], keeping the path as the wall's editable spine. */
+    fun buildWall(
+        path: OrthoPath,
+        thickness: ScalarRef,
+    ): Wall? = buildWall(path.vertices.map { it.ref }, thickness, path.closed, path)
 
     private fun evalMm(ref: ScalarRef): Double =
         (Evaluator().eval(ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.mm } ?: 0.0

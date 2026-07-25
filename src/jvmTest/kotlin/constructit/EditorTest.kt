@@ -651,6 +651,67 @@ class EditorTest {
     }
 
     @Test
+    fun anOrthoPathIsRetainedWithItsLegTopology() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)) // V0
+        ed.click(Vec2(40.0, 3.0)) // V1 (40,0)  leg 0 horizontal
+        ed.click(Vec2(38.0, 30.0)) // V2 (40,30) leg 1 vertical
+        ed.finishPath()
+
+        assertEquals(1, ed.doc.orthoPaths.size)
+        val path = ed.doc.orthoPaths[0]
+        assertEquals(3, path.vertices.size)
+        assertFalse(path.closed)
+        assertEquals(2, path.legCount)
+        assertEquals(2, path.legs.size, "each leg keeps its segment element")
+        assertEquals(0, path.legAxis(0), "first leg horizontal")
+        assertEquals(1, path.legAxis(1), "second leg vertical")
+        assertEquals(0, path.legIndexOf(path.legs[0]))
+    }
+
+    @Test
+    fun aClosedOrthoPathRecordsTheClosingLeg() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(60.0, 3.0)) // leg 0 horizontal
+        ed.click(Vec2(58.0, 40.0)) // leg 1 vertical
+        ed.click(Vec2(2.0, 40.0)) // leg 2 horizontal
+        ed.click(Vec2(0.0, 0.0)) // close
+
+        val path = ed.doc.orthoPaths.single()
+        assertTrue(path.closed)
+        assertEquals(4, path.vertices.size)
+        assertEquals(4, path.legCount, "closed: one leg per vertex")
+        assertEquals(4, path.legs.size)
+        assertEquals(1, path.legAxis(3), "the closing leg runs vertically back to the start")
+        val (a, b) = path.legEnds(3)
+        assertTrue(a === path.vertices[3] && b === path.vertices[0], "closing leg joins last to first")
+    }
+
+    @Test
+    fun abandoningAPathBeforeItsSecondVertexRetainsNoPath() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(5.0, 5.0))
+        ed.finishPath()
+        assertTrue(ed.doc.orthoPaths.isEmpty(), "a single click is not a path")
+    }
+
+    @Test
+    fun aWallKeepsItsCenterlinePath() {
+        val ed = Editor()
+        ed.setTool(Tools.WALL)
+        ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(100.0, 2.0))
+        ed.finishPath()
+        val wall = ed.doc.walls.single()
+        assertTrue(wall.path === ed.doc.orthoPaths.single(), "the wall's spine is the retained path")
+    }
+
+    @Test
     fun draggingAnOrthoVertexMovesOnlyItAndItsTwoNeighbours() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)

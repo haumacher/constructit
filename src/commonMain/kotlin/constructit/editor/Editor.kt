@@ -45,9 +45,8 @@ class Editor(
     private val pickedClicks = ArrayList<Vec2>()
     private var filledSlots = 0
 
-    // ortho-path (turtle) state
-    private val pathVerts = ArrayList<OrthoVertex>()
-    private var pathActive = false
+    // ortho-path (turtle) state — the path itself is retained in the document while being drawn
+    private var activePath: OrthoPath? = null
     private var pathClosed = false
     private var previewSeg: Pair<Vec2, Vec2>? = null
     private var pathThickness: constructit.dsl.ScalarRef? = null // set for the WALL tool
@@ -71,8 +70,7 @@ class Editor(
         attachTarget = null
         haloPos = null
         panning = false
-        pathVerts.clear()
-        pathActive = false
+        activePath = null
         pathClosed = false
         previewSeg = null
         pathThickness = null
@@ -112,7 +110,7 @@ class Editor(
             return
         }
         if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {
-            if (toolId == Tools.WALL && !pathActive && activeScalar == null) {
+            if (toolId == Tools.WALL && activePath == null && activeScalar == null) {
                 statusHint = "Wall: select a thickness parameter in the panel first"
                 onChange()
                 return
@@ -129,20 +127,19 @@ class Editor(
 
     /** One click of a path tool (ortho path / wall): start a chain, append a leg, or close the loop. */
     private fun pathClick(world: Vec2) {
-        if (!pathActive) {
-            pathVerts.clear()
-            pathVerts.add(doc.startOrthoVertex(world))
-            pathActive = true
+        val path = activePath
+        if (path == null) {
+            activePath = doc.startOrthoPath(world)
             if (toolId == Tools.WALL) pathThickness = activeScalar?.ref
             statusHint = "${if (toolId == Tools.WALL) "Wall" else "Ortho path"}: click the next point; click the start to close (Esc/double-click to finish)"
         } else {
-            val v0 = (ev().valueOf(pathVerts.first().ref) as? PointValue)?.p
-            if (v0 != null && pathVerts.size >= 3 && (world - v0).length() <= tolWorld() * 2) {
+            val v0 = (ev().valueOf(path.vertices.first().ref) as? PointValue)?.p
+            if (v0 != null && path.vertices.size >= 3 && (world - v0).length() <= tolWorld() * 2) {
                 pathClosed = true
                 finishPath()
                 return // clicked the start -> close the loop
             }
-            doc.addOrthoVertex(pathVerts.last(), world)?.let { pathVerts.add(it) }
+            doc.addOrthoVertex(path, world)
         }
         previewSeg = null
         onChange()
@@ -162,17 +159,13 @@ class Editor(
 
     /** Finish the current path (Esc / double-click / close / tool switch); for WALL, build faces. */
     fun finishPath() {
-        if (!pathActive && pathVerts.isEmpty()) return
-        val closed = pathClosed && pathVerts.size >= 3
-        if (closed) {
-            doc.closeOrthoPath(pathVerts.first(), pathVerts.last()) // snap last coord to fit
-            doc.segment(pathVerts.last().ref, pathVerts.first().ref) // close the centerline
-        }
+        val path = activePath ?: return
+        if (pathClosed) doc.closeOrthoPath(path) // snaps the last coordinate to fit, adds the closing leg
         val t = pathThickness
-        if (t != null && pathVerts.size >= 2) doc.buildWall(pathVerts.map { it.ref }, t, closed)
-        pathActive = false
+        if (t != null && path.vertices.size >= 2) doc.buildWall(path, t)
+        doc.discardOrthoPath(path) // a path that never got a second vertex isn't a path
+        activePath = null
         pathClosed = false
-        pathVerts.clear()
         previewSeg = null
         pathThickness = null
         statusHint = ""
@@ -181,7 +174,7 @@ class Editor(
 
     fun pointerMove(screen: Vec2) {
         if (toolId == Tools.ORTHO_PATH) {
-            previewSeg = if (pathActive) doc.orthoLegPreview(pathVerts.last().ref, camera.screenToWorld(screen)) else null
+            previewSeg = activePath?.let { doc.orthoLegPreview(it, camera.screenToWorld(screen)) }
             onChange()
             return
         }
