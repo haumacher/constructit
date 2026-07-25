@@ -7,6 +7,9 @@ import constructit.dsl.valueOf
 import constructit.geom.Vec2
 import constructit.units.mm
 
+/** Undo depth bound: snapshots are whole scripts, so the stack must not grow with the session. */
+private const val UNDO_CAP = 100
+
 /**
  * Pure interaction controller. In SELECT mode it drags free points (live recompute) or pans;
  * otherwise it runs the active [ToolDef] as a generic slot-collector, picking existing
@@ -21,14 +24,116 @@ class Editor(
     var doc: Document = doc
         private set
 
-    /** Swap in a loaded document, dropping every reference into the old one. */
+    /** Swap in a loaded document, dropping every reference into the old one and its history. */
     fun replaceDocument(fresh: Document) {
+        adopt(fresh)
+        // a loaded file starts its own history — earlier snapshots describe a different document
+        undoStack.clear()
+        redoStack.clear()
+        lastCommitted = DocumentFormat.save(fresh)
+        statusHint = ""
+        onChange()
+    }
+
+    /** Swap [fresh] in, resetting every transient reference into the old document (selection, picks). */
+    private fun adopt(fresh: Document) {
         doc = fresh
         selection = null
         activeScalar = null
         resetPicks()
-        statusHint = ""
+    }
+
+    // ---- undo/redo: the saved construction script is the undo substrate (OP-18) ----
+    //
+    // One snapshot of the saved script per committed user-level operation; undo replays the previous
+    // snapshot into a fresh document. Prefix-replay over the journal was rejected: a drag or a typed
+    // value mutates a source node's literal without adding a step, so journal length does not delimit
+    // an operation — the saved text (which restates those literals) does.
+    //
+    // [checkpoint] is called where an operation *commits*, not where the document mutates: a tool's
+    // build, a drag's release (welds, attaches and joins included), a typed field write, a path's
+    // finish (its start/vertex/close steps are one gesture), a break click, an opening insertion, a
+    // delete, and the panel edits the browser shell routes here. A snapshot is pushed only when the
+    // text changed, so a cancelled or no-op gesture never becomes an undo step.
+    private val undoStack = ArrayList<String>()
+    private val redoStack = ArrayList<String>()
+    private var lastCommitted: String = DocumentFormat.save(doc)
+
+    val canUndo: Boolean get() = undoStack.isNotEmpty()
+    val canRedo: Boolean get() = redoStack.isNotEmpty()
+
+    /** Record the document as one committed operation — the seam every user-level edit funnels through. */
+    fun checkpoint() {
+        val now = DocumentFormat.save(doc)
+        if (now == lastCommitted) return
+        undoStack.add(lastCommitted)
+        if (undoStack.size > UNDO_CAP) undoStack.removeAt(0)
+        redoStack.clear()
+        lastCommitted = now
+    }
+
+    fun undo(): Boolean {
+        if (undoStack.isEmpty()) return false
+        if (DocumentFormat.save(doc) != lastCommitted) {
+            // uncommitted work in progress — a half-drawn path, a cancelled tool's stray points —
+            // is discarded as the first undo, not popped past: it was never a step, so it has no
+            // snapshot of its own and cannot be redone
+            adopt(DocumentFormat.load(lastCommitted))
+        } else {
+            redoStack.add(lastCommitted)
+            lastCommitted = undoStack.removeLast()
+            adopt(DocumentFormat.load(lastCommitted))
+        }
+        statusHint = "Undone"
         onChange()
+        return true
+    }
+
+    fun redo(): Boolean {
+        if (redoStack.isEmpty()) return false
+        undoStack.add(lastCommitted)
+        lastCommitted = redoStack.removeLast()
+        adopt(DocumentFormat.load(lastCommitted))
+        statusHint = "Redone"
+        onChange()
+        return true
+    }
+
+    /**
+     * Delete the selection at the granularity of the step that created it (OP-18): that step is
+     * dropped together with every later step depending on what the dropped steps made, and the
+     * remaining script is replayed into a fresh document — so what survives is exactly what still
+     * constructs, never a graph with holes in it.
+     */
+    fun deleteSelection(): Boolean {
+        val sel = selection ?: return false
+        val root = doc.creatingStep(sel)
+        if (root == null) {
+            statusHint = "${sel.id} has no construction step to remove"
+            onChange()
+            return false
+        }
+        val droppedSteps = doc.dependentSteps(root)
+        val removed = droppedSteps.flatMapTo(HashSet()) { it.creates }
+        val dependents = removed.count { it !== sel && it in doc.elements }
+        val journalBefore = doc.journal.toList()
+        doc.journal.removeAll(droppedSteps)
+        val fresh =
+            try {
+                DocumentFormat.load(DocumentFormat.save(doc))
+            } catch (e: Exception) {
+                doc.journal.clear()
+                doc.journal.addAll(journalBefore)
+                statusHint = "Delete failed: ${e.message}"
+                onChange()
+                return false
+            }
+        val deletedId = sel.id
+        adopt(fresh)
+        checkpoint()
+        statusHint = if (dependents == 0) "Deleted $deletedId" else "Deleted $deletedId and $dependents dependent${if (dependents == 1) "" else "s"}"
+        onChange()
+        return true
     }
 
     var camera: Camera = Camera.centered(canvasW, canvasH)
@@ -186,6 +291,9 @@ class Editor(
     val pendingCount: Int get() = filledSlots
 
     fun setTool(id: String) {
+        // an active path is a pending operation: switching tools finishes it (wall faces included)
+        // rather than silently abandoning half-drawn state that no gesture ever committed
+        finishPath()
         toolId = id
         resetPicks()
         statusHint = ""
@@ -243,6 +351,7 @@ class Editor(
         val f = selectionFields().getOrNull(index) ?: return false
         if (!f.writable) return false
         f.write(quantityOf(f.dim, value))
+        checkpoint()
         onChange()
         return true
     }
@@ -325,6 +434,7 @@ class Editor(
                 } else {
                     "Click a segment of an ortho path"
                 }
+            checkpoint()
             onChange()
             return
         }
@@ -499,6 +609,7 @@ class Editor(
             return
         }
         statusHint = if (doc.addOpeningAtRecorded(world, w.ref, tolWorld() * 2)) "Opening added" else "Click on a wall to place an opening"
+        checkpoint()
         onChange()
     }
 
@@ -515,6 +626,7 @@ class Editor(
         previewSeg = null
         closePreview = emptyList()
         pathThickness = null
+        checkpoint() // the whole path — start, legs, close, wall — commits as one operation
         statusHint = ""
         onChange()
     }
@@ -595,6 +707,8 @@ class Editor(
                 statusHint = "Joined into ${it.id} — the flattened corner is gone"
                 onChange()
             }
+            // the release is where a drag commits — moves, welds, attaches and joins are one operation
+            checkpoint()
         }
     }
 
@@ -733,6 +847,7 @@ class Editor(
         val picks = Picks(pickedPoints.toList(), pickedElements.toList(), pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0), pickedClicks.toList())
         if (filledSlots >= 2) {
             doc.recordingTool(tool.id, picks, activeScalar) { tool.build(doc, picks, activeScalar?.ref) }
+            checkpoint()
             statusHint = ""
         } else {
             statusHint = "${tool.label}: needs at least two curves"
@@ -793,6 +908,7 @@ class Editor(
             }
             val picks = Picks(pickedPoints.toList(), pickedElements.toList(), world, pickedClicks.toList())
             doc.recordingTool(tool.id, picks, activeScalar) { tool.build(doc, picks, activeScalar?.ref) }
+            checkpoint() // the tool application — earlier slot clicks were only halves of it
             resetPicks()
             statusHint = ""
         } else {

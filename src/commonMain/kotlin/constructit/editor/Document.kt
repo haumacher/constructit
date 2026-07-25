@@ -87,8 +87,12 @@ class Element(
      */
     val hasFreeDof: Boolean get() = handle?.dragMovable ?: false
 
-    /** Anything a pointer can address: a point, or a curve carrying a handle (an ortho leg). */
-    val selectable: Boolean get() = isPoint || handle != null
+    /**
+     * Anything a pointer can address. Every displayed element is selectable: selection is what makes
+     * an element's values readable in the inspector and — since delete operates on the selection —
+     * what makes it removable, so a curve with no handle must still take the pick.
+     */
+    val selectable: Boolean get() = true
     val isCurve: Boolean get() =
         kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT ||
             kind == ElementKind.RAY || kind == ElementKind.ARC || kind == ElementKind.BEZIER
@@ -234,6 +238,7 @@ class Document {
             if (skipIfEmpty && created.isEmpty() && scalars.size == scalarsBefore) return result
             val step = Step(kind, args.toList())
             step.creates.addAll(created)
+            step.createsScalars.addAll(scalars.subList(scalarsBefore, scalars.size))
             journal.add(step)
             return result
         } finally {
@@ -263,6 +268,112 @@ class Document {
             skipIfEmpty = true,
             body = body,
         )
+
+    // ---- delete: the unit of removal is the journal step (OP-18) ----
+
+    /** The journal step that created [el], if any — what a delete of [el] removes. */
+    fun creatingStep(el: Element): Step? = journal.firstOrNull { s -> s.creates.any { it === el } }
+
+    /** Elements a step's arguments reference, keyed wrappers included. */
+    private fun referencedElements(step: Step): List<Element> {
+        val out = ArrayList<Element>()
+
+        fun walk(a: Arg) {
+            when (a) {
+                is Arg.El -> out.add(a.el)
+                is Arg.Els -> out.addAll(a.els)
+                is Arg.Keyed -> walk(a.value)
+                else -> {}
+            }
+        }
+        step.args.forEach { walk(it) }
+        return out
+    }
+
+    /** Scalars a step's arguments reference, keyed wrappers included. */
+    private fun referencedScalars(step: Step): List<ScalarEntry> {
+        val out = ArrayList<ScalarEntry>()
+
+        fun walk(a: Arg) {
+            when (a) {
+                is Arg.Sc -> out.add(a.entry)
+                is Arg.Keyed -> walk(a.value)
+                else -> {}
+            }
+        }
+        step.args.forEach { walk(it) }
+        return out
+    }
+
+    /**
+     * [root] plus every later step that (transitively) depends on something the dropped steps made —
+     * what a delete must remove for the remaining journal to replay as a valid script.
+     *
+     * Three dependency kinds, checked in one forward walk:
+     * - **explicit** — an argument references a dropped element or scalar;
+     * - **path context** — the ortho steps address the "current path" without an element argument, so
+     *   a path's topology steps chain: dropping one drops the rest of that path's steps. Per-vertex
+     *   surgery is deliberately not attempted — replay coalesces a straight-on step into the previous
+     *   leg and a wall's face count follows the leg count, so removing one topology step changes how
+     *   many elements later steps create, which the loader rejects as a count mismatch;
+     * - **wall regeneration** — an opening step's created elements are the wall's *regenerated* faces,
+     *   whose count depends on every opening already in the wall: dropping any wall or opening step
+     *   therefore drops every later opening step.
+     */
+    fun dependentSteps(root: Step): Set<Step> {
+        // one drawn path; mirrors the loader's "current path" resolution so the chain matches replay
+        class Group {
+            var dropped = false
+        }
+
+        val dropped = LinkedHashSet<Step>()
+        val droppedEls = HashSet<Element>()
+        val droppedScalars = HashSet<ScalarEntry>()
+        var wallFamilyDropped = false
+
+        fun drop(
+            step: Step,
+            group: Group?,
+        ) {
+            dropped.add(step)
+            droppedEls.addAll(step.creates)
+            droppedScalars.addAll(step.createsScalars)
+            when (step.kind) {
+                // a wall or opening can go without taking its centerline path down with it
+                "wall", "opening" -> wallFamilyDropped = true
+                else -> group?.dropped = true
+            }
+        }
+
+        var current: Group? = null
+        val groupOfEl = HashMap<Element, Group>()
+        var seenRoot = false
+        for (step in journal) {
+            val els = referencedElements(step)
+            val group: Group? =
+                when (step.kind) {
+                    "orthostart" -> Group().also { current = it }
+                    "orthoresume" -> (els.firstNotNullOfOrNull { groupOfEl[it] } ?: current).also { current = it }
+                    "orthojoin", "orthobreak" -> els.firstNotNullOfOrNull { groupOfEl[it] } ?: current
+                    "orthovertex", "orthoprepend", "orthoclose", "orthodiscard", "wall" -> current
+                    else -> null
+                }
+            if (group != null) step.creates.forEach { groupOfEl[it] = group }
+            if (step === root) {
+                drop(step, group)
+                seenRoot = true
+                continue
+            }
+            if (!seenRoot) continue
+            val depends =
+                group?.dropped == true ||
+                    (step.kind == "opening" && wallFamilyDropped) ||
+                    els.any { it in droppedEls } ||
+                    referencedScalars(step).any { it in droppedScalars }
+            if (depends) drop(step, group)
+        }
+        return dropped
+    }
 
     private fun nextId(prefix: String) = "$prefix${++counter}"
 
@@ -323,9 +434,12 @@ class Document {
     ): ScalarEntry {
         val node = ParameterNode(nextId("pn"), ScalarValue(value))
         val e = ScalarEntry(nextId("s"), uniqueScalarName(name), Ref<ScalarValue>(node), editable = true)
-        scalars.add(e)
-        recording("param", Arg.Sc(e), Arg.Text("="), Arg.Num(value)) {}
-        return e
+        // added inside the recording, so the step *owns* the scalar it introduces — which is what
+        // lets delete's dependency analysis follow scalar references the same way as element ones
+        return recording("param", Arg.Sc(e), Arg.Text("="), Arg.Num(value)) {
+            scalars.add(e)
+            e
+        }
     }
 
     private fun measurement(

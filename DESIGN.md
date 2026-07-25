@@ -306,9 +306,24 @@ afterwards. Three consequences fall out of the shared-coordinate model:
    model beyond a single active scalar), Chamfer (straight bevel between two legs), Rectangle,
    Regular polygon, Rounded-rectangle (expose the existing macro), Area measurement (needs an
    area op).
-2. **Editing & persistence.** Save/load is **done** (OP-18, see *Document format* below). Remaining:
-   Delete (dependency-aware — removing a node invalidates/removes dependents) and undo/redo, which
-   the journal now makes tractable: an undo step is a prefix of the recorded construction.
+2. **Editing & persistence — done.** Save/load (OP-18, see *Document format* below), plus undo/redo
+   and dependency-aware delete. Undo is a stack of **document-format snapshots** — one per committed
+   user-level operation (a tool build, a drag's release with its welds/joins, a typed write, a whole
+   path finish, a break, an opening, a delete, a panel edit), captured at the single
+   `Editor.checkpoint()` seam and restored by replaying the script into a fresh document. A snapshot
+   is pushed only when the saved text changed, so cancelled and no-op gestures are not steps; a new
+   edit clears redo; the stack is capped at 100. The originally sketched prefix-replay undo ("an undo
+   step is a prefix of the journal") was **rejected on contact**: drags and typed values mutate
+   source-node literals without adding steps, so journal length does not delimit an operation — the
+   saved text, which restates those literals, does. Delete's unit is the **step**: the step that
+   created the selection is dropped together with every later step that transitively references
+   anything the dropped steps made — explicit element/scalar arguments, plus two implicit chains: a
+   path's topology steps (replay coalesces straight-on legs and a wall's face count follows the leg
+   count, so per-vertex surgery would replay as a loader count mismatch) and wall openings (an
+   opening step's creations are the wall's *regenerated* faces, so any dropped wall/opening step
+   drops the later opening steps). The filtered journal is re-saved and replayed, so the survivors
+   are exactly what still constructs, `save → load → save` stays byte-stable afterwards, and the
+   status line reports what else went ("deleted e3 and 2 dependents").
 3. **Productivity.** Remaining snap modes — key points of *derived* geometry (endpoint/midpoint/
    quadrant, which need the derived point materialized, not just its coordinate) and arcs (no carrier
    circle yet); drag-to-attach onto **arcs** and onto **derived points** (the two cases the weld

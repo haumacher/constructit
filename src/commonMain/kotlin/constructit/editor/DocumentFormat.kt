@@ -38,6 +38,9 @@ sealed interface Arg {
  */
 class Step(val kind: String, val args: List<Arg>) {
     val creates = ArrayList<Element>()
+
+    /** Scalars this step introduced (a parameter, a measurement) — a dependency unit for delete too. */
+    val createsScalars = ArrayList<ScalarEntry>()
 }
 
 /**

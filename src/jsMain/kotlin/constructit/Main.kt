@@ -75,7 +75,24 @@ private fun setupApp() {
         val key = e.key
         // don't steal typing from the panel's own inputs
         val inField = (e.target as? HTMLElement)?.tagName?.lowercase() in setOf("input", "select", "textarea")
-        if (!inField && editor.key(key)) e.preventDefault()
+        val ctrl = e.ctrlKey || e.metaKey
+        if (!inField) {
+            when {
+                ctrl && (key == "z" || key == "Z") -> {
+                    if (e.shiftKey) editor.redo() else editor.undo()
+                    e.preventDefault()
+                }
+                ctrl && (key == "y" || key == "Y") -> {
+                    editor.redo()
+                    e.preventDefault()
+                }
+                // the controller first: direct distance entry owns digits/Enter/Esc/Backspace while active
+                editor.key(key) -> e.preventDefault()
+                key == "Delete" || key == "Backspace" -> {
+                    if (editor.deleteSelection()) e.preventDefault()
+                }
+            }
+        }
         if (key == "Shift" && !editor.axisLock) {
             editor.axisLock = true
             editor.note("Axis lock: the drag is restricted to one axis (release Shift to free it)")
@@ -102,6 +119,11 @@ private fun setupApp() {
         }
     })
 
+    // ---- edit actions: thin adapters over the Editor's own undo/redo/delete ----
+    (document.getElementById("e-undo") as HTMLElement).addEventListener("click", { editor.undo() })
+    (document.getElementById("e-redo") as HTMLElement).addEventListener("click", { editor.redo() })
+    (document.getElementById("e-delete") as HTMLElement).addEventListener("click", { editor.deleteSelection() })
+
     // ---- palette (tool selection via delegation) ----
     (document.getElementById("palette") as HTMLElement).addEventListener("click", {
         val btn = (it.target as? HTMLElement)?.closest("button") ?: return@addEventListener
@@ -120,6 +142,7 @@ private fun setupApp() {
                 else -> Quantity.mm(v)
             }
         editor.activeScalar = editor.doc.newParameter(name, q)
+        editor.checkpoint() // panel edits commit through the same seam as canvas gestures
         repaint()
     })
     val paramsList = document.getElementById("params-list") as HTMLElement
@@ -150,6 +173,7 @@ private fun setupApp() {
             t is HTMLInputElement && t.className.contains("pval") -> {
                 val v = t.value.toDoubleOrNull() ?: return@addEventListener
                 editor.doc.setParameter(entry, quantityIn(entry, v))
+                editor.checkpoint()
                 repaint()
             }
             t is HTMLSelectElement && t.className.contains("pbind") -> {
@@ -159,6 +183,7 @@ private fun setupApp() {
                 } else if (!editor.doc.wireParameter(entry, target)) {
                     editor.note("Can't wire ${entry.name}: type mismatch or would create a cycle")
                 }
+                editor.checkpoint()
                 repaint()
             }
         }
@@ -259,6 +284,11 @@ private fun buildPalette() {
 private fun renderPanel(editor: Editor) {
     (document.getElementById("status") as HTMLElement).textContent =
         if (editor.statusHint.isNotEmpty()) editor.statusHint else editor.currentHelp()
+
+    // edit buttons mirror the editor's stacks and selection
+    (document.getElementById("e-undo") as org.w3c.dom.HTMLButtonElement).disabled = !editor.canUndo
+    (document.getElementById("e-redo") as org.w3c.dom.HTMLButtonElement).disabled = !editor.canRedo
+    (document.getElementById("e-delete") as org.w3c.dom.HTMLButtonElement).disabled = editor.selection == null
 
     // active tool highlight
     val toolNodes = document.querySelectorAll(".tool")
