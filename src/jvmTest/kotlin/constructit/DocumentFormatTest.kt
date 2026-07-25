@@ -180,6 +180,26 @@ class DocumentFormatTest {
     }
 
     @Test
+    fun aJoinedRunRoundTripsAsTheJoinedRun() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(50.0, 2.0))
+        ed.click(Vec2(48.0, -30.0))
+        ed.click(Vec2(110.0, -28.0))
+        ed.finishPath()
+        ed.setTool(Tools.SELECT)
+        ed.drag(Vec2(80.0, -30.0), Vec2(80.0, 0.0)) // flatten the jog -> joins on release
+
+        val text = DocumentFormat.save(ed.doc)
+        assertTrue(text.contains("orthojoin"), "got:\n$text")
+        val reloaded = assertRoundTrips(ed)
+        val path = reloaded.orthoPaths.single()
+        assertEquals(1, path.legCount, "the reload is the joined run, not the jog it came from")
+        assertEquals(2, path.vertices.size)
+    }
+
+    @Test
     fun aWallWithAnOpeningRoundTrips() {
         val ed = Editor()
         ed.activeScalar = ed.doc.newParameter("t", 10.0.mm)

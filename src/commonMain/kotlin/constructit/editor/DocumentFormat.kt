@@ -63,10 +63,11 @@ object DocumentFormat {
 
     fun save(doc: Document): String {
         val ev = Evaluator()
+        val present = doc.elements.toHashSet()
         val names = HashMap<String, String>() // element id -> script name
         val out = StringBuilder(HEADER).append('\n')
         for (step in doc.journal) {
-            val args = restate(step, ev).joinToString(" ") { encode(it, names) }
+            val args = restate(step, ev, present).joinToString(" ") { encode(it, names) }
             val created = step.creates.map { el -> "e${names.size + 1}".also { names[el.id] = it } }
             out.append(step.kind)
             if (args.isNotEmpty()) out.append(' ').append(args)
@@ -87,8 +88,14 @@ object DocumentFormat {
     private fun restate(
         step: Step,
         ev: Evaluator,
+        present: Set<Element>,
     ): List<Arg> {
         fun posOf(el: Element): Vec2? = ((ev.eval(el.ref.node) as? EvalResult.Ok)?.value as? PointValue)?.p
+        // A step whose creations have since been *removed* — by a join collapsing a jog — keeps its
+        // recorded literals. Re-reading a deleted vertex would describe the state after the edit that
+        // deleted it, whereas replay has to rebuild the geometry that existed before, so the later join
+        // has something to collapse. What survives the join is described by the steps that still own it.
+        if (step.creates.any { it !in present }) return step.args
         return when (step.kind) {
             "param" -> {
                 val e = (step.args[0] as Arg.Sc).entry
@@ -224,6 +231,14 @@ object DocumentFormat {
             "orthostart" -> doc.startOrthoPath(parsePos(words[1]))
             "orthovertex" -> doc.addOrthoVertex(currentPath(doc), parsePos(words[1]))
             "orthoclose" -> doc.closeOrthoPath(currentPath(doc))
+            "orthojoin" -> {
+                val (path, i) = doc.legOf(el(1)) ?: throw LoadError("'${words[1]}' is not an ortho segment")
+                doc.joinCollapsedLeg(path, i)
+            }
+            "orthojoin" -> {
+                val (path, i) = doc.legOf(el(1)) ?: throw LoadError("'${words[1]}' is not an ortho segment")
+                doc.joinCollapsedLeg(path, i)
+            }
             "orthobreak" -> {
                 val (path, i) = doc.legOf(el(1)) ?: throw LoadError("'${words[1]}' is not an ortho segment")
                 doc.breakOrthoLeg(path, i, parsePos(words[2]), parsePos(words[3]))

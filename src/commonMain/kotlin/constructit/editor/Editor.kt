@@ -147,6 +147,7 @@ class Editor(
     // transient state
     private var dragTarget: Element? = null // a point, or a whole ortho leg
     private var dragStart: Vec2? = null // where the drag began, in world space — the axis-lock origin
+    private var pendingJoin: Pair<OrthoPath, Int>? = null // a jog this drag has flattened
     private var weldTarget: Element? = null // a point to weld onto
     private var attachTarget: Element? = null // a curve to attach onto
     private var haloPos: Vec2? = null // where the magnet ring is drawn
@@ -188,6 +189,7 @@ class Editor(
         filledSlots = 0
         dragTarget = null
         dragStart = null
+        pendingJoin = null
         weldTarget = null
         attachTarget = null
         haloPos = null
@@ -477,6 +479,10 @@ class Editor(
                 el.handle?.drag(world, ev())
                 // a free point and an open path end can connect on release; nothing else can
                 if (canConnect(el)) updateMagnet(el, world) else clearMagnet()
+                // a jog dragged shut is *visually* already a single wall, so nothing needs to change
+                // yet — but say that releasing will clean the model up to match (OP-19)
+                pendingJoin = doc.pathOf(el)?.let { p -> doc.collapsedLegIndex(p, tolWorld())?.let { p to it } }
+                if (pendingJoin != null) statusHint = "Release to join these segments — the flattened corner will be removed"
                 onChange()
             }
             panning -> {
@@ -493,8 +499,10 @@ class Editor(
         val dragged = dragTarget
         val weld = weldTarget
         val attach = attachTarget
+        val join = pendingJoin
         dragTarget = null
         dragStart = null
+        pendingJoin = null
         clearMagnet() // clear before rendering so the magnet halo doesn't linger
         panning = false
         if (dragged != null) {
@@ -511,6 +519,17 @@ class Editor(
                     statusHint = "Attached ${dragged.id} to ${attach.id}"
                     onChange()
                 }
+            }
+        }
+        if (join != null) {
+            val (path, legIndex) = join
+            // re-check: the drag may have moved on since the hint was set
+            val collapsed = doc.collapsedLegIndex(path, tolWorld()) ?: legIndex
+            val merged = doc.joinCollapsedLeg(path, collapsed)
+            if (merged != null) {
+                selection = merged
+                statusHint = "Joined into ${merged.id} — the flattened corner is gone"
+                onChange()
             }
         }
     }

@@ -1121,6 +1121,71 @@ class EditorTest {
     }
 
     @Test
+    fun draggingAJogShutJoinsTheTwoSegmentsOnRelease() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)) // V0
+        ed.click(Vec2(50.0, 2.0)) // V1  horizontal at y=0
+        ed.click(Vec2(48.0, -30.0)) // V2  vertical jog down
+        ed.click(Vec2(110.0, -28.0)) // V3  horizontal at y=-30
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+        assertEquals(3, path.legCount)
+
+        // drag the far horizontal leg back up level with the near one: the jog is now flat
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(80.0, -30.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
+        assertTrue(ed.statusHint.contains("Release to join"), "got: '${ed.statusHint}'")
+        assertEquals(3, path.legCount, "nothing changes while dragging — a flat jog already looks joined")
+
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
+        assertEquals(1, path.legCount, "one leg survives")
+        assertEquals(2, path.vertices.size, "the two corners of the flattened jog are gone")
+        val ev = Evaluator()
+        assertClose(ev.point(path.vertices[0].ref).x, 0.0)
+        assertClose(ev.point(path.vertices[1].ref).x, 110.0)
+        assertClose(ev.point(path.vertices[1].ref).y, 0.0)
+
+        // and the survivor is a proper leg: dragging it moves the whole joined run
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(60.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(60.0, 20.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(60.0, 20.0)))
+        val q = Evaluator()
+        assertClose(q.point(path.vertices[0].ref).y, 20.0)
+        assertClose(q.point(path.vertices[1].ref).y, 20.0)
+    }
+
+    @Test
+    fun breakAndJoinAreInverses() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(100.0, 2.0))
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+
+        ed.setTool(Tools.BREAK_LEG)
+        ed.click(Vec2(60.0, 0.0))
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(80.0, -25.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(80.0, -25.0)))
+        assertEquals(3, path.legCount, "broken and pulled open")
+
+        // drag it flat again: back to exactly one leg, geometry as it started
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(80.0, -25.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(80.0, 0.0)))
+        assertEquals(1, path.legCount)
+        assertEquals(2, path.vertices.size)
+        val ev = Evaluator()
+        assertClose(ev.point(path.vertices[0].ref).x, 0.0)
+        assertClose(ev.point(path.vertices[1].ref).x, 100.0)
+        assertClose(ev.point(path.vertices[1].ref).y, 0.0)
+    }
+
+    @Test
     fun breakingIsRefusedWhereItWouldBeSubtlyWrong() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)

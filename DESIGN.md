@@ -368,15 +368,21 @@ orthovertex 429.25,14.75 -> e5,e6
 A leg *extension* (a step continuing the previous leg's axis) is deliberately **not** a step: it
 changes no topology, only a value, and values already travel with the step that introduced the node.
 
-### Break and join legs — topology by gesture (OP-19 — break done, join open)
+### Break and join legs — topology by gesture (OP-19 — RESOLVED)
 
 Two editing operations on an ortho path, inverses of each other. *Leg* here means a segment of an
 ortho path, not the architectural `Wall`.
 
-- **Join** — dragging a leg perpendicular until the adjacent perpendicular leg shrinks to roughly zero
-  removes that leg and makes the two legs it separated into one. Applied **live** during the drag, with
-  the collapsed jog kept restorable if the drag moves back past the threshold; only what is on screen
-  at release is committed, so the drawing always looks like the model.
+- **Join** (done) — dragging a leg perpendicular until the adjacent perpendicular leg shrinks to
+  roughly zero removes that leg and makes the two legs it separated into one. Committed **on release**,
+  with a status hint while the jog is flat.
+  - Live merging was the plan, to keep the drawing looking like the model. It turns out there is
+    nothing to fix: a **zero-length jog is already visually identical to a joined run**, so the drawing
+    never shows anything the model is about to stop being. Merging mid-drag would in fact make the
+    gesture *worse* — the drag holds the far leg's own DOF, so after a merge the same drag would move
+    the whole run instead of just the half that was grabbed, and dragging on through the flat position
+    would no longer re-open the jog. Deferring to release keeps the gesture's meaning fixed and needs
+    no restore-the-jog state at all.
 - **Break** (`Tools.BREAK_LEG`, done) — click a leg to split it there, inserting two vertices with a
   **zero-length perpendicular** leg between them, so the drawing does not change shape. The jog then
   opens by dragging either half. Refused on a loop's **closing** leg, where the endpoints' binding runs
@@ -409,6 +415,11 @@ join (collapse):         V3.y re-pointed: N.y   =>  V0.y     (M, N dropped)
 `closeOrthoPath` already works this way — it binds the last vertex's coordinate to the start's and
 redirects the drag to write the master — so unifying on bindings removes the second mechanism rather
 than adding one. Drags then write the master of a binding chain, which is that redirect generalised.
+
+Scope: both operate on **interior** legs of the run. Collapsing an *end* leg would shorten the path
+rather than join two legs — a different edit — and the closing leg of a loop is refused for the reason
+above. Repeating the pair leaves both steps in the journal, which replays correctly: the break rebuilds
+the jog and the join collapses it again.
 
 Two things a join has to carry, if the path carries a wall: `Wall` holds a fixed vertex list and must
 derive from its path instead, and openings address their leg by *index* and measure position from the

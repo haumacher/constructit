@@ -8,6 +8,7 @@ import constructit.core.Node
 import constructit.core.ParameterNode
 import constructit.core.PointValue
 import constructit.core.ScalarValue
+import constructit.core.SegmentValue
 import constructit.core.SourceNode
 import constructit.core.Value
 import constructit.dsl.ArcRef
@@ -953,6 +954,73 @@ class Document {
         path.legs.add(legIndex + 2, dragLeg(path, segment(n.ref, b.ref)))
         return true
     }
+
+    /**
+     * The interior leg of [path] shorter than [tol], if any — a jog the user has just dragged shut.
+     * Only interior legs qualify: collapsing an end leg would shorten the path rather than join two
+     * legs, which is a different edit.
+     */
+    fun collapsedLegIndex(
+        path: OrthoPath,
+        tol: Double,
+    ): Int? {
+        val ev = Evaluator()
+        for (i in 1 until path.legCount - 1) {
+            if (path.closed && i + 1 == path.legCount - 1) continue // would involve the closing leg
+            val seg = (ev.eval(path.legs[i].ref.node) as? EvalResult.Ok)?.value as? SegmentValue ?: continue
+            if ((seg.seg.b - seg.seg.a).length() <= tol) return i
+        }
+        return null
+    }
+
+    /**
+     * Collapse the zero-length leg [legIndex] of [path], joining the two legs it separated into one —
+     * the join half of OP-19, and the exact inverse of [breakOrthoLeg]: the far endpoint's binding is
+     * re-pointed off the jog and back onto what the near half already follows. Returns the merged leg.
+     */
+    fun joinCollapsedLeg(
+        path: OrthoPath,
+        legIndex: Int,
+    ): Element? {
+        val leg = path.legs.getOrNull(legIndex) ?: return null
+        return recording("orthojoin", Arg.El(leg)) { joinCollapsedLegNow(path, legIndex) }
+    }
+
+    private fun joinCollapsedLegNow(
+        path: OrthoPath,
+        legIndex: Int,
+    ): Element? {
+        if (legIndex < 1 || legIndex + 1 >= path.legCount) return null
+        if (path.closed && legIndex + 1 == path.legCount - 1) return null
+        val axis = path.legAxis(legIndex - 1)
+        if (path.legAxis(legIndex + 1) != axis) return null // not two legs of one run separated by a jog
+        val a = path.vertices[legIndex - 1]
+        val m = path.vertices[legIndex]
+        val n = path.vertices[legIndex + 1]
+        val b = path.vertices[legIndex + 2]
+        val perpOf = { c: OrthoCornerHandle -> if (axis == 0) c.yNode else c.xNode }
+        val mPerp = perpOf(m.corner)
+        val nPerp = perpOf(n.corner)
+        val bPerp = perpOf(b.corner)
+        val master = mPerp.boundTo ?: return null // the near half must already follow something
+        if (bPerp.boundTo !== nPerp) return null // the far half must follow the jog
+
+        bPerp.boundTo = master // the far half rejoins the near half's run; the jog is now unreferenced
+        b.corner.legAnchor = if (axis == 0) a.corner.xNode else a.corner.yNode
+
+        listOf(path.legs[legIndex - 1], path.legs[legIndex], path.legs[legIndex + 1]).forEach { remove(it) }
+        elementFor(m.ref)?.let { remove(it) }
+        elementFor(n.ref)?.let { remove(it) }
+        repeat(3) { path.legs.removeAt(legIndex - 1) }
+        repeat(2) { path.vertices.removeAt(legIndex) }
+        val merged = dragLeg(path, segment(a.ref, b.ref))
+        path.legs.add(legIndex - 1, merged)
+        return merged
+    }
+
+    /** The ortho path [el] belongs to — as one of its legs or as one of its vertices. */
+    fun pathOf(el: Element): OrthoPath? =
+        orthoPaths.firstOrNull { p -> p.legIndexOf(el) >= 0 || p.vertices.any { it.ref === el.ref } }
 
     /** The path and leg index of [el] if it is an ortho leg, else null. */
     fun legOf(el: Element): Pair<OrthoPath, Int>? {
