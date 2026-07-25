@@ -24,7 +24,13 @@ import constructit.dsl.SegmentRef
 import constructit.geom.Vec2
 import constructit.units.Quantity
 import constructit.units.mm
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.acos
+import kotlin.math.asin
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 
 enum class ElementKind { POINT, DERIVED_POINT, ON_CURVE, LINE, RAY, CIRCLE, SEGMENT, ARC }
 
@@ -115,6 +121,28 @@ class OrthoPath {
         } else {
             listOf(i - 1, i + 1).filter { it in 0 until legCount }
         }
+}
+
+/**
+ * A point where things meet, and the **owner of that point's freedom** (OP-20).
+ *
+ * Without this, whichever run was connected first ended up owning the shared DOF and every later
+ * arrival inherited none — so two runs meeting at one point behaved differently for no reason the user
+ * could see. The total number of degrees of freedom was always right; only their *attribution* was
+ * order-dependent, and the editor exposes attribution.
+ *
+ * A junction on a curve owns one DOF (a point-on-curve parameter); a junction at a free point owns its
+ * two coordinates. Everything meeting there binds to it, so no participant owns the shared freedom and
+ * all of them reach it the same way: through [handle], one structural hop away — no search, no probing.
+ */
+class Junction(val point: PointRef, val handle: Handle?, val curve: Element?) {
+    /**
+     * Put this junction where its coordinate [axis] (0 = x, 1 = y) equals [value], exactly, by solving
+     * for its own parameter. Closed form per curve kind — a line is affine in its parameter, a circle
+     * has two solutions and the nearer is kept — so typing a driven coordinate stays as exact as
+     * dragging it (OP-13), with no solver anywhere.
+     */
+    var place: (axis: Int, value: Double) -> Boolean = { _, _ -> false }
 }
 
 /** A gap in a wall leg: [position] = distance from the leg start, [width] along the leg. */
@@ -490,23 +518,18 @@ class Document {
         (el.handle as? OrthoCornerHandle)?.takeIf { it.isEndpoint }
 
     /**
-     * Attach an ortho path endpoint [el] onto [curve]: both its coordinate nodes are bound to a fresh
-     * point-on-curve, so the endpoint — and the neighbour sharing one coordinate — follow the curve,
-     * and dragging it now slides along the curve. The ortho analogue of [attachToCurve].
+     * Attach an ortho path endpoint [el] onto [curve] by making that meeting point a [Junction]: the
+     * junction owns the freedom (one parameter along the curve) and **both** of the endpoint's
+     * coordinates are bound to it, so the endpoint owns none of it.
      *
-     * For a **line**, exactly one coordinate is bound: the one the line *determines*. A line that
-     * crosses every horizontal fixes x once y is known, so x is derived from the (free) y and y stays
-     * the 1 DOF that slides along the line; a horizontal line is the mirror image.
+     * That is what makes two runs meeting here symmetric (OP-20). The previous scheme derived one
+     * coordinate from the other, which handed the shared DOF to whichever run arrived first: its far end
+     * kept two directions to drag while the other run's kept one, though the two are the same thing to
+     * the user. Now every participant reaches the shared freedom the same way — through the junction.
      *
-     * Keying this on the **line's** orientation rather than on the vertex's own/shared split is what
-     * makes the two ends of a path attach *symmetrically*. A path's start attaches before it has any
-     * leg, so its own coordinate is not yet defined — deciding from the leg therefore had to pin both
-     * of the start's coordinates, which silently robbed its first leg of the perpendicular DOF that
-     * the same connection at the other end left intact. The line's orientation is always defined.
-     *
-     * A consequence that *is* geometry: if the leg at the attached end runs parallel to the line, the
-     * bound coordinate is the one shared with the neighbour, so the neighbour moves onto the line too.
-     * An axis-aligned leg starting on a parallel line has to be collinear with it.
+     * The *master* of each coordinate chain is bound, not the local node, so the rest of the run follows
+     * the junction and every leg stays axis-aligned. A leg parallel to the line still ends up collinear
+     * with it: that is geometry, not attribution.
      */
     fun attachOrthoEndpointToCurve(
         el: Element,
@@ -518,45 +541,87 @@ class Document {
         curve: Element,
     ): Boolean {
         val corner = orthoEndpoint(el) ?: return false
+        val junction = junctionOnCurve(curve, el.ref.node) ?: return false
+        return bindCornerToJunction(corner, junction)
+    }
+
+    /** A junction sliding along [curve], placed where [near] currently is. Null if it would cycle. */
+    private fun junctionOnCurve(
+        curve: Element,
+        near: Node,
+    ): Junction? {
         val ev = Evaluator()
+        val p = (ev.eval(near) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p } ?: return null
         if (curve.isLinear) {
             val lr = carrierLine(curve)
-            if (dependsOn(lr.node, el.ref.node, HashSet())) return false
-            val dir = ((ev.eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line?.dir ?: return false
-            // a line crossing every horizontal determines x from y; a horizontal line determines y from x
-            val bindsX = abs(dir.y) > Vec2.EPS
-            // bind the *master* of the chain: binding the local node would discard the binding that
-            // holds this leg axis-aligned, and the whole chain must follow the curve anyway
-            val bound = writableMaster(if (bindsX) corner.xNode else corner.yNode) ?: return false
-            val free = if (bindsX) corner.yNode else corner.xNode
-            val alongFree = Ref<ScalarValue>(free)
-            val cut =
-                if (bindsX) {
-                    cx.lineThrough(cx.pointXY(cx.const(0.0.mm), alongFree), cx.pointXY(cx.const(1.0.mm), alongFree))
+            if (dependsOn(lr.node, near, HashSet())) return null
+            val l = (ev.eval(lr.node) as? EvalResult.Ok)?.value as? LineValue ?: return null
+            val tNode = SourceNode(nextId("jt"), ScalarValue(Quantity.mm((p - l.line.origin).dot(l.line.dir))))
+            val point = cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode))
+            val junction = Junction(point, OnLineHandle(lr, tNode), curve)
+            junction.place = { axis, value ->
+                // a line is affine in its parameter: t = (value - origin) / dir, exactly
+                val line = ((Evaluator().eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line
+                val d = if (axis == 0) line?.dir?.x else line?.dir?.y
+                val o = if (axis == 0) line?.origin?.x else line?.origin?.y
+                if (line == null || d == null || o == null || abs(d) < Vec2.EPS) {
+                    false
                 } else {
-                    cx.lineThrough(cx.pointXY(alongFree, cx.const(0.0.mm)), cx.pointXY(alongFree, cx.const(1.0.mm)))
+                    tNode.value = ScalarValue(Quantity.mm((value - o) / d))
+                    true
                 }
-            val crossing = cx.select(cx.intersectLL(lr, cut), +1)
-            bound.boundTo = (if (bindsX) cx.measureX(crossing) else cx.measureY(crossing)).node
-            corner.isEndpoint = false
-            return true
+            }
+            junctions.add(junction)
+            return junction
         }
         if (curve.kind == ElementKind.CIRCLE) {
             val cr = curve.ref as CircleRef
-            if (dependsOn(cr.node, el.ref.node, HashSet())) return false
-            val p = (ev.eval(el.ref.node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p } ?: return false
-            val c = (ev.eval(cr.node) as EvalResult.Ok).value as CircleValue
-            val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
-            val pol = cx.pointOnCircle(cr, Ref<ScalarValue>(aNode))
-            el.handle = OnCircleHandle(cr, aNode)
-            corner.xNode.boundTo = cx.measureX(pol).node
-            corner.yNode.boundTo = cx.measureY(pol).node
-            return true
+            if (dependsOn(cr.node, near, HashSet())) return null
+            val c = (ev.eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue ?: return null
+            val aNode = SourceNode(nextId("ja"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
+            val point = cx.pointOnCircle(cr, Ref<ScalarValue>(aNode))
+            val junction = Junction(point, OnCircleHandle(cr, aNode), curve)
+            junction.place = { axis, value ->
+                // a circle has two angles per coordinate; keep the one nearer where it already sits
+                val circle = ((Evaluator().eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue)?.circle
+                val centre = if (axis == 0) circle?.center?.x else circle?.center?.y
+                val ratio = if (circle == null || centre == null) 2.0 else (value - centre) / circle.radius
+                if (circle == null || abs(ratio) > 1.0) {
+                    false
+                } else {
+                    val base = if (axis == 0) acos(ratio) else asin(ratio)
+                    val current = (aNode.value as ScalarValue).q.base
+                    val options = if (axis == 0) listOf(base, -base) else listOf(base, PI - base)
+                    val pick = options.minByOrNull { abs(atan2(sin(it - current), cos(it - current))) } ?: base
+                    aNode.value = ScalarValue(Quantity.rad(pick))
+                    true
+                }
+            }
+            junctions.add(junction)
+            return junction
         }
-        return false
+        return null
     }
 
-    /** Weld an ortho path endpoint [el] onto point [target]: its coordinates track the target. */
+    /** Bind both of [corner]'s coordinates (via their masters) to [junction], so it owns neither. */
+    private fun bindCornerToJunction(
+        corner: OrthoCornerHandle,
+        junction: Junction,
+    ): Boolean {
+        val mx = writableMaster(corner.xNode) ?: return false
+        val my = writableMaster(corner.yNode) ?: return false
+        driveByJunction(mx, junction, junction.point, 0)
+        if (my !== mx) driveByJunction(my, junction, junction.point, 1)
+        corner.isEndpoint = false
+        return true
+    }
+
+    /**
+     * Weld an ortho path endpoint [el] onto point [target]: the meeting point becomes a [Junction] too,
+     * so a second run arriving at a junction reaches the shared freedom exactly as the first one does.
+     * When [target] is already driven by a junction, that same junction is joined rather than a new one
+     * invented on top of it.
+     */
     fun weldOrthoEndpointToPoint(
         el: Element,
         target: Element,
@@ -569,12 +634,20 @@ class Document {
         val corner = orthoEndpoint(el) ?: return false
         val tref = target.ref as? PointRef ?: return false
         if (!target.isPoint || target === el || dependsOn(tref.node, el.ref.node, HashSet())) return false
-        val mx = writableMaster(corner.xNode) ?: return false
-        val my = writableMaster(corner.yNode) ?: return false
-        mx.boundTo = cx.measureX(tref).node
-        my.boundTo = cx.measureY(tref).node
-        corner.isEndpoint = false
-        return true
+        val existing = (target.handle as? OrthoCornerHandle)?.let { junctionOf(it.xNode) ?: junctionOf(it.yNode) }
+        // a target with no handle of its own — a derived point such as an intersection — makes a junction
+        // that owns nothing: the meeting point is then fixed by construction, and honestly immovable
+        val junction =
+            existing ?: Junction(tref, target.handle, null).also {
+                it.place = { axis, value ->
+                    // a plain point owns its coordinates outright, so placing one is just a write
+                    val field = it.handle?.fields()?.getOrNull(axis)
+                    field?.write(Quantity.mm(value))
+                    field?.writable == true
+                }
+                junctions.add(it)
+            }
+        return bindCornerToJunction(corner, junction)
     }
 
     fun remove(el: Element) {
@@ -774,20 +847,42 @@ class Document {
 
     // ---- architectural: ortho path (shared-coordinate rectilinear polyline) ----
 
-    /**
-     * Coordinate nodes of ortho paths. Tracked so a leg drag that has to reach *upstream* for a free
-     * DOF can only ever move ortho geometry — never the reference line or point it was attached to.
-     */
-    val orthoCoords = HashSet<SourceNode>()
+    /** Junctions, and the coordinate nodes each one drives — see [Junction] and [junctionOf]. */
+    val junctions = ArrayList<Junction>()
+    private val junctionByNode = HashMap<String, Junction>()
 
-    private fun scalarSource(value: Double): SourceNode = SourceNode(nextId("oc"), ScalarValue(value.mm)).also { orthoCoords.add(it) }
+    /**
+     * The junction driving [node], if its chain of bindings ends at one. This is how a handle whose
+     * coordinate is driven finds the freedom that moves it: structurally, in one lookup.
+     */
+    fun junctionOf(node: SourceNode): Junction? {
+        var n = node
+        var guard = 0
+        while (guard++ < 64) {
+            junctionByNode[n.id]?.let { return it }
+            n = n.boundTo as? SourceNode ?: return null
+        }
+        return null
+    }
+
+    private fun driveByJunction(
+        node: SourceNode,
+        junction: Junction,
+        driver: Ref<PointValue>,
+        axis: Int,
+    ) {
+        node.boundTo = (if (axis == 0) cx.measureX(driver) else cx.measureY(driver)).node
+        junctionByNode[node.id] = junction
+    }
+
+    private fun scalarSource(value: Double): SourceNode = SourceNode(nextId("oc"), ScalarValue(value.mm))
 
     private fun orthoVertex(
         x: SourceNode,
         y: SourceNode,
         ownAxis: Int,
     ): OrthoVertex {
-        val corner = OrthoCornerHandle(x, y)
+        val corner = OrthoCornerHandle(x, y, this)
         corner.ownCoord = if (ownAxis == -1) 0 else ownAxis // start: fixed once its first edge is drawn
         val ref = cx.pointXY(Ref<ScalarValue>(x), Ref<ScalarValue>(y))
         addConstrained(ref, corner)

@@ -4,7 +4,6 @@ import constructit.core.CircleValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.LineValue
-import constructit.core.Node
 import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.core.SourceNode
@@ -144,105 +143,6 @@ fun writableMaster(node: SourceNode): SourceNode? {
     return null
 }
 
-/**
- * Free source nodes [target] depends on, nearest first — the degrees of freedom that can still move it
- * once its own node is driven.
- *
- * Breadth-first, so a node one hop away is offered before one buried deeper. Named parameters are
- * excluded on purpose: dragging geometry must not silently rewrite a wall thickness.
- */
-fun freeInputs(
-    target: Node,
-    limit: Int = 64,
-): List<SourceNode> {
-    val found = ArrayList<SourceNode>()
-    val seen = HashSet<String>()
-    var frontier = listOf(target)
-    var depth = 0
-    while (frontier.isNotEmpty() && depth++ < limit) {
-        val next = ArrayList<Node>()
-        for (n in frontier) {
-            if (!seen.add(n.id)) continue
-            if (n is SourceNode && n.boundTo == null) found.add(n) else next.addAll(n.inputs)
-        }
-        frontier = next
-    }
-    return found
-}
-
-/**
- * Whether moving [free] changes what [target] evaluates to, checked by probing and restoring.
- *
- * A candidate DOF that the target merely *depends on* is not enough: a vertical line's x does not vary
- * with the height you sample it at, so a leg attached along one has an upstream free coordinate that
- * cannot move it. Offering that as draggable would produce exactly the dead drag this mechanism exists
- * to remove.
- */
-fun influences(
-    free: SourceNode,
-    target: Node,
-): Boolean {
-    val original = free.value as? ScalarValue ?: return false
-
-    fun read(): Double? = ((Evaluator().eval(target) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.base
-
-    val before = read() ?: return false
-    val h = if (kotlin.math.abs(original.q.base) > 1.0) kotlin.math.abs(original.q.base) * 1e-3 else 1.0
-    free.value = ScalarValue(Quantity(original.q.base + h, original.q.dim))
-    val after = read()
-    free.value = original
-    return after != null && kotlin.math.abs(after - before) > 1e-12
-}
-
-/**
- * Move [free] so that [target] evaluates to [want] — the inverse of a drag whose own coordinate is
- * driven, so it can still follow the cursor by moving what drives it.
- *
- * Not a constraint solver: nothing is asserted or stored, and the model stays a pure function of its
- * parameters (OP-5). This is the same thing every handle already does — an on-curve point projects the
- * cursor onto its curve, a length field inverts its own arithmetic — only here the relationship is
- * read off the graph by probing instead of being known in closed form. Every relationship the editor
- * builds this way is **affine** (a crossing with an axis line, a coordinate sum), so one secant step is
- * exact; a second guards against a nonlinear one, and a failed solve leaves the value untouched.
- */
-fun driveTo(
-    free: SourceNode,
-    target: Node,
-    want: Double,
-): Boolean {
-    val original = free.value as? ScalarValue ?: return false
-
-    fun read(): Double? = ((Evaluator().eval(target) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.base
-
-    fun set(v: Double) {
-        free.value = ScalarValue(Quantity(v, original.q.dim))
-    }
-
-    var x = original.q.base
-    repeat(2) {
-        val f =
-            read() ?: run {
-                free.value = original
-                return false
-            }
-        if (kotlin.math.abs(f - want) <= 1e-9) return true
-        val h = if (kotlin.math.abs(x) > 1.0) kotlin.math.abs(x) * 1e-3 else 1.0
-        set(x + h)
-        val f2 = read()
-        if (f2 == null || kotlin.math.abs(f2 - f) < 1e-12) { // this DOF does not move the target
-            free.value = original
-            return false
-        }
-        x += (want - f) * h / (f2 - f)
-        set(x)
-    }
-    if (read()?.let { kotlin.math.abs(it - want) <= 1e-6 * kotlin.math.max(1.0, kotlin.math.abs(want)) } != true) {
-        free.value = original
-        return false
-    }
-    return true
-}
-
 /** The effective point value of [node] — its literal, or whatever drives it. */
 private fun pointOf(
     node: SourceNode,
@@ -293,8 +193,10 @@ fun coordField(
 fun orthoCoordField(
     label: String,
     node: SourceNode,
-    /** A free DOF further upstream that can move [node] when it is itself driven — see [driveTo]. */
-    driver: () -> SourceNode? = { null },
+    /** The document, to find the junction owning [node] when this coordinate is driven. */
+    doc: Document? = null,
+    /** Which coordinate this is (0 = x, 1 = y), for asking that junction to place itself. */
+    axis: Int = 0,
 ) = HandleField(
     label,
     node,
@@ -303,9 +205,9 @@ fun orthoCoordField(
     { q ->
         val master = writableMaster(node)
         // typing must reach exactly as far as dragging does, or the two stop being one operation (OP-13)
-        if (master != null) master.value = ScalarValue(Quantity.mm(q.mm)) else driver()?.let { driveTo(it, node, q.mm) }
+        if (master != null) master.value = ScalarValue(Quantity.mm(q.mm)) else doc?.junctionOf(node)?.place?.invoke(axis, q.mm)
     },
-    writableWhen = { writableMaster(node) != null || driver() != null },
+    writableWhen = { writableMaster(node) != null || doc?.junctionOf(node) != null },
 )
 
 /** A field over one component of a point-valued source node: [axis] 0 = x, 1 = y. */
@@ -389,7 +291,7 @@ class OnLineHandle(private val line: LineRef, private val t: SourceNode) : Handl
  * Binding rather than sharing one node is what makes the topology editable: a binding can be
  * re-pointed in place, which is what break and join do (OP-19). Loop closure is just another binding.
  */
-class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode) : Handle {
+class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode, private val doc: Document? = null) : Handle {
     /** True while this vertex terminates its path (degree 1) — the case that may weld/attach. */
     var isEndpoint: Boolean = true
 
@@ -404,18 +306,28 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode) : Handle {
     /** This vertex's own coordinate node — the one its incoming leg runs along. */
     val ownNode: SourceNode get() = if (ownCoord == 0) xNode else yNode
 
+    /** The junction owning whichever of this corner's coordinates is driven — see [Junction]. */
+    private val junction: Junction? get() = doc?.let { it.junctionOf(xNode) ?: it.junctionOf(yNode) }
+
     override val dragNodes: List<SourceNode> get() = listOfNotNull(writableMaster(xNode), writableMaster(yNode))
+
+    override val dragMovable: Boolean get() = dragNodes.isNotEmpty() || junction?.handle != null
 
     override fun drag(
         world: Vec2,
         ev: Evaluator,
     ) {
-        writableMaster(xNode)?.value = ScalarValue(Quantity.mm(world.x))
-        writableMaster(yNode)?.value = ScalarValue(Quantity.mm(world.y))
+        val mx = writableMaster(xNode)
+        val my = writableMaster(yNode)
+        mx?.value = ScalarValue(Quantity.mm(world.x))
+        my?.value = ScalarValue(Quantity.mm(world.y))
+        // a coordinate this corner does not own is owned by the junction it meets at; hand the gesture
+        // there rather than dropping it, so every corner at a junction drags the same way (OP-20)
+        if (mx == null || my == null) junction?.handle?.drag(world, ev)
     }
 
     override fun fields(): List<HandleField> =
-        listOf(orthoCoordField("x", xNode), orthoCoordField("y", yNode)) +
+        listOf(orthoCoordField("x", xNode, doc, 0), orthoCoordField("y", yNode, doc, 1)) +
             (legAnchor?.let { listOf(lengthField("leg length", ownNode, it)) } ?: emptyList())
 }
 
@@ -451,19 +363,12 @@ class OrthoEdgeHandle(private val doc: Document, private val path: OrthoPath, pr
         return if (path.legAxis(i) == 0) a.corner.xNode to b.corner.xNode else a.corner.yNode to b.corner.yNode
     }
 
-    /**
-     * The free ortho coordinate that moves this leg when its own is driven — welded or attached, as at a
-     * junction on a slanted line. Restricted to ortho coordinates so reaching upstream can reshape ortho
-     * paths but never the reference geometry the junction was attached to.
-     */
-    private val driver: SourceNode?
-        get() {
-            if (sharedNode != null) return null
-            val perp = perpendicular ?: return null
-            return freeInputs(perp).firstOrNull { it in doc.orthoCoords && influences(it, perp) }
-        }
+    /** The junction owning this leg's perpendicular coordinate when the leg does not — see [Junction]. */
+    private val junction: Junction? get() = if (sharedNode != null) null else perpendicular?.let { doc.junctionOf(it) }
 
-    override val dragNodes: List<SourceNode> get() = listOfNotNull(sharedNode ?: driver)
+    override val dragNodes: List<SourceNode> get() = listOfNotNull(sharedNode)
+
+    override val dragMovable: Boolean get() = sharedNode != null || junction?.handle != null
 
     override fun drag(
         world: Vec2,
@@ -474,18 +379,17 @@ class OrthoEdgeHandle(private val doc: Document, private val path: OrthoPath, pr
             it.value = ScalarValue(Quantity.mm(want))
             return
         }
-        // this leg's own coordinate is driven, so follow the cursor by moving what drives it. Dragging
-        // a leg whose far end rides a slanted line already slides the junction along that line; this is
-        // the same motion asked for from the other side, which the model can express just as exactly.
-        val free = driver ?: return
-        val perp = perpendicular ?: return
-        driveTo(free, perp, want)
+        // this leg's own coordinate belongs to the junction it meets at; ask the junction to *place* that
+        // one coordinate rather than projecting the whole cursor, so the leg lands exactly under it.
+        // Dragging a leg whose far end rides a slanted line slides the junction along that line — the
+        // same motion the run beyond the junction already produced, now reachable from both sides.
+        junction?.place?.invoke(if (axis == 0) 1 else 0, want)
     }
 
     override fun fields(): List<HandleField> {
         // over the leg's *own* node, not its master: when the chain ends in derived geometry there is
         // no master, and the leg must still report its position (as unwritable) and its lengths
-        val position = orthoCoordField(if (axis == 0) "y" else "x", perpendicular ?: return emptyList()) { driver }
+        val position = orthoCoordField(if (axis == 0) "y" else "x", perpendicular ?: return emptyList(), doc, 1 - (axis ?: 0))
         val along = alongNodes() ?: return listOf(position)
         val (start, end) = along
         return listOf(

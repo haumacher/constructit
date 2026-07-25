@@ -368,6 +368,42 @@ orthovertex 429.25,14.75 -> e5,e6
 A leg *extension* (a step continuing the previous leg's axis) is deliberately **not** a step: it
 changes no topology, only a value, and values already travel with the step that introduced the node.
 
+### Junctions own the freedom at a meeting point (OP-20 — RESOLVED)
+
+Repeated reports of asymmetry — a leg draggable on one side of a junction but not the other, then a
+corner with two degrees of freedom facing one with one — all had a single cause, and it was not the
+individual gestures being fixed one at a time.
+
+**The count was always right; the attribution was order-dependent.** A horizontal run ending on a
+slanted segment with a vertical run hanging off that junction has three DOF: the junction slides along
+the segment, and each run has a length. But the attach derived one of the endpoint's coordinates *from
+the other*, which quietly handed the shared DOF to whichever run connected first. Every later arrival
+inherited none. The editor exposes attribution, so the drawing behaved asymmetrically although the
+geometry was not.
+
+So a meeting point is now a **`Junction`**: an object that owns that point's freedom — one parameter
+along a curve, or its two coordinates when it is a plain point — with *everything* meeting there bound
+to it. No participant owns the shared freedom, and all of them reach it the same way, through the
+junction's own handle, one structural hop away.
+
+- **Dragging** a coordinate the corner does not own is delegated to the junction. A corner hands over
+  the whole cursor (the junction projects onto its curve, which is what a slider does); a *leg* asks the
+  junction to place one coordinate exactly, so the leg lands under the cursor rather than at a
+  projection of it.
+- **Typing** reaches exactly as far (OP-13): `Junction.place` solves for the junction's own parameter in
+  closed form per curve kind — a line is affine in it, a circle has two solutions and the nearer is
+  kept — so a driven coordinate is derived but *not* read-only.
+- **A junction can own nothing**: welded to a derived point, the meeting place is fixed by construction.
+  That is the one honestly immovable case, and it explains itself.
+- Attaching now **projects** the endpoint onto the curve — the same landing spot the drag magnet
+  previews — where the old scheme slid it along one axis to meet the curve.
+
+This supersedes an earlier attempt that had each handle search the graph upstream for a free DOF and
+invert numerically. That worked, but its candidate choice was itself order-dependent — papering over
+order-dependence with an order-dependent heuristic — and it assumed affine relationships, so it would
+not have held on a circle. Junctions fix the attribution instead of compensating for it, and need no
+probing at all.
+
 ### Break and join legs — topology by gesture (OP-19 — RESOLVED)
 
 Two editing operations on an ortho path, inverses of each other. *Leg* here means a segment of an
@@ -971,6 +1007,10 @@ Three broad families (see OP-9 decision above):
       JavaFX harness, file persistence). Client stack = Kotlin (TL-as-shell a non-requirement,
       so GWT/J2CL not indicated; Flutter would sacrifice the shared engine). TL module and
       server-side 3D compute remain valid non-driving later options.
+- [x] **OP-20 Where things meet** — RESOLVED: a meeting point is a `Junction` that **owns** the shared
+      freedom, with everything meeting there bound to it. Fixes the order-dependent *attribution* of
+      DOF that made two runs at one junction behave differently; drags and typed values both reach the
+      shared freedom through the junction, in closed form. See *Junctions own the freedom*.
 - [ ] **OP-19 Break / join legs** — mechanics agreed, not yet built: threshold-triggered topology
       edits by gesture (join on collapse, break as a tool inserting a zero-length perpendicular).
       Requires ortho coordinates to move from *shared* nodes to *bound* ones — a binding can be

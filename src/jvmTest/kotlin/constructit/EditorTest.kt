@@ -787,35 +787,39 @@ class EditorTest {
     }
 
     @Test
-    fun aLegParallelToTheCurveItAttachesToSaysWhyItCannotMove() {
+    fun aRunWeldedToADerivedPointIsImmovableAndSaysSo() {
+        // a junction can own *no* freedom: welded to a derived point, the meeting place is fixed by
+        // construction. That is the honest immovable case, and it must explain itself.
         val ed = Editor()
         ed.setTool(Tools.POINT)
-        ed.click(Vec2(30.0, -60.0))
-        ed.click(Vec2(30.0, 60.0))
-        ed.setTool(Tools.SEGMENT)
-        ed.click(Vec2(30.0, -60.0))
-        ed.click(Vec2(30.0, 60.0)) // a vertical wall
+        ed.click(Vec2(-40.0, 0.0))
+        ed.click(Vec2(40.0, 0.0))
+        ed.click(Vec2(0.0, -40.0))
+        ed.click(Vec2(0.0, 40.0))
+        ed.setTool(Tools.LINE)
+        ed.click(Vec2(-40.0, 0.0))
+        ed.click(Vec2(40.0, 0.0))
+        ed.click(Vec2(0.0, -40.0))
+        ed.click(Vec2(0.0, 40.0))
+        ed.setTool(Tools.INTERSECT)
+        ed.click(Vec2(20.0, 0.0))
+        ed.click(Vec2(0.0, 20.0))
+        val crossing = ed.doc.elements.last { it.kind == ElementKind.DERIVED_POINT }
+
         ed.setTool(Tools.ORTHO_PATH)
-        ed.click(Vec2(0.0, 0.0))
-        ed.click(Vec2(0.0, 40.0)) // a *vertical* leg — parallel to the wall
+        ed.click(Vec2(60.0, 60.0))
+        ed.click(Vec2(60.0, 20.0))
         ed.finishPath()
         val path = ed.doc.orthoPaths.single()
-        val end = ed.doc.elements.first { it.ref === path.vertices[1].ref }
+        val end = ed.doc.elementFor(path.vertices[1].ref)!!
+        assertTrue(ed.doc.weldOrthoEndpointToPoint(end, crossing))
 
-        // attaching a vertical leg's end onto a vertical line pins the coordinate the leg *shares*, so
-        // the whole leg lands on the wall and genuinely has no perpendicular freedom left. Unlike the
-        // asymmetry this replaced, that is geometry: an axis-aligned leg on a parallel line is collinear
+        assertFalse(end.hasFreeDof, "welded to a fixed point, it owns nothing and nothing drives it")
         ed.setTool(Tools.SELECT)
-        assertTrue(ed.doc.attachOrthoEndpointToCurve(end, ed.doc.elements.first { it.kind == ElementKind.SEGMENT }))
-        assertClose(Evaluator().point(path.vertices[0].ref).x, 30.0)
-        assertClose(Evaluator().point(path.vertices[1].ref).x, 30.0)
-
-        assertFalse(path.legs[0].hasFreeDof)
-        ed.pointerDown(ed.camera.worldToScreen(Vec2(30.0, 20.0)))
-        ed.pointerMove(ed.camera.worldToScreen(Vec2(60.0, 20.0)))
-        ed.pointerUp(ed.camera.worldToScreen(Vec2(60.0, 20.0)))
-        assertClose(Evaluator().point(path.vertices[0].ref).x, 30.0)
-        assertTrue(ed.statusHint.contains("no free direction"), "got: '${ed.statusHint}'")
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(0.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(20.0, 20.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(20.0, 20.0)))
+        assertTrue(ed.statusHint.contains("no free direction") || ed.statusHint.contains("fully determined"), "got: '${ed.statusHint}'")
     }
 
     @Test
@@ -841,7 +845,8 @@ class EditorTest {
         ed.click(Vec2(54.0, 21.0)) // ends on the right wall -> finishes the run
         val run = ed.doc.orthoPaths[1]
 
-        assertTrue(ed.doc.elementFor(run.vertices.first().ref)!!.handle!!.fields().any { !it.writable }, "the start is attached")
+        val startHandle = ed.doc.elementFor(run.vertices.first().ref)!!.handle as constructit.editor.OrthoCornerHandle
+        assertTrue(ed.doc.junctionOf(startHandle.xNode) != null, "the start is attached, via a junction")
         assertEquals(3, run.legCount)
         assertTrue(run.legs[0].hasFreeDof, "the first leg must be as movable as the last")
         assertTrue(run.legs[2].hasFreeDof, "the last leg was always movable")
@@ -915,7 +920,7 @@ class EditorTest {
     }
 
     @Test
-    fun aFullyDrivenVertexIsNotGrabbableSoItsMasterStaysReachable() {
+    fun aWeldedVertexDragsWhatItIsWeldedTo() {
         val ed = Editor()
         ed.setTool(Tools.POINT)
         ed.click(Vec2(20.0, 30.0))
@@ -923,11 +928,21 @@ class EditorTest {
         ed.click(Vec2(20.0, 30.0)) // snaps + welds the start onto that point
         ed.click(Vec2(120.0, 32.0))
         ed.finishPath()
-
         val master = ed.doc.elements.first { it.kind == ElementKind.POINT }
-        val start = ed.doc.elements.first { it.ref === ed.doc.orthoPaths.single().vertices[0].ref }
-        assertFalse(start.draggable, "both its coordinates are driven, so dragging it could do nothing")
-        assertTrue(master.draggable, "and the point that drives it is still grabbable at the same spot")
+        val path = ed.doc.orthoPaths.single()
+        val start = ed.doc.elementFor(path.vertices[0].ref)!!
+
+        // it owns nothing of its own, but the junction it meets at is that point — so the gesture is
+        // delegated rather than swallowed, and either element drags the pair
+        assertTrue(start.hasFreeDof)
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(20.0, 30.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(-10.0, 55.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(-10.0, 55.0)))
+        val ev = Evaluator()
+        assertClose(ev.point(master.ref as constructit.dsl.PointRef).x, -10.0)
+        assertClose(ev.point(path.vertices[0].ref).x, -10.0)
+        assertClose(ev.point(path.vertices[0].ref).y, 55.0)
     }
 
     @Test
@@ -1379,65 +1394,59 @@ class EditorTest {
     }
 
     @Test
-    fun aLegPinnedByAJunctionStillDragsByMovingWhatDrivesIt() {
-        // reported: a horizontal run ending on a slanted segment, with a vertical run hanging off that
-        // junction. The horizontal leg dragged (its far end slides along the segment) but the vertical
-        // one did not, though the two are symmetric to the eye. They have one free DOF each — the
-        // horizontal leg's is its own perpendicular, the vertical leg's lies upstream at the junction.
+    fun bothRunsAtAJunctionDragTheSameWay() {
+        // reported twice: a horizontal run ending on a slanted segment with a vertical run hanging off
+        // that junction behaved asymmetrically — first the legs, then the corners. The cause was that
+        // whichever run connected first owned the junction's one DOF. Now the junction owns it (OP-20).
         val ed = Editor()
         ed.setTool(Tools.POINT)
         ed.click(Vec2(-43.375, 83.75))
         ed.click(Vec2(110.125, -12.75))
         ed.setTool(Tools.SEGMENT)
         ed.click(Vec2(-43.375, 83.75))
-        ed.click(Vec2(110.125, -12.75)) // a slanted segment
-        val slanted = ed.doc.elements.first { it.kind == ElementKind.SEGMENT }
+        ed.click(Vec2(110.125, -12.75))
 
         ed.setTool(Tools.ORTHO_PATH)
-        ed.click(Vec2(-68.625, 39.25)) // horizontal run, right end attached to the segment
-        ed.click(Vec2(20.0, 39.25))
-        ed.finishPath()
+        ed.click(Vec2(-68.625, 39.25))
+        ed.click(Vec2(30.0, 39.0)) // aimed at the segment: the leg runs on until it meets it
         val across = ed.doc.orthoPaths[0]
-        val junction = ed.doc.elementFor(across.vertices[1].ref)!!
-        assertTrue(ed.doc.attachOrthoEndpointToCurve(junction, slanted))
+        assertEquals(1, ed.doc.junctions.size, "meeting the segment made a junction")
 
-        val jx = Evaluator().point(across.vertices[1].ref).x
+        val j = Evaluator().point(across.vertices[1].ref)
         ed.setTool(Tools.ORTHO_PATH)
-        ed.click(Vec2(jx, 39.25)) // second run starts on the junction (welds to it) and goes down
-        ed.click(Vec2(jx, -37.25))
+        ed.click(Vec2(j.x, j.y)) // second run starts at the junction
+        ed.click(Vec2(j.x, j.y - 76.5))
         ed.finishPath()
         val down = ed.doc.orthoPaths[1]
+        assertEquals(1, ed.doc.junctions.size, "and joins the same junction rather than inventing another")
 
-        val horizontal = across.legs[0]
-        val vertical = down.legs[0]
-        assertTrue(horizontal.hasFreeDof, "the horizontal leg was always draggable")
-        assertTrue(vertical.hasFreeDof, "and so must the vertical one be — its DOF is just further away")
+        // symmetry: each run's far corner has one coordinate of its own and reaches the shared one
+        // through the junction, so both offer two drag directions
+        val farAcross = ed.doc.elementFor(across.vertices[0].ref)!!
+        val farDown = ed.doc.elementFor(down.vertices[1].ref)!!
+        assertTrue(farAcross.hasFreeDof)
+        assertTrue(farDown.hasFreeDof)
+        assertEquals(2, farAcross.handle!!.fields().count { it.writable && it.label in setOf("x", "y") })
+        assertEquals(2, farDown.handle!!.fields().count { it.writable && it.label in setOf("x", "y") })
 
-        // drag the vertical leg sideways: the junction slides along the slanted segment, which pushes
-        // the horizontal leg in y — the mirror image of dragging the horizontal leg
-        ed.setTool(Tools.SELECT)
+        // and both legs drag: the vertical one sideways, which slides the junction along the segment and
+        // pushes the horizontal run in y — the mirror of what dragging the horizontal leg always did
+        assertTrue(across.legs[0].hasFreeDof)
+        assertTrue(down.legs[0].hasFreeDof)
         val yBefore = Evaluator().point(across.vertices[0].ref).y
-        val target = jx - 30.0
-        val mid = Evaluator().segment(vertical.ref as SegmentRef).let { (it.a.y + it.b.y) / 2 }
-        ed.pointerDown(ed.camera.worldToScreen(Vec2(jx, mid)))
-        ed.pointerMove(ed.camera.worldToScreen(Vec2(target, mid)))
-        ed.pointerUp(ed.camera.worldToScreen(Vec2(target, mid)))
-
-        // and typing reaches exactly as far as dragging (OP-13): the same value, set numerically
-        val xField = vertical.handle!!.fields().first { it.label == "x" }
-        assertTrue(xField.writable, "if the drag can move it, the field must be settable too")
+        val target = j.x - 30.0
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(j.x, j.y - 40.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(target, j.y - 40.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(target, j.y - 40.0)))
 
         val ev = Evaluator()
-        assertClose(ev.point(down.vertices[0].ref).x, target, tol = 1e-6)
-        assertClose(ev.point(down.vertices[1].ref).x, target, tol = 1e-6) // the leg really moved
-        assertTrue(kotlin.math.abs(ev.point(across.vertices[0].ref).y - yBefore) > 1.0, "the other run followed in y")
-        // and the junction is still exactly on the segment: nothing was forced, only re-parameterised
-        val seg = ev.segment(slanted.ref as SegmentRef)
-        val j = ev.point(across.vertices[1].ref)
-        assertClose((j - seg.a).cross((seg.b - seg.a).normalized()), 0.0, tol = 1e-6)
-
-        xField.write(15.0.mm)
-        assertClose(Evaluator().point(down.vertices[0].ref).x, 15.0, tol = 1e-6)
+        assertClose(ev.point(down.vertices[1].ref).x, target, tol = 1e-6) // exactly under the cursor
+        assertTrue(kotlin.math.abs(ev.point(across.vertices[0].ref).y - yBefore) > 1.0, "the other run followed")
+        // the junction is still exactly on the segment: re-parameterised, never forced
+        val seg = ev.segment(ed.doc.elements.first { it.kind == ElementKind.SEGMENT }.ref as SegmentRef)
+        val jNow = ev.point(across.vertices[1].ref)
+        assertClose((jNow - seg.a).cross((seg.b - seg.a).normalized()), 0.0, tol = 1e-6)
     }
 
     @Test
@@ -1590,28 +1599,28 @@ class EditorTest {
     }
 
     @Test
-    fun aCoordinateDrivenByAnAttachIsReportedUnwritable() {
+    fun anAttachedCoordinateIsDrivenYetStillSettableThroughItsJunction() {
         val ed = Editor()
         ed.setTool(Tools.LINE)
         ed.click(Vec2(30.0, -50.0))
         ed.click(Vec2(30.0, 50.0)) // vertical line x=30
         ed.setTool(Tools.ORTHO_PATH)
         ed.click(Vec2(0.0, 0.0))
-        ed.click(Vec2(3.0, 40.0))
-        ed.click(Vec2(20.0, 40.0)) // V2's own coordinate is x (its leg is horizontal)
+        ed.click(Vec2(20.0, 2.0)) // a horizontal leg ending short of the line
         ed.finishPath()
-        val v2 = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }[2]
+        val v2 = ed.doc.elementFor(ed.doc.orthoPaths.single().vertices[1].ref)!!
 
         ed.setTool(Tools.SELECT)
-        ed.pointerDown(ed.camera.worldToScreen(Vec2(20.0, 40.0)))
-        ed.pointerMove(ed.camera.worldToScreen(Vec2(30.0, 40.0)))
-        ed.pointerUp(ed.camera.worldToScreen(Vec2(30.0, 40.0))) // attach: x becomes derived
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(20.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(30.0, 0.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(30.0, 0.0))) // drag it onto the line -> attach
 
-        val fields = v2.handle!!.fields()
-        val x = fields.first { it.label == "x" }
-        assertFalse(x.writable, "x is now determined by the line — typing it must be refused, as dragging it is")
-        assertTrue(fields.first { it.label == "y" }.writable, "y is still free")
-        x.write(999.0.mm) // no-op
+        val h = v2.handle as constructit.editor.OrthoCornerHandle
+        val x = v2.handle!!.fields().first { it.label == "x" }
+        assertEquals(null, constructit.editor.writableMaster(h.xNode), "x is derived, not owned")
+        assertTrue(ed.doc.junctionOf(h.xNode) != null, "it is owned by the junction it meets at")
+        // and therefore still settable: driven is not the same as read-only (OP-13/OP-20)
+        assertTrue(x.writable)
         assertClose(Evaluator().point(v2.ref as constructit.dsl.PointRef).x, 30.0)
     }
 
