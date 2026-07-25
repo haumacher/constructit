@@ -651,6 +651,55 @@ class EditorTest {
     }
 
     @Test
+    fun axisLockRestrictsAVertexDragToOneAxis() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)) // V0
+        ed.click(Vec2(40.0, 3.0)) // V1 (40,0)
+        ed.click(Vec2(38.0, 30.0)) // V2 (40,30)
+        ed.finishPath()
+        val verts = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }
+
+        fun p(i: Int) = Evaluator().point(verts[i].ref as constructit.dsl.PointRef)
+
+        // drag V1 mostly sideways with the lock on: x follows, y must not budge
+        ed.setTool(Tools.SELECT)
+        ed.axisLock = true
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(40.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(60.0, -8.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(60.0, -8.0)))
+        assertClose(p(1).x, 60.0)
+        assertClose(p(1).y, 0.0)
+
+        // and the other way round: a mostly-vertical gesture keeps x
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(60.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(66.0, 25.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(66.0, 25.0)))
+        assertClose(p(1).x, 60.0)
+        assertClose(p(1).y, 25.0)
+    }
+
+    @Test
+    fun axisLockLeavesLegDraggingAlone() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(40.0, 3.0)) // leg 0 horizontal
+        ed.click(Vec2(38.0, 30.0)) // leg 1 vertical at x=40
+        ed.finishPath()
+        val verts = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }
+
+        // a leg has one axis of its own already; the lock must not be able to make the drag inert,
+        // even when the gesture is dominated by the direction the leg runs in
+        ed.setTool(Tools.SELECT)
+        ed.axisLock = true
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(40.0, 15.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(48.0, 40.0))) // mostly along the leg
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(48.0, 40.0)))
+        assertClose(Evaluator().point(verts[1].ref as constructit.dsl.PointRef).x, 48.0)
+    }
+
+    @Test
     fun draggingAnOrthoLegMovesOnlyThatLegPerpendicular() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)

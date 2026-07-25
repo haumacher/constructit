@@ -24,6 +24,13 @@ class Editor(
     var activeScalar: ScalarEntry? = null
     var onChange: () -> Unit = {}
     var showGrid: Boolean = false
+
+    /**
+     * While set, a drag is restricted to the single axis its gesture is dominated by, measured from
+     * where the drag started — so a corner can be moved in x *or* y without disturbing the other.
+     * Read live, so it can be engaged or released mid-drag.
+     */
+    var axisLock: Boolean = false
     var statusHint: String = ""
         private set
 
@@ -35,6 +42,7 @@ class Editor(
 
     // transient state
     private var dragTarget: Element? = null // a point, or a whole ortho leg
+    private var dragStart: Vec2? = null // where the drag began, in world space — the axis-lock origin
     private var weldTarget: Element? = null // a point to weld onto
     private var attachTarget: Element? = null // a curve to attach onto
     private var haloPos: Vec2? = null // where the magnet ring is drawn
@@ -66,6 +74,7 @@ class Editor(
         pickedClicks.clear()
         filledSlots = 0
         dragTarget = null
+        dragStart = null
         weldTarget = null
         attachTarget = null
         haloPos = null
@@ -106,6 +115,7 @@ class Editor(
                     ?: HitTest.nearestDraggableCurve(doc, ev(), world, tolWorld())
             if (hit != null) {
                 dragTarget = hit
+                dragStart = world
             } else {
                 panning = true
                 lastScreen = screen
@@ -184,7 +194,7 @@ class Editor(
         when {
             dragTarget != null -> {
                 val el = dragTarget!!
-                val world = camera.screenToWorld(screen)
+                val world = axisLocked(camera.screenToWorld(screen), el)
                 val c = el.handle
                 when {
                     // an open ortho-path end drags normally AND shows the weld/attach magnet
@@ -218,6 +228,7 @@ class Editor(
         val weld = weldTarget
         val attach = attachTarget
         dragTarget = null
+        dragStart = null
         clearMagnet() // clear before rendering so the magnet halo doesn't linger
         panning = false
         if (dragged != null) {
@@ -235,6 +246,24 @@ class Editor(
                     onChange()
                 }
             }
+        }
+    }
+
+    /**
+     * Apply [axisLock]: keep only the component the gesture is dominated by, relative to where the
+     * drag started. A leg already moves on a single axis of its own, so the lock leaves it alone
+     * rather than making it inert when the cursor happens to travel along it.
+     */
+    private fun axisLocked(
+        world: Vec2,
+        el: Element,
+    ): Vec2 {
+        val start = dragStart
+        if (!axisLock || start == null || el.handle is OrthoEdgeHandle) return world
+        return if (kotlin.math.abs(world.x - start.x) >= kotlin.math.abs(world.y - start.y)) {
+            Vec2(world.x, start.y)
+        } else {
+            Vec2(start.x, world.y)
         }
     }
 
