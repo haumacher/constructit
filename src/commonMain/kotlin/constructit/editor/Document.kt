@@ -1304,6 +1304,30 @@ class Document {
     }
 
     /**
+     * What closing [path] will actually look like: the leg into its last vertex once that vertex snaps
+     * into line with the start, plus the closing leg itself.
+     *
+     * Closing *moves* a vertex — binding its own coordinate to the start's is what makes the closing leg
+     * axis-aligned — so a rubber band merely reaching for the start would promise a shape the click does
+     * not produce, and the drawing appeared to jump on close.
+     */
+    fun orthoClosePreview(path: OrthoPath): List<Pair<Vec2, Vec2>> {
+        if (path.closed || path.vertices.size < 3) return emptyList()
+        val ev = Evaluator()
+
+        fun pos(v: OrthoVertex): Vec2? = ((ev.eval(v.ref.node) as? EvalResult.Ok)?.value as? PointValue)?.p
+
+        val last = path.vertices.last()
+        val axis = last.ownAxis
+        if (axis != 0 && axis != 1) return emptyList()
+        val start = pos(path.vertices.first()) ?: return emptyList()
+        val here = pos(last) ?: return emptyList()
+        val prev = pos(path.vertices[path.vertices.size - 2]) ?: return emptyList()
+        val moved = if (axis == 0) Vec2(start.x, here.y) else Vec2(here.x, start.y)
+        return listOf(prev to moved, moved to start)
+    }
+
+    /**
      * Close an ortho loop so the closing edge is axis-aligned. The last vertex's own coordinate is
      * **shared** with the start's matching coordinate: its source node is bound to the start's (so
      * the geometry snaps to fit), and its drag handle is redirected to write the start's node —

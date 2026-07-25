@@ -164,6 +164,7 @@ class Editor(
     private var pathAtEnd = true // which end of a resumed path is growing
     private var pathClosed = false
     private var previewSeg: Pair<Vec2, Vec2>? = null
+    private var closePreview: List<Pair<Vec2, Vec2>> = emptyList() // the shape a closing click will make
     private var pathThickness: constructit.dsl.ScalarRef? = null // set for the WALL tool
     private var hoverWorld: Vec2? = null // last cursor position, so a typed length keeps its direction
 
@@ -201,6 +202,7 @@ class Editor(
         pathAtEnd = true
         pathClosed = false
         previewSeg = null
+        closePreview = emptyList()
         pathThickness = null
         hoverWorld = null
         numericEntry = ""
@@ -250,7 +252,10 @@ class Editor(
     }
 
     fun render(target: DrawTarget) {
-        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selection, snapHint?.pos, joinHints)
+        SceneRenderer.render(
+            doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selection,
+            snapHint?.pos, joinHints, closePreview,
+        )
     }
 
     fun wheel(
@@ -445,6 +450,16 @@ class Editor(
             previewSeg = null
             return
         }
+        // hovering the far end offers to close: preview the *closed* shape, because closing moves a
+        // corner into line and a band merely reaching for the start would promise something else
+        val far = (if (pathAtEnd) path.vertices.first() else path.vertices.last()).ref
+        if (path.vertices.size >= 3 && HitTest.nearest(doc, ev(), hover, tolWorld() * 2) { it.ref === far } != null) {
+            closePreview = doc.orthoClosePreview(path)
+            previewSeg = null
+            if (closePreview.isNotEmpty()) statusHint = "Click to close the loop — the last corner moves into line with the start"
+            return
+        }
+        closePreview = emptyList()
         val base = doc.orthoLegPreview(path, hover, pathAtEnd) ?: return
         val typed = numericEntry.toDoubleOrNull()
         previewSeg =
@@ -479,8 +494,10 @@ class Editor(
         if (t != null && path.vertices.size >= 2) doc.buildWall(path, t)
         doc.discardOrthoPath(path) // a path that never got a second vertex isn't a path
         activePath = null
+        pathAtEnd = true
         pathClosed = false
         previewSeg = null
+        closePreview = emptyList()
         pathThickness = null
         statusHint = ""
         onChange()

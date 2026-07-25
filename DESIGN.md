@@ -1301,6 +1301,10 @@ Then 3D walls = extrude + boolean.
     geometry jump to it on the first move; the drag applies the offset from where the grab landed
     instead. A repeat click on the growing end is ignored for the same family of reasons — it is the
     second half of a double-click, and used to leave a hairline segment behind before the path finished.
+  - **The closing edge is previewed as it will be.** Closing *moves* a corner — binding its own
+    coordinate to the start's is what makes the closing leg axis-aligned — so hovering the start shows
+    the leg into that corner *already aligned* plus the closing leg, rather than a band reaching for the
+    start that promises a different shape. The drawing no longer appears to jump on close.
   - Rubber-band preview; Esc / double-click / click-start to finish.
 - **Slice 2 — walls** (`Tools.WALL`, `Document.buildWall`): centerline + thickness → two offset
   faces with `intersectLL` miter corners + end caps; retained as a `Wall` so it can be regenerated.

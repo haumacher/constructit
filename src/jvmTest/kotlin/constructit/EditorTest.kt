@@ -1477,6 +1477,34 @@ class EditorTest {
     }
 
     @Test
+    fun hoveringTheStartPreviewsTheClosedShapeItWillMakeNotABandToIt() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(60.0, 3.0)) // -> (60,0)
+        ed.click(Vec2(58.0, 40.0)) // -> (60,40)
+        ed.click(Vec2(-4.0, 44.0)) // -> (-4,40): its own coordinate is x, and closing will align it to 0
+        val path = ed.doc.orthoPaths.single()
+
+        // closing moves that last corner into line with the start, so the preview must show it there
+        val closing = ed.doc.orthoClosePreview(path)
+        assertEquals(2, closing.size, "the leg into the moved corner, and the closing leg")
+        assertClose(closing[0].second.x, 0.0) // the corner previewed *already aligned*
+        assertClose(closing[0].second.y, 40.0)
+        assertClose(closing[1].second.x, 0.0) // and the closing leg reaching the start
+        assertClose(closing[1].second.y, 0.0)
+
+        // hovering there says so, and clicking produces exactly the previewed shape
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(0.0, 0.0)))
+        assertTrue(ed.statusHint.contains("close the loop"), "got: '${ed.statusHint}'")
+        ed.click(Vec2(0.0, 0.0))
+        assertTrue(path.closed)
+        val ev = Evaluator()
+        assertClose(ev.point(path.vertices.last().ref).x, 0.0)
+        assertClose(ev.point(path.vertices.last().ref).y, 40.0)
+    }
+
+    @Test
     fun aDoubleClickFinishesWithoutLeavingAHairlineSegment() {
         // reported: ending a path with a double-click dropped two points instead of one. The second
         // click of the pair landed a near-zero leg before dblclick finished the path.

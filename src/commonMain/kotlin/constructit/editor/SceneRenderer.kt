@@ -58,6 +58,7 @@ object SceneRenderer {
         selected: Element? = null,
         snap: Vec2? = null,
         joins: List<Vec2> = emptyList(),
+        closing: List<Pair<Vec2, Vec2>> = emptyList(),
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
@@ -85,6 +86,10 @@ object SceneRenderer {
         }
         // rubber-band preview of the next ortho-path leg
         preview?.let { target.polyline(listOf(cam.worldToScreen(it.first), cam.worldToScreen(it.second)), previewStyle) }
+        // and of a *closed* loop: what the click will make, including the corner it moves into line
+        for (seg in closing) {
+            target.polyline(listOf(cam.worldToScreen(seg.first), cam.worldToScreen(seg.second)), previewStyle)
+        }
         // snap marker: a small square where a placing click would land (and what it would link to)
         snap?.let {
             val c = cam.worldToScreen(it)
