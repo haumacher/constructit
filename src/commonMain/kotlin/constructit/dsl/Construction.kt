@@ -6,12 +6,14 @@ import constructit.core.DirectionValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.LineValue
+import constructit.core.LoopValue
 import constructit.core.Node
 import constructit.core.OpNode
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.ProfileValue
 import constructit.core.RayValue
+import constructit.core.RegionValue
 import constructit.core.ScalarValue
 import constructit.core.SegmentValue
 import constructit.core.SourceNode
@@ -23,14 +25,17 @@ import constructit.geom.Circle
 import constructit.geom.Direction
 import constructit.geom.GeomMath
 import constructit.geom.Line
+import constructit.geom.Loop
 import constructit.geom.Profile
 import constructit.geom.ProfileElement
 import constructit.geom.Ray
+import constructit.geom.Region
 import constructit.geom.Segment
 import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.DimensionError
 import constructit.units.Quantity
+import kotlin.math.abs
 import kotlin.math.pow
 
 /** A typed handle to a node's output. Compile-time typing over the generic graph (OP-5). */
@@ -46,6 +51,8 @@ typealias PointSetRef = Ref<PointSetValue>
 typealias RayRef = Ref<RayValue>
 typealias DirectionRef = Ref<DirectionValue>
 typealias ProfileRef = Ref<ProfileValue>
+typealias LoopRef = Ref<LoopValue>
+typealias RegionRef = Ref<RegionValue>
 
 /**
  * Builder for a construction DAG. Generates stable ids; supports macro instantiation with
@@ -766,6 +773,155 @@ class Construction {
             EvalResult.Ok(ProfileValue(Profile(elems)))
         }
 
+    // ================= Tier 4: the result layer (OP-14) =================
+    // Trimming is what separates the *drawing* from the construction that produced it: a drawn line
+    // is infinite and a circle is whole, but an outline needs the piece between two cut points. The
+    // result is therefore constructed, not flagged — and for line/circle/arc it needs no new value
+    // type, because a trimmed line *is* a segment and a trimmed circle *is* an arc.
+
+    private fun carrierLine(v: Value): Line? =
+        when (v) {
+            is LineValue -> v.line
+            is RayValue -> Line(v.ray.origin, v.ray.dir)
+            is SegmentValue ->
+                if ((v.seg.b - v.seg.a).length() < Vec2.EPS) {
+                    null
+                } else {
+                    Line(v.seg.a, (v.seg.b - v.seg.a).normalized())
+                }
+            else -> null
+        }
+
+    private fun carrierCircle(v: Value): Circle? =
+        when (v) {
+            is CircleValue -> v.circle
+            is ArcValue -> Circle(v.arc.center, v.arc.radius)
+            else -> null
+        }
+
+    /**
+     * The piece of [curve] between [from] and [to] (OP-14). Accepts a line, segment or ray — the
+     * carrier-line coercion, so any linear element can be trimmed.
+     *
+     * Both cut points are **projected** onto the carrier rather than required to lie exactly on it.
+     * A cut point is normally constructed *from* the curve (an intersection, a projection, a key
+     * point), so exact incidence is unattainable in floating point anyway; projecting keeps the trim
+     * well-defined as parameters move, instead of failing on noise.
+     */
+    fun segmentBetween(
+        curve: Ref<*>,
+        from: PointRef,
+        to: PointRef,
+    ): SegmentRef =
+        op(curve, from, to) {
+            val l = carrierLine(it[0]) ?: return@op EvalResult.Invalid("not a linear curve")
+            val a = l.origin + l.dir * (pt(it[1]) - l.origin).dot(l.dir)
+            val b = l.origin + l.dir * (pt(it[2]) - l.origin).dot(l.dir)
+            if ((b - a).length() < Vec2.EPS) {
+                EvalResult.Invalid("degenerate trim: the cut points coincide")
+            } else {
+                EvalResult.Ok(SegmentValue(Segment(a, b)))
+            }
+        }
+
+    /**
+     * The arc of [curve] from [from] to [to], sweeping counter-clockwise unless [ccw] is false
+     * (OP-14). Accepts a circle or an arc (its carrier circle). [ccw] is a stored *discrete* branch
+     * choice, exactly like the sign on a `Select` — which of the two arcs between two points is
+     * meant is a choice, not something to be tracked (OP-1).
+     *
+     * Cut points are projected radially onto the circle, for the reason given on [segmentBetween].
+     */
+    fun arcBetween(
+        curve: Ref<*>,
+        from: PointRef,
+        to: PointRef,
+        ccw: Boolean = true,
+    ): ArcRef =
+        op(curve, from, to) {
+            val c = carrierCircle(it[0]) ?: return@op EvalResult.Invalid("not a circular curve")
+            val d0 = pt(it[1]) - c.center
+            val d1 = pt(it[2]) - c.center
+            if (d0.length() < Vec2.EPS || d1.length() < Vec2.EPS) {
+                return@op EvalResult.Invalid("a cut point coincides with the centre")
+            }
+            val arc = Arc(c.center, c.radius, d0.angle(), d1.angle(), ccw)
+            if (abs(GeomMath.sweep(arc)) < Vec2.EPS) {
+                EvalResult.Invalid("degenerate trim: the cut points coincide")
+            } else {
+                EvalResult.Ok(ArcValue(arc))
+            }
+        }
+
+    /**
+     * Chain [parts] (segments, arcs, or a single whole circle) into a closed loop, normalised to
+     * counter-clockwise (OP-14).
+     *
+     * The loop stores **which nodes, in which order** — a stable identity (OP-8), so a parameter
+     * edit only moves the cut points and never re-decides what the boundary *is*. A chain that stops
+     * meeting up makes this node invalid, which hides it and heals automatically (OP-3). Each piece
+     * after the first is flipped if that is what continues the chain, so pieces may be named in
+     * traversal order without regard to how their own endpoints happened to be ordered.
+     */
+    fun loop(vararg parts: Ref<*>): LoopRef =
+        op(*parts) { args ->
+            val elems = ArrayList<ProfileElement>(args.size)
+            for (v in args) {
+                val e =
+                    when (v) {
+                        is SegmentValue -> ProfileElement.Seg(v.seg)
+                        is ArcValue -> ProfileElement.ArcE(v.arc)
+                        is CircleValue -> ProfileElement.CircleE(v.circle)
+                        else -> return@op EvalResult.Invalid("a loop piece must be a segment, an arc or a circle")
+                    }
+                elems.add(e)
+            }
+            val (chained, reason) = GeomMath.chainLoop(elems)
+            if (chained == null) {
+                EvalResult.Invalid(reason ?: "not a closed loop")
+            } else {
+                EvalResult.Ok(LoopValue(GeomMath.orient(chained, ccw = true)))
+            }
+        }
+
+    /**
+     * An area bounded by [outer] with [holes] removed (OP-14). Orientation is normalised here
+     * (outer counter-clockwise, holes clockwise) so the signed areas add up, which is the form the
+     * 2D→3D seam consumes (OP-17).
+     *
+     * Note the deliberate limit: containment is *not* verified. A hole placed outside the outer
+     * boundary, or two overlapping holes, are accepted — only the degenerate case where the holes
+     * remove more than the boundary encloses is rejected (in [regionArea]). Real containment
+     * testing belongs with the point-in-region predicate, which this slice does not need.
+     */
+    fun region(
+        outer: LoopRef,
+        vararg holes: LoopRef,
+    ): RegionRef =
+        op(outer, *holes) { args ->
+            val o = GeomMath.orient((args[0] as LoopValue).loop, ccw = true)
+            val h = args.drop(1).map { GeomMath.orient((it as LoopValue).loop, ccw = false) }
+            EvalResult.Ok(RegionValue(Region(o, h)))
+        }
+
+    /** Enclosed area of a loop (OP-4 measurement, dimension L²). Exact for segments and arcs. */
+    fun loopArea(l: LoopRef): ScalarRef =
+        op(l) {
+            EvalResult.Ok(ScalarValue(Quantity(abs(GeomMath.signedArea((it[0] as LoopValue).loop)), Dimension.AREA)))
+        }
+
+    /** Area of a region: its outer boundary less its holes (OP-4 measurement, dimension L²). */
+    fun regionArea(r: RegionRef): ScalarRef =
+        op(r) {
+            val reg = (it[0] as RegionValue).region
+            val a = GeomMath.signedArea(reg.outer) + reg.holes.sumOf { h -> GeomMath.signedArea(h) }
+            if (a <= 0.0) {
+                EvalResult.Invalid("the holes remove more area than the outer boundary encloses")
+            } else {
+                EvalResult.Ok(ScalarValue(Quantity(a, Dimension.AREA)))
+            }
+        }
+
     // ================= sub-entity accessors (provenance-based points on a curve) =================
     // These let *derived* geometry (e.g. a mirrored segment) expose usable points for further
     // construction — the compound-value+accessor principle (OP-6/OP-8).
@@ -836,5 +992,9 @@ fun Evaluator.ray(ref: RayRef): Ray = (valueOf(ref) as RayValue).ray
 fun Evaluator.direction(ref: DirectionRef): Direction = (valueOf(ref) as DirectionValue).dir
 
 fun Evaluator.profile(ref: ProfileRef): Profile = (valueOf(ref) as ProfileValue).profile
+
+fun Evaluator.loop(ref: LoopRef): Loop = (valueOf(ref) as LoopValue).loop
+
+fun Evaluator.region(ref: RegionRef): Region = (valueOf(ref) as RegionValue).region
 
 fun Evaluator.pointSet(ref: PointSetRef): constructit.geom.PointSet = (valueOf(ref) as PointSetValue).set

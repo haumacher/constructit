@@ -318,8 +318,9 @@ afterwards. Three consequences fall out of the shared-coordinate model:
 4. **Selection & grouping (OP-16).** Multi-select (absent — `Editor.selection` is a single
    `Element?`), then flat named groups, then **placed groups** (a frame source node; moving a group
    edits the frame, not its points), then relocate-origin / re-parent / constructed frames.
-5. **Result layer (OP-14).** Trim ops + `Loop`/`Region` + the boundary-tracing *Outline* tool —
-   what separates the drawing from its scaffolding, and the interface the 3D layer consumes.
+5. **Result layer (OP-14).** Engine half **done** (trim ops, `Loop`/`Region`, areas — see OP-14's
+   as-built note); remaining is the boundary-tracing *Outline* tool and the scaffolding/result
+   display roles.
 6. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
    tool (OP-6 `Macro` machinery exists in the engine; needs the record/parameterize UI). The
    headline capability of the paradigm. Shares its dialog with group creation (OP-16).
@@ -534,6 +535,39 @@ order** (stable node identity); only the trim parameters recompute. A loop that 
 Every level of the model needs an explicit **output set**: which 2D curves are the drawing, which
 regions are the sketch (OP-17), which solids get exported to STL (OP-9). This was the concept
 missing from the model.
+
+### Implementation status (as built — engine half)
+The pure-engine slice ships (`geom/Geom.kt`, `core/Model.kt`, `dsl/Construction.kt`, `RegionTest`):
+- **Trim ops** `segmentBetween(curve, from, to)` and `arcBetween(curve, from, to, ccw)`. Both accept
+  the *coerced* carrier (line/segment/ray; circle/arc) and **project** their cut points onto it —
+  documented rather than silent, because a cut point is normally constructed *from* the curve, so
+  exact incidence is unattainable in floating point and projecting is what keeps a trim well-defined
+  as parameters move. `ccw` is a stored discrete branch choice, exactly like a `Select` sign (OP-1).
+  Neither op needed a new value type: a trimmed line **is** a `Segment`, a trimmed circle **is** an
+  `Arc`.
+- **`Loop`** (closed + oriented) and **`Region`** (outer + holes) values, built by `loop(vararg)` /
+  `region(outer, vararg holes)`. `loop` chains pieces *in the order given* — stable identity (OP-8) —
+  but flips each piece as needed, since a piece's stored direction is an accident of how its inputs
+  were picked, not a statement about the boundary. Orientation is normalised (outer CCW, holes CW) so
+  signed areas add up, which is the form the seam consumes. A chain that stops meeting up makes the
+  node invalid with a reason and heals when it closes again (OP-3).
+- **`ProfileElement.CircleE`** — a whole circle as one closed piece, so a circular hole is never
+  faked as a full-turn arc whose 0-vs-2π sweep is ambiguous. It carries its own `ccw` so a hole can
+  be oriented.
+- **`loopArea` / `regionArea`** (dimension L², exact for segments and arcs via the ∮(x·dy − y·dx)
+  line integral). This also closes "Area measurement" from the tool roadmap.
+- Transforms extend over the new values, re-orienting after a mirror so the outer-CCW/holes-CW
+  convention survives a negative determinant. The SVG serializer renders loops and regions, so the
+  *result* is what an export contains.
+- Worked spec example: `RegionTest.flangedPlateRegionArea` builds the OP-17 slice-1 sketch —
+  `roundedRect` outer + `boltCircle` holes — and asserts the exact known area
+  `w·h − (4−π)r² − n·πr_hole²`, plus an SVG golden.
+
+**Deliberately not done here:** containment is not verified (a hole outside the outer boundary, or
+two overlapping holes, are accepted; only holes removing more than the boundary encloses are
+rejected) — real containment needs the point-in-region predicate, which this slice does not need.
+**Remaining:** the boundary-tracing *Outline* tool and the scaffolding/result display roles — both UI,
+and both deliberately deferred so this slice touches none of the files the ortho-path work is in.
 
 ## General curves & splines (OP-15 — RESOLVED)
 
@@ -858,6 +892,8 @@ Three broad families (see OP-9 decision above):
       scaffolding reads as scaffolding because nothing consumes it. Boundary-tracing *Outline* tool.
       Interior-seed region detection **rejected** (discovered identity re-imports OP-8 into 2D).
       Result-vs-scaffolding (semantic) / hidden (presentation) / layer (organizational) kept distinct.
+      **Engine half implemented** (trim ops, `Loop`/`Region`, `CircleE`, exact areas, transforms and
+      SVG over the new values); the *Outline* tool and display roles remain.
 - [x] **OP-15 General curves & splines** — RESOLVED: splines are in and fit natively — a spline is a
       pure function of its control points, and those control points may themselves be *constructed*
       (the bridge from technical construction to smooth geometry). Continuity by construction (G1 via a
@@ -1008,6 +1044,16 @@ Three broad families (see OP-9 decision above):
   *mate*, so phase-3 assemblies need no solver either; and the group frame is the same concept as the
   sketch plane, so 2D frames prototype the 3D seam. Agreed build order: multi-select → flat groups →
   frames/placement → result layer + trim → 2D↔3D seam → splines.
+- **Session 2 — OP-14 engine half built.** Started with the result layer rather than multi-select,
+  inverting the agreed order for one reason: multi-select is `Editor.kt` surgery, which is exactly
+  where the in-progress ortho-path work lives, whereas trim + `Loop`/`Region` is additive in `geom/`,
+  `core/` and `dsl/` and touches none of it. Three things made it cheaper than expected: a trimmed
+  line already *is* a `Segment` and a trimmed circle *is* an `Arc`, so no new curve type was needed;
+  `Dimension.AREA` already existed, so the roadmap's area measurement fell out; and the general
+  `CurveValue` refactor (OP-15) turned out **not** to be a prerequisite after all — it is only needed
+  once splines arrive. One design decision worth noting: `loop` chains pieces in the order given but
+  *flips* them as needed, because order carries the boundary's identity while a piece's stored
+  direction is an accident of how its inputs were picked. 107 jvm tests green.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

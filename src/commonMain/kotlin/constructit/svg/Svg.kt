@@ -4,10 +4,12 @@ import constructit.core.ArcValue
 import constructit.core.CircleValue
 import constructit.core.Evaluator
 import constructit.core.LineValue
+import constructit.core.LoopValue
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.ProfileValue
 import constructit.core.RayValue
+import constructit.core.RegionValue
 import constructit.core.SegmentValue
 import constructit.dsl.Ref
 import constructit.dsl.valueOf
@@ -47,6 +49,27 @@ object Svg {
     }
 
     private fun screen(v: Vec2) = Vec2(v.x, -v.y)
+
+    /** Add bbox samples for a chain of profile / loop pieces. */
+    private fun sampleChain(
+        elements: List<ProfileElement>,
+        samples: MutableList<Vec2>,
+    ) {
+        for (el in elements) when (el) {
+            is ProfileElement.Seg -> {
+                samples.add(el.segment.a)
+                samples.add(el.segment.b)
+            }
+            is ProfileElement.ArcE -> {
+                samples.add(el.arc.center + Vec2(el.arc.radius, el.arc.radius))
+                samples.add(el.arc.center - Vec2(el.arc.radius, el.arc.radius))
+            }
+            is ProfileElement.CircleE -> {
+                samples.add(el.circle.center + Vec2(el.circle.radius, el.circle.radius))
+                samples.add(el.circle.center - Vec2(el.circle.radius, el.circle.radius))
+            }
+        }
+    }
 
     private fun norm2pi(a: Double): Double {
         val twoPi = 2 * kotlin.math.PI
@@ -92,17 +115,17 @@ object Svg {
                 is LineValue -> prepared.add(Prepared("line", d, v.line)) // clipped later; not in bbox
                 is RayValue -> prepared.add(Prepared("ray", d, v.ray))
                 is ProfileValue -> {
-                    for (el in v.profile.elements) when (el) {
-                        is ProfileElement.Seg -> {
-                            samples.add(el.segment.a)
-                            samples.add(el.segment.b)
-                        }
-                        is ProfileElement.ArcE -> {
-                            samples.add(el.arc.center + Vec2(el.arc.radius, el.arc.radius))
-                            samples.add(el.arc.center - Vec2(el.arc.radius, el.arc.radius))
-                        }
-                    }
-                    prepared.add(Prepared("profile", d, v.profile))
+                    sampleChain(v.profile.elements, samples)
+                    prepared.add(Prepared("chain", d, v.profile.elements))
+                }
+                is LoopValue -> {
+                    sampleChain(v.loop.elements, samples)
+                    prepared.add(Prepared("chain", d, v.loop.elements))
+                }
+                is RegionValue -> {
+                    val elements = v.region.outer.elements + v.region.holes.flatMap { it.elements }
+                    sampleChain(elements, samples)
+                    prepared.add(Prepared("chain", d, elements))
                 }
                 is PointSetValue -> for (p in v.set.points) {
                     samples.add(p)
@@ -169,10 +192,15 @@ object Svg {
                     val clipped = clipRayToRect(p.geom as Ray, clipMin, clipMax)
                     if (clipped != null) sb.append(lineTag(screen(clipped.a), screen(clipped.b), p.d.stroke))
                 }
-                "profile" -> {
-                    for (el in (p.geom as constructit.geom.Profile).elements) when (el) {
+                "chain" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    for (el in p.geom as List<ProfileElement>) when (el) {
                         is ProfileElement.Seg -> sb.append(lineTag(screen(el.segment.a), screen(el.segment.b), p.d.stroke))
                         is ProfileElement.ArcE -> sb.append(arcTag(el.arc, p.d.stroke))
+                        is ProfileElement.CircleE -> {
+                            val s = screen(el.circle.center)
+                            sb.append("  <circle cx=\"${fmt(s.x)}\" cy=\"${fmt(s.y)}\" r=\"${fmt(el.circle.radius)}\" fill=\"none\" stroke=\"${p.d.stroke}\" stroke-width=\"${fmt(STROKE_WIDTH)}\"/>\n")
+                        }
                     }
                 }
             }

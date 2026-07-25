@@ -4,9 +4,11 @@ import constructit.geom.Arc
 import constructit.geom.Circle
 import constructit.geom.Direction
 import constructit.geom.Line
+import constructit.geom.Loop
 import constructit.geom.PointSet
 import constructit.geom.Profile
 import constructit.geom.Ray
+import constructit.geom.Region
 import constructit.geom.Segment
 import constructit.geom.Vec2
 import constructit.units.Quantity
@@ -33,6 +35,12 @@ data class PointSetValue(val set: PointSet) : Value
 data class DirectionValue(val dir: Direction) : Value
 
 data class ProfileValue(val profile: Profile) : Value
+
+/** A closed, oriented boundary — the result layer's own value type (OP-14). */
+data class LoopValue(val loop: Loop) : Value
+
+/** An area (outer boundary + holes): what the 2D→3D seam consumes (OP-14, OP-17). */
+data class RegionValue(val region: Region) : Value
 
 /** Result of evaluating a node: valid value or invalid with a reason (OP-3). */
 sealed interface EvalResult {

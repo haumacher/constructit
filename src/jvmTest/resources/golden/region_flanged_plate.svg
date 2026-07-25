@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-46.000 -31.000 92.000 62.000" width="92.000" height="62.000">
+  <path d="M 40.000 -17.000 A 8.000 8.000 0 0 0 32.000 -25.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <line x1="32.000" y1="-25.000" x2="-32.000" y2="-25.000" stroke="#1f77b4" stroke-width="0.500"/>
+  <path d="M -32.000 -25.000 A 8.000 8.000 0 0 0 -40.000 -17.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <line x1="-40.000" y1="-17.000" x2="-40.000" y2="17.000" stroke="#1f77b4" stroke-width="0.500"/>
+  <path d="M -40.000 17.000 A 8.000 8.000 0 0 0 -32.000 25.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <line x1="-32.000" y1="25.000" x2="32.000" y2="25.000" stroke="#1f77b4" stroke-width="0.500"/>
+  <path d="M 32.000 25.000 A 8.000 8.000 0 0 0 40.000 17.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <line x1="40.000" y1="17.000" x2="40.000" y2="-17.000" stroke="#1f77b4" stroke-width="0.500"/>
+  <circle cx="21.213" cy="-21.213" r="3.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <circle cx="-21.213" cy="-21.213" r="3.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <circle cx="-21.213" cy="21.213" r="3.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+  <circle cx="21.213" cy="21.213" r="3.000" fill="none" stroke="#1f77b4" stroke-width="0.500"/>
+</svg>
