@@ -182,15 +182,15 @@ class Editor(
             dragPoint != null -> {
                 val el = dragPoint!!
                 val world = camera.screenToWorld(screen)
-                val c = el.constraint
+                val c = el.handle
                 when {
                     // an open ortho-path end drags normally AND shows the weld/attach magnet
-                    c is OrthoCornerConstraint && c.isEndpoint -> {
-                        c.update(world, ev())
+                    c is OrthoCornerHandle && c.isEndpoint -> {
+                        c.drag(world, ev())
                         updateMagnet(el, world)
                     }
                     c != null -> {
-                        c.update(world, ev())
+                        c.drag(world, ev())
                         clearMagnet()
                     }
                     else -> {
@@ -218,7 +218,7 @@ class Editor(
         clearMagnet() // clear before rendering so the magnet halo doesn't linger
         panning = false
         if (dragged != null) {
-            val ortho = dragged.constraint is OrthoCornerConstraint
+            val ortho = dragged.handle is OrthoCornerHandle
             if (weld != null) {
                 val ok = if (ortho) doc.weldOrthoEndpointToPoint(dragged, weld) else doc.weld(dragged, weld)
                 if (ok) {
@@ -310,7 +310,7 @@ class Editor(
                 SlotKind.CIRCLE -> pickElement(world) { it.kind == ElementKind.CIRCLE }
                 SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
                 SlotKind.GEOMETRY -> pickElement(world) { true }
-                SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.constraint is OnCircleConstraint }
+                SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.handle is OnCircleHandle }
                 SlotKind.CENTRIC -> pickElement(world) { it.kind == ElementKind.CIRCLE || it.kind == ElementKind.ARC }
                 SlotKind.SIDE -> true // captures the click position only; creates nothing
             }

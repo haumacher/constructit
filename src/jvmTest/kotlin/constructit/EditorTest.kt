@@ -651,6 +651,57 @@ class EditorTest {
     }
 
     @Test
+    fun typingAVertexCoordinateIsTheSameWriteAsDraggingIt() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)) // V0
+        ed.click(Vec2(40.0, 3.0)) // V1 (40,0)
+        ed.click(Vec2(38.0, 30.0)) // V2 (40,30) — shares x with V1
+        ed.finishPath()
+        val verts = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }
+
+        fun p(i: Int) = Evaluator().point(verts[i].ref as constructit.dsl.PointRef)
+
+        val fields = verts[1].handle!!.fields()
+        assertEquals(listOf("x", "y"), fields.map { it.label })
+        assertClose(fields[0].read(Evaluator())!!.mm, 40.0)
+        assertClose(fields[1].read(Evaluator())!!.mm, 0.0)
+
+        // typing x = 50 must do exactly what dragging V1 to x=50 does: V1 moves, and V2 follows
+        // because it shares that very node
+        fields[0].write(50.0.mm)
+        assertClose(p(1).x, 50.0)
+        assertClose(p(2).x, 50.0)
+        assertClose(p(0).x, 0.0)
+    }
+
+    @Test
+    fun aCoordinateDrivenByAnAttachIsReportedUnwritable() {
+        val ed = Editor()
+        ed.setTool(Tools.LINE)
+        ed.click(Vec2(30.0, -50.0))
+        ed.click(Vec2(30.0, 50.0)) // vertical line x=30
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(3.0, 40.0))
+        ed.click(Vec2(20.0, 40.0)) // V2's own coordinate is x (its leg is horizontal)
+        ed.finishPath()
+        val v2 = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }[2]
+
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(20.0, 40.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(30.0, 40.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(30.0, 40.0))) // attach: x becomes derived
+
+        val fields = v2.handle!!.fields()
+        val x = fields.first { it.label == "x" }
+        assertFalse(x.writable, "x is now determined by the line — typing it must be refused, as dragging it is")
+        assertTrue(fields.first { it.label == "y" }.writable, "y is still free")
+        x.write(999.0.mm) // no-op
+        assertClose(Evaluator().point(v2.ref as constructit.dsl.PointRef).x, 30.0)
+    }
+
+    @Test
     fun anOrthoPathIsRetainedWithItsLegTopology() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)
@@ -963,7 +1014,7 @@ class EditorTest {
         // detaching restores an independent free point at the current position
         ed.doc.unweld(p)
         assertEquals(ElementKind.POINT, p.kind)
-        assertEquals(null, p.constraint)
+        assertEquals(null, p.handle)
         val pf = Evaluator().point(p.ref as constructit.dsl.PointRef)
         assertClose(pf.y, 0.0)
         assertClose(pf.x, -20.0)

@@ -77,7 +77,14 @@ Intersections return an ordered `PointSet` + a separate `Select` node picking th
   clicking) + optional scalar + a `build` lambda. Adding a tool = add a `ToolDef`, not new
   controller code. `Editor` runs any tool as a generic slot-collector.
 - `Document` holds the retained `Element`s (a displayable graph output with kind + style + optional
-  `PointConstraint`) and the architectural editing state (ortho paths, walls, openings).
+  `Handle`) and the architectural editing state (ortho paths, walls, openings).
+- **`Handle` (OP-13): dragging something and typing a value for it are the same operation** — both
+  write the same free source nodes. A handle has a continuous binding (`drag`) and a discrete one
+  (`fields`), so anything draggable is also typeable and vice versa; a hidden internal parameter
+  reachable only by dragging is a bug. A `HandleField` is affine in exactly one free node (so writing
+  it inverts by arithmetic, never a solve) and reports itself unwritable when that node is driven.
+  A quantity spanning two vertices gets one field *per end* — the field belongs to the handle that
+  moves, which is what makes "which end moves?" unambiguous.
 - Rendering goes through the one `DrawTarget` seam: `SceneRenderer` projects world→screen and
   tessellates arcs, so backends (`SvgDrawTarget` for golden tests, `BrowserCanvasDrawTarget`) stay
   trivial. All `DrawTarget` coordinates are **screen pixels**.

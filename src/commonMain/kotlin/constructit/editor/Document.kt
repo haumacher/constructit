@@ -35,8 +35,8 @@ class Element(
     var kind: ElementKind,
     var style: Style,
     var visible: Boolean = true,
-    /** For [ElementKind.ON_CURVE]: how a drag updates the hidden position parameter. */
-    var constraint: PointConstraint? = null,
+    /** For [ElementKind.ON_CURVE] (and draggable legs): the grabbable DOF — see [Handle]. */
+    var handle: Handle? = null,
 ) {
     val draggable: Boolean get() =
         (kind == ElementKind.POINT && (ref.node as? SourceNode)?.boundTo == null) || kind == ElementKind.ON_CURVE
@@ -56,7 +56,7 @@ class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val edit
  * start, which owns both) — the safe one to bind when closing a loop. [corner] is a `var` because
  * closing a loop replaces the live handle (see [Document.closeOrthoPath]).
  */
-class OrthoVertex(val ref: PointRef, var corner: OrthoCornerConstraint, val ownAxis: Int)
+class OrthoVertex(val ref: PointRef, var corner: OrthoCornerHandle, val ownAxis: Int)
 
 /**
  * A retained rectilinear path: [vertices] in draw order plus the [legs] between them (the closing
@@ -276,7 +276,7 @@ class Document {
         node.boundTo = null
         if (cur != null) node.value = PointValue(cur)
         alias.kind = ElementKind.POINT
-        alias.constraint = null
+        alias.handle = null
         alias.style = Styles.FREE_POINT
         alias.visible = true
     }
@@ -352,14 +352,14 @@ class Document {
                 val t0 = (p - l.line.origin).dot(l.line.dir)
                 val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(t0)))
                 node.boundTo = cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode)).node
-                pt.constraint = OnLineConstraint(lr, tNode)
+                pt.handle = OnLineHandle(lr, tNode)
             }
             else -> { // circle
                 val cr = curve.ref as CircleRef
                 val c = (ev.eval(cr.node) as EvalResult.Ok).value as CircleValue
                 val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
                 node.boundTo = cx.pointOnCircle(cr, Ref<ScalarValue>(aNode)).node
-                pt.constraint = OnCircleConstraint(cr, aNode)
+                pt.handle = OnCircleHandle(cr, aNode)
             }
         }
         pt.kind = ElementKind.ON_CURVE
@@ -367,9 +367,9 @@ class Document {
         return true
     }
 
-    /** The ortho-corner constraint of [el] if it is a draggable *end* of an open path, else null. */
-    fun orthoEndpoint(el: Element): OrthoCornerConstraint? =
-        (el.constraint as? OrthoCornerConstraint)?.takeIf { it.isEndpoint }
+    /** The ortho-corner handle of [el] if it is a draggable *end* of an open path, else null. */
+    fun orthoEndpoint(el: Element): OrthoCornerHandle? =
+        (el.handle as? OrthoCornerHandle)?.takeIf { it.isEndpoint }
 
     /**
      * Attach an ortho path endpoint [el] onto [curve]: both its coordinate nodes are bound to a fresh
@@ -408,7 +408,7 @@ class Document {
             val l = (ev.eval(lr.node) as EvalResult.Ok).value as LineValue
             val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm((p - l.line.origin).dot(l.line.dir))))
             val pol = cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode))
-            el.constraint = OnLineConstraint(lr, tNode)
+            el.handle = OnLineHandle(lr, tNode)
             corner.xNode.boundTo = cx.measureX(pol).node
             corner.yNode.boundTo = cx.measureY(pol).node
             return true
@@ -420,7 +420,7 @@ class Document {
             val c = (ev.eval(cr.node) as EvalResult.Ok).value as CircleValue
             val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
             val pol = cx.pointOnCircle(cr, Ref<ScalarValue>(aNode))
-            el.constraint = OnCircleConstraint(cr, aNode)
+            el.handle = OnCircleHandle(cr, aNode)
             corner.xNode.boundTo = cx.measureX(pol).node
             corner.yNode.boundTo = cx.measureY(pol).node
             return true
@@ -468,9 +468,9 @@ class Document {
 
     private fun addConstrained(
         ref: PointRef,
-        constraint: PointConstraint,
+        handle: Handle,
     ): PointRef {
-        elements.add(Element(nextId("e"), ref, ElementKind.ON_CURVE, Styles.ON_CURVE, constraint = constraint))
+        elements.add(Element(nextId("e"), ref, ElementKind.ON_CURVE, Styles.ON_CURVE, handle = handle))
         return ref
     }
 
@@ -483,7 +483,7 @@ class Document {
         val l = (Evaluator().eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
         val t0 = if (l != null) (at - l.line.origin).dot(l.line.dir) else 0.0
         val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(t0)))
-        return addConstrained(cx.pointOnLineAt(lineRef, Ref<ScalarValue>(tNode)), OnLineConstraint(lineRef, tNode))
+        return addConstrained(cx.pointOnLineAt(lineRef, Ref<ScalarValue>(tNode)), OnLineHandle(lineRef, tNode))
     }
 
     /** Fully-determined point on a line at [distance] from [from]; direction from the click side of [at]. */
@@ -517,7 +517,7 @@ class Document {
         val c = (Evaluator().eval(circleRef.node) as? EvalResult.Ok)?.value as? CircleValue
         val a0 = if (c != null) (at - c.circle.center).angle() else 0.0
         val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad(a0)))
-        return addConstrained(cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode)), OnCircleConstraint(circleRef, aNode))
+        return addConstrained(cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode)), OnCircleHandle(circleRef, aNode))
     }
 
     /**
@@ -595,7 +595,7 @@ class Document {
         y: SourceNode,
         ownAxis: Int,
     ): OrthoVertex {
-        val corner = OrthoCornerConstraint(x, y)
+        val corner = OrthoCornerHandle(x, y)
         corner.ownCoord = if (ownAxis == -1) 0 else ownAxis // start: fixed once its first edge is drawn
         val ref = cx.pointXY(Ref<ScalarValue>(x), Ref<ScalarValue>(y))
         addConstrained(ref, corner)
@@ -685,7 +685,7 @@ class Document {
     /**
      * Close an ortho loop so the closing edge is axis-aligned. The last vertex's own coordinate is
      * **shared** with the start's matching coordinate: its source node is bound to the start's (so
-     * the geometry snaps to fit), and its drag-constraint is redirected to write the start's node —
+     * the geometry snaps to fit), and its drag handle is redirected to write the start's node —
      * so dragging the last vertex moves the start with it (2 DOF, symmetric with every other corner)
      * rather than being pinned. Both vertices stop being endpoints.
      */
@@ -706,18 +706,18 @@ class Document {
             when (last.ownAxis) {
                 0 -> {
                     last.corner.xNode.boundTo = first.corner.xNode // own x -> vertical closing edge
-                    OrthoCornerConstraint(first.corner.xNode, last.corner.yNode)
+                    OrthoCornerHandle(first.corner.xNode, last.corner.yNode)
                 }
                 1 -> {
                     last.corner.yNode.boundTo = first.corner.yNode // own y -> horizontal closing edge
-                    OrthoCornerConstraint(last.corner.xNode, first.corner.yNode)
+                    OrthoCornerHandle(last.corner.xNode, first.corner.yNode)
                 }
                 else -> return
             }
         redirect.isEndpoint = false
         redirect.ownCoord = 1 - last.ownAxis // the coordinate the redirect can still write
         first.corner.isEndpoint = false
-        el.constraint = redirect
+        el.handle = redirect
         last.corner = redirect // keep the vertex pointing at its live handle
     }
 
@@ -932,10 +932,10 @@ class Document {
         p: PointRef,
     ) = add(cx.perpendicularThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
 
-    /** Tangent at a point-on-circle — the circle is inferred from the point's constraint. */
+    /** Tangent at a point-on-circle — the circle is inferred from the point's handle. */
     fun tangentAtPointOnCircle(pointEl: Element) {
-        val c = pointEl.constraint
-        if (c is OnCircleConstraint) add(cx.tangentAtCircle(c.circle, pointEl.ref as PointRef), ElementKind.LINE, Styles.CONSTRUCT)
+        val c = pointEl.handle
+        if (c is OnCircleHandle) add(cx.tangentAtCircle(c.circle, pointEl.ref as PointRef), ElementKind.LINE, Styles.CONSTRUCT)
     }
 
     fun parallelThrough(

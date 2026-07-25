@@ -201,6 +201,34 @@ Engine                 — Construction DAG + Evaluator (unchanged)
 - Run locally: `./gradlew jsBrowserDevelopmentRun`. MVP tools: Select/drag, Point, Line,
   Circle, Intersect; live parametric recompute on drag; pan + zoom; grid + axes.
 
+### Handles — dragging and typing are one operation (OP-13 — RESOLVED)
+
+**There is no conceptual difference between dragging something and entering a number for it.** Both
+are a write to the same free source nodes; a value entered numerically can afterwards be changed by
+dragging, and vice versa. So the editor has exactly one notion — a **`Handle`**: the grabbable DOF of
+an `Element`, with a *continuous* binding (`drag`) and a *discrete* one (`fields`).
+
+Consequences, which is why this is worth stating as a principle rather than a UI detail:
+
+- **No geometry is reachable by mouse but not by number**, or the reverse. A hidden internal
+  parameter (the `t` of a point-on-line, the angle of a point-on-circle, an ortho vertex's
+  coordinates) is a bug in the model, not an implementation detail — it means a DOF exists that the
+  user can only reach by dragging.
+- **A `HandleField` is a re-parameterization, not a new node.** It is affine in exactly one free
+  node — a coordinate, a distance from an anchor, an angle — so writing it inverts by exact
+  arithmetic. Nothing is asserted and solved; no DOF is consumed by typing a value; there is no
+  "dimensioned" vs "free" state for an edge.
+- **This is what resolves "which end moves?"** for a quantity spanning two vertices, like a leg
+  length. There is no drag gesture called *drag the length* — there are drags of each endpoint — so
+  there is no single length field either. The field belongs to the handle that moves: a leg is
+  editable from either end, as two fields writing different nodes. Ambiguity dissolves instead of
+  needing an anchor picker.
+- A field whose node is **driven** (welded, attached, shared by a loop closure) reports itself
+  unwritable, which is the same answer dragging gives: that DOF is gone by construction.
+- Deliberately *not* called a constraint. A handle only writes free source nodes; what stays
+  invariant (a leg's axis, a point's curve) is invariant because of the nodes it does *not* write,
+  which are shared with the geometry that must follow.
+
 ### Editor tool roadmap
 
 **Implemented** (data-driven `ToolDef` registry, categorized palette; scalar tools use the
@@ -239,7 +267,7 @@ snaps onto **curves**. Dragging a free point onto a line/segment/ray attaches it
 **point-on-line** (2→1 DOF), onto a circle as a **point-on-circle**; it then slides along the
 curve. Realized on the same substrate: the point's `SourceNode.boundTo` is welded onto a fresh
 `pointOnLineAt`/`pointOnCircle` node (so every reference follows) and its `Element` flips to
-`ON_CURVE` in place with the matching `PointConstraint`. Curves built *from* the point are
+`ON_CURVE` in place with the matching `Handle`. Curves built *from* the point are
 excluded (cycle check), and the point's own endpoints therefore never self-attach. Points win
 over curves when both are in snap range. `unweld` detaches either kind back to a free point.
 Remaining: attach onto **arcs** (needs the arc's carrier circle) and onto a **derived/intersection
@@ -514,6 +542,12 @@ Three broad families (see OP-9 decision above):
       JavaFX harness, file persistence). Client stack = Kotlin (TL-as-shell a non-requirement,
       so GWT/J2CL not indicated; Flutter would sacrifice the shared engine). TL module and
       server-side 3D compute remain valid non-driving later options.
+- [x] **OP-13 Dragging vs. numeric entry** — RESOLVED: the **same operation**. One `Handle` per
+      grabbable DOF, with a continuous binding (drag) and a discrete one (typed fields); a field
+      is a re-parameterization of a single free node, never a new node and never a consumed DOF.
+      A quantity spanning two vertices (a leg length) therefore has one field *per end* — the
+      field belongs to the handle that moves, which is what makes "which end moves?" unambiguous
+      without an anchor picker. See *Handles* under the editor architecture.
 
 ## Prior art to keep in mind
 
