@@ -149,6 +149,13 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode) : Handle {
      *  to bind when attaching to a line, so the shared coordinate stays free for the neighbour. */
     var ownCoord: Int = 0
 
+    /** The far end of the leg that created this vertex: the node its own coordinate is measured
+     *  from, so the leg's length is a field of *this* handle. Null for a path's start vertex. */
+    var legAnchor: SourceNode? = null
+
+    /** This vertex's own coordinate node — the one its incoming leg runs along. */
+    val ownNode: SourceNode get() = if (ownCoord == 0) xNode else yNode
+
     override fun drag(
         world: Vec2,
         ev: Evaluator,
@@ -157,7 +164,59 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode) : Handle {
         yNode.value = ScalarValue(Quantity.mm(world.y))
     }
 
-    override fun fields(): List<HandleField> = listOf(coordField("x", xNode), coordField("y", yNode))
+    override fun fields(): List<HandleField> =
+        listOf(coordField("x", xNode), coordField("y", yNode)) +
+            (legAnchor?.let { listOf(lengthField("leg length", ownNode, it)) } ?: emptyList())
+}
+
+/**
+ * A whole leg of an ortho path. Its two endpoints *share* the coordinate perpendicular to it (that
+ * sharing is what keeps the leg axis-aligned), so the leg has exactly one DOF of its own: dragging
+ * it writes that one node, moving both endpoints together and stretching the two neighbouring legs.
+ * Nothing else in the document moves — the same locality a vertex drag has.
+ *
+ * Its [fields] are that perpendicular position plus the leg's **length from either end**. A length
+ * spans two vertices, so there is no single write for it: each end is a separate field, labelled by
+ * which end moves, matching the two drags (of either endpoint, along the leg) that already exist.
+ */
+class OrthoEdgeHandle(private val path: OrthoPath, private val leg: Element) : Handle {
+    /** 0 = horizontal leg (shared coordinate is y), 1 = vertical (shared x), null if detached. */
+    val axis: Int? get() = path.legIndexOf(leg).takeIf { it >= 0 }?.let { path.legAxis(it) }
+
+    /** The coordinate node both endpoints share — the leg's own single DOF. */
+    val sharedNode: SourceNode?
+        get() {
+            val i = path.legIndexOf(leg).takeIf { it >= 0 } ?: return null
+            val a = path.legEnds(i).first.corner
+            return if (path.legAxis(i) == 0) a.yNode else a.xNode
+        }
+
+    /** The two nodes along the leg, in draw order — their difference is the leg's length. */
+    private fun alongNodes(): Pair<SourceNode, SourceNode>? {
+        val i = path.legIndexOf(leg).takeIf { it >= 0 } ?: return null
+        val (a, b) = path.legEnds(i)
+        return if (path.legAxis(i) == 0) a.corner.xNode to b.corner.xNode else a.corner.yNode to b.corner.yNode
+    }
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        val node = sharedNode ?: return
+        node.value = ScalarValue(Quantity.mm(if (axis == 0) world.y else world.x))
+    }
+
+    override fun fields(): List<HandleField> {
+        val shared = sharedNode ?: return emptyList()
+        val position = coordField(if (axis == 0) "y" else "x", shared)
+        val along = alongNodes() ?: return listOf(position)
+        val (start, end) = along
+        return listOf(
+            position,
+            lengthField("length (move end)", end, start),
+            lengthField("length (move start)", start, end),
+        )
+    }
 }
 
 /** Point on a circle: the handle's one DOF is the angle around the centre. */

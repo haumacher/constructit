@@ -651,6 +651,104 @@ class EditorTest {
     }
 
     @Test
+    fun draggingAnOrthoLegMovesOnlyThatLegPerpendicular() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)) // V0
+        ed.click(Vec2(40.0, 3.0)) // V1 (40,0)   leg 0 horizontal, shares y
+        ed.click(Vec2(38.0, 30.0)) // V2 (40,30)  leg 1 vertical, shares x
+        ed.click(Vec2(80.0, 28.0)) // V3 (80,30)  leg 2 horizontal
+        ed.finishPath()
+        val verts = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE } // [V0..V3]
+
+        fun p(i: Int) = Evaluator().point(verts[i].ref as constructit.dsl.PointRef)
+
+        // grab leg 1 (the vertical one at x=40, spanning y 0..30) at its middle and drag sideways
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(40.0, 15.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(55.0, 22.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(55.0, 22.0)))
+
+        assertClose(p(1).x, 55.0) // both ends of the leg moved together...
+        assertClose(p(2).x, 55.0)
+        assertClose(p(1).y, 0.0) // ...and only perpendicular: the along-leg coordinates are untouched
+        assertClose(p(2).y, 30.0)
+        assertClose(p(0).x, 0.0) // the neighbouring legs just stretched
+        assertClose(p(0).y, 0.0)
+        assertClose(p(3).x, 80.0)
+        assertClose(p(3).y, 30.0)
+    }
+
+    @Test
+    fun aVertexWinsOverTheLegsMeetingAtIt() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(40.0, 3.0)) // V1 (40,0)
+        ed.click(Vec2(38.0, 30.0)) // V2 (40,30)
+        ed.finishPath()
+        val verts = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }
+
+        // press exactly on V1, where leg 0 and leg 1 also pass: the vertex must be picked, so the
+        // drag moves it in both axes rather than sliding a leg
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(40.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(50.0, -10.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(50.0, -10.0)))
+        val p1 = Evaluator().point(verts[1].ref as constructit.dsl.PointRef)
+        assertClose(p1.x, 50.0)
+        assertClose(p1.y, -10.0)
+    }
+
+    @Test
+    fun aLegOffersItsPositionAndItsLengthFromEitherEnd() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)) // V0
+        ed.click(Vec2(40.0, 3.0)) // V1 (40,0)  leg 0 horizontal, length 40
+        ed.click(Vec2(38.0, 30.0)) // V2 (40,30)
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+        val verts = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }
+
+        fun p(i: Int) = Evaluator().point(verts[i].ref as constructit.dsl.PointRef)
+
+        val fields = path.legs[0].handle!!.fields()
+        assertEquals(listOf("y", "length (move end)", "length (move start)"), fields.map { it.label })
+        assertClose(fields[0].read(Evaluator())!!.mm, 0.0)
+        assertClose(fields[1].read(Evaluator())!!.mm, 40.0)
+
+        // "move end" writes V1's own x: V1 goes to 25 and V2 follows (it shares that node)
+        fields[1].write(25.0.mm)
+        assertClose(p(1).x, 25.0)
+        assertClose(p(2).x, 25.0)
+        assertClose(p(0).x, 0.0)
+
+        // "move start" holds V1 and writes V0's x instead — same leg, the other end moves
+        fields[2].write(10.0.mm)
+        assertClose(p(0).x, 15.0) // 25 - 10, keeping the leg's direction
+        assertClose(p(1).x, 25.0)
+    }
+
+    @Test
+    fun aVertexOffersTheLengthOfTheLegThatCreatedIt() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(40.0, 3.0)) // V1: horizontal leg of length 40
+        ed.finishPath()
+        val verts = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }
+
+        assertTrue(verts[0].handle!!.fields().none { it.label == "leg length" }, "the start has no incoming leg")
+        val len = verts[1].handle!!.fields().first { it.label == "leg length" }
+        assertClose(len.read(Evaluator())!!.mm, 40.0)
+
+        len.write(150.0.mm)
+        assertClose(Evaluator().point(verts[1].ref as constructit.dsl.PointRef).x, 150.0)
+        assertClose(Evaluator().point(verts[0].ref as constructit.dsl.PointRef).x, 0.0)
+    }
+
+    @Test
     fun typingAVertexCoordinateIsTheSameWriteAsDraggingIt() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)
@@ -663,7 +761,7 @@ class EditorTest {
         fun p(i: Int) = Evaluator().point(verts[i].ref as constructit.dsl.PointRef)
 
         val fields = verts[1].handle!!.fields()
-        assertEquals(listOf("x", "y"), fields.map { it.label })
+        assertEquals(listOf("x", "y", "leg length"), fields.map { it.label })
         assertClose(fields[0].read(Evaluator())!!.mm, 40.0)
         assertClose(fields[1].read(Evaluator())!!.mm, 0.0)
 

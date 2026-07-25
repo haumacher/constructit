@@ -717,11 +717,23 @@ Then 3D walls = extrude + boolean.
   (a horizontal edge shares `y`, a vertical edge shares `x`). Consequences, all solver-free:
   - **Local editing** — dragging a vertex writes its two coordinate nodes; each is shared with
     exactly one neighbour, so only the vertex and its two neighbours move (no downstream cascade),
-    and edges stay axis-aligned by construction (`OrthoCornerConstraint`).
+    and edges stay axis-aligned by construction (`OrthoCornerHandle`).
   - **Closing** is symmetric: the last vertex's own coordinate node is bound to the start's
-    (`SourceNode.boundTo`, so the geometry snaps to fit) *and* its drag-constraint is redirected to
+    (`SourceNode.boundTo`, so the geometry snaps to fit) *and* its drag handle is redirected to
     write the start's node — so the vertex before the closing edge keeps 2 DOF like every other
     corner. Closing is triggered by clicking the start.
+  - **Leg dragging** — a whole leg is a handle too (`OrthoEdgeHandle`). Its endpoints share the
+    coordinate perpendicular to it, so the leg has exactly one DOF of its own: dragging it writes
+    that single node, moving both ends together and stretching the two neighbouring legs. This is
+    the direct way to change one coordinate without disturbing the other.
+  - **Numeric editing** — per OP-13 every one of those drags is also a typed field. A vertex offers
+    `x`, `y` and the length of the leg that created it; a leg offers its perpendicular position plus
+    its length *from either end* (`length (move end)` / `length (move start)`), because a length
+    spans two vertices and each end is a separate write. A field over a driven node (welded,
+    attached, loop-closed) reports itself unwritable.
+  - The path is retained as an `OrthoPath` (vertices in draw order + a segment element per leg), so
+    legs are addressable — which is what lets a leg's length find the neighbour supplying its other
+    end. A `Wall` keeps a reference to the centerline path it was built from.
   - Rubber-band preview; Esc / double-click / click-start to finish.
 - **Slice 2 — walls** (`Tools.WALL`, `Document.buildWall`): centerline + thickness → two offset
   faces with `intersectLL` miter corners + end caps; retained as a `Wall` so it can be regenerated.
@@ -730,12 +742,16 @@ Then 3D walls = extrude + boolean.
   to cut a door/window gap; position (distance-from-leg-start) + width are editable parameters;
   regenerates the wall with gapped faces + jamb reveal lines. Position is anchored at the start
   edge; width extends the end.
-- **Endpoint connections**: an **open** path's end vertices (`OrthoCornerConstraint.isEndpoint`)
+- **Endpoint connections**: an **open** path's end vertices (`OrthoCornerHandle.isEndpoint`)
   take part in the weld/attach magnet — drag an end onto a point to **weld** it, or onto a
   line/circle to **attach** it (becomes an on-curve slider). Attach binds only the endpoint's
   *own* coordinate (derived as where the line crosses the still-free shared coordinate), so the
   neighbour keeps its DOF; a connecting edge parallel to the target line is the one case where the
   shared coordinate is genuinely pinned (falls back to a point-on-line slider).
-- **Next:** wall-to-wall junction cleanup (T/L merges), edge-length readouts (numeric length
-  editing over the coordinates), opening sill/head heights (for 3D), and 3D walls (extrude +
-  boolean-subtract openings).
+- **Next (ortho editing):** selection + a handle inspector in the shell (so the typed fields are
+  reachable from the UI), axis-locked vertex dragging, direct distance entry while drawing, a shared
+  snap resolver for point placement (see the tool roadmap), and the robustness gaps — consecutive
+  same-axis legs are accepted today and yield collinear legs whose wall miter is undefined; closing
+  moves the last vertex without previewing the closing edge; no insert/delete vertex.
+- **Next (architectural):** wall-to-wall junction cleanup (T/L merges), opening sill/head heights
+  (for 3D), and 3D walls (extrude + boolean-subtract openings).

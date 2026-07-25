@@ -34,7 +34,7 @@ class Editor(
     private fun ev() = Evaluator()
 
     // transient state
-    private var dragPoint: Element? = null
+    private var dragTarget: Element? = null // a point, or a whole ortho leg
     private var weldTarget: Element? = null // a point to weld onto
     private var attachTarget: Element? = null // a curve to attach onto
     private var haloPos: Vec2? = null // where the magnet ring is drawn
@@ -65,7 +65,7 @@ class Editor(
         pickedElements.clear()
         pickedClicks.clear()
         filledSlots = 0
-        dragPoint = null
+        dragTarget = null
         weldTarget = null
         attachTarget = null
         haloPos = null
@@ -100,9 +100,12 @@ class Editor(
     fun pointerDown(screen: Vec2) {
         if (toolId == Tools.SELECT) {
             val world = camera.screenToWorld(screen)
-            val hit = HitTest.nearestFreePoint(doc, ev(), world, tolWorld())
+            // a vertex wins over the legs meeting at it; a leg drags perpendicular (OrthoEdgeHandle)
+            val hit =
+                HitTest.nearestFreePoint(doc, ev(), world, tolWorld())
+                    ?: HitTest.nearestDraggableCurve(doc, ev(), world, tolWorld())
             if (hit != null) {
-                dragPoint = hit
+                dragTarget = hit
             } else {
                 panning = true
                 lastScreen = screen
@@ -179,8 +182,8 @@ class Editor(
             return
         }
         when {
-            dragPoint != null -> {
-                val el = dragPoint!!
+            dragTarget != null -> {
+                val el = dragTarget!!
                 val world = camera.screenToWorld(screen)
                 val c = el.handle
                 when {
@@ -211,10 +214,10 @@ class Editor(
     fun pointerUp(
         @Suppress("UNUSED_PARAMETER") screen: Vec2,
     ) {
-        val dragged = dragPoint
+        val dragged = dragTarget
         val weld = weldTarget
         val attach = attachTarget
-        dragPoint = null
+        dragTarget = null
         clearMagnet() // clear before rendering so the magnet halo doesn't linger
         panning = false
         if (dragged != null) {

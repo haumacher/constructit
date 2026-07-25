@@ -624,9 +624,15 @@ class Document {
     ): OrthoVertex? {
         val v = addOrthoVertex(path.vertices.last(), to) ?: return null
         path.vertices.add(v)
-        path.legs.add(lastSegment())
+        path.legs.add(dragLeg(path, lastSegment()))
         return v
     }
+
+    /** Make [leg] a draggable leg of [path] (moves perpendicular; see [OrthoEdgeHandle]). */
+    private fun dragLeg(
+        path: OrthoPath,
+        leg: Element,
+    ): Element = leg.also { it.handle = OrthoEdgeHandle(path, it) }
 
     /** The most recently added segment element — the leg [addOrthoVertex] just drew. */
     private fun lastSegment(): Element = elements.last { it.kind == ElementKind.SEGMENT }
@@ -663,7 +669,12 @@ class Document {
         } else {
             prev.corner.ownCoord = ownAxis // the start's own coord = the one V1 didn't share
         }
-        return orthoVertex(xNode, yNode, ownAxis).also { segment(prev.ref, it.ref) }
+        return orthoVertex(xNode, yNode, ownAxis).also {
+            // the far end of the new leg: what its length is measured from, so the length is a field
+            // of the new vertex's handle (the end that moves when you write it)
+            it.corner.legAnchor = if (ownAxis == 0) prev.corner.xNode else prev.corner.yNode
+            segment(prev.ref, it.ref)
+        }
     }
 
     /** Where the next leg of [path] would land (rubber-band preview). */
@@ -692,8 +703,8 @@ class Document {
     fun closeOrthoPath(path: OrthoPath): Boolean {
         if (path.vertices.size < 3 || path.closed) return false
         closeOrthoPath(path.vertices.first(), path.vertices.last())
-        path.legs.add(segment(path.vertices.last().ref, path.vertices.first().ref)) // the closing leg
-        path.closed = true
+        path.closed = true // before the leg handle resolves its index, which depends on closure
+        path.legs.add(dragLeg(path, segment(path.vertices.last().ref, path.vertices.first().ref)))
         return true
     }
 

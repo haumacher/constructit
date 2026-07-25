@@ -36,6 +36,17 @@ object HitTest {
         return best
     }
 
+    /**
+     * Nearest curve that is itself draggable — an ortho leg. Only consulted after
+     * [nearestFreePoint] misses, so a vertex always wins over the legs meeting at it.
+     */
+    fun nearestDraggableCurve(
+        doc: Document,
+        ev: Evaluator,
+        world: Vec2,
+        tol: Double,
+    ): Element? = nearest(doc, ev, world, tol) { it.isCurve && it.handle != null }
+
     /** Nearest point-like element (free, derived, or on-curve), for snapping/reuse. */
     fun nearestAnyPoint(
         doc: Document,

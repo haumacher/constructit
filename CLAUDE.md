@@ -78,13 +78,6 @@ Intersections return an ordered `PointSet` + a separate `Select` node picking th
   controller code. `Editor` runs any tool as a generic slot-collector.
 - `Document` holds the retained `Element`s (a displayable graph output with kind + style + optional
   `Handle`) and the architectural editing state (ortho paths, walls, openings).
-- **Dragging something and typing a value for it must stay the same operation** (`Handle`, OP-13):
-  one grabbable DOF with a continuous binding (`drag`) and a discrete one (`fields`), both writing
-  the same free source nodes. So never leave a DOF reachable only by dragging, and never make a
-  numeric field a new node or a consumed DOF — a `HandleField` is affine in exactly one free node
-  (writes invert by arithmetic, never a solve). A quantity spanning two vertices gets one field
-  *per end*: the field belongs to the handle that moves, which is what keeps "which end moves?"
-  unambiguous.
 - Rendering goes through the one `DrawTarget` seam: `SceneRenderer` projects world→screen and
   tessellates arcs, so backends (`SvgDrawTarget` for golden tests, `BrowserCanvasDrawTarget`) stay
   trivial. All `DrawTarget` coordinates are **screen pixels**.
