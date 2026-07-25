@@ -237,8 +237,8 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode) : Handle {
     /** True while this vertex terminates its path (degree 1) — the case that may weld/attach. */
     var isEndpoint: Boolean = true
 
-    /** Which coordinate is this vertex's *own* (not shared with a neighbour): 0 = x, 1 = y. The one
-     *  to bind when attaching to a line, so the shared coordinate stays free for the neighbour. */
+    /** Which coordinate is this vertex's *own* (not shared with a neighbour): 0 = x, 1 = y — the axis
+     *  its incoming leg runs along, and so the one its leg length is measured on. */
     var ownCoord: Int = 0
 
     /** The far end of the leg that created this vertex: the node its own coordinate is measured

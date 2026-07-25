@@ -1159,10 +1159,20 @@ Then 3D walls = extrude + boolean.
   edge; width extends the end.
 - **Endpoint connections**: an **open** path's end vertices (`OrthoCornerHandle.isEndpoint`)
   take part in the weld/attach magnet — drag an end onto a point to **weld** it, or onto a
-  line/circle to **attach** it (becomes an on-curve slider). Attach binds only the endpoint's
-  *own* coordinate (derived as where the line crosses the still-free shared coordinate), so the
-  neighbour keeps its DOF; a connecting edge parallel to the target line is the one case where the
-  shared coordinate is genuinely pinned (falls back to a point-on-line slider).
+  line/circle to **attach** it. Attaching to a line binds exactly one coordinate: **the one the line
+  determines**. A line crossing every horizontal fixes x once y is known, so x is derived from the
+  (still free) y, and y is the remaining DOF that slides along the line; a horizontal line is the
+  mirror image.
+  - Keying that on the **line's** orientation, not on the vertex's own/shared split, is what makes the
+    two ends of a path attach *symmetrically*. A path's start attaches before it has any leg, so its
+    own coordinate is not yet defined; deciding from the leg therefore had to pin *both* of the
+    start's coordinates, which silently robbed its first leg of the perpendicular freedom that the
+    same connection at the other end left intact — two legs that are symmetric to the eye behaved
+    differently. The line's orientation is always defined, so one rule covers both ends.
+  - What remains genuinely immovable is geometry, not accident: if the leg at the attached end runs
+    *parallel* to the line, the bound coordinate is the one shared with the neighbour, so the
+    neighbour lands on the line too and the leg has no perpendicular freedom — an axis-aligned leg
+    starting on a parallel line has to be collinear with it.
 - **Next (ortho editing):** a shared snap resolver for point placement (see the tool roadmap — today a path
   click uses the raw cursor, so a wall cannot be started exactly on an existing corner), and the
   robustness gaps: closing moves the last vertex without previewing the closing edge, and there is no

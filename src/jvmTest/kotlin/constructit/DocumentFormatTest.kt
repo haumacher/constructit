@@ -191,8 +191,11 @@ class DocumentFormatTest {
         val reloaded = assertRoundTrips(ed)
         val path = reloaded.orthoPaths.single()
         val start = reloaded.elements.first { it.ref === path.vertices[0].ref }
-        // an attached start slides *along* the curve: that is the connection, not a coincidence
-        assertEquals(listOf("along line"), start.handle!!.fields().map { it.label })
+        // an attached start slides along the curve, expressed as coordinates: the one the line
+        // determines is driven, the other is the remaining DOF
+        val fields = start.handle!!.fields().associateBy { it.label }
+        assertTrue(!fields.getValue("x").writable, "x is determined by the vertical segment")
+        assertTrue(fields.getValue("y").writable, "y still slides along it")
 
         // and moving the segment still carries the path with it
         val ed2 = Editor(reloaded)

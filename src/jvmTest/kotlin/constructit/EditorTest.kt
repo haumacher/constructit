@@ -787,35 +787,74 @@ class EditorTest {
     }
 
     @Test
-    fun aLegWhoseSharedCoordinateIsDrivenSaysWhyItCannotMove() {
+    fun aLegParallelToTheCurveItAttachesToSaysWhyItCannotMove() {
         val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(30.0, -60.0))
+        ed.click(Vec2(30.0, 60.0))
         ed.setTool(Tools.SEGMENT)
-        ed.click(Vec2(0.0, -60.0))
-        ed.click(Vec2(0.0, 60.0)) // a wall to build off
+        ed.click(Vec2(30.0, -60.0))
+        ed.click(Vec2(30.0, 60.0)) // a vertical wall
         ed.setTool(Tools.ORTHO_PATH)
-        ed.click(Vec2(0.5, 10.0)) // start attached to the wall: pins both of the start's coordinates
-        ed.click(Vec2(80.0, 11.0)) // leg 0 — shares the driven y, so it has no free direction left
-        ed.click(Vec2(81.0, 70.0)) // leg 1 — its x is still free
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(0.0, 40.0)) // a *vertical* leg — parallel to the wall
         ed.finishPath()
         val path = ed.doc.orthoPaths.single()
+        val end = ed.doc.elements.first { it.ref === path.vertices[1].ref }
 
-        // the immovable leg is still selectable (its values must be readable) but is not dragged, and
-        // the reason is stated instead of the drag silently doing nothing
+        // attaching a vertical leg's end onto a vertical line pins the coordinate the leg *shares*, so
+        // the whole leg lands on the wall and genuinely has no perpendicular freedom left. Unlike the
+        // asymmetry this replaced, that is geometry: an axis-aligned leg on a parallel line is collinear
         ed.setTool(Tools.SELECT)
-        val before = Evaluator().segment(path.legs[0].ref as SegmentRef)
-        ed.pointerDown(ed.camera.worldToScreen(Vec2(40.0, 10.0)))
-        ed.pointerMove(ed.camera.worldToScreen(Vec2(40.0, 35.0)))
-        ed.pointerUp(ed.camera.worldToScreen(Vec2(40.0, 35.0)))
-        assertTrue(ed.selection === path.legs[0], "an immovable leg can still be selected and inspected")
-        assertClose(Evaluator().segment(path.legs[0].ref as SegmentRef).a.y, before.a.y)
-        assertTrue(ed.statusHint.contains("no free direction"), "got: '${ed.statusHint}'")
-        assertTrue(ed.statusHint.contains("y"), "it should name the driven value; got: '${ed.statusHint}'")
+        assertTrue(ed.doc.attachOrthoEndpointToCurve(end, ed.doc.elements.first { it.kind == ElementKind.SEGMENT }))
+        assertClose(Evaluator().point(path.vertices[0].ref).x, 30.0)
+        assertClose(Evaluator().point(path.vertices[1].ref).x, 30.0)
 
-        // the neighbouring leg still moves, so this is a property of that one leg, not of the path
-        ed.pointerDown(ed.camera.worldToScreen(Vec2(80.0, 40.0)))
-        ed.pointerMove(ed.camera.worldToScreen(Vec2(110.0, 40.0)))
-        ed.pointerUp(ed.camera.worldToScreen(Vec2(110.0, 40.0)))
-        assertClose(Evaluator().segment(path.legs[1].ref as SegmentRef).a.x, 110.0)
+        assertFalse(path.legs[0].hasFreeDof)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(30.0, 20.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(60.0, 20.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(60.0, 20.0)))
+        assertClose(Evaluator().point(path.vertices[0].ref).x, 30.0)
+        assertTrue(ed.statusHint.contains("no free direction"), "got: '${ed.statusHint}'")
+    }
+
+    @Test
+    fun bothEndsOfAConnectingPathAttachSymmetrically() {
+        // the reported case: a Z-shaped run joining the left and right walls of a closed room. Its
+        // first and last legs are symmetric to the eye, so they must be equally movable — they were
+        // not, because the start attached before it had a leg and so had *both* coordinates pinned
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(-40.0, 70.0))
+        ed.click(Vec2(-40.0, 0.0))
+        ed.click(Vec2(55.0, 0.0))
+        ed.click(Vec2(55.0, 70.0))
+        ed.click(Vec2(-40.0, 70.0)) // close the room
+        val room = ed.doc.orthoPaths.single()
+        val leftWall = room.legs[0]
+        val rightWall = room.legs[2]
+
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(-39.0, 32.0)) // starts on the left wall
+        ed.click(Vec2(10.0, 32.0))
+        ed.click(Vec2(10.0, 21.0))
+        ed.click(Vec2(54.0, 21.0)) // ends on the right wall -> finishes the run
+        val run = ed.doc.orthoPaths[1]
+
+        assertTrue(ed.doc.elementFor(run.vertices.first().ref)!!.handle!!.fields().any { !it.writable }, "the start is attached")
+        assertEquals(3, run.legCount)
+        assertTrue(run.legs[0].hasFreeDof, "the first leg must be as movable as the last")
+        assertTrue(run.legs[2].hasFreeDof, "the last leg was always movable")
+
+        // and both really move, in the same way: perpendicular, carrying both of their own ends
+        fun y(i: Int) = Evaluator().point(run.vertices[i].ref).y
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(-10.0, y(0))))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(-10.0, 45.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(-10.0, 45.0)))
+        assertClose(y(0), 45.0)
+        assertClose(y(1), 45.0)
+        assertTrue(leftWall.hasFreeDof && rightWall.hasFreeDof, "the room's own walls stay movable")
     }
 
     @Test

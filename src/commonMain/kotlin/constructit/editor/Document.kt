@@ -480,11 +480,19 @@ class Document {
      * point-on-curve, so the endpoint — and the neighbour sharing one coordinate — follow the curve,
      * and dragging it now slides along the curve. The ortho analogue of [attachToCurve].
      *
-     * Where a leg already exists, only the endpoint's *own* coordinate is bound (derived from where
-     * the line crosses the still-free shared one), leaving the neighbour its DOF. A path's **start**
-     * has no leg yet, so it has no own/shared split to exploit: it is pinned to a slider along the
-     * curve, and the first leg drawn from it then shares that driven coordinate — which is what keeps
-     * the leg axis-aligned while the start slides.
+     * For a **line**, exactly one coordinate is bound: the one the line *determines*. A line that
+     * crosses every horizontal fixes x once y is known, so x is derived from the (free) y and y stays
+     * the 1 DOF that slides along the line; a horizontal line is the mirror image.
+     *
+     * Keying this on the **line's** orientation rather than on the vertex's own/shared split is what
+     * makes the two ends of a path attach *symmetrically*. A path's start attaches before it has any
+     * leg, so its own coordinate is not yet defined — deciding from the leg therefore had to pin both
+     * of the start's coordinates, which silently robbed its first leg of the perpendicular DOF that
+     * the same connection at the other end left intact. The line's orientation is always defined.
+     *
+     * A consequence that *is* geometry: if the leg at the attached end runs parallel to the line, the
+     * bound coordinate is the one shared with the neighbour, so the neighbour moves onto the line too.
+     * An axis-aligned leg starting on a parallel line has to be collinear with it.
      */
     fun attachOrthoEndpointToCurve(
         el: Element,
@@ -501,32 +509,21 @@ class Document {
             val lr = carrierLine(curve)
             if (dependsOn(lr.node, el.ref.node, HashSet())) return false
             val dir = ((ev.eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line?.dir ?: return false
-            val hasLeg = corner.legAnchor != null // false for a path start: nothing shared yet
-            // Bind only the OWN coordinate, derived as where the line crosses the (free, shared) one —
-            // so the shared coordinate stays writable and the neighbour keeps its DOF. Works while the
-            // line isn't parallel to the own axis; otherwise fall back to pinning both onto the line.
-            if (hasLeg && corner.ownCoord == 0 && abs(dir.y) > Vec2.EPS) { // own x from shared y
-                val sy = Ref<ScalarValue>(corner.yNode)
-                val cut = cx.lineThrough(cx.pointXY(cx.const(0.0.mm), sy), cx.pointXY(cx.const(1.0.mm), sy))
-                corner.xNode.boundTo = cx.measureX(cx.select(cx.intersectLL(lr, cut), +1)).node
-                corner.isEndpoint = false
-                return true
-            }
-            if (hasLeg && corner.ownCoord == 1 && abs(dir.x) > Vec2.EPS) { // own y from shared x
-                val sx = Ref<ScalarValue>(corner.xNode)
-                val cut = cx.lineThrough(cx.pointXY(sx, cx.const(0.0.mm)), cx.pointXY(sx, cx.const(1.0.mm)))
-                corner.yNode.boundTo = cx.measureY(cx.select(cx.intersectLL(lr, cut), +1)).node
-                corner.isEndpoint = false
-                return true
-            }
-            // no leg yet, or an edge parallel to the line: bind both coordinates to a slider on the line
-            val p = (ev.eval(el.ref.node) as EvalResult.Ok).let { (it.value as PointValue).p }
-            val l = (ev.eval(lr.node) as EvalResult.Ok).value as LineValue
-            val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm((p - l.line.origin).dot(l.line.dir))))
-            val pol = cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode))
-            el.handle = OnLineHandle(lr, tNode)
-            corner.xNode.boundTo = cx.measureX(pol).node
-            corner.yNode.boundTo = cx.measureY(pol).node
+            // a line crossing every horizontal determines x from y; a horizontal line determines y from x
+            val bindsX = abs(dir.y) > Vec2.EPS
+            val bound = if (bindsX) corner.xNode else corner.yNode
+            val free = if (bindsX) corner.yNode else corner.xNode
+            if (bound.boundTo != null) return false // already driven: don't fight the existing connection
+            val alongFree = Ref<ScalarValue>(free)
+            val cut =
+                if (bindsX) {
+                    cx.lineThrough(cx.pointXY(cx.const(0.0.mm), alongFree), cx.pointXY(cx.const(1.0.mm), alongFree))
+                } else {
+                    cx.lineThrough(cx.pointXY(alongFree, cx.const(0.0.mm)), cx.pointXY(alongFree, cx.const(1.0.mm)))
+                }
+            val crossing = cx.select(cx.intersectLL(lr, cut), +1)
+            bound.boundTo = (if (bindsX) cx.measureX(crossing) else cx.measureY(crossing)).node
+            corner.isEndpoint = false
             return true
         }
         if (curve.kind == ElementKind.CIRCLE) {
