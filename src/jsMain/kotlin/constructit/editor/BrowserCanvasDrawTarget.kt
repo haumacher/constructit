@@ -55,5 +55,24 @@ class BrowserCanvasDrawTarget(private val ctx: CanvasRenderingContext2D) : DrawT
         ctx.fill()
     }
 
+    override fun text(
+        at: Vec2,
+        text: String,
+        style: Style,
+        anchor: TextAnchor,
+    ) {
+        ctx.font = "${TEXT_SIZE_PX}px $TEXT_FAMILY"
+        ctx.asDynamic().textAlign =
+            when (anchor) {
+                TextAnchor.START -> "start"
+                TextAnchor.MIDDLE -> "center"
+                TextAnchor.END -> "end"
+            }
+        // alphabetic is also SVG's default baseline, so both backends put the text in the same place
+        ctx.asDynamic().textBaseline = "alphabetic"
+        ctx.fillStyle = style.fill ?: style.stroke
+        ctx.fillText(text, at.x, at.y)
+    }
+
     override fun end() {}
 }

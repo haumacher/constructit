@@ -677,6 +677,8 @@ class Editor(
             val movable =
                 HitTest.nearestFreePoint(doc, ev(), world, tolWorld())
                     ?: HitTest.nearestDraggableCurve(doc, ev(), world, tolWorld())
+                    // last, so a dimension lying over the geometry it names never steals its grab
+                    ?: HitTest.nearestDraggableAnnotation(doc, ev(), world, tolWorld())
             // an immovable element is still selectable, so its values can be read and the reason shown
             val hit = movable ?: HitTest.nearestSelectable(doc, ev(), world, tolWorld())
             // a press on nothing starts a rubber band; what it covers is selected on release (OP-16)
@@ -1224,7 +1226,11 @@ class Editor(
     private fun grabAnchor(
         el: Element,
         world: Vec2,
-    ): Vec2 = (ev().valueOf(el.ref) as? PointValue)?.p ?: Snap.legPoint(ev(), el, world) ?: world
+    ): Vec2 =
+        (ev().valueOf(el.ref) as? PointValue)?.p
+            ?: el.annotation?.anchor(ev())
+            ?: Snap.legPoint(ev(), el, world)
+            ?: world
 
     /** Where a (possibly zero-length) leg sits, for marking it on the canvas. */
     private fun legPoint(el: Element): Vec2? =

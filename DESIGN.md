@@ -345,8 +345,11 @@ afterwards. Three consequences fall out of the shared-coordinate model:
 6. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
    tool (OP-6 `Macro` machinery exists in the engine; needs the record/parameterize UI). The
    headline capability of the paradigm. Shares its dialog with group creation (OP-16).
-7. **Dimensions & annotations.** Dimension lines/leaders showing a measured length/angle —
-   for the 2D technical/architectural-drawing goal.
+7. **Dimensions & annotations — done.** Linear (aligned), radial and angular dimensions, each a
+   `ToolDef` in an *Annotate* category and each an element whose value **is** an ordinary measurement
+   node (OP-4). See *Dimensions* under Measurements below. Remaining here: leaders with free text,
+   baseline/chain dimensions, and dimensioning a wall footprint (which wants the footprint accessors
+   listed under the architectural next steps).
 8. **Splines (OP-15).** The general `CurveValue` refactor, then control-point Bézier/B-splines with
    *constructed* control points. Independent of 1–7; slot it wherever it fits.
 
@@ -621,6 +624,42 @@ against the strong type system (OP-5), which also drives context-sensitive tools
   quantity's endpoints are fully determined (no free DOF to absorb the input).
 - **(c) General inversion** (solve for a determined quantity) — out of scope (needs a solver).
 
+### Dimensions (as built)
+
+A **dimension** is a displayable element (`ElementKind.DIMENSION`) whose value is one of these
+measurement nodes — nothing new in the engine, and nothing asserted. The graphic is a *view* of the
+node: drag a measured point and the number redraws, with no node created and none rebuilt. Making a
+measured value drive geometry stays parameter wiring, i.e. the other side of driving-XOR-driven; a
+dimension is always the driven side.
+
+- **Three kinds, three `ToolDef`s** (`ToolCategory.ANNOTATE`, no controller code): *linear* between two
+  points (aligned — the dimension line is parallel to the span), *radial* on a circle or arc (through
+  the new `circleOfArc` carrier coercion), *angular* between two lines (through the LINE-slot carrier
+  coercion that already existed).
+- **Its placement is its own DOF and an ordinary `Handle`** (OP-13): the linear kind owns the *signed*
+  offset from the span (so the sign *is* which side, and no discrete choice is needed for it), the
+  radial kind a leader angle + reach, the angular kind the arc radius. Each is a source node, so a drag
+  and a typed field write the same literal, and the inspector also shows the measured value as a
+  read-only field — a `HandleField` with **no node**, which is how "derived by construction, cannot be
+  written" is already expressed.
+- **Which sector an angular dimension names is a stored discrete choice** (OP-1), resolved once from the
+  placing click in the crossing's own basis and then fed to the measurement itself
+  (`measureAngleSector(l1, l2, sign1, sign2)`), so the number shown and the arc drawn are the same
+  sector however the lines later move. Testing dot products instead is wrong for non-perpendicular
+  lines, which is the interesting case.
+- **Persistence** rides the generic `tool` step (OP-18) with one addition that generalizes: a step's
+  **`dofs=`** argument restates the literals a tool's own source nodes hold, exactly as `param` restates
+  a parameter's value. The *clicks* stay verbatim, because what they encode is a **choice** (which side,
+  which sector) — the format's existing state-vs-choice rule, now load-bearing for a second feature.
+  Deriving the offset back from a restated click position was tried first and rejected: the derivation
+  and its inverse are not bit-identical, so `save → load → save` drifted in the last digits.
+- **One new `DrawTarget` primitive:** `text(at, string, style, anchor)` — the first thing a drawing needs
+  that geometry does not. Both backends use one font (`12px sans-serif`) and the alphabetic baseline; the
+  SVG writer keeps fixed attribute order and precision, so goldens stay byte-stable. Arrowheads and the
+  gap that lifts the text off its line are sized in **pixels** by `SceneRenderer` (they are drawing marks
+  and must not scale); everything else about a dimension is world-space and follows the geometry. Text is
+  never rotated — a deliberate "unidirectional" reading, not a limitation of the seam.
+
 ## Scope, deliverables & phasing (OP-2 — RESOLVED)
 
 - **Primary goal:** 3D geometries for **3D printing**.
@@ -682,6 +721,15 @@ order** (stable node identity); only the trim parameters recompute. A loop that 
 | result vs. scaffolding | **semantic** | is it consumed by an output node |
 | dimmed / hidden | presentation | per-element flag |
 | layer (walls, dimensions, annotation) | organizational | named bucket + visibility |
+
+**Annotation is the third column, and the dim toggle must respect that.** Scaffolding is *derived* —
+the ancestor closure of the result elements — and a dimension can end up inside that closure: wire a
+parameter to a measured value and the measurement node becomes an ancestor of the result. Dimming the
+dimension then would be exactly backwards, so `scaffoldingElements()` excludes annotation outright
+(`Element.isAnnotation`). The honest rule, recorded here because it is a decision and not a fallout: **a
+dimension is neither result nor scaffolding; it is visible whenever it is not hidden.** It is also never
+*consumed* by anything — nothing may depend on an annotation — so excluding it costs the derivation
+nothing.
 
 ### One idea, three levels
 Every level of the model needs an explicit **output set**: which 2D curves are the drawing, which

@@ -30,6 +30,9 @@ sealed interface Arg {
 
     class Positions(val ps: List<Vec2>) : Arg
 
+    /** Several numbers in one argument — a tool's own degrees of freedom, in the order it created them. */
+    class Nums(val qs: List<Quantity>) : Arg
+
     /** `key=value`, so a step with several optional parts stays readable. */
     class Keyed(val key: String, val value: Arg) : Arg
 }
@@ -157,14 +160,23 @@ object DocumentFormat {
             "tool" -> {
                 val onCurve = step.creates.singleOrNull { it.kind == ElementKind.ON_CURVE }
                 val here = onCurve?.let { posOf(it) }
-                if (here == null) {
-                    step.args
-                } else {
-                    step.args.map { arg ->
-                        val v = (arg as? Arg.Keyed)?.value
-                        if (arg is Arg.Keyed && v is Arg.Positions) Arg.Keyed(arg.key, Arg.Positions(v.ps.dropLast(1) + here)) else arg
+                val args =
+                    if (here == null) {
+                        step.args
+                    } else {
+                        step.args.map { arg ->
+                            val v = (arg as? Arg.Keyed)?.value
+                            if (arg is Arg.Keyed && v is Arg.Positions) Arg.Keyed(arg.key, Arg.Positions(v.ps.dropLast(1) + here)) else arg
+                        }
                     }
-                }
+                // A dimension's placement is its own state (OP-13), so it is restated as a value rather than
+                // as the click that first set it: `dofs=` carries it, while the clicks stay verbatim, since
+                // what *they* encode is a discrete choice — which side of the span, which sector of a
+                // crossing — and replay must make the same choice (see this object's header).
+                // in creation order and consumed positionally, so this stays one rule however many
+                // annotations a step makes
+                val dofs = step.creates.mapNotNull { it.annotation }.flatMap { it.dofValues() }
+                if (dofs.isEmpty()) args else args + Arg.Keyed("dofs", Arg.Nums(dofs))
             }
             else -> step.args
         }
@@ -185,6 +197,7 @@ object DocumentFormat {
             is Arg.Sc -> quote(arg.entry.name)
             is Arg.Pos -> pos(arg.p)
             is Arg.Positions -> arg.ps.joinToString(";") { pos(it) }
+            is Arg.Nums -> arg.qs.joinToString(";") { num(it) }
             is Arg.Num -> num(arg.q)
             is Arg.Text -> arg.s
             is Arg.Label -> quote(arg.s)
@@ -399,6 +412,7 @@ object DocumentFormat {
         var points = emptyList<PointRef>()
         var elements = emptyList<Element>()
         var clicks = emptyList<Vec2>()
+        var dofs = emptyList<Quantity>()
         var scalar: ScalarEntry? = null
         for (w in words.drop(2)) {
             val key = w.substringBefore('=')
@@ -412,6 +426,7 @@ object DocumentFormat {
                         }
                 "els" -> elements = v.split(',').filter { it.isNotEmpty() }.map { byName[it] ?: throw LoadError("unknown element '$it'") }
                 "clicks" -> clicks = v.split(';').filter { it.isNotEmpty() }.map { parsePos(it) }
+                "dofs" -> dofs = v.split(';').filter { it.isNotEmpty() }.map { quantity(it) }
                 "scalar" -> {
                     val name = unquote(v)
                     scalar = doc.scalars.firstOrNull { it.name == name } ?: throw LoadError("unknown scalar '$name'")
@@ -420,7 +435,7 @@ object DocumentFormat {
             }
         }
         val at = clicks.lastOrNull() ?: Vec2(0.0, 0.0)
-        val picks = Picks(points, elements, at, clicks)
+        val picks = Picks(points, elements, at, clicks, dofs)
         // replay through the same recorder the click used, so the reloaded document can be saved again
         doc.recordingTool(tool.id, picks, scalar) { tool.build(doc, picks, scalar?.ref) }
     }

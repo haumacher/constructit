@@ -64,6 +64,12 @@ enum class ElementKind {
 
     /** An area — an outline with holes (OP-14), what the 2D→3D seam consumes. */
     AREA,
+
+    /**
+     * A **dimension**: annotation, showing a measurement node's live value (OP-4). Neither scaffolding
+     * nor result geometry — OP-14's third, organizational column — see [Element.isAnnotation].
+     */
+    DIMENSION,
 }
 
 /** A retained, displayable/selectable graph output with style + kind. */
@@ -76,6 +82,11 @@ class Element(
     var visible: Boolean = true,
     /** For [ElementKind.ON_CURVE] (and draggable legs): the grabbable DOF — see [Handle]. */
     var handle: Handle? = null,
+    /**
+     * For [ElementKind.DIMENSION]: what this element *is*. Held here rather than looked up in the
+     * document so drawing, picking and saving all reach it one hop from the element, as [handle] is.
+     */
+    var annotation: DimensionAnnotation? = null,
 ) {
     /**
      * Whether grabbing this element can actually move anything. An on-curve point qualifies only
@@ -85,7 +96,7 @@ class Element(
      */
     val draggable: Boolean get() =
         when (kind) {
-            ElementKind.POINT, ElementKind.ON_CURVE -> hasFreeDof
+            ElementKind.POINT, ElementKind.ON_CURVE, ElementKind.DIMENSION -> hasFreeDof
             else -> false
         }
 
@@ -108,6 +119,14 @@ class Element(
 
     /** An output of the construction rather than scaffolding for it (OP-14). */
     val isResult: Boolean get() = kind == ElementKind.OUTLINE || kind == ElementKind.AREA
+
+    /**
+     * Annotation: it says something *about* the drawing instead of being part of it (OP-14's third
+     * column). Neither a result nor scaffolding — a dimension is not what the drawing is made of, and it
+     * is never construction for anything, so the dim toggle leaves it alone: it is visible whenever it is
+     * not hidden, full stop.
+     */
+    val isAnnotation: Boolean get() = kind == ElementKind.DIMENSION
     val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT || kind == ElementKind.ON_CURVE
 
     /** Line / segment / ray — anything that determines an infinite line. */
@@ -2160,7 +2179,11 @@ class Document {
             node.inputs.forEach { walk(it) }
         }
         results.forEach { walk(it.ref.node) }
-        return elements.filter { !it.isResult && it.ref.node.id in seen }
+        // Annotation is excluded outright (OP-14): a dimension is never scaffolding, whatever the graph
+        // says. Its node *can* end up in the closure — wire a parameter to a measured value and the
+        // measurement becomes an ancestor of the result — and dimming the dimension then would be
+        // exactly backwards: the drawing is what it names.
+        return elements.filter { !it.isResult && !it.isAnnotation && it.ref.node.id in seen }
     }
 
     /**
@@ -2536,6 +2559,97 @@ class Document {
         l1: Element,
         l2: Element,
     ) = measurement("angle", cx.measureAngleLines(carrierLine(l1), carrierLine(l2)))
+
+    // ---- dimensions: annotation over an ordinary measurement node (OP-4) ----
+    //
+    // Each of these creates *one* element (the annotation) plus the measurement entry it shows, so the
+    // measured value is a first-class scalar like any other — readable in the panel, and wirable *from*.
+    // Nothing is asserted: a dimension is the driven side of OP-4's driving-XOR-driven rule.
+    //
+    // Its own placement DOF are fresh source nodes, seeded from the click that placed it and thereafter
+    // state of their own: a handle writes them (OP-13) and the save restates them (OP-18). [dofs] is that
+    // restated state on replay — given, it is used verbatim, so a reload lands exactly where the drag left
+    // it instead of re-deriving from the click.
+
+    /** An aligned linear dimension between two point elements, its dimension line through [at]. */
+    @Suppress("UNCHECKED_CAST")
+    fun linearDimension(
+        pa: Element,
+        pb: Element,
+        at: Vec2,
+        dofs: List<Quantity> = emptyList(),
+    ): Element? {
+        if (!pa.isPoint || !pb.isPoint || pa === pb) return null
+        val a = pa.ref as PointRef
+        val b = pb.ref as PointRef
+        val ref = cx.measureDistance(a, b)
+        measurement("dist", ref)
+        val ev = Evaluator()
+        val wa = ((ev.eval(a.node) as? EvalResult.Ok)?.value as? PointValue)?.p ?: Vec2(0.0, 0.0)
+        val wb = ((ev.eval(b.node) as? EvalResult.Ok)?.value as? PointValue)?.p ?: Vec2(0.0, 0.0)
+        val n = (wb - wa).normalized().perp()
+        val offset = SourceNode(nextId("dl"), ScalarValue(dofs.getOrNull(0) ?: Quantity.mm((at - wa).dot(n))))
+        return annotate(ref, LinearDimension(ref, a, b, offset))
+    }
+
+    /** A radial dimension on a circle or arc, its leader through [at]. */
+    fun radialDimension(
+        curve: Element,
+        at: Vec2,
+        dofs: List<Quantity> = emptyList(),
+    ): Element? {
+        val circle = carrierCircle(curve) ?: return null
+        val ref = cx.measureRadius(circle)
+        measurement("radius", ref)
+        val c = (Evaluator().eval(circle.node) as? EvalResult.Ok)?.let { (it.value as? CircleValue)?.circle }
+        val d = if (c == null) Vec2(1.0, 0.0) else at - c.center
+        val angle = SourceNode(nextId("da"), ScalarValue(dofs.getOrNull(0) ?: Quantity.rad(d.angle())))
+        val reach = SourceNode(nextId("dr"), ScalarValue(dofs.getOrNull(1) ?: Quantity.mm(d.length() - (c?.radius ?: 0.0))))
+        return annotate(ref, RadialDimension(ref, circle, angle, reach))
+    }
+
+    /**
+     * An angular dimension between two lines, naming the sector [at] lies in. That sector is resolved here,
+     * once, into the stored signs the measurement itself is built from (OP-1) — so replaying the same click
+     * makes the same choice, and moving the lines afterwards never changes which angle is meant.
+     */
+    fun angularDimension(
+        l1: Element,
+        l2: Element,
+        at: Vec2,
+        dofs: List<Quantity> = emptyList(),
+    ): Element? {
+        val a = carrierLine(l1)
+        val b = carrierLine(l2)
+        val ev = Evaluator()
+        val la = ((ev.eval(a.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: return null
+        val lb = ((ev.eval(b.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: return null
+        val vertex = GeomMath.intersectLL(la, lb).points.firstOrNull() ?: return null
+        val (s1, s2) = AngularDimension.signsToward(la.dir, lb.dir, at - vertex)
+        val ref = cx.measureAngleSector(a, b, s1, s2)
+        measurement("angle", ref)
+        val radius = SourceNode(nextId("dR"), ScalarValue(dofs.getOrNull(0) ?: Quantity.mm((at - vertex).length())))
+        return annotate(ref, AngularDimension(ref, a, b, s1, s2, radius))
+    }
+
+    /** The full circle of a circle or arc element — the coercion a radial dimension needs. */
+    @Suppress("UNCHECKED_CAST")
+    private fun carrierCircle(el: Element): CircleRef? =
+        when (el.kind) {
+            ElementKind.CIRCLE -> el.ref as CircleRef
+            ElementKind.ARC -> cx.circleOfArc(el.ref as ArcRef)
+            else -> null
+        }
+
+    /** The one displayable element of a dimension: the measurement it shows, drawn as [ann]. */
+    private fun annotate(
+        ref: ScalarRef,
+        ann: DimensionAnnotation,
+    ): Element =
+        add(ref, ElementKind.DIMENSION, Styles.ANNOTATION).also {
+            it.annotation = ann
+            it.handle = ann
+        }
 }
 
 /** Head height a new interval carries by default (mm) — a door; the sill defaults to the floor. */
@@ -2559,4 +2673,7 @@ object Styles {
 
     /** Scaffolding, once a result exists to contrast it with — dimmed, not hidden. */
     val DIMMED = Style(stroke = "#c9c9c9", width = 1.0)
+
+    /** Annotation (OP-14): thin, and a colour of its own, because it is not part of the drawing. */
+    val ANNOTATION = Style(stroke = "#17607d", width = 1.0)
 }

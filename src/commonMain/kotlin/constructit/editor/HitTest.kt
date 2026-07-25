@@ -47,6 +47,17 @@ object HitTest {
         tol: Double,
     ): Element? = nearest(doc, ev, world, tol) { it.isCurve && it.hasFreeDof }
 
+    /**
+     * Nearest annotation whose own DOF a drag can write — a dimension's offset (OP-13). Consulted after
+     * points and curves, so a dimension crossing the geometry it names never steals a grab from it.
+     */
+    fun nearestDraggableAnnotation(
+        doc: Document,
+        ev: Evaluator,
+        world: Vec2,
+        tol: Double,
+    ): Element? = nearest(doc, ev, world, tol) { it.annotation != null && it.hasFreeDof }
+
     /** Nearest element a pointer can address at all, movable or not — for selecting and explaining. */
     fun nearestSelectable(
         doc: Document,
@@ -68,6 +79,28 @@ object HitTest {
      * (an invalid node, or a value kind that isn't pickable).
      */
     fun distanceTo(
+        ev: Evaluator,
+        el: Element,
+        world: Vec2,
+    ): Double? {
+        // An annotation's value is a scalar, so it has no geometry of its own to measure against: what is
+        // pickable is the graphic it draws (OP-4). Measured to that, a dimension is picked exactly where it
+        // is visible — its lines, its arc, and the number itself.
+        el.annotation?.let { a -> return a.graphic(ev)?.let { distanceToGraphic(world, it) } }
+        return distanceToValue(ev, el, world)
+    }
+
+    private fun distanceToGraphic(
+        world: Vec2,
+        g: DimensionGraphic,
+    ): Double =
+        (
+            g.lines.map { distToSegment(world, it.a, it.b) } +
+                listOfNotNull(g.arc?.let { distToArc(world, it) }) +
+                listOf((g.textAt - world).length())
+        ).min()
+
+    private fun distanceToValue(
         ev: Evaluator,
         el: Element,
         world: Vec2,
@@ -150,6 +183,21 @@ object HitTest {
      * polyline the renderer draws, so what the marquee visibly covers is what it takes.
      */
     private fun meetsRect(
+        ev: Evaluator,
+        el: Element,
+        lo: Vec2,
+        hi: Vec2,
+    ): Boolean {
+        el.annotation?.let { a ->
+            val g = a.graphic(ev) ?: return false
+            return g.lines.any { spanMeets(it.a, it.b - it.a, lo, hi, 0.0, 1.0) } ||
+                (g.arc?.let { polyMeets(SceneRenderer.tessellate(it), lo, hi) } ?: false) ||
+                inRect(g.textAt, lo, hi)
+        }
+        return meetsRectValue(ev, el, lo, hi)
+    }
+
+    private fun meetsRectValue(
         ev: Evaluator,
         el: Element,
         lo: Vec2,

@@ -61,7 +61,12 @@ interface Handle {
  */
 class HandleField(
     val label: String,
-    val node: SourceNode,
+    /**
+     * Null only for a field over a value that is **derived by construction** and therefore read-only —
+     * a dimension's measured value (OP-4). Such a field has no node to write, which is exactly why it
+     * reports [writable] as false.
+     */
+    val node: SourceNode?,
     val dim: Dimension,
     private val getter: (Evaluator) -> Quantity?,
     private val setter: (Quantity) -> Unit,
@@ -70,7 +75,7 @@ class HandleField(
      * its neighbour's to hold the leg axis-aligned, and writing it means writing the master they both
      * resolve to. Only a chain ending in derived geometry is truly unwritable.
      */
-    private val writableWhen: () -> Boolean = { node.boundTo == null },
+    private val writableWhen: () -> Boolean = { node != null && node.boundTo == null },
 ) {
     /**
      * False when the value is derived by construction — welded or attached — so it reads but cannot be
@@ -115,7 +120,7 @@ fun explainImmovable(el: Element): String {
     // Normally the reason is a field the drag would have written. When the drag can write *nothing* —
     // its whole binding chain ends in derived geometry, so there is no master to name — every
     // unwritable field is the reason instead.
-    val candidates = fields.filter { it.node in dragged }.ifEmpty { fields }
+    val candidates = fields.filter { it.node != null && it.node in dragged }.ifEmpty { fields }
     val driven = candidates.filter { !it.writable }.map { it.label }
     if (driven.isEmpty()) return "${el.id} can't be moved: it is fully determined by the construction."
     val verb = if (driven.size == 1) "is" else "are"

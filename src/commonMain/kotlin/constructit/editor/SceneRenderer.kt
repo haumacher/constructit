@@ -11,6 +11,7 @@ import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.RayValue
 import constructit.core.RegionValue
+import constructit.core.ScalarValue
 import constructit.core.SegmentValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
@@ -106,8 +107,14 @@ object SceneRenderer {
                     }
                 }
                 is PointSetValue -> v.set.points.forEach { target.dot(cam.worldToScreen(it), POINT_PX, style.stroke) }
+                // a dimension's value is a scalar (OP-4), so what is drawn is the graphic it prescribes
+                is ScalarValue -> el.annotation?.let { drawDimension(it, ev, cam, target, style) }
                 else -> {}
             }
+        }
+        // a selected dimension's own graphic on top, so the annotation being edited reads as picked
+        for (el in selected) {
+            if (el.visible) el.annotation?.let { drawDimension(it, ev, cam, target, selectionStyle, withText = false) }
         }
         // the selection, redrawn on top: what delete removes and — when it is a single element — what
         // the inspector's numeric fields refer to. Every kind is highlighted, since a marquee (OP-16)
@@ -179,6 +186,61 @@ object SceneRenderer {
         }
         target.end()
     }
+
+    /** Screen length of an arrowhead's barbs, and their half-angle: a drawing mark, so it never scales. */
+    private const val ARROW_PX = 9.0
+    private const val ARROW_SPREAD = 0.3
+
+    /** How far the value text is lifted off its own dimension line, in pixels. */
+    private const val TEXT_GAP_PX = 4.0
+
+    /**
+     * Draw a dimension (OP-4): its world-space skeleton through the camera, plus the two things that must
+     * *not* scale with the drawing — arrowheads and the value text, both sized in pixels here, which is
+     * the only layer that knows about pixels.
+     */
+    private fun drawDimension(
+        ann: DimensionAnnotation,
+        ev: Evaluator,
+        cam: Camera,
+        target: DrawTarget,
+        style: Style,
+        withText: Boolean = true,
+    ) {
+        val g = ann.graphic(ev) ?: return
+        for (s in g.lines) target.polyline(listOf(cam.worldToScreen(s.a), cam.worldToScreen(s.b)), style)
+        g.arc?.let { arc -> target.polyline(tessellate(arc).map { cam.worldToScreen(it) }, style) }
+        for (a in g.arrows) drawArrow(cam.worldToScreen(a.tip), screenDir(cam, a.tip, a.along), target, style)
+        if (!withText) return
+        target.text(cam.worldToScreen(g.textAt) + screenDir(cam, g.textAt, g.textUp) * TEXT_GAP_PX, g.text, style, g.textAnchor)
+    }
+
+    /** A world direction at [from] as a unit *screen* direction — the camera's y flip included. */
+    private fun screenDir(
+        cam: Camera,
+        from: Vec2,
+        worldDir: Vec2,
+    ): Vec2 = (cam.worldToScreen(from + worldDir) - cam.worldToScreen(from)).normalized()
+
+    /** An open arrowhead at [tip] pointing [along] (a unit screen direction): two barbs, no fill. */
+    private fun drawArrow(
+        tip: Vec2,
+        along: Vec2,
+        target: DrawTarget,
+        style: Style,
+    ) {
+        if (along.length() < Vec2.EPS) return
+        val back = -along
+        target.polyline(
+            listOf(tip + rotate(back, ARROW_SPREAD) * ARROW_PX, tip, tip + rotate(back, -ARROW_SPREAD) * ARROW_PX),
+            style,
+        )
+    }
+
+    private fun rotate(
+        v: Vec2,
+        a: Double,
+    ) = Vec2(v.x * cos(a) - v.y * sin(a), v.x * sin(a) + v.y * cos(a))
 
     private fun norm2pi(a: Double): Double {
         var r = a % TWO_PI

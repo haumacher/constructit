@@ -30,6 +30,9 @@ first-class goal and the current implementation focus.
   3-point), arcs, transforms (mirror / rotate / scale / translate), and measurements.
 - **Constrained, draggable points** — point-on-line / point-on-circle (1-DOF), and *drag-to-weld*:
   drag a free point onto another to join them, or onto a curve to attach it as a sliding point.
+- **Dimensions** — linear (aligned), radial and angular dimension graphics whose value *is* a
+  measurement node: the number and the drawing follow the geometry live, and nothing is asserted. The
+  dimension line's own placement is draggable and typeable like any other degree of freedom.
 - **Parameter wiring** — reduce degrees of freedom by binding one parameter (or point) to another;
   equality by shared reference, with cycle checks.
 - **Architectural layer** — a rectilinear **ortho-path** (shared-coordinate model: local vertex

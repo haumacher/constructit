@@ -584,6 +584,26 @@ class Construction {
     ): ScalarRef =
         op(l1, l2) { EvalResult.Ok(ScalarValue(Quantity.rad(kotlin.math.acos(kotlin.math.abs(ln(it[0]).dir.dot(ln(it[1]).dir)).coerceIn(0.0, 1.0))))) }
 
+    /**
+     * Angle between the rays [sign1]`*dir(l1)` and [sign2]`*dir(l2)`, in `[0, PI]` — the opening of **one
+     * sector** of the crossing, rather than the acute angle of [measureAngleLines].
+     *
+     * The two signs are a stored discrete branch choice, exactly like a `Select` sign (OP-1): which of the
+     * four sectors a dimension names is decided once, when it is placed, and never re-derived — so the
+     * number shown and the arc drawn stay the same sector as the lines move.
+     */
+    fun measureAngleSector(
+        l1: LineRef,
+        l2: LineRef,
+        sign1: Int,
+        sign2: Int,
+    ): ScalarRef =
+        op(l1, l2) {
+            val d1 = ln(it[0]).dir * sign1.toDouble()
+            val d2 = ln(it[1]).dir * sign2.toDouble()
+            EvalResult.Ok(ScalarValue(Quantity.rad(kotlin.math.acos(d1.dot(d2).coerceIn(-1.0, 1.0)))))
+        }
+
     fun measureLength(segment: SegmentRef): ScalarRef =
         op(segment) {
             val s = (it[0] as SegmentValue).seg
@@ -1075,6 +1095,13 @@ class Construction {
     fun rayOrigin(r: RayRef): PointRef = op(r) { EvalResult.Ok(PointValue((it[0] as RayValue).ray.origin)) }
 
     fun arcCenter(a: ArcRef): PointRef = op(a) { EvalResult.Ok(PointValue((it[0] as ArcValue).arc.center)) }
+
+    /** The full circle an arc lies on — the carrier coercion a radius measurement or a radial dimension needs. */
+    fun circleOfArc(a: ArcRef): CircleRef =
+        op(a) {
+            val arc = (it[0] as ArcValue).arc
+            EvalResult.Ok(CircleValue(Circle(arc.center, arc.radius)))
+        }
 
     fun arcStart(a: ArcRef): PointRef =
         op(a) {

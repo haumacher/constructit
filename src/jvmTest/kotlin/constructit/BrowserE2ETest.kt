@@ -29,6 +29,9 @@ class BrowserE2ETest {
                     BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true),
                 )
             val page = browser.newPage()
+            // uncaught exceptions only, so an unrelated console warning cannot fail the run
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
             page.setViewportSize(1000, 700)
             page.navigate(index.toURI().toString())
             page.waitForSelector("#canvas")
@@ -100,6 +103,31 @@ class BrowserE2ETest {
             val note = page.querySelector("#status").textContent()
             assertTrue(note == "Grouped $itemsBuilt elements as shell", "got: $note")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/04-grouped.png")))
+
+            // A linear dimension over the two base points (OP-4). The canvas text primitive exists only
+            // in the browser backend, so this is the one place it can be exercised at all — and the
+            // dimension is placed *after* grouping, so clicking it addresses the annotation alone.
+            val dx1 = box.x + box.width * 0.2
+            val dx2 = box.x + box.width * 0.5
+            val dy = box.y + box.height * 0.85
+            // Alt places freely, so the two points land exactly under the cursor and the very same pixels
+            // pick them again for the dimension's existing-point slots
+            page.click("#tool-point")
+            page.keyboard().down("Alt")
+            page.mouse().click(dx1, dy)
+            page.mouse().click(dx2, dy)
+            page.keyboard().up("Alt")
+            page.click("#tool-dimlinear")
+            page.mouse().click(dx1, dy)
+            page.mouse().click(dx2, dy)
+            page.mouse().click((dx1 + dx2) / 2, dy - 60.0) // where the dimension line goes
+            page.click("#tool-select")
+            page.mouse().click((dx1 + dx2) / 2, dy - 60.0)
+            val fieldLabels = page.querySelectorAll(".flabel").map { it.textContent() }
+            assertTrue(fieldLabels.contains("offset"), "the dimension's own DOF is a panel field; got: $fieldLabels")
+            assertTrue(fieldLabels.contains("distance"), "and its measured value reads beside it; got: $fieldLabels")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/05-dimension.png")))
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()
         }
     }

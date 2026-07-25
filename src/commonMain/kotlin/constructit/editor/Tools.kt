@@ -3,17 +3,29 @@ package constructit.editor
 import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.geom.Vec2
+import constructit.units.Quantity
 
 /** What the next click of a tool must supply. SIDE just captures a click position (creates nothing). */
 enum class SlotKind { PLACE_POINT, POINT, EXISTING_POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT, SIDE, CENTRIC }
 
-enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, RESULT }
+enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, ANNOTATE, RESULT }
 
 /**
  * Geometry picked so far for the active tool (split by kind), [at] = the last click's world
  * position, and [clicks] = the world position of every click in slot order.
  */
-class Picks(val points: List<PointRef>, val elements: List<Element>, val at: Vec2, val clicks: List<Vec2>)
+class Picks(
+    val points: List<PointRef>,
+    val elements: List<Element>,
+    val at: Vec2,
+    val clicks: List<Vec2>,
+    /**
+     * State a replay hands back to a tool that owns degrees of freedom of its own — a dimension's offset
+     * (OP-13), restated on save (OP-18). Empty for a live click, where the DOF is seeded from [clicks]
+     * instead; the clicks keep encoding the *choices* (which side, which sector), which never change.
+     */
+    val dofs: List<Quantity> = emptyList(),
+)
 
 /**
  * A data-driven tool: geometry [slots] to pick by clicking (plus an optional [scalar] from the
@@ -102,6 +114,11 @@ object Tools {
     const val COORD_Y = "my"
     const val ANGLE_LINES = "manglelines"
 
+    // Annotate (OP-4 + OP-14): a dimension *shows* a measurement, and drives nothing
+    const val DIM_LINEAR = "dimlinear"
+    const val DIM_RADIAL = "dimradial"
+    const val DIM_ANGULAR = "dimangular"
+
     val all: List<ToolDef> =
         listOf(
             // ----- Points -----
@@ -155,6 +172,10 @@ object Tools {
             ToolDef(COORD_X, "X coordinate", ToolCategory.MEASURE, listOf(SlotKind.POINT), help = "Click a point to read its x coordinate.") { d, p, _ -> d.measureX(p.points[0]) },
             ToolDef(COORD_Y, "Y coordinate", ToolCategory.MEASURE, listOf(SlotKind.POINT), help = "Click a point to read its y coordinate.") { d, p, _ -> d.measureY(p.points[0]) },
             ToolDef(ANGLE_LINES, "Angle (2 lines)", ToolCategory.MEASURE, listOf(SlotKind.LINE, SlotKind.LINE), help = "Click two lines to measure the angle between them.") { d, p, _ -> d.measureAngleLines(p.elements[0], p.elements[1]) },
+            // ----- Annotate: dimensions (OP-4) — the graphic shows a measurement, and drives nothing -----
+            ToolDef(DIM_LINEAR, "Linear dimension", ToolCategory.ANNOTATE, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT, SlotKind.SIDE), help = "Click two points, then click where the dimension line should sit (drag it later, or type the offset).") { d, p, _ -> d.linearDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
+            ToolDef(DIM_RADIAL, "Radial dimension", ToolCategory.ANNOTATE, listOf(SlotKind.CENTRIC, SlotKind.SIDE), help = "Click a circle or arc, then click where the leader and its radius should sit.") { d, p, _ -> d.radialDimension(p.elements[0], p.at, p.dofs) },
+            ToolDef(DIM_ANGULAR, "Angular dimension", ToolCategory.ANNOTATE, listOf(SlotKind.LINE, SlotKind.LINE, SlotKind.SIDE), help = "Click two lines, then click inside the angle you mean — that sector is what the dimension names.") { d, p, _ -> d.angularDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
         )
 
     fun byId(id: String): ToolDef? = all.firstOrNull { it.id == id }

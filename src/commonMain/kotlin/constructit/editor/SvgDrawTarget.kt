@@ -47,6 +47,17 @@ class SvgDrawTarget : DrawTarget {
         sb.append("  <circle cx=\"${fmt(center.x)}\" cy=\"${fmt(center.y)}\" r=\"${fmt(radiusPx)}\" fill=\"$color\"/>\n")
     }
 
+    /** Fixed attribute order and fixed precision, like every other primitive here, so goldens stay byte-stable. */
+    override fun text(
+        at: Vec2,
+        text: String,
+        style: Style,
+        anchor: TextAnchor,
+    ) {
+        sb.append("  <text x=\"${fmt(at.x)}\" y=\"${fmt(at.y)}\" font-family=\"$TEXT_FAMILY\" font-size=\"${fmt(TEXT_SIZE_PX)}\" ")
+        sb.append("text-anchor=\"${anchorName(anchor)}\" fill=\"${style.fill ?: style.stroke}\">${escape(text)}</text>\n")
+    }
+
     override fun end() {
         sb.append("</svg>\n")
     }
@@ -54,6 +65,15 @@ class SvgDrawTarget : DrawTarget {
     private companion object {
         const val PRECISION = 3
         const val SCALE = 1000L
+
+        fun anchorName(a: TextAnchor): String =
+            when (a) {
+                TextAnchor.START -> "start"
+                TextAnchor.MIDDLE -> "middle"
+                TextAnchor.END -> "end"
+            }
+
+        fun escape(s: String): String = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
         fun fmt(v: Double): String {
             val scaled = round(abs(v) * SCALE).toLong()
