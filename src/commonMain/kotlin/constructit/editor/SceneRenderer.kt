@@ -1,16 +1,21 @@
 package constructit.editor
 
 import constructit.core.ArcValue
+import constructit.core.BezierValue
 import constructit.core.CircleValue
 import constructit.core.Evaluator
 import constructit.core.LineValue
+import constructit.core.LoopValue
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.RayValue
+import constructit.core.RegionValue
 import constructit.core.SegmentValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
+import constructit.geom.GeomMath
 import constructit.geom.Line
+import constructit.geom.ProfileElement
 import constructit.geom.Ray
 import constructit.geom.Segment
 import constructit.geom.Vec2
@@ -59,20 +64,28 @@ object SceneRenderer {
         snap: Vec2? = null,
         joins: List<Vec2> = emptyList(),
         closing: List<Pair<Vec2, Vec2>> = emptyList(),
+        dimmed: Set<Element> = emptySet(),
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
         if (grid) drawGrid(cam, target, view)
         for (el in doc.elements) {
             if (!el.visible) continue
+            val style = if (el in dimmed) Styles.DIMMED else el.style
             when (val v = ev.valueOf(el.ref)) {
-                is PointValue -> target.dot(cam.worldToScreen(v.p), POINT_PX, el.style.stroke)
-                is SegmentValue -> target.polyline(listOf(cam.worldToScreen(v.seg.a), cam.worldToScreen(v.seg.b)), el.style)
-                is LineValue -> clipLine(v.line, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), el.style) }
-                is RayValue -> clipRay(v.ray, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), el.style) }
-                is CircleValue -> target.circle(cam.worldToScreen(v.circle.center), v.circle.radius * cam.scale, el.style)
-                is ArcValue -> target.polyline(tessellate(v.arc).map { cam.worldToScreen(it) }, el.style)
-                is PointSetValue -> v.set.points.forEach { target.dot(cam.worldToScreen(it), POINT_PX, el.style.stroke) }
+                is PointValue -> target.dot(cam.worldToScreen(v.p), POINT_PX, style.stroke)
+                is SegmentValue -> target.polyline(listOf(cam.worldToScreen(v.seg.a), cam.worldToScreen(v.seg.b)), style)
+                is LineValue -> clipLine(v.line, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), style) }
+                is RayValue -> clipRay(v.ray, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), style) }
+                is CircleValue -> target.circle(cam.worldToScreen(v.circle.center), v.circle.radius * cam.scale, style)
+                is ArcValue -> target.polyline(tessellate(v.arc).map { cam.worldToScreen(it) }, style)
+                is BezierValue -> target.polyline(GeomMath.tessellateBezier(v.bezier).map { cam.worldToScreen(it) }, style)
+                is LoopValue -> drawChain(v.loop.elements, cam, target, style)
+                is RegionValue -> {
+                    drawChain(v.region.outer.elements, cam, target, style)
+                    for (h in v.region.holes) drawChain(h.elements, cam, target, style)
+                }
+                is PointSetValue -> v.set.points.forEach { target.dot(cam.worldToScreen(it), POINT_PX, style.stroke) }
                 else -> {}
             }
         }
@@ -128,6 +141,28 @@ object SceneRenderer {
         return (0..n).map {
             val ang = arc.startAngle + sweep * it / n
             arc.center + Vec2(arc.radius * cos(ang), arc.radius * sin(ang))
+        }
+    }
+
+    /**
+     * Draw a boundary chain (a `Loop`, or a `Region`'s outer/hole loop) piece by piece. Each piece
+     * becomes a polyline in screen space; the piece dispatch itself stays in `GeomMath`, except for
+     * this one — emitting backend primitives is a rendering question, not a geometric one.
+     */
+    private fun drawChain(
+        elements: List<ProfileElement>,
+        cam: Camera,
+        target: DrawTarget,
+        style: Style,
+    ) {
+        for (el in elements) when (el) {
+            is ProfileElement.Seg ->
+                target.polyline(listOf(cam.worldToScreen(el.segment.a), cam.worldToScreen(el.segment.b)), style)
+            is ProfileElement.ArcE -> target.polyline(tessellate(el.arc).map { cam.worldToScreen(it) }, style)
+            is ProfileElement.BezierE ->
+                target.polyline(GeomMath.tessellateBezier(el.bezier).map { cam.worldToScreen(it) }, style)
+            is ProfileElement.CircleE ->
+                target.circle(cam.worldToScreen(el.circle.center), el.circle.radius * cam.scale, style)
         }
     }
 

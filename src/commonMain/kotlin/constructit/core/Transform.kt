@@ -23,6 +23,7 @@ fun transformValue(
         is SegmentValue -> SegmentValue(Segment(t.apply(v.seg.a), t.apply(v.seg.b)))
         is CircleValue -> CircleValue(Circle(t.apply(v.circle.center), v.circle.radius * t.scale))
         is ArcValue -> ArcValue(GeomMath.transformArc(v.arc, t))
+        is BezierValue -> BezierValue(GeomMath.transformBezier(v.bezier, t))
         is DirectionValue -> DirectionValue(Direction(t.linear(v.dir.v).normalized()))
         is PointSetValue -> PointSetValue(PointSet(v.set.points.map { t.apply(it) }))
         is ProfileValue -> ProfileValue(Profile(v.profile.elements.map { GeomMath.transform(it, t) }))

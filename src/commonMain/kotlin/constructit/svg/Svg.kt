@@ -1,6 +1,7 @@
 package constructit.svg
 
 import constructit.core.ArcValue
+import constructit.core.BezierValue
 import constructit.core.CircleValue
 import constructit.core.DirectionValue
 import constructit.core.Evaluator
@@ -15,6 +16,7 @@ import constructit.core.ScalarValue
 import constructit.core.SegmentValue
 import constructit.dsl.Ref
 import constructit.dsl.valueOf
+import constructit.geom.Bezier
 import constructit.geom.GeomMath
 import constructit.geom.Line
 import constructit.geom.ProfileElement
@@ -106,6 +108,10 @@ object Svg {
                     samples.add(a.center - Vec2(a.radius, a.radius))
                     prepared.add(Prepared("arc", d, a))
                 }
+                is BezierValue -> {
+                    sampleChain(listOf(ProfileElement.BezierE(v.bezier)), samples)
+                    prepared.add(Prepared("chain", d, listOf(ProfileElement.BezierE(v.bezier))))
+                }
                 is LineValue -> prepared.add(Prepared("line", d, v.line)) // clipped later; not in bbox
                 is RayValue -> prepared.add(Prepared("ray", d, v.ray))
                 is ProfileValue -> {
@@ -196,6 +202,7 @@ object Svg {
                     for (el in p.geom as List<ProfileElement>) when (el) {
                         is ProfileElement.Seg -> sb.append(lineTag(screen(el.segment.a), screen(el.segment.b), p.d.stroke))
                         is ProfileElement.ArcE -> sb.append(arcTag(el.arc, p.d.stroke))
+                        is ProfileElement.BezierE -> sb.append(bezierTag(el.bezier, p.d.stroke))
                         is ProfileElement.CircleE -> {
                             val s = screen(el.circle.center)
                             sb.append("  <circle cx=\"${fmt(s.x)}\" cy=\"${fmt(s.y)}\" r=\"${fmt(el.circle.radius)}\" fill=\"none\" stroke=\"${p.d.stroke}\" stroke-width=\"${fmt(STROKE_WIDTH)}\"/>\n")
@@ -229,6 +236,18 @@ object Svg {
         // negating y flips the sense, so a math-CCW arc is sweep-flag 0 (and math-CW is 1).
         val sweepFlag = if (arc.ccw) 0 else 1
         return "  <path d=\"M ${fmt(s0.x)} ${fmt(s0.y)} A ${fmt(arc.radius)} ${fmt(arc.radius)} 0 $largeArc $sweepFlag ${fmt(s1.x)} ${fmt(s1.y)}\" fill=\"none\" stroke=\"$stroke\" stroke-width=\"${fmt(STROKE_WIDTH)}\"/>\n"
+    }
+
+    /** A Bézier is emitted natively (SVG's own cubic), so no tessellation enters the golden. */
+    private fun bezierTag(
+        b: Bezier,
+        stroke: String,
+    ): String {
+        val s0 = screen(b.p0)
+        val s1 = screen(b.p1)
+        val s2 = screen(b.p2)
+        val s3 = screen(b.p3)
+        return "  <path d=\"M ${fmt(s0.x)} ${fmt(s0.y)} C ${fmt(s1.x)} ${fmt(s1.y)} ${fmt(s2.x)} ${fmt(s2.y)} ${fmt(s3.x)} ${fmt(s3.y)}\" fill=\"none\" stroke=\"$stroke\" stroke-width=\"${fmt(STROKE_WIDTH)}\"/>\n"
     }
 
     /** Liang-Barsky style clip of an infinite line to an axis-aligned rectangle. */

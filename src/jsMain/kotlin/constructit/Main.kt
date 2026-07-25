@@ -195,6 +195,10 @@ private fun setupApp() {
         repaint()
     }
 
+    (document.getElementById("v-dim") as HTMLInputElement).addEventListener("change", { e ->
+        editor.dimScaffolding = (e.target as HTMLInputElement).checked
+        repaint()
+    })
     (document.getElementById("f-copy") as HTMLElement).addEventListener("click", {
         val text = DocumentFormat.save(editor.doc)
         window.navigator.clipboard.writeText(text).then(

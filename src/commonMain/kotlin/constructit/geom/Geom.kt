@@ -66,11 +66,24 @@ data class PointSet(val points: List<Vec2>)
 /** A 2D direction / free vector. */
 data class Direction(val v: Vec2)
 
+/**
+ * A cubic Bézier curve: from [p0] to [p3], shaped by control points [p1] and [p2] (OP-15).
+ *
+ * A spline is a **pure function of its control points**, which is why it needs no new evaluation
+ * machinery here — and because each control point may itself be *constructed*, technical geometry can
+ * drive smooth geometry. Tangency at an end is likewise achieved by construction: put the first
+ * control leg on the tangent line and G1 cannot be violated.
+ */
+data class Bezier(val p0: Vec2, val p1: Vec2, val p2: Vec2, val p3: Vec2)
+
 /** One element of a profile chain. */
 sealed interface ProfileElement {
     data class Seg(val segment: Segment) : ProfileElement
 
     data class ArcE(val arc: Arc) : ProfileElement
+
+    /** A cubic Bézier as a boundary piece (OP-15) — a loop may mix these with segments and arcs. */
+    data class BezierE(val bezier: Bezier) : ProfileElement
 
     /**
      * A whole circle as a single element — a closed boundary in its own right (a circular hole),
@@ -240,6 +253,7 @@ object GeomMath {
             is ProfileElement.Seg -> e.segment.a
             is ProfileElement.ArcE -> arcStart(e.arc)
             is ProfileElement.CircleE -> e.circle.center + Vec2(e.circle.radius, 0.0)
+            is ProfileElement.BezierE -> e.bezier.p0
         }
 
     /** Where a piece ends, following its own orientation. */
@@ -248,6 +262,7 @@ object GeomMath {
             is ProfileElement.Seg -> e.segment.b
             is ProfileElement.ArcE -> arcEnd(e.arc)
             is ProfileElement.CircleE -> e.circle.center + Vec2(e.circle.radius, 0.0)
+            is ProfileElement.BezierE -> e.bezier.p3
         }
 
     /** The same piece traversed the other way. */
@@ -256,6 +271,8 @@ object GeomMath {
             is ProfileElement.Seg -> ProfileElement.Seg(Segment(e.segment.b, e.segment.a))
             is ProfileElement.ArcE -> ProfileElement.ArcE(Arc(e.arc.center, e.arc.radius, e.arc.endAngle, e.arc.startAngle, !e.arc.ccw))
             is ProfileElement.CircleE -> ProfileElement.CircleE(e.circle, !e.ccw)
+            is ProfileElement.BezierE ->
+                ProfileElement.BezierE(Bezier(e.bezier.p3, e.bezier.p2, e.bezier.p1, e.bezier.p0))
         }
 
     /**
@@ -275,6 +292,17 @@ object GeomMath {
             is ProfileElement.CircleE -> {
                 val r = e.circle.radius
                 (if (e.ccw) 1.0 else -1.0) * 2.0 * PI * r * r
+            }
+            is ProfileElement.BezierE -> {
+                // Closed form of the same line integral over a cubic Bézier — exact, not sampled,
+                // so a spline in a boundary costs no accuracy relative to segments and arcs.
+                val b = e.bezier
+                (
+                    6 * b.p0.x * b.p1.y + 3 * b.p0.x * b.p2.y + b.p0.x * b.p3.y -
+                        6 * b.p1.x * b.p0.y + 3 * b.p1.x * b.p2.y + 3 * b.p1.x * b.p3.y -
+                        3 * b.p2.x * b.p0.y - 3 * b.p2.x * b.p1.y + 6 * b.p2.x * b.p3.y -
+                        b.p3.x * b.p0.y - 3 * b.p3.x * b.p1.y - 6 * b.p3.x * b.p2.y
+                ) / 10.0
             }
         }
 
@@ -351,6 +379,14 @@ object GeomMath {
                 e.arc.center - Vec2(e.arc.radius, e.arc.radius) to e.arc.center + Vec2(e.arc.radius, e.arc.radius)
             is ProfileElement.CircleE ->
                 e.circle.center - Vec2(e.circle.radius, e.circle.radius) to e.circle.center + Vec2(e.circle.radius, e.circle.radius)
+            is ProfileElement.BezierE -> {
+                // The control polygon's box: a Bézier lies inside its own convex hull, so this is
+                // conservative for the same reason the circle box is.
+                val b = e.bezier
+                val xs = listOf(b.p0.x, b.p1.x, b.p2.x, b.p3.x)
+                val ys = listOf(b.p0.y, b.p1.y, b.p2.y, b.p3.y)
+                Vec2(xs.min(), ys.min()) to Vec2(xs.max(), ys.max())
+            }
         }
 
     /** Apply an affine map to an arc, flipping its sweep when the map reflects. */
@@ -378,7 +414,54 @@ object GeomMath {
                     Circle(t.apply(e.circle.center), e.circle.radius * t.scale),
                     if (t.det < 0) !e.ccw else e.ccw,
                 )
+            is ProfileElement.BezierE -> ProfileElement.BezierE(transformBezier(e.bezier, t))
         }
+
+    /**
+     * Apply an affine map to a Bézier. Béziers are **affine invariant** — mapping the control points
+     * maps the curve — so this is exact for rotate/mirror/scale alike, with no re-fitting.
+     */
+    fun transformBezier(
+        b: Bezier,
+        t: Affine,
+    ): Bezier = Bezier(t.apply(b.p0), t.apply(b.p1), t.apply(b.p2), t.apply(b.p3))
+
+    /** Point on a cubic Bézier at parameter [t] in [0,1] (de Casteljau / Bernstein basis). */
+    fun bezierPointAt(
+        b: Bezier,
+        t: Double,
+    ): Vec2 {
+        val u = 1.0 - t
+        val w0 = u * u * u
+        val w1 = 3.0 * t * u * u
+        val w2 = 3.0 * t * t * u
+        val w3 = t * t * t
+        return Vec2(
+            w0 * b.p0.x + w1 * b.p1.x + w2 * b.p2.x + w3 * b.p3.x,
+            w0 * b.p0.y + w1 * b.p1.y + w2 * b.p2.y + w3 * b.p3.y,
+        )
+    }
+
+    /** Tangent direction of a cubic Bézier at [t] (the derivative; not normalised). */
+    fun bezierTangentAt(
+        b: Bezier,
+        t: Double,
+    ): Vec2 {
+        val u = 1.0 - t
+        return (b.p1 - b.p0) * (3.0 * u * u) + (b.p2 - b.p1) * (6.0 * u * t) + (b.p3 - b.p2) * (3.0 * t * t)
+    }
+
+    /**
+     * Polyline approximation of a Bézier for rendering. A **fixed** subdivision count on purpose:
+     * an adaptive one would make SVG goldens depend on curvature, and determinism is worth more here
+     * than a few saved points.
+     */
+    fun tessellateBezier(
+        b: Bezier,
+        steps: Int = BEZIER_STEPS,
+    ): List<Vec2> = (0..steps).map { bezierPointAt(b, it.toDouble() / steps) }
+
+    const val BEZIER_STEPS = 24
 
     /**
      * Apply an affine map to a loop, keeping the orientation it had. A reflection reverses the

@@ -39,6 +39,13 @@ class Editor(
     var showGrid: Boolean = false
 
     /**
+     * Dim the construction that the results are built from (OP-14), so the drawing reads on its own.
+     * A *view* setting: which elements are scaffolding is derived from the graph, so nothing is
+     * flagged and nothing can drift out of date.
+     */
+    var dimScaffolding: Boolean = false
+
+    /**
      * While set, a drag is restricted to the single axis its gesture is dominated by, measured from
      * where the drag started — so a corner can be moved in x *or* y without disturbing the other.
      * Read live, so it can be engaged or released mid-drag.
@@ -255,6 +262,7 @@ class Editor(
         SceneRenderer.render(
             doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selection,
             snapHint?.pos, joinHints, closePreview,
+            dimmed = if (dimScaffolding) doc.scaffoldingElements().toHashSet() else emptySet(),
         )
     }
 
@@ -416,6 +424,14 @@ class Editor(
                 true
             }
             key == "Enter" && numericEntry.isNotEmpty() -> commitTypedLeg()
+            // a repeating tool (Outline) commits on Enter and abandons on Escape
+            key == "Enter" && !pathActive -> finishRepeatingTool()
+            key == "Escape" && !pathActive && filledSlots > 0 -> {
+                resetPicks()
+                statusHint = ""
+                onChange()
+                true
+            }
             key == "Escape" || key == "Enter" -> {
                 finishPath()
                 true
@@ -700,10 +716,37 @@ class Editor(
         }
     }
 
+    /**
+     * Finish a repeating tool (Enter, or clicking the first pick again). Builds from whatever has been
+     * collected; too few picks just cancels, since a boundary of one curve is not a boundary.
+     */
+    fun finishRepeatingTool(): Boolean {
+        val tool = Tools.byId(toolId) ?: return false
+        if (!tool.repeating || filledSlots == 0) return false
+        val picks = Picks(pickedPoints.toList(), pickedElements.toList(), pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0), pickedClicks.toList())
+        if (filledSlots >= 2) {
+            doc.recordingTool(tool.id, picks, activeScalar) { tool.build(doc, picks, activeScalar?.ref) }
+            statusHint = ""
+        } else {
+            statusHint = "${tool.label}: needs at least two curves"
+        }
+        resetPicks()
+        onChange()
+        return true
+    }
+
     private fun runToolClick(screen: Vec2) {
         val tool = Tools.byId(toolId) ?: return
         val world = camera.screenToWorld(screen)
-        val slot = tool.slots[filledSlots]
+        // a repeating tool closes when the first pick is clicked again — the boundary is complete
+        if (tool.repeating && filledSlots >= 2) {
+            val again = HitTest.nearest(doc, ev(), world, tolWorld()) { it === pickedElements.firstOrNull() }
+            if (again != null) {
+                finishRepeatingTool()
+                return
+            }
+        }
+        val slot = if (tool.repeating) tool.slots.last() else tool.slots[filledSlots]
         val picked =
             when (slot) {
                 SlotKind.PLACE_POINT, SlotKind.POINT -> {
@@ -729,6 +772,11 @@ class Editor(
         filledSlots++
         pickedClicks.add(world)
 
+        if (tool.repeating) {
+            statusHint = "${tool.help} ($filledSlots picked)"
+            onChange()
+            return
+        }
         if (filledSlots == tool.slots.size) {
             if (tool.scalar && activeScalar == null) {
                 statusHint = "${tool.label}: select a parameter or measurement in the panel first"

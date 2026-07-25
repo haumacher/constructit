@@ -1,6 +1,7 @@
 package constructit.core
 
 import constructit.geom.Arc
+import constructit.geom.Bezier
 import constructit.geom.Circle
 import constructit.geom.Direction
 import constructit.geom.Line
@@ -35,6 +36,9 @@ data class PointSetValue(val set: PointSet) : Value
 data class DirectionValue(val dir: Direction) : Value
 
 data class ProfileValue(val profile: Profile) : Value
+
+/** A cubic Bézier — a pure function of its (possibly constructed) control points (OP-15). */
+data class BezierValue(val bezier: Bezier) : Value
 
 /** A closed, oriented boundary — the result layer's own value type (OP-14). */
 data class LoopValue(val loop: Loop) : Value

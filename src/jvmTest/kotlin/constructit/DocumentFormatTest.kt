@@ -62,6 +62,35 @@ class DocumentFormatTest {
         return reloaded
     }
 
+    /**
+     * A traced outline and a spline round-trip with no per-tool support in the format: the `tool` step
+     * already carries `els=` and `clicks=`, and a repeating tool is just more of both (OP-14, OP-15).
+     */
+    @Test
+    fun outlinesAndSplinesRoundTrip() {
+        val ed = Editor()
+        ed.setTool(Tools.LINE)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(60.0, 0.0))
+        ed.setTool(Tools.BEZIER)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(0.0, 40.0))
+        ed.click(Vec2(60.0, 40.0))
+        ed.click(Vec2(60.0, 0.0))
+        ed.setTool(Tools.OUTLINE)
+        ed.click(Vec2(30.0, 0.0))
+        ed.click(Vec2(30.0, 30.0))
+        ed.key("Enter")
+        assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.OUTLINE })
+
+        val reloaded = assertRoundTrips(ed)
+        assertEquals(1, reloaded.elements.count { it.kind == ElementKind.OUTLINE }, "the outline must come back")
+        assertEquals(1, reloaded.elements.count { it.kind == ElementKind.BEZIER }, "so must the spline")
+        val ev = Evaluator()
+        val loop = reloaded.elements.first { it.kind == ElementKind.OUTLINE }
+        assertTrue(ev.eval(loop.ref.node) is EvalResult.Ok, "and it must still be a closed boundary")
+    }
+
     @Test
     fun pointsAndCurvesRoundTrip() {
         val ed = Editor()

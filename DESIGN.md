@@ -318,10 +318,10 @@ afterwards. Three consequences fall out of the shared-coordinate model:
 4. **Selection & grouping (OP-16).** Multi-select (absent — `Editor.selection` is a single
    `Element?`), then flat named groups, then **placed groups** (a frame source node; moving a group
    edits the frame, not its points), then relocate-origin / re-parent / constructed frames.
-5. **Result layer (OP-14).** Engine half **done** (trim ops, `Loop`/`Region`, areas — see OP-14's
-   as-built note). Then, in order: **rework the wall as an output feature** (OP-21 — it needs rework
-   anyway, and it drives regions programmatically with no new UI), then the boundary-tracing *Outline*
-   tool and the scaffolding/result display roles.
+5. **Result layer (OP-14) — done end to end.** Trim ops, `Loop`/`Region`, areas, the *Outline* tool,
+   derived scaffolding + a dim toggle, and cubic Béziers (OP-15) taking part in a boundary. Remaining
+   here: **rework the wall as an output feature** (OP-21), regions with holes from traced outlines
+   (only single loops are traceable so far), and parametric spline trimming.
 6. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
    tool (OP-6 `Macro` machinery exists in the engine; needs the record/parameterize UI). The
    headline capability of the paradigm. Shares its dialog with group creation (OP-16).
@@ -701,6 +701,24 @@ The one place exhaustiveness is structurally unreachable is `DocumentFormat`, wh
 `String` step kind. Its design contains the blast radius: steps are *tool invocations*, not ops, so a
 new tool rides the generic `tool` step instead of adding a kind.
 
+### Implementation status (as built — the UI half)
+The result layer is reachable end to end in the browser:
+- **`Outline` tool** — click the curves round a boundary in order, then close by clicking the first
+  again or pressing Enter. Variable arity is data-driven: `ToolDef.repeating` makes the **last** slot
+  repeat, so this needed no new controller special case (unlike the ortho path). Consecutive picks are
+  intersected — the branch chosen from where the user clicked and then **stored** (OP-1) — and each
+  pick is trimmed between the two joints that fall on it.
+- **Two picks are a special case worth naming.** When a boundary has only two pieces, each is the
+  other's neighbour on *both* sides, so they must hand over at two *different* meetings; taking the
+  nearest one twice collapses both pieces to a point. A chord and its arc take the two intersection
+  branches in canonical order; a chord and a spline take the spline's two endpoints.
+- **Scaffolding is derived, not flagged** — `Document.scaffoldingElements()` is the ancestor closure of
+  the result elements, so "this is construction geometry" means exactly "something in the output
+  depends on it". A *Dim construction* view toggle greys it, leaving the drawing legible on its own.
+  Geometry no result uses is not scaffolding either — it is simply unused.
+- Save/load needed **no per-tool support**: the `tool` step already carries `els=` and `clicks=`, and a
+  repeating tool is just more of both.
+
 **Deliberately not done here:** containment is not verified (a hole outside the outer boundary, or
 two overlapping holes, are accepted; only holes removing more than the boundary encloses are
 rejected) — real containment needs the point-in-region predicate, which this slice does not need.
@@ -758,6 +776,29 @@ must say so.
 - **Build order:** control-point Bézier/B-spline first (pure, trivial, immediately useful) →
   fit-through-points → **NURBS weights last**, since weights mainly buy exact conics and exact
   circles already exist analytically.
+
+### Implementation status (as built — cubic Béziers)
+Splines are in, as the completeness proof for the result layer: a `Bezier` piece sits in a boundary
+next to segments and arcs on equal terms.
+- **`Bezier` value + `ProfileElement.BezierE`**, `bezier(p0, p1, p2, p3)` over four ordinary
+  `PointRef`s — so every control point may itself be *constructed*. A `Bezier curve` tool exposes it.
+- **Exact piece maths, not sampled.** The area contribution has a closed form for the same line
+  integral the other pieces use (derived, then verified against 200 000-step numerical integration):
+  `∮(x·dy − y·dx) = [6x₀y₁ + 3x₀y₂ + x₀y₃ − 6x₁y₀ + 3x₁y₂ + 3x₁y₃ − 3x₂y₀ − 3x₂y₁ + 6x₂y₃ − x₃y₀ −
+  3x₃y₁ − 6x₃y₂]/10`. So a spline in a boundary costs no accuracy relative to an arc.
+- Reverse is the reversed control points; transform is **affine invariance** (map the points, get the
+  mapped curve — exact for mirror/rotate/scale, no re-fitting); bounds is the control polygon's box,
+  conservative by the convex-hull property. Rendering tessellates at a **fixed** step count, because an
+  adaptive one would make goldens depend on curvature.
+- **Tangency by construction** — `bezierTangentControl(from, line, handle)` places the first control
+  leg *on* the tangent line, so G1 is structurally impossible to violate and survives moving the line
+  with no re-solve. This is the OP-15 claim made concrete.
+- **A spline is not trimmed into a boundary — it is built onto it.** There is no `bezierBetween`;
+  instead a spline contributes its own endpoints as joints, so the constructive move is to attach its
+  ends to where they belong (a shared derived point, or drag-to-attach). If it does not actually reach
+  its neighbours the loop reports the gap and stays invalid (OP-3), which is more useful than a
+  silently mended boundary. Parametric trimming (`subCurve` via de Casteljau) is still open, and is
+  what a *fit* spline through points will want.
 
 ## Groups, frames & placement (OP-16 — RESOLVED)
 
@@ -1038,8 +1079,10 @@ Three broad families (see OP-9 decision above):
       scaffolding reads as scaffolding because nothing consumes it. Boundary-tracing *Outline* tool.
       Interior-seed region detection **rejected** (discovered identity re-imports OP-8 into 2D).
       Result-vs-scaffolding (semantic) / hidden (presentation) / layer (organizational) kept distinct.
-      **Engine half implemented** (trim ops, `Loop`/`Region`, `CircleE`, exact areas, transforms and
-      SVG over the new values); the *Outline* tool and display roles remain.
+      **Implemented end to end**: trim ops, `Loop`/`Region`, `CircleE`, exact areas, transforms and SVG
+      over the new values, the boundary-tracing *Outline* tool (variable arity via `ToolDef.repeating`),
+      graph-derived scaffolding with a dim toggle, and save/load for free. Remaining: traced regions
+      *with holes*, and the wall rework (OP-21).
 - [x] **OP-15 General curves & splines** — RESOLVED: splines are in and fit natively — a spline is a
       pure function of its control points, and those control points may themselves be *constructed*
       (the bridge from technical construction to smooth geometry). Continuity by construction (G1 via a
@@ -1048,7 +1091,10 @@ Three broad families (see OP-9 decision above):
       deterministic — determinism is load-bearing, not closed form. Adds a general `CurveValue`
       (largest refactor) and a **2D analog of the mesh-is-a-sink rule**: exact analytic curves vs.
       approximated curves (spline offsets, general fillets). Order: Bézier/B-spline → fit-through-points
-      → NURBS weights last.
+      → NURBS weights last. **Cubic Béziers implemented** — exact closed-form area (verified against
+      numerical integration), affine invariance, tangency by construction, and a spline sitting in a
+      traced boundary beside segments and arcs. Splines are *built onto* their neighbours rather than
+      trimmed to them; parametric trimming and fit-through-points remain.
 - [x] **OP-16 Groups, frames & placement** — RESOLVED: a group carries its **own coordinate frame**;
       internals are local; **moving a group edits the frame** (one literal write, O(1)) rather than
       transforming every point. The frame is a `Handle` (OP-13), so groups move by drag and by number.
@@ -1229,6 +1275,22 @@ Three broad families (see OP-9 decision above):
   plan drawing *and* a solid. A closed wall centerline turns out to yield `Region(outer, [inner])`,
   making walls a genuinely good forcing function for OP-14 rather than the niche they were positioned
   as — while the mechanical triad still leads in 3D, since a wall extrude exercises less of the seam.
+
+- **Session 2 — the output layer, end to end, with splines.** Built the *Outline* tool over the OP-14
+  engine, plus cubic Béziers (OP-15) to prove the boundary machinery generalises beyond segments and
+  arcs. Five things worth recording. (1) Variable arity stayed data-driven: `ToolDef.repeating` repeats
+  the last slot, so a tool that takes "as many curves as you click" needed no controller special case —
+  unlike the ortho path, which predates the idea. (2) The Bézier area needed a **derivation**, not a
+  recollection; it is checked against 200 000-step numerical integration, and the check earned its keep
+  when two *test* expectations turned out wrong while the implementation was right. (3) A **two-piece
+  boundary** is a genuine special case: each piece is the other's neighbour on both sides, so they must
+  meet at two different places — taking the nearest meeting twice collapses both pieces to a point.
+  This surfaced as three failing tests with one root cause. (4) Splines are **built onto** their
+  neighbours, not trimmed to them, which is the paradigm's own answer and avoids needing de Casteljau
+  yet. (5) Scaffolding is the **ancestor closure of the results**, so it needs no flag and cannot drift;
+  geometry no result uses is simply unused rather than scaffolding. Verified in a real browser
+  (screenshots under `tmp/`): trace an arch over a construction line, then dim the construction and only
+  the drawing remains. 151 jvm tests green.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

@@ -7,7 +7,7 @@ import constructit.geom.Vec2
 /** What the next click of a tool must supply. SIDE just captures a click position (creates nothing). */
 enum class SlotKind { PLACE_POINT, POINT, EXISTING_POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT, SIDE, CENTRIC }
 
-enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE }
+enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, RESULT }
 
 /**
  * Geometry picked so far for the active tool (split by kind), [at] = the last click's world
@@ -26,6 +26,12 @@ class ToolDef(
     val slots: List<SlotKind>,
     val scalar: Boolean = false,
     val help: String = "",
+    /**
+     * When true the **last** slot repeats: the tool keeps collecting picks until the user finishes
+     * (Enter, or clicking the first pick again to close a boundary). Keeps a variable-arity tool like
+     * *Outline* data-driven instead of another special case in the controller.
+     */
+    val repeating: Boolean = false,
     val build: (Document, Picks, ScalarRef?) -> Unit,
 )
 
@@ -59,6 +65,10 @@ object Tools {
     const val ARC_3 = "arc3"
     const val ARC_CS = "arccs"
     const val CONCENTRIC = "concentric"
+    const val BEZIER = "bezier"
+
+    // Result layer (OP-14)
+    const val OUTLINE = "outline"
 
     // Construct
     const val PERP_BISECTOR = "perpbis"
@@ -113,6 +123,8 @@ object Tools {
             ToolDef(CIRCLE_3, "Circle (3 points)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click three points the circle passes through.") { d, p, _ -> d.circle3(p.points[0], p.points[1], p.points[2]) },
             ToolDef(ARC_3, "Arc (3 points)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click start, a point on the arc, then the end.") { d, p, _ -> d.arc3(p.points[0], p.points[1], p.points[2]) },
             ToolDef(ARC_CS, "Arc (centre, ends)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the centre, the start point, then the end (sweeps counter-clockwise).") { d, p, _ -> d.arcCenterStartEnd(p.points[0], p.points[1], p.points[2]) },
+            ToolDef(BEZIER, "Bezier curve", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the start, two control points, then the end. Control points may be existing constructed points.") { d, p, _ -> d.bezierCurve(p.points[0], p.points[1], p.points[2], p.points[3]) },
+            ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.") { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
             ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalar = true, help = "Select a distance, click a circle, then click inside or outside for the concentric circle.") { d, p, s -> d.concentricCircle(p.elements[0], s!!, p.at) },
             // ----- Construct -----
             ToolDef(PERP_BISECTOR, "Perp. bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points for their perpendicular bisector.") { d, p, _ -> d.perpBisector(p.points[0], p.points[1]) },

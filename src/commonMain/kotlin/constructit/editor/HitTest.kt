@@ -1,13 +1,18 @@
 package constructit.editor
 
 import constructit.core.ArcValue
+import constructit.core.BezierValue
 import constructit.core.CircleValue
 import constructit.core.Evaluator
 import constructit.core.LineValue
+import constructit.core.LoopValue
 import constructit.core.PointValue
+import constructit.core.RegionValue
 import constructit.core.SegmentValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
+import constructit.geom.GeomMath
+import constructit.geom.ProfileElement
 import constructit.geom.Vec2
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -71,6 +76,14 @@ object HitTest {
             is CircleValue -> abs((world - v.circle.center).length() - v.circle.radius)
             is SegmentValue -> distToSegment(world, v.seg.a, v.seg.b)
             is ArcValue -> distToArc(world, v.arc)
+            // A Bézier is measured against its own tessellation — the same polyline the renderer
+            // draws, so what looks near the curve is near it.
+            is BezierValue ->
+                GeomMath.tessellateBezier(v.bezier).zipWithNext().minOfOrNull { (a, b) -> distToSegment(world, a, b) }
+            is LoopValue -> v.loop.elements.minOfOrNull { distToPiece(world, it) }
+            is RegionValue ->
+                (v.region.outer.elements + v.region.holes.flatMap { it.elements })
+                    .minOfOrNull { distToPiece(world, it) }
             else -> null
         }
 
@@ -110,6 +123,19 @@ object HitTest {
         world: Vec2,
         tol: Double,
     ): Element? = nearest(doc, ev, world, tol) { it.isCurve }
+
+    /** Distance to one boundary piece, so an outline is pickable as a whole. */
+    private fun distToPiece(
+        world: Vec2,
+        e: ProfileElement,
+    ): Double =
+        when (e) {
+            is ProfileElement.Seg -> distToSegment(world, e.segment.a, e.segment.b)
+            is ProfileElement.ArcE -> distToArc(world, e.arc)
+            is ProfileElement.CircleE -> abs((world - e.circle.center).length() - e.circle.radius)
+            is ProfileElement.BezierE ->
+                GeomMath.tessellateBezier(e.bezier).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
+        }
 
     private fun distToSegment(
         p: Vec2,

@@ -1,6 +1,7 @@
 package constructit.dsl
 
 import constructit.core.ArcValue
+import constructit.core.BezierValue
 import constructit.core.CircleValue
 import constructit.core.DirectionValue
 import constructit.core.EvalResult
@@ -21,6 +22,7 @@ import constructit.core.Value
 import constructit.core.transformValue
 import constructit.geom.Affine
 import constructit.geom.Arc
+import constructit.geom.Bezier
 import constructit.geom.Circle
 import constructit.geom.Direction
 import constructit.geom.GeomMath
@@ -50,6 +52,7 @@ typealias ArcRef = Ref<ArcValue>
 typealias PointSetRef = Ref<PointSetValue>
 typealias RayRef = Ref<RayValue>
 typealias DirectionRef = Ref<DirectionValue>
+typealias BezierRef = Ref<BezierValue>
 typealias ProfileRef = Ref<ProfileValue>
 typealias LoopRef = Ref<LoopValue>
 typealias RegionRef = Ref<RegionValue>
@@ -767,11 +770,64 @@ class Construction {
                     when (v) {
                         is SegmentValue -> ProfileElement.Seg(v.seg)
                         is ArcValue -> ProfileElement.ArcE(v.arc)
-                        else -> throw IllegalArgumentException("profile element must be a segment or arc")
+                        is BezierValue -> ProfileElement.BezierE(v.bezier)
+                        else -> throw IllegalArgumentException("profile element must be a segment, arc or Bézier")
                     }
                 }
             EvalResult.Ok(ProfileValue(Profile(elems)))
         }
+
+    // ================= Tier 3b: splines (OP-15) =================
+
+    /**
+     * A cubic Bézier from [p0] to [p3] shaped by [p1] and [p2] (OP-15).
+     *
+     * Nothing new is needed to evaluate this — a spline *is* a pure function of its control points.
+     * The interesting part is that those control points are ordinary `PointRef`s, so each may itself
+     * be **constructed**: an intersection, a projection, a point on a circle. That is the bridge from
+     * technical construction to smooth geometry, and it is why splines fit this paradigm natively
+     * rather than by concession. See [bezierTangentControl] for tangency by construction.
+     */
+    fun bezier(
+        p0: PointRef,
+        p1: PointRef,
+        p2: PointRef,
+        p3: PointRef,
+    ): BezierRef =
+        op(p0, p1, p2, p3) {
+            EvalResult.Ok(BezierValue(Bezier(pt(it[0]), pt(it[1]), pt(it[2]), pt(it[3]))))
+        }
+
+    /**
+     * The control point that makes a Bézier leave [from] along [line], at distance [handle] (OP-15).
+     *
+     * This is how tangency stops being a constraint. Every sketcher asserts "spline tangent to this
+     * line" and solves it; here the first control leg is simply *placed on* the tangent line, so G1
+     * continuity is not enforced — it is structurally impossible to violate. [side] picks which way
+     * along the line the handle extends.
+     */
+    fun bezierTangentControl(
+        from: PointRef,
+        line: LineRef,
+        handle: ScalarRef,
+        side: Int = +1,
+    ): PointRef =
+        op(from, line, handle) {
+            val p = pt(it[0])
+            val l = ln(it[1])
+            val d = sc(it[2]).mm * (if (side >= 0) 1.0 else -1.0)
+            EvalResult.Ok(PointValue(p + l.dir * d))
+        }
+
+    /** Point on a Bézier at parameter [t] in [0,1] — a sub-entity accessor (OP-8). */
+    fun bezierPointAt(
+        b: BezierRef,
+        t: Double,
+    ): PointRef = op(b) { EvalResult.Ok(PointValue(GeomMath.bezierPointAt((it[0] as BezierValue).bezier, t))) }
+
+    fun bezierStart(b: BezierRef): PointRef = op(b) { EvalResult.Ok(PointValue((it[0] as BezierValue).bezier.p0)) }
+
+    fun bezierEnd(b: BezierRef): PointRef = op(b) { EvalResult.Ok(PointValue((it[0] as BezierValue).bezier.p3)) }
 
     // ================= Tier 4: the result layer (OP-14) =================
     // Trimming is what separates the *drawing* from the construction that produced it: a drawn line
@@ -872,7 +928,8 @@ class Construction {
                         is SegmentValue -> ProfileElement.Seg(v.seg)
                         is ArcValue -> ProfileElement.ArcE(v.arc)
                         is CircleValue -> ProfileElement.CircleE(v.circle)
-                        else -> return@op EvalResult.Invalid("a loop piece must be a segment, an arc or a circle")
+                        is BezierValue -> ProfileElement.BezierE(v.bezier)
+                        else -> return@op EvalResult.Invalid("a loop piece must be a segment, an arc, a circle or a Bézier")
                     }
                 elems.add(e)
             }
@@ -990,6 +1047,8 @@ fun Evaluator.arc(ref: ArcRef): Arc = (valueOf(ref) as ArcValue).arc
 fun Evaluator.ray(ref: RayRef): Ray = (valueOf(ref) as RayValue).ray
 
 fun Evaluator.direction(ref: DirectionRef): Direction = (valueOf(ref) as DirectionValue).dir
+
+fun Evaluator.bezier(ref: BezierRef): Bezier = (valueOf(ref) as BezierValue).bezier
 
 fun Evaluator.profile(ref: ProfileRef): Profile = (valueOf(ref) as ProfileValue).profile
 

@@ -1,5 +1,7 @@
 package constructit.editor
 
+import constructit.core.ArcValue
+import constructit.core.BezierValue
 import constructit.core.CircleValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
@@ -12,6 +14,7 @@ import constructit.core.SegmentValue
 import constructit.core.SourceNode
 import constructit.core.Value
 import constructit.dsl.ArcRef
+import constructit.dsl.BezierRef
 import constructit.dsl.CircleRef
 import constructit.dsl.Construction
 import constructit.dsl.LineRef
@@ -21,6 +24,8 @@ import constructit.dsl.RayRef
 import constructit.dsl.Ref
 import constructit.dsl.ScalarRef
 import constructit.dsl.SegmentRef
+import constructit.dsl.valueOf
+import constructit.geom.GeomMath
 import constructit.geom.Vec2
 import constructit.units.Quantity
 import constructit.units.mm
@@ -32,7 +37,25 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 
-enum class ElementKind { POINT, DERIVED_POINT, ON_CURVE, LINE, RAY, CIRCLE, SEGMENT, ARC }
+enum class ElementKind {
+    POINT,
+    DERIVED_POINT,
+    ON_CURVE,
+    LINE,
+    RAY,
+    CIRCLE,
+    SEGMENT,
+    ARC,
+
+    /** A cubic Bézier (OP-15) — a curve like any other, pickable and trimmable-adjacent. */
+    BEZIER,
+
+    /** A closed boundary: the result layer's own element (OP-14). */
+    OUTLINE,
+
+    /** An area — an outline with holes (OP-14), what the 2D→3D seam consumes. */
+    AREA,
+}
 
 /** A retained, displayable/selectable graph output with style + kind. */
 class Element(
@@ -66,7 +89,12 @@ class Element(
 
     /** Anything a pointer can address: a point, or a curve carrying a handle (an ortho leg). */
     val selectable: Boolean get() = isPoint || handle != null
-    val isCurve: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY || kind == ElementKind.ARC
+    val isCurve: Boolean get() =
+        kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT ||
+            kind == ElementKind.RAY || kind == ElementKind.ARC || kind == ElementKind.BEZIER
+
+    /** An output of the construction rather than scaffolding for it (OP-14). */
+    val isResult: Boolean get() = kind == ElementKind.OUTLINE || kind == ElementKind.AREA
     val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT || kind == ElementKind.ON_CURVE
 
     /** Line / segment / ray — anything that determines an infinite line. */
@@ -1360,6 +1388,185 @@ class Document {
 
     val walls = ArrayList<Wall>()
 
+    // ---- the result layer (OP-14) ----
+
+    /**
+     * A cubic Bézier through four control points (OP-15). The control points are ordinary points, so
+     * they may be free *or* constructed — which is what lets technical geometry drive a smooth curve.
+     */
+    fun bezierCurve(
+        p0: PointRef,
+        p1: PointRef,
+        p2: PointRef,
+        p3: PointRef,
+    ): BezierRef = cx.bezier(p0, p1, p2, p3).also { add(it, ElementKind.BEZIER, Styles.CURVE) }
+
+    /**
+     * Build a closed **outline** by walking the picked curves in order (OP-14).
+     *
+     * This is what separates the drawing from the construction that produced it. Each consecutive
+     * pair of picks is intersected — with the branch chosen from where the user clicked and then
+     * *stored*, never re-derived (OP-1) — and each pick is trimmed between the two joints that fall on
+     * it. The loop records **which curves in which order**, a stable identity (OP-8), so later
+     * parameter edits move the cut points without ever re-deciding what the boundary is.
+     *
+     * A Bézier cannot be trimmed by intersection, so it contributes its **own endpoint** as the joint
+     * — the constructive way round: build the spline onto the points where it should meet its
+     * neighbours (drag-to-attach or a shared derived point) instead of trimming it afterwards. If it
+     * does not actually reach them, the loop reports the gap and stays invalid (OP-3), which is the
+     * useful answer rather than a silently mended boundary.
+     */
+    fun buildOutline(
+        picks: List<Element>,
+        clicks: List<Vec2>,
+    ): Element? {
+        val n = picks.size
+        if (n < 2 || clicks.size < n) return null
+        if (picks.any { !it.isCurve }) return null
+        val ev = Evaluator()
+
+        // joint[i] = where picks[i] hands over to picks[i+1]
+        val joints =
+            if (n == 2) {
+                // Two picks are adjacent on *both* sides, so they must hand over at two *different*
+                // places — taking the nearest meeting twice would collapse both pieces to a point.
+                bothJointsBetween(picks[0], picks[1], ev) ?: return null
+            } else {
+                val js = ArrayList<PointRef>(n)
+                for (i in 0 until n) {
+                    js.add(jointBetween(picks[i], picks[(i + 1) % n], clicks[i], clicks[(i + 1) % n], ev) ?: return null)
+                }
+                js
+            }
+
+        val pieces = ArrayList<Ref<*>>(n)
+        for (i in 0 until n) {
+            val from = joints[(i - 1 + n) % n]
+            val to = joints[i]
+            pieces.add(trimPiece(picks[i], from, to, clicks[i], ev) ?: return null)
+        }
+        return add(cx.loop(*pieces.toTypedArray()), ElementKind.OUTLINE, Styles.RESULT)
+    }
+
+    /** Where two picks hand over, chosen as the meeting nearest to where *both* were clicked. */
+    private fun jointBetween(
+        a: Element,
+        b: Element,
+        nearA: Vec2,
+        nearB: Vec2,
+        ev: Evaluator,
+    ): PointRef? =
+        when {
+            a.kind == ElementKind.BEZIER -> bezierEndNear(a, nearB, ev)
+            b.kind == ElementKind.BEZIER -> bezierEndNear(b, nearA, ev)
+            else -> intersectNearNow(a, b, (nearA + nearB) * 0.5)
+        }
+
+    /**
+     * Both places two picks meet, for the two-piece boundary where each is the other's neighbour on
+     * both sides — a chord and its arc, or a chord and a spline arching over it.
+     *
+     * For two curves that is the pair of intersection branches, taken in the canonical order (OP-1) so
+     * the choice is deterministic rather than click-dependent; for a Bézier it is simply its own two
+     * endpoints, since a spline is built onto its neighbours instead of trimmed to them.
+     */
+    private fun bothJointsBetween(
+        a: Element,
+        b: Element,
+        ev: Evaluator,
+    ): List<PointRef>? {
+        val spline =
+            if (a.kind == ElementKind.BEZIER) {
+                a
+            } else if (b.kind == ElementKind.BEZIER) {
+                b
+            } else {
+                null
+            }
+        if (spline != null) {
+            @Suppress("UNCHECKED_CAST")
+            val ref = spline.ref as BezierRef
+            if (ev.valueOf(ref) !is BezierValue) return null
+            return listOf(addDerived(cx.bezierStart(ref)), addDerived(cx.bezierEnd(ref)))
+        }
+        val (set, lineLine) = intersectionSet(a, b) ?: return null
+        if (lineLine) return null // two lines meet once: they cannot bound an area on their own
+        val first = cx.select(set, +1)
+        val second = cx.select(set, -1)
+        val p1 = (ev.valueOf(first) as? PointValue)?.p ?: return null
+        val p2 = (ev.valueOf(second) as? PointValue)?.p ?: return null
+        if ((p1 - p2).length() < GeomMath.JOIN_TOL) return null // tangent: one meeting only
+        return listOf(addDerived(first), addDerived(second))
+    }
+
+    /** Whichever end of a Bézier is nearer [near] — the joint it offers a neighbouring piece. */
+    private fun bezierEndNear(
+        el: Element,
+        near: Vec2,
+        ev: Evaluator,
+    ): PointRef? {
+        @Suppress("UNCHECKED_CAST")
+        val ref = el.ref as BezierRef
+        val b = (ev.valueOf(ref) as? BezierValue)?.bezier ?: return null
+        val start = (b.p0 - near).length() <= (b.p3 - near).length()
+        return addDerived(if (start) cx.bezierStart(ref) else cx.bezierEnd(ref))
+    }
+
+    /**
+     * The piece of [el] between the two joints. For a circle or arc the *branch* — which of the two
+     * arcs between the joints is meant — is decided here from where the user clicked and then stored
+     * on the node, so it is a persisted discrete choice and not continuity tracking (OP-1).
+     */
+    private fun trimPiece(
+        el: Element,
+        from: PointRef,
+        to: PointRef,
+        near: Vec2,
+        ev: Evaluator,
+    ): Ref<*>? {
+        if (el.isLinear) return cx.segmentBetween(el.ref, from, to)
+        if (el.kind == ElementKind.BEZIER) return el.ref
+        if (el.kind != ElementKind.CIRCLE && el.kind != ElementKind.ARC) return null
+        val centre =
+            when (val v = ev.valueOf(el.ref)) {
+                is CircleValue -> v.circle.center
+                is ArcValue -> v.arc.center
+                else -> return null
+            }
+        val a0 = ((ev.valueOf(from) as? PointValue)?.p ?: return null) - centre
+        val a1 = ((ev.valueOf(to) as? PointValue)?.p ?: return null) - centre
+        val ccwSweep = norm2pi(a1.angle() - a0.angle())
+        val toClick = norm2pi((near - centre).angle() - a0.angle())
+        return cx.arcBetween(el.ref, from, to, ccw = toClick <= ccwSweep)
+    }
+
+    private fun norm2pi(a: Double): Double {
+        val twoPi = 2.0 * kotlin.math.PI
+        var r = a % twoPi
+        if (r < 0) r += twoPi
+        return r
+    }
+
+    /**
+     * Every element the results are built *from* — the scaffolding (OP-14).
+     *
+     * Derived, not flagged: it is the ancestor closure of the result elements' nodes. So "this is
+     * construction geometry" means exactly "something in the output depends on it", which is a graph
+     * fact rather than bookkeeping that could drift out of date.
+     */
+    fun scaffoldingElements(): List<Element> {
+        val results = elements.filter { it.isResult }
+        if (results.isEmpty()) return emptyList()
+        val seen = HashSet<String>()
+
+        fun walk(node: Node) {
+            if (!seen.add(node.id)) return
+            node.inputs.forEach { walk(it) }
+        }
+        results.forEach { walk(it.ref.node) }
+        return elements.filter { !it.isResult && it.ref.node.id in seen }
+    }
+
     /**
      * Build a retained wall of [thickness] along the centerline through [vertices]: two offset faces
      * whose interior corners are the intersections of adjacent offset lines (miter joints), closed
@@ -1726,4 +1933,10 @@ object Styles {
     val INVALID = Style(stroke = "#dddddd", width = 1.0)
     val PREVIEW = Style(stroke = "#ff7f0e", width = 1.0)
     val WALL = Style(stroke = "#333333", width = 2.4)
+
+    /** The result layer (OP-14): the drawing itself, weighted so it reads above its scaffolding. */
+    val RESULT = Style(stroke = "#111111", width = 2.6)
+
+    /** Scaffolding, once a result exists to contrast it with — dimmed, not hidden. */
+    val DIMMED = Style(stroke = "#c9c9c9", width = 1.0)
 }
