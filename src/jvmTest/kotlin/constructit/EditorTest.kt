@@ -651,6 +651,74 @@ class EditorTest {
     }
 
     @Test
+    fun typingALengthWhileDrawingPlacesTheLegExactly() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)) // start
+        // the mouse only supplies the direction — roughly to the right, a long way off
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(17.0, 2.0)))
+        "350".forEach { assertTrue(ed.key(it.toString()), "digits feed the length entry") }
+        assertEquals("350", ed.numericEntry)
+        assertTrue(ed.key("Enter"))
+        assertEquals("", ed.numericEntry, "committing clears the entry")
+
+        val path = ed.doc.orthoPaths.single()
+        assertEquals(2, path.vertices.size)
+        val p1 = Evaluator().point(path.vertices[1].ref)
+        assertClose(p1.x, 350.0) // exactly the typed length, in the direction the cursor indicated
+        assertClose(p1.y, 0.0)
+
+        // and the placed leg reports that length back, from either end
+        val fields = path.legs[0].handle!!.fields()
+        assertClose(fields.first { it.label == "length (move end)" }.read(Evaluator())!!.mm, 350.0)
+    }
+
+    @Test
+    fun aTypedLengthFollowsTheCursorDirectionAndCanBeCancelled() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        // cursor below the start -> a downward vertical leg
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(-3.0, -20.0)))
+        ed.key("8")
+        ed.key("0")
+        assertTrue(ed.key("Enter"))
+        val path = ed.doc.orthoPaths.single()
+        val p1 = Evaluator().point(path.vertices[1].ref)
+        assertClose(p1.x, 0.0)
+        assertClose(p1.y, -80.0) // sign taken from the cursor side
+
+        // Escape cancels a pending entry rather than finishing the path
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(40.0, -78.0)))
+        ed.key("5")
+        assertEquals("5", ed.numericEntry)
+        assertTrue(ed.key("Escape"))
+        assertEquals("", ed.numericEntry)
+        assertEquals(2, path.vertices.size, "no leg was placed")
+        assertTrue(ed.doc.orthoPaths.isNotEmpty(), "and the path is still being drawn")
+
+        // a second Escape finishes it
+        assertTrue(ed.key("Escape"))
+        ed.setTool(Tools.SELECT)
+        assertEquals(2, path.vertices.size)
+    }
+
+    @Test
+    fun backspaceEditsAPendingLengthEntry() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(10.0, 0.0)))
+        ed.key("1")
+        ed.key("2")
+        ed.key("3")
+        assertTrue(ed.key("Backspace"))
+        assertEquals("12", ed.numericEntry)
+        ed.key("Enter")
+        assertClose(Evaluator().point(ed.doc.orthoPaths.single().vertices[1].ref).x, 12.0)
+    }
+
+    @Test
     fun clickingSelectsAndTheInspectorWritesTheSameNodeAsTheDrag() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)

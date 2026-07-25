@@ -66,6 +66,15 @@ class Editor(
     private var pathClosed = false
     private var previewSeg: Pair<Vec2, Vec2>? = null
     private var pathThickness: constructit.dsl.ScalarRef? = null // set for the WALL tool
+    private var hoverWorld: Vec2? = null // last cursor position, so a typed length keeps its direction
+
+    /**
+     * Direct distance entry: digits typed while a leg is being previewed. The mouse supplies the
+     * leg's *direction*, the keyboard its *length* — the same construction either way, so a leg
+     * placed by typing is indistinguishable from one placed by clicking (OP-13).
+     */
+    var numericEntry: String = ""
+        private set
 
     val pendingCount: Int get() = filledSlots
 
@@ -91,6 +100,8 @@ class Editor(
         pathClosed = false
         previewSeg = null
         pathThickness = null
+        hoverWorld = null
+        numericEntry = ""
     }
 
     /** The typed views of the selection's handle — the same writes its drag performs (OP-13). */
@@ -195,8 +206,84 @@ class Editor(
             }
             doc.addOrthoVertex(path, world)
         }
+        hoverWorld = world
         previewSeg = null
         onChange()
+    }
+
+    /**
+     * A key pressed while the canvas has focus, as a pure controller entry point. Digits feed the
+     * direct distance entry; Enter places the previewed leg at the typed length (or finishes the
+     * path); Escape cancels a pending entry first, then finishes. Returns true when consumed.
+     */
+    fun key(key: String): Boolean {
+        val pathActive = activePath != null
+        return when {
+            pathActive && key.length == 1 && (key[0].isDigit() || key == ".") -> {
+                numericEntry += key
+                refreshPreview()
+                onChange()
+                true
+            }
+            key == "Backspace" && numericEntry.isNotEmpty() -> {
+                numericEntry = numericEntry.dropLast(1)
+                refreshPreview()
+                onChange()
+                true
+            }
+            key == "Escape" && numericEntry.isNotEmpty() -> {
+                numericEntry = ""
+                refreshPreview()
+                onChange()
+                true
+            }
+            key == "Enter" && numericEntry.isNotEmpty() -> commitTypedLeg()
+            key == "Escape" || key == "Enter" -> {
+                finishPath()
+                true
+            }
+            else -> false
+        }
+    }
+
+    /**
+     * Place the previewed leg. [previewSeg] already carries the exact typed length, so this is the
+     * very same call a click makes — only the endpoint came from the keyboard.
+     */
+    private fun commitTypedLeg(): Boolean {
+        val path = activePath ?: return false
+        val end = previewSeg?.second ?: return false
+        numericEntry = ""
+        val placed = doc.addOrthoVertex(path, end) != null
+        refreshPreview()
+        statusHint = if (placed) "" else "That length would make a zero-length leg"
+        onChange()
+        return true
+    }
+
+    /**
+     * The rubber-band leg: direction from the cursor (snapped to an axis), length from the typed
+     * entry when there is one, so the preview shows exactly what Enter will place.
+     */
+    private fun refreshPreview() {
+        val path = activePath
+        val hover = hoverWorld
+        if (path == null || hover == null) {
+            previewSeg = null
+            return
+        }
+        val base = doc.orthoLegPreview(path, hover) ?: return
+        val typed = numericEntry.toDoubleOrNull()
+        previewSeg =
+            if (typed == null) {
+                base
+            } else {
+                val (from, to) = base
+                val horizontal = kotlin.math.abs(to.x - from.x) >= kotlin.math.abs(to.y - from.y)
+                val sign = if ((if (horizontal) to.x - from.x else to.y - from.y) < 0) -1.0 else 1.0
+                from to if (horizontal) Vec2(from.x + sign * typed, from.y) else Vec2(from.x, from.y + sign * typed)
+            }
+        if (numericEntry.isNotEmpty()) statusHint = "Leg length $numericEntry mm — Enter to place, Esc to cancel"
     }
 
     /** One click of the opening tool: cut a door/window gap into the wall under the cursor. */
@@ -227,8 +314,9 @@ class Editor(
     }
 
     fun pointerMove(screen: Vec2) {
-        if (toolId == Tools.ORTHO_PATH) {
-            previewSeg = activePath?.let { doc.orthoLegPreview(it, camera.screenToWorld(screen)) }
+        if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {
+            hoverWorld = camera.screenToWorld(screen)
+            refreshPreview()
             onChange()
             return
         }

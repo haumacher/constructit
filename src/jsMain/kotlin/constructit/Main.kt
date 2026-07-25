@@ -66,8 +66,11 @@ private fun setupApp() {
     })
     canvas.addEventListener("dblclick", { editor.finishPath() })
     document.addEventListener("keydown", {
-        val key = (it as org.w3c.dom.events.KeyboardEvent).key
-        if (key == "Escape" || key == "Enter") editor.finishPath()
+        val e = it as org.w3c.dom.events.KeyboardEvent
+        val key = e.key
+        // don't steal typing from the panel's own inputs
+        val inField = (e.target as? HTMLElement)?.tagName?.lowercase() in setOf("input", "select", "textarea")
+        if (!inField && editor.key(key)) e.preventDefault()
         if (key == "Shift" && !editor.axisLock) {
             editor.axisLock = true
             editor.note("Axis lock: the drag is restricted to one axis (release Shift to free it)")

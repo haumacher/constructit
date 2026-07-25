@@ -740,6 +740,11 @@ Then 3D walls = extrude + boolean.
   - The path is retained as an `OrthoPath` (vertices in draw order + a segment element per leg), so
     legs are addressable — which is what lets a leg's length find the neighbour supplying its other
     end. A `Wall` keeps a reference to the centerline path it was built from.
+  - **Direct distance entry** — while a leg is previewed the mouse supplies its *direction* and the
+    keyboard its *length*: type digits, Enter places the leg at exactly that length (Backspace edits,
+    Esc cancels the entry before it finishes the path). The preview shows the typed length, and the
+    placed leg is indistinguishable from a clicked one — same construction, so the length is
+    afterwards editable by dragging, per OP-13. `Editor.key` keeps this in the pure controller.
   - Rubber-band preview; Esc / double-click / click-start to finish.
 - **Slice 2 — walls** (`Tools.WALL`, `Document.buildWall`): centerline + thickness → two offset
   faces with `intersectLL` miter corners + end caps; retained as a `Wall` so it can be regenerated.
@@ -754,8 +759,7 @@ Then 3D walls = extrude + boolean.
   *own* coordinate (derived as where the line crosses the still-free shared coordinate), so the
   neighbour keeps its DOF; a connecting edge parallel to the target line is the one case where the
   shared coordinate is genuinely pinned (falls back to a point-on-line slider).
-- **Next (ortho editing):** direct distance entry while drawing (type a leg length instead of
-  clicking its end), a shared snap resolver for point placement (see the tool roadmap — today a path
+- **Next (ortho editing):** a shared snap resolver for point placement (see the tool roadmap — today a path
   click uses the raw cursor, so a wall cannot be started exactly on an existing corner), and the
   robustness gaps: consecutive same-axis legs are accepted and yield collinear legs whose wall miter
   is undefined; closing moves the last vertex without previewing the closing edge; no insert/delete
