@@ -1342,6 +1342,68 @@ class EditorTest {
     }
 
     @Test
+    fun aLegPinnedByAJunctionStillDragsByMovingWhatDrivesIt() {
+        // reported: a horizontal run ending on a slanted segment, with a vertical run hanging off that
+        // junction. The horizontal leg dragged (its far end slides along the segment) but the vertical
+        // one did not, though the two are symmetric to the eye. They have one free DOF each — the
+        // horizontal leg's is its own perpendicular, the vertical leg's lies upstream at the junction.
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(-43.375, 83.75))
+        ed.click(Vec2(110.125, -12.75))
+        ed.setTool(Tools.SEGMENT)
+        ed.click(Vec2(-43.375, 83.75))
+        ed.click(Vec2(110.125, -12.75)) // a slanted segment
+        val slanted = ed.doc.elements.first { it.kind == ElementKind.SEGMENT }
+
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(-68.625, 39.25)) // horizontal run, right end attached to the segment
+        ed.click(Vec2(20.0, 39.25))
+        ed.finishPath()
+        val across = ed.doc.orthoPaths[0]
+        val junction = ed.doc.elementFor(across.vertices[1].ref)!!
+        assertTrue(ed.doc.attachOrthoEndpointToCurve(junction, slanted))
+
+        val jx = Evaluator().point(across.vertices[1].ref).x
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(jx, 39.25)) // second run starts on the junction (welds to it) and goes down
+        ed.click(Vec2(jx, -37.25))
+        ed.finishPath()
+        val down = ed.doc.orthoPaths[1]
+
+        val horizontal = across.legs[0]
+        val vertical = down.legs[0]
+        assertTrue(horizontal.hasFreeDof, "the horizontal leg was always draggable")
+        assertTrue(vertical.hasFreeDof, "and so must the vertical one be — its DOF is just further away")
+
+        // drag the vertical leg sideways: the junction slides along the slanted segment, which pushes
+        // the horizontal leg in y — the mirror image of dragging the horizontal leg
+        ed.setTool(Tools.SELECT)
+        val yBefore = Evaluator().point(across.vertices[0].ref).y
+        val target = jx - 30.0
+        val mid = Evaluator().segment(vertical.ref as SegmentRef).let { (it.a.y + it.b.y) / 2 }
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(jx, mid)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(target, mid)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(target, mid)))
+
+        // and typing reaches exactly as far as dragging (OP-13): the same value, set numerically
+        val xField = vertical.handle!!.fields().first { it.label == "x" }
+        assertTrue(xField.writable, "if the drag can move it, the field must be settable too")
+
+        val ev = Evaluator()
+        assertClose(ev.point(down.vertices[0].ref).x, target, tol = 1e-6)
+        assertClose(ev.point(down.vertices[1].ref).x, target, tol = 1e-6) // the leg really moved
+        assertTrue(kotlin.math.abs(ev.point(across.vertices[0].ref).y - yBefore) > 1.0, "the other run followed in y")
+        // and the junction is still exactly on the segment: nothing was forced, only re-parameterised
+        val seg = ev.segment(slanted.ref as SegmentRef)
+        val j = ev.point(across.vertices[1].ref)
+        assertClose((j - seg.a).cross((seg.b - seg.a).normalized()), 0.0, tol = 1e-6)
+
+        xField.write(15.0.mm)
+        assertClose(Evaluator().point(down.vertices[0].ref).x, 15.0, tol = 1e-6)
+    }
+
+    @Test
     fun aLegIsAxisAlignedByBindingNotBySharingOneNode() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)

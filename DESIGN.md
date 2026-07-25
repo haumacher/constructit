@@ -1272,6 +1272,22 @@ Then 3D walls = extrude + boolean.
     start's coordinates, which silently robbed its first leg of the perpendicular freedom that the
     same connection at the other end left intact — two legs that are symmetric to the eye behaved
     differently. The line's orientation is always defined, so one rule covers both ends.
+  - **Reaching upstream.** A leg whose own coordinate is *driven* — welded to a junction that is itself
+    attached to non-axis-aligned geometry — still drags: the gesture moves the free ortho coordinate
+    upstream of it, solving for the value that puts the leg under the cursor (`freeInputs` finds the
+    candidates, `influences` rejects the ones that cannot actually move it, `driveTo` inverts). Dragging
+    such a leg slides the junction along the line it is attached to, which pushes the *other* run — the
+    mirror image of what dragging that other run already did, and the reason the two felt asymmetric
+    when only one of them wrote its own coordinate.
+    - Not a solver: nothing is asserted or stored and the model stays a pure function of its parameters.
+      It is what every handle already does — an on-curve point projects the cursor onto its curve, a
+      length field inverts its own arithmetic — except that the relationship is read off the graph by
+      probing rather than known in closed form. Every relationship the editor builds this way is affine,
+      so one secant step is exact; a failed solve leaves the value untouched.
+    - Restricted to **ortho coordinates**, so reaching upstream can reshape ortho paths but never move
+      the reference line or point a junction was attached to.
+    - Typing reaches exactly as far as dragging (OP-13): the same field is writable, and setting it
+      drives the same upstream DOF.
   - What remains genuinely immovable is geometry, not accident: if the leg at the attached end runs
     *parallel* to the line, the bound coordinate is the one shared with the neighbour, so the
     neighbour lands on the line too and the leg has no perpendicular freedom — an axis-aligned leg

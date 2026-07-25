@@ -774,7 +774,13 @@ class Document {
 
     // ---- architectural: ortho path (shared-coordinate rectilinear polyline) ----
 
-    private fun scalarSource(value: Double): SourceNode = SourceNode(nextId("oc"), ScalarValue(value.mm))
+    /**
+     * Coordinate nodes of ortho paths. Tracked so a leg drag that has to reach *upstream* for a free
+     * DOF can only ever move ortho geometry — never the reference line or point it was attached to.
+     */
+    val orthoCoords = HashSet<SourceNode>()
+
+    private fun scalarSource(value: Double): SourceNode = SourceNode(nextId("oc"), ScalarValue(value.mm)).also { orthoCoords.add(it) }
 
     private fun orthoVertex(
         x: SourceNode,
@@ -853,7 +859,7 @@ class Document {
     private fun dragLeg(
         path: OrthoPath,
         leg: Element,
-    ): Element = leg.also { it.handle = OrthoEdgeHandle(path, it) }
+    ): Element = leg.also { it.handle = OrthoEdgeHandle(this, path, it) }
 
     /** The most recently added segment element — the leg [addOrthoVertex] just drew. */
     private fun lastSegment(): Element = elements.last { it.kind == ElementKind.SEGMENT }
