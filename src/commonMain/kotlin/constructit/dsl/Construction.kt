@@ -6,6 +6,7 @@ import constructit.core.CircleValue
 import constructit.core.DirectionValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
+import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Node
@@ -57,6 +58,9 @@ typealias BezierRef = Ref<BezierValue>
 typealias ProfileRef = Ref<ProfileValue>
 typealias LoopRef = Ref<LoopValue>
 typealias RegionRef = Ref<RegionValue>
+
+/** A placed group's coordinate frame (OP-16) — origin + angle, held by one source node. */
+typealias FrameRef = Ref<FrameValue>
 
 /**
  * Builder for a construction DAG. Generates stable ids; supports macro instantiation with
@@ -593,6 +597,23 @@ class Construction {
 
     fun measureY(point: PointRef): ScalarRef = op(point) { EvalResult.Ok(ScalarValue(Quantity.mm(pt(it[0]).y))) }
 
+    // ---- placement (OP-16): a frame maps a group's local geometry into the world ----
+
+    /**
+     * The world position of [local] as seen through [frame] — the one op a placed group needs (OP-16).
+     *
+     * Everything else about placement is the existing weld substrate: the group's free point sources are
+     * *bound* onto nodes of this kind (`SourceNode.boundTo`), so nothing that already referenced them is
+     * rewired (OP-5) and moving the group is a single literal write on the frame.
+     */
+    fun frameApply(
+        frame: Ref<FrameValue>,
+        local: PointRef,
+    ): PointRef =
+        op(frame, local) {
+            EvalResult.Ok(PointValue((it[0] as FrameValue).toWorld(pt(it[1]))))
+        }
+
     // ================= Tier 2: mechanical constructions =================
 
     /** Fillet arc of [radius] in the corner at [corner] opening toward [p1] and [p2]. */
@@ -1077,6 +1098,8 @@ fun Evaluator.isValid(ref: Ref<*>): Boolean = eval(ref.node) is EvalResult.Ok
 fun Evaluator.valueOf(ref: Ref<*>): Value? = (eval(ref.node) as? EvalResult.Ok)?.value
 
 fun Evaluator.point(ref: PointRef): Vec2 = (valueOf(ref) as PointValue).p
+
+fun Evaluator.frame(ref: FrameRef): FrameValue = valueOf(ref) as FrameValue
 
 fun Evaluator.scalar(ref: ScalarRef): Quantity = (valueOf(ref) as ScalarValue).q
 

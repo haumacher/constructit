@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320.000" height="260.000" viewBox="0 0 320.000 260.000">
+  <circle cx="84.862" cy="175.856" r="4.000" fill="#1f77b4"/>
+  <circle cx="251.138" cy="79.856" r="4.000" fill="#1f77b4"/>
+  <circle cx="136.000" cy="72.431" r="4.000" fill="#1f77b4"/>
+  <circle cx="211.713" cy="139.569" r="4.000" fill="#1f77b4"/>
+  <polyline points="84.862,175.856 251.138,79.856" fill="none" stroke="#333333" stroke-width="1.500"/>
+  <polyline points="136.000,72.431 211.713,139.569" fill="none" stroke="#333333" stroke-width="1.500"/>
+  <circle cx="110.431" cy="124.144" r="4.000" fill="#2ca02c"/>
+  <circle cx="186.475" cy="117.190" r="4.000" fill="#2ca02c"/>
+  <circle cx="84.862" cy="175.856" r="7.000" fill="none" stroke="#1f77b4" stroke-width="1.500"/>
+  <circle cx="251.138" cy="79.856" r="7.000" fill="none" stroke="#1f77b4" stroke-width="1.500"/>
+  <circle cx="136.000" cy="72.431" r="7.000" fill="none" stroke="#1f77b4" stroke-width="1.500"/>
+  <circle cx="211.713" cy="139.569" r="7.000" fill="none" stroke="#1f77b4" stroke-width="1.500"/>
+  <polyline points="84.862,175.856 251.138,79.856" fill="none" stroke="#1f77b4" stroke-width="3.000"/>
+  <polyline points="136.000,72.431 211.713,139.569" fill="none" stroke="#1f77b4" stroke-width="3.000"/>
+  <circle cx="110.431" cy="124.144" r="7.000" fill="none" stroke="#1f77b4" stroke-width="1.500"/>
+  <circle cx="186.475" cy="117.190" r="7.000" fill="none" stroke="#1f77b4" stroke-width="1.500"/>
+  <polyline points="160.000,114.000 179.053,103.000" fill="none" stroke="#8c564b" stroke-width="1.400"/>
+  <polyline points="160.000,114.000 149.000,94.947" fill="none" stroke="#8c564b" stroke-width="1.400"/>
+  <circle cx="160.000" cy="114.000" r="3.000" fill="none" stroke="#8c564b" stroke-width="1.400"/>
+</svg>

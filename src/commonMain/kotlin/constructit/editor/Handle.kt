@@ -3,6 +3,7 @@ package constructit.editor
 import constructit.core.CircleValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
+import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.PointValue
 import constructit.core.ScalarValue
@@ -165,6 +166,115 @@ class FreePointHandle(private val node: SourceNode) : Handle {
     }
 
     override fun fields(): List<HandleField> = listOf(pointCoordField("x", node, 0), pointCoordField("y", node, 1))
+}
+
+/** The effective frame value of [node] — a placed group's frame (OP-16). */
+private fun frameOf(
+    node: SourceNode,
+    ev: Evaluator,
+): FrameValue? = (ev.eval(node) as? EvalResult.Ok)?.value as? FrameValue
+
+/**
+ * A placed group's **frame** (OP-16 step 2): the group's own coordinate system, and the whole of what
+ * moving the group writes.
+ *
+ * Its three fields are the group's three degrees of freedom in 2D, so a group is movable by drag *and*
+ * by typed number for free (OP-13) — and since the members' points are bound to `frameApply` nodes over
+ * this one source, a move is a single literal write whatever the group contains.
+ */
+class FrameHandle(private val node: SourceNode) : Handle {
+    override val dragNodes: List<SourceNode> get() = listOf(node)
+
+    /** Where the frame sits now — the grab anchor, so dragging a group never makes it jump. */
+    fun origin(ev: Evaluator): Vec2? = frameOf(node, ev)?.origin
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        // a drag moves the origin and leaves the angle alone: rotation has its own field, and mixing the
+        // two into one gesture would make a move unable to preserve orientation
+        val f = frameOf(node, ev) ?: return
+        node.value = FrameValue(world, f.angle)
+    }
+
+    override fun fields(): List<HandleField> =
+        listOf(frameCoordField("x", node, 0), frameCoordField("y", node, 1), frameAngleField("angle", node))
+}
+
+/** A field over one coordinate of a frame's origin: [axis] 0 = x, 1 = y. */
+fun frameCoordField(
+    label: String,
+    node: SourceNode,
+    axis: Int,
+) = HandleField(
+    label,
+    node,
+    Dimension.LENGTH,
+    { ev -> frameOf(node, ev)?.let { Quantity.mm(if (axis == 0) it.origin.x else it.origin.y) } },
+    { q ->
+        val f = frameOf(node, Evaluator()) ?: return@HandleField
+        node.value = FrameValue(if (axis == 0) Vec2(q.mm, f.origin.y) else Vec2(f.origin.x, q.mm), f.angle)
+    },
+)
+
+/** A field over a frame's rotation. Base unit rad, shown in degrees like every other angle. */
+fun frameAngleField(
+    label: String,
+    node: SourceNode,
+) = HandleField(
+    label,
+    node,
+    Dimension.ANGLE,
+    { ev -> frameOf(node, ev)?.let { Quantity.rad(it.angle) } },
+    { q ->
+        val f = frameOf(node, Evaluator()) ?: return@HandleField
+        node.value = FrameValue(f.origin, q.base)
+    },
+)
+
+/**
+ * A free point that has been placed under a group's frame (OP-16 step 2): its world position is
+ * `frameApply(frame, local)`, and its one DOF is now [local].
+ *
+ * Dragging **inverse-maps the cursor into the frame** and writes the local source, so the point still
+ * lands under the pointer and nothing else in the group moves. The fields stay the *world* coordinates
+ * they were before placing — the same numbers the panel showed, only written through the frame — so
+ * placing a group changes no value the user can see (OP-13).
+ */
+class FramedPointHandle(private val frame: SourceNode, private val local: SourceNode) : Handle {
+    override val dragNodes: List<SourceNode> get() = listOf(local)
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        local.value = PointValue(frameOf(frame, ev)?.toLocal(world) ?: world)
+    }
+
+    override fun fields(): List<HandleField> = listOf(framedCoordField("x", 0), framedCoordField("y", 1))
+
+    private fun framedCoordField(
+        label: String,
+        axis: Int,
+    ) = HandleField(
+        label,
+        local,
+        Dimension.LENGTH,
+        { ev -> worldOf(ev)?.let { Quantity.mm(if (axis == 0) it.x else it.y) } },
+        { q ->
+            val ev = Evaluator()
+            val w = worldOf(ev) ?: Vec2(0.0, 0.0)
+            val want = if (axis == 0) Vec2(q.mm, w.y) else Vec2(w.x, q.mm)
+            local.value = PointValue(frameOf(frame, ev)?.toLocal(want) ?: want)
+        },
+    )
+
+    /** This point's *world* position: the local literal seen through the frame. */
+    private fun worldOf(ev: Evaluator): Vec2? {
+        val f = frameOf(frame, ev) ?: return null
+        return pointOf(local, ev)?.let { f.toWorld(it) }
+    }
 }
 
 /** The effective value of [node] in base units — its literal, or whatever drives it. */

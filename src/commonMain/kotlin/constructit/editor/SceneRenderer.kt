@@ -4,6 +4,7 @@ import constructit.core.ArcValue
 import constructit.core.BezierValue
 import constructit.core.CircleValue
 import constructit.core.Evaluator
+import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.PointSetValue
@@ -52,6 +53,12 @@ object SceneRenderer {
 
     private val marqueeStyle = Style("#1f77b4", 1.0)
 
+    /** A placed group's frame marker (OP-16): its own axes, in the group's orientation. */
+    private val frameStyle = Style("#8c564b", 1.4)
+
+    /** Screen length of a drawn frame axis — a marker, so it does not scale with the drawing. */
+    private const val FRAME_AXIS_PX = 22.0
+
     fun render(
         doc: Document,
         ev: Evaluator,
@@ -68,6 +75,7 @@ object SceneRenderer {
         closing: List<Pair<Vec2, Vec2>> = emptyList(),
         dimmed: Set<Element> = emptySet(),
         marquee: Pair<Vec2, Vec2>? = null,
+        frames: List<FrameValue> = emptyList(),
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
@@ -123,6 +131,16 @@ object SceneRenderer {
                 }
                 else -> {}
             }
+        }
+        // a selected placed group's frame (OP-16 step 2): its origin and axes, drawn in the group's own
+        // orientation — modest, because it is not geometry, but visible, because it is what a drag writes
+        for (f in frames) {
+            val o = cam.worldToScreen(f.origin)
+            val ax = cam.worldToScreen(f.toWorld(Vec2(FRAME_AXIS_PX / cam.scale, 0.0)))
+            val ay = cam.worldToScreen(f.toWorld(Vec2(0.0, FRAME_AXIS_PX / cam.scale)))
+            target.polyline(listOf(o, ax), frameStyle)
+            target.polyline(listOf(o, ay), frameStyle)
+            target.circle(o, 3.0, frameStyle)
         }
         // rubber band of a marquee in progress — the rectangle whose contents the release will select
         marquee?.let { (a, b) ->

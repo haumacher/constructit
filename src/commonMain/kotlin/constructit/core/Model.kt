@@ -46,6 +46,33 @@ data class LoopValue(val loop: Loop) : Value
 /** An area (outer boundary + holes): what the 2D→3D seam consumes (OP-14, OP-17). */
 data class RegionValue(val region: Region) : Value
 
+/**
+ * A **placement frame** (OP-16): the local→world map of a placed group, as an origin plus a rotation
+ * [angle] (radians, the base unit for angles).
+ *
+ * One value, not three scalars, because moving a group must be *one* literal write on *one* source
+ * node — that is what makes a move O(1) and a single undo entry, structurally identical to dragging a
+ * free point. Rotation is part of the same value for the same reason. The same concept one dimension
+ * up is a sketch plane (OP-17).
+ */
+data class FrameValue(val origin: Vec2, val angle: Double) : Value {
+    /** Where local point [p] lands in world coordinates: rotate by [angle], then translate. */
+    fun toWorld(p: Vec2): Vec2 {
+        val c = kotlin.math.cos(angle)
+        val s = kotlin.math.sin(angle)
+        return Vec2(origin.x + p.x * c - p.y * s, origin.y + p.x * s + p.y * c)
+    }
+
+    /** The inverse: which local point [w] is. What a drag of a frame-relative point inverts through. */
+    fun toLocal(w: Vec2): Vec2 {
+        val c = kotlin.math.cos(angle)
+        val s = kotlin.math.sin(angle)
+        val dx = w.x - origin.x
+        val dy = w.y - origin.y
+        return Vec2(dx * c + dy * s, -dx * s + dy * c)
+    }
+}
+
 /** Result of evaluating a node: valid value or invalid with a reason (OP-3). */
 sealed interface EvalResult {
     data class Ok(val value: Value) : EvalResult

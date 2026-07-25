@@ -36,4 +36,9 @@ fun transformValue(
                 ),
             )
         is ScalarValue -> v // scalars are invariant under geometric transforms
+        // A placement frame (OP-16) is not geometry: composing one with a construction transform is
+        // *re-parenting* (step 3), which recomposes the frame and keeps the world output fixed — a
+        // different operation from mirroring what it carries. Deliberately no rule here rather than a
+        // plausible-looking wrong one; the Evaluator turns this into node invalidity (OP-3).
+        is FrameValue -> throw IllegalArgumentException("a placement frame cannot be transformed (OP-16 step 3)")
     }

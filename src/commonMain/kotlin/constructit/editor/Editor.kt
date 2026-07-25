@@ -1,6 +1,8 @@
 package constructit.editor
 
+import constructit.core.EvalResult
 import constructit.core.Evaluator
+import constructit.core.FrameValue
 import constructit.core.PointValue
 import constructit.dsl.PointRef
 import constructit.dsl.valueOf
@@ -218,6 +220,17 @@ class Editor(
 
     fun isSelected(el: Element): Boolean = el in selected
 
+    /**
+     * The group the selection currently addresses *as a whole* — set when a click (or the panel) selected
+     * every member, cleared when a second click reached a member alone.
+     *
+     * Which of the two the selection means is a fact about the gesture, not about the set: a one-member
+     * group selects the same elements either way, and for a **placed** group the difference is what the
+     * inspector shows and what a drag writes (the frame, or the member's local point).
+     */
+    var selectedGroup: Group? = null
+        private set
+
     /** Replace the selection with [els], making [primary] the inspector's subject. */
     private fun select(
         els: Collection<Element>,
@@ -226,12 +239,17 @@ class Editor(
         selected.clear()
         selected.addAll(els)
         selection = primary?.takeIf { it in selected } ?: selected.firstOrNull()
+        selectedGroup = null
     }
 
     fun clearSelection() {
         selected.clear()
         selection = null
+        selectedGroup = null
     }
+
+    /** The frame the selection addresses: a **placed** group selected as a whole (OP-16 step 2). */
+    fun selectedFrame(): Group? = selectedGroup?.takeIf { it.placed }
 
     var statusHint: String = ""
         private set
@@ -316,6 +334,7 @@ class Editor(
 
     // transient state
     private var dragTarget: Element? = null // a point, or a whole ortho leg
+    private var dragFrame: Group? = null // a placed group being moved by its frame (OP-16 step 2)
     private var dragStart: Vec2? = null // where on the geometry the drag began — the axis-lock origin
     private var grabOffset: Vec2 = Vec2(0.0, 0.0) // cursor minus that, so a grab never jumps
     private var joinHints: List<Vec2> = emptyList() // corners this drag has flattened, marked on canvas
@@ -326,6 +345,7 @@ class Editor(
     private var lastScreen = Vec2(0.0, 0.0)
     private var downScreen: Vec2? = null // where the press landed, so a release can tell click from drag
     private var pendingToggle: Element? = null // Shift+click's toggle, applied on release (see [pointerUp])
+    private var pendingCycle: Element? = null // group/member cycle of a placed group's member, likewise on release
     private var marqueeFrom: Vec2? = null // rubber-band origin in world coordinates
     private var marqueeTo: Vec2? = null
     private var marqueeAdds = false // Shift+marquee adds to the selection instead of replacing it
@@ -369,6 +389,7 @@ class Editor(
         pickedClicks.clear()
         filledSlots = 0
         dragTarget = null
+        dragFrame = null
         dragStart = null
         grabOffset = Vec2(0.0, 0.0)
         joinHints = emptyList()
@@ -378,6 +399,7 @@ class Editor(
         panning = false
         downScreen = null
         pendingToggle = null
+        pendingCycle = null
         marqueeFrom = null
         marqueeTo = null
         marqueeAdds = false
@@ -397,10 +419,16 @@ class Editor(
      * selection of *one*: a field addresses one node, and with several elements selected there is no
      * single answer to show (nor to write back), so the inspector stays empty.
      */
-    fun selectionFields(): List<HandleField> = if (selected.size == 1) selection?.handle?.fields() ?: emptyList() else emptyList()
+    fun selectionFields(): List<HandleField> {
+        // a placed group selected as a whole addresses its *frame* — the group's three degrees of freedom
+        // (OP-16 step 2), which is exactly what dragging it writes, so drag and panel stay one operation
+        selectedFrame()?.frameHandle?.let { return it.fields() }
+        return if (selected.size == 1) selection?.handle?.fields() ?: emptyList() else emptyList()
+    }
 
     /** Short name for the selection, for the inspector header. */
     fun selectionLabel(): String {
+        selectedFrame()?.let { return "frame of ${it.name}" }
         if (selected.size > 1) return "${selected.size} elements"
         val el = selection ?: return ""
         val kind =
@@ -456,18 +484,88 @@ class Editor(
             onChange()
             return null
         }
+        selectedGroup = g // the selection now addresses the group it just became
         checkpoint()
         statusHint = "Grouped ${g.members.size} elements as ${g.name}"
         onChange()
         return g
     }
 
-    /** Dissolve [g] — its elements stay, and stay selected. */
+    /** Dissolve [g] — its elements stay, and stay selected. A placed group is unplaced first. */
     fun ungroup(g: Group): Boolean {
         val n = doc.groupMembers(g).size
+        val wasPlaced = g.placed
         if (!doc.ungroup(g)) return false
         checkpoint()
-        statusHint = "Ungrouped ${g.name} — its $n element${if (n == 1) "" else "s"} stay"
+        val note = if (wasPlaced) " (its frame went with it)" else ""
+        statusHint = "Ungrouped ${g.name}$note — its $n element${if (n == 1) "" else "s"} stay"
+        onChange()
+        return true
+    }
+
+    // ---- placed groups (OP-16 step 2) ----
+
+    /**
+     * Place [g]: give it a frame and make the free points it owns frame-relative, so moving the group is
+     * one write on the frame. Geometry is unchanged by construction — the retrofit is world-invariant.
+     *
+     * Refused, with the ambiguity named, when a free point the group owns is also used from outside: that
+     * group cannot move independently, and which of the two should own the point is a modelling decision
+     * the editor must not make silently (OP-16).
+     */
+    fun placeGroup(g: Group): Boolean {
+        if (g.placed) {
+            statusHint = "${g.name} is already placed — drag any member to move it, or Unplace it first"
+            onChange()
+            return false
+        }
+        val analysis = doc.analysePlacement(g)
+        if (analysis.conflicts.isNotEmpty()) {
+            val points = analysis.conflicts.map { it.point }.distinct()
+            val consumers = analysis.conflicts.map { it.consumer.id }.distinct()
+            val verb = if (points.size == 1) "is" else "are"
+            statusHint =
+                "Can't place ${g.name}: ${points.joinToString(", ")} $verb also used by " +
+                "${consumers.joinToString(", ")} — include ${if (points.size == 1) "it" else "them"} in the group, " +
+                "or this group cannot move independently"
+            onChange()
+            return false
+        }
+        if (analysis.candidates.isEmpty()) {
+            statusHint = "Can't place ${g.name}: it owns no free point, so a frame would have nothing to move"
+            onChange()
+            return false
+        }
+        val result = doc.placeGroup(g)
+        if (result == null) {
+            statusHint = "Could not place ${g.name}"
+            onChange()
+            return false
+        }
+        checkpoint()
+        // the deformable boundary is stated at placement time, because it is invisible on canvas: those
+        // members are driven from outside the group and the frame does not move them (OP-16)
+        val deforms =
+            if (result.unfollowed.isEmpty()) {
+                ""
+            } else {
+                " — ${result.unfollowed.joinToString(", ") { it.id }} " +
+                    "${if (result.unfollowed.size == 1) "is" else "are"} driven from outside and will not follow it"
+            }
+        statusHint = "Placed ${g.name}: ${result.captured} point${if (result.captured == 1) "" else "s"} are now frame-relative$deforms"
+        onChange()
+        return true
+    }
+
+    /** Unplace [g]: its points become free again where they are, and the frame goes. */
+    fun unplaceGroup(g: Group): Boolean {
+        if (!doc.unplaceGroup(g)) {
+            statusHint = "${g.name} is not placed"
+            onChange()
+            return false
+        }
+        checkpoint()
+        statusHint = "Unplaced ${g.name} — its points are free again, exactly where they were"
         onChange()
         return true
     }
@@ -476,7 +574,9 @@ class Editor(
     fun selectGroup(g: Group) {
         val members = doc.groupMembers(g)
         select(members, members.firstOrNull())
-        statusHint = "Group ${g.name}: ${members.size} element${if (members.size == 1) "" else "s"} selected"
+        selectedGroup = g
+        val what = if (g.placed) " (placed — the panel shows its frame)" else ""
+        statusHint = "Group ${g.name}: ${members.size} element${if (members.size == 1) "" else "s"} selected$what"
         onChange()
     }
 
@@ -530,7 +630,19 @@ class Editor(
             snapHint?.pos, joinHints, closePreview,
             dimmed = if (dimScaffolding) doc.scaffoldingElements().toHashSet() else emptySet(),
             marquee = marqueeFrom?.let { f -> marqueeTo?.let { t -> f to t } },
+            frames = selectedFrames(),
         )
+    }
+
+    /**
+     * The frames to draw: those of placed groups with a selected member (OP-16 step 2). Shown on
+     * selection only — the frame is a handle, not geometry, so it appears when it is addressable.
+     */
+    private fun selectedFrames(): List<FrameValue> {
+        val ev = ev()
+        return doc.groups
+            .filter { g -> g.placed && doc.groupMembers(g).any { it in selected } }
+            .mapNotNull { g -> g.frameNode?.let { (ev.eval(it) as? EvalResult.Ok)?.value as? FrameValue } }
     }
 
     fun wheel(
@@ -575,8 +687,31 @@ class Editor(
                 onChange()
                 return
             }
+            // A member of a **placed** group is addressed by the *gesture*, not by what the press does to
+            // the selection: a drag moves the frame — or the member, when that member was the one already
+            // reached alone — while the group/member cycle is a click semantic and is therefore applied on
+            // release, exactly as Shift's toggle is. Deciding it after re-picking would make a click
+            // followed by a drag of the same member move the member rather than the group.
+            val placedGroup = if (additive) null else doc.placedGroupOf(hit)
+            val reachedAlone = selected.size == 1 && selection === hit && selectedGroup == null
             var note = ""
-            if (additive) pendingToggle = hit else note = pickOnCanvas(hit)
+            when {
+                additive -> pendingToggle = hit
+                placedGroup != null -> pendingCycle = hit
+                else -> note = pickOnCanvas(hit)
+            }
+            // dragging the frame is one literal write, whatever the group contains, and the whole of it
+            // follows rigidly — derived geometry included, since it is downstream (OP-16 step 2)
+            val frameGroup = placedGroup?.takeIf { !reachedAlone }
+            if (frameGroup != null) {
+                val anchor = frameGroup.frameHandle?.origin(ev()) ?: world
+                dragFrame = frameGroup
+                grabOffset = world - anchor
+                dragStart = anchor
+                statusHint = note
+                onChange()
+                return
+            }
             if (movable != null) {
                 dragTarget = movable
                 // drag by the *offset* from where the grab landed, not to the cursor outright:
@@ -836,11 +971,20 @@ class Editor(
             return ""
         }
         val members = doc.groupMembers(group)
-        if (selection === hit && selected.size > 1) {
+        // the *same* element clicked again, while its group is what is selected — so clicking a different
+        // member keeps addressing the group, as it did before frames existed
+        val reachedAlone = selection === hit && (selectedGroup === group || selected.size > 1)
+        if (reachedAlone) {
             select(listOf(hit), hit)
-            return "${hit.id} alone (of group ${group.name}) — click again for the whole group"
+            val what = if (group.placed) " — dragging it moves it inside the frame" else ""
+            return "${hit.id} alone (of group ${group.name})$what — click again for the whole group"
         }
         select(members, hit)
+        selectedGroup = group
+        if (group.placed) {
+            return "Group ${group.name} is placed: dragging moves its frame (x / y / angle in the panel) — " +
+                "click ${hit.id} again to reach it alone"
+        }
         return "Group ${group.name}: ${members.size} elements — click ${hit.id} again to reach it alone"
     }
 
@@ -887,6 +1031,13 @@ class Editor(
             return
         }
         when {
+            dragFrame != null -> {
+                // one write on the frame source moves the whole group, derived geometry included — the
+                // O(1) move OP-16 is built around, and axis lock applies to it exactly as to a point
+                val g = dragFrame!!
+                g.frameHandle?.drag(axisLockedFrom(camera.screenToWorld(screen) - grabOffset), ev())
+                onChange()
+            }
             dragTarget != null -> {
                 val el = dragTarget!!
                 val world = axisLocked(camera.screenToWorld(screen) - grabOffset, el)
@@ -925,19 +1076,26 @@ class Editor(
             onChange()
             return
         }
+        // whether the gesture *moved* — read while [downScreen] still holds where the press landed, since
+        // the deferred click semantics below clear it
+        val moved = movedSince(screen)
         val toggle = pendingToggle
+        val cycle = pendingCycle
         pendingToggle = null
+        pendingCycle = null
         val dragged = dragTarget
+        val movedFrame = dragFrame
         val weld = weldTarget
         val attach = attachTarget
         dragTarget = null
+        dragFrame = null
         dragStart = null
         joinHints = emptyList()
         clearMagnet() // clear before rendering so the magnet halo doesn't linger
         panning = false
         // Shift+click toggles membership — but only when the gesture was a *click*: the same Shift is
         // axis lock, so a Shift-drag reshapes geometry and leaves the selection exactly as it was
-        if (toggle != null && !movedSince(screen)) {
+        if (toggle != null && !moved) {
             if (toggle in selected) {
                 selected.remove(toggle)
                 if (selection === toggle) selection = selected.lastOrNull()
@@ -947,6 +1105,12 @@ class Editor(
             }
             statusHint = if (selected.isEmpty()) "Nothing selected" else "${selected.size} element${if (selected.size == 1) "" else "s"} selected"
             onChange() // a release otherwise repaints only when the drag changed the model
+        }
+        // the deferred group/member cycle: a click on a member already reached alone goes back to the whole
+        // group, while the very same press that *moved* left the member selected and edited it
+        if (cycle != null && !moved) {
+            statusHint = pickOnCanvas(cycle)
+            onChange()
         }
         downScreen = null
         if (dragged != null) {
@@ -964,6 +1128,17 @@ class Editor(
                     onChange()
                 }
             }
+        }
+        if (movedFrame != null && moved) {
+            // a frame move commits like any other drag: one operation, one undo step. It also *selects* the
+            // group it moved — the press deferred its selection change, and having moved a group without it
+            // ending up selected would leave the frame's fields unreachable right after using them.
+            val members = doc.groupMembers(movedFrame)
+            select(members, members.firstOrNull())
+            selectedGroup = movedFrame
+            checkpoint()
+            statusHint = "Moved ${movedFrame.name}"
+            onChange()
         }
         if (dragged != null) {
             joinFlattenedEnds(dragged)?.let {
@@ -988,8 +1163,14 @@ class Editor(
         world: Vec2,
         el: Element,
     ): Vec2 {
+        if (el.handle is OrthoEdgeHandle) return world
+        return axisLockedFrom(world)
+    }
+
+    /** [axisLocked] without an element: what a frame drag (OP-16) is restricted to. */
+    private fun axisLockedFrom(world: Vec2): Vec2 {
         val start = dragStart
-        if (!axisLock || start == null || el.handle is OrthoEdgeHandle) return world
+        if (!axisLock || start == null) return world
         return if (kotlin.math.abs(world.x - start.x) >= kotlin.math.abs(world.y - start.y)) {
             Vec2(world.x, start.y)
         } else {
@@ -1049,9 +1230,13 @@ class Editor(
     private fun legPoint(el: Element): Vec2? =
         (ev().valueOf(el.ref) as? constructit.core.SegmentValue)?.seg?.let { Vec2((it.a.x + it.b.x) / 2, (it.a.y + it.b.y) / 2) }
 
-    /** Whether dropping [el] can join it to something: a free point, or an open path end. */
+    /**
+     * Whether dropping [el] can join it to something: a free point, or an open path end. A point held
+     * frame-relative by a placed group (OP-16) is neither — its position is already derived, so the weld
+     * would be refused on release and the magnet must not offer it.
+     */
     private fun canConnect(el: Element): Boolean =
-        el.kind == ElementKind.POINT || (el.handle as? OrthoCornerHandle)?.isEndpoint == true
+        (el.kind == ElementKind.POINT && !doc.isFramed(el)) || (el.handle as? OrthoCornerHandle)?.isEndpoint == true
 
     /** True when the active tool's next slot creates a point — the case a snap marker is useful for. */
     private fun placesAPoint(): Boolean {

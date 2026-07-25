@@ -169,6 +169,9 @@ private fun setupApp() {
         val g = editor.doc.groups.firstOrNull { g -> g.id == row.getAttribute("data-gid") } ?: return@addEventListener
         when {
             t.className.contains("gvis") -> editor.setGroupVisible(g, !editor.isGroupVisible(g))
+            // place / unplace (OP-16 step 2): a placed group carries its own frame, and moving it edits
+            // that frame rather than its points
+            t.className.contains("gplace") -> if (g.placed) editor.unplaceGroup(g) else editor.placeGroup(g)
             t.className.contains("gdrop") -> editor.ungroup(g)
             else -> editor.selectGroup(g)
         }
@@ -356,7 +359,9 @@ private fun renderPanel(editor: Editor) {
     insp.innerHTML =
         if (editor.selection == null) {
             "<div class=\"hint\">Click a corner or a leg to read and set its values.</div>"
-        } else if (editor.selectionCount > 1) {
+        } else if (editor.selectionCount > 1 && fields.isEmpty()) {
+            // a *placed* group is the exception: several elements are selected, but they have one handle
+            // between them — the frame (OP-16 step 2) — so its fields are shown rather than nothing
             // fields address one handle (OP-13), so a multi-selection shows none — but it is what
             // delete, hide and Group act on, hence the count
             "<div class=\"selname\">${editor.selectionLabel()}</div>" +
@@ -376,13 +381,15 @@ private fun renderPanel(editor: Editor) {
                 if (fields.isEmpty()) "<div class=\"hint\">No editable values — this element is fully derived.</div>" else ""
         }
 
-    // groups: a flat named set (OP-16 step 1) — click to select its members, ◉ to hide/show, × to dissolve
+    // groups: a named set (OP-16) — click to select its members, ◉ to hide/show, ⌖ to place/unplace
+    // (a placed group gets its own frame: dragging it then moves the frame), × to dissolve
     val glist = document.getElementById("groups-list") as HTMLElement
     glist.innerHTML =
         editor.doc.groups.joinToString("") { g ->
             "<div class=\"grow\" data-gid=\"${g.id}\">" +
                 "<span class=\"gname\">${g.name}</span>" +
                 "<span class=\"gcount\">${editor.doc.groupMembers(g).size}</span>" +
+                "<button class=\"gplace\" title=\"${if (g.placed) "Unplace — its points become free again where they are" else "Place — give it a frame; dragging then moves the whole group"}\">${if (g.placed) "⊗" else "⌖"}</button>" +
                 "<button class=\"gvis\" title=\"Hide or show every member\">${if (editor.isGroupVisible(g)) "◉" else "○"}</button>" +
                 "<button class=\"gdrop\" title=\"Dissolve the group — its elements stay\">×</button>" +
                 "</div>"

@@ -5,6 +5,7 @@ import constructit.core.BezierValue
 import constructit.core.CircleValue
 import constructit.core.DirectionValue
 import constructit.core.Evaluator
+import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.PointSetValue
@@ -136,6 +137,9 @@ object Svg {
                 // An exporter silently omitting what it was handed is the failure worth preventing.
                 is ScalarValue -> {}
                 is DirectionValue -> {}
+                // a placement frame (OP-16) is a coordinate system, not a drawn thing: it is where the
+                // geometry it carries already is, so exporting it would draw nothing twice
+                is FrameValue -> {}
                 null -> {}
             }
         }

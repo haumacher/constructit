@@ -5,10 +5,14 @@ import constructit.core.BezierValue
 import constructit.core.CircleValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
+import constructit.core.FrameValue
 import constructit.core.LineValue
+import constructit.core.LoopValue
 import constructit.core.Node
 import constructit.core.ParameterNode
 import constructit.core.PointValue
+import constructit.core.RayValue
+import constructit.core.RegionValue
 import constructit.core.ScalarValue
 import constructit.core.SegmentValue
 import constructit.core.SourceNode
@@ -17,6 +21,7 @@ import constructit.dsl.ArcRef
 import constructit.dsl.BezierRef
 import constructit.dsl.CircleRef
 import constructit.dsl.Construction
+import constructit.dsl.FrameRef
 import constructit.dsl.LineRef
 import constructit.dsl.PointRef
 import constructit.dsl.PointSetRef
@@ -27,6 +32,7 @@ import constructit.dsl.SegmentRef
 import constructit.dsl.valueOf
 import constructit.geom.GeomMath
 import constructit.geom.Justification
+import constructit.geom.ProfileElement
 import constructit.geom.Segment
 import constructit.geom.ThickFaces
 import constructit.geom.Vec2
@@ -126,7 +132,76 @@ class Group(val id: String, var name: String) {
 
     /** The journal step that recorded this group — what [Document.ungroup] drops again. */
     internal var step: Step? = null
+
+    /**
+     * The group's own coordinate frame once it is **placed** (OP-16 step 2), else null. One
+     * [SourceNode] holding a [FrameValue]: moving the group is a literal edit on it, nothing more.
+     */
+    var frame: FrameRef? = null
+        internal set
+
+    /** The frame's source node — what a drag and the typed x/y/angle fields write. */
+    val frameNode: SourceNode? get() = frame?.node as? SourceNode
+
+    /** The frame as a [Handle] (OP-13), so a group is movable by drag *and* by number. */
+    var frameHandle: FrameHandle? = null
+        internal set
+
+    /** The free point sources this placement retrofitted — what [Document.unplaceGroup] inverts. */
+    val captures = ArrayList<FrameCapture>()
+
+    /** The journal step that recorded the placement — dropped again by unplace. */
+    internal var placeStep: Step? = null
+
+    val placed: Boolean get() = frame != null
 }
+
+/**
+ * One retrofitted free point of a placed group (OP-16 step 2).
+ *
+ * [original] is the point's own source node, now **bound** onto a `frameApply` node (so everything that
+ * already referenced it follows the frame without a single input list being rewired — OP-5); [local]
+ * holds the same position in the group's own coordinates and is the DOF that remains. The pair is what
+ * makes the retrofit invertible: unplacing writes the current world value back into [original].
+ */
+class FrameCapture(
+    val original: SourceNode,
+    val local: SourceNode,
+    /** The point element displaying [original], whose handle became a [FramedPointHandle]. */
+    val element: Element?,
+    private val priorHandle: Handle?,
+) {
+    fun restoreHandle() {
+        element?.handle = priorHandle
+    }
+}
+
+/** A free point of a placed group's closure that something *outside* the group also uses (OP-16). */
+class SharedPoint(val point: String, val consumer: Element)
+
+/** What placing a group would do: where its frame lands, what it captures, and what forbids it. */
+class Placement(
+    /** The frame's default origin: the centre of the members' bounding box. */
+    val origin: Vec2,
+    /** The free point sources the frame would carry. */
+    val candidates: List<SourceNode>,
+    /**
+     * Free points the group owns that a non-member also depends on. A group moves independently only
+     * if this is empty — a real modelling ambiguity, reported concretely rather than papered over.
+     */
+    val conflicts: List<SharedPoint>,
+)
+
+/** The outcome of a placement: how much the frame carries, and what it does *not*. */
+class PlaceResult(
+    val captured: Int,
+    /**
+     * Members the frame does not move: their position is driven from outside the group (a weld or an
+     * attach that leaves it), or held by coordinates a frame cannot capture (an ortho path's shared
+     * scalars). The group deforms there, correctly — but invisibly, so it is reported.
+     */
+    val unfollowed: List<Element>,
+)
 
 /**
  * A vertex of an ortho path, carrying the two coordinate source nodes so drags/closure can write
@@ -381,6 +456,11 @@ class Document {
         val dropped = LinkedHashSet<Step>()
         val droppedEls = HashSet<Element>()
         val droppedScalars = HashSet<ScalarEntry>()
+        // a `place` step names its group, not elements, so it follows the group step rather than any
+        // dependency of its own: a placement whose group is gone has nothing left to place (OP-16)
+        val droppedGroups = HashSet<String>()
+
+        fun labelOfStep(step: Step): String? = step.args.filterIsInstance<Arg.Label>().firstOrNull()?.s
 
         fun drop(
             step: Step,
@@ -419,7 +499,14 @@ class Document {
             // the one place the member-deletion rule lives — [groups] hides an all-dead group live, and
             // [DocumentFormat] writes only the surviving members, so replay and delete agree.
             if (step.kind == "group") {
-                if (els.isNotEmpty() && els.all { it in droppedEls }) drop(step, chain)
+                if (els.isNotEmpty() && els.all { it in droppedEls }) {
+                    drop(step, chain)
+                    labelOfStep(step)?.let { droppedGroups.add(it) }
+                }
+                continue
+            }
+            if (step.kind == "place") {
+                if (labelOfStep(step) in droppedGroups) drop(step, chain)
                 continue
             }
             val depends =
@@ -568,12 +655,231 @@ class Document {
     /**
      * Dissolve [g]; its elements stay. The recorded step is dropped outright — a `group` step creates
      * no geometry, so unlike a delete (OP-18) nothing has to be replayed for the script to stay valid.
+     * A *placed* group is unplaced first, so its members keep their positions as free points again.
      */
     fun ungroup(g: Group): Boolean {
+        if (g.placed) unplaceGroup(g)
         if (!allGroups.remove(g)) return false
         g.step?.let { s -> journal.removeAll { it === s } }
         return true
     }
+
+    // ---- placed groups (OP-16 step 2): a frame source node; moving the group edits the frame ----
+
+    /** The placed group [el] belongs to, if any — whose frame a drag of [el] moves. */
+    fun placedGroupOf(el: Element): Group? = groups.firstOrNull { it.placed && it.members.any { m -> m === el } }
+
+    /**
+     * True when [el]'s position is held **frame-relative** by a placed group.
+     *
+     * Its node is bound, like a weld's is, but for a different reason — so the two must be told apart:
+     * a framed point is not a welded alias (it stays visible and draggable, through its local node).
+     */
+    fun isFramed(el: Element): Boolean {
+        val node = el.ref.node as? SourceNode ?: return false
+        return allGroups.any { g -> g.captures.any { it.original === node } }
+    }
+
+    /**
+     * What placing [g] would do — computed without touching anything, so the caller can refuse first.
+     *
+     * The frame carries the free point sources in the members' closure that the group **owns**: a free
+     * point displayed by a non-member is that non-member's degree of freedom, not the group's, so it is
+     * left alone (a member bound to it simply does not follow the frame — OP-16's boundary-attachment
+     * rule, which falls out of `boundTo` with no special case). A free point the group *does* own but a
+     * non-member also depends on is a [conflict][Placement.conflicts]: placing would silently capture
+     * something outside, so it is refused instead.
+     */
+    fun analysePlacement(g: Group): Placement {
+        val members = groupMembers(g)
+        val memberSet = members.toHashSet()
+        val candidates =
+            ancestors(members.map { it.ref.node })
+                .filterIsInstance<SourceNode>()
+                .filter { it.boundTo == null && it.value is PointValue && ownedBy(it, memberSet) }
+        val conflicts = ArrayList<SharedPoint>()
+        if (candidates.isNotEmpty()) {
+            val cand = candidates.toHashSet()
+            for (el in elements) {
+                if (el in memberSet) continue
+                for (n in ancestors(listOf(el.ref.node))) if (n in cand) conflicts.add(SharedPoint(labelOf(n), el))
+            }
+        }
+        return Placement(boundsCentre(members) ?: Vec2(0.0, 0.0), candidates, conflicts)
+    }
+
+    /**
+     * Place [g]: give it a frame at [origin] (its members' bounding-box centre by default) rotated by
+     * [angle] (rad), and retrofit the free points it owns to frame-relative form.
+     *
+     * **World-invariant by construction:** each captured source keeps its position, expressed as a fresh
+     * local source at the frame-inverse of where it already is, and is then *bound* onto
+     * `frameApply(frame, local)`. So the retrofit preserves every evaluated position, preserves the DOF
+     * count (one local per captured free point, plus the frame's own three), and is invertible
+     * ([unplaceGroup]). Refused when already placed or when a free point is shared with a non-member.
+     */
+    fun placeGroup(
+        g: Group,
+        origin: Vec2? = null,
+        angle: Double = 0.0,
+    ): PlaceResult? {
+        if (g.placed) return null
+        val analysis = analysePlacement(g)
+        if (analysis.conflicts.isNotEmpty()) return null
+        val at = origin ?: analysis.origin
+        val result =
+            recording(
+                "place",
+                Arg.Label(g.name),
+                Arg.Keyed("at", Arg.Pos(at)),
+                Arg.Keyed("angle", Arg.Num(Quantity.rad(angle))),
+            ) { placeGroupNow(g, at, angle, analysis.candidates) }
+        g.placeStep = journal.lastOrNull()?.takeIf { it.kind == "place" }
+        return result
+    }
+
+    private fun placeGroupNow(
+        g: Group,
+        at: Vec2,
+        angle: Double,
+        candidates: List<SourceNode>,
+    ): PlaceResult {
+        val f = FrameValue(at, angle)
+        val node = SourceNode(nextId("fr"), f)
+        val frame = Ref<FrameValue>(node)
+        g.frame = frame
+        g.frameHandle = FrameHandle(node)
+        // every world position is read *before* any binding: reading them as the retrofit proceeds would
+        // describe a half-placed document
+        val ev = Evaluator()
+        val world = candidates.map { pointOf(it, ev) }
+        for ((i, src) in candidates.withIndex()) {
+            val w = world[i] ?: continue
+            val local = SourceNode(nextId("lp"), PointValue(f.toLocal(w)))
+            src.boundTo = cx.frameApply(frame, Ref<PointValue>(local)).node
+            val el = elements.lastOrNull { it.ref.node === src }
+            val prior = el?.handle
+            // its DOF is now the local point, so its handle must write *that* — by inverse-mapping the
+            // cursor, which keeps the drag landing under the pointer and the fields reading world values
+            if (el != null) el.handle = FramedPointHandle(node, local)
+            g.captures.add(FrameCapture(src, local, el, prior))
+        }
+        return PlaceResult(g.captures.size, deformingMembers(g))
+    }
+
+    /**
+     * Members the frame does not carry *entirely*: they depend on a position that is pinned in world
+     * coordinates and is not one of the group's own locals, so moving the frame stretches them.
+     *
+     * The pinned kinds are exactly two — a **free point source** owned by something outside the group (a
+     * weld or an attach that left it), and an **ortho vertex coordinate**, which is an absolute world
+     * coordinate a frame cannot capture without also owning the vertex's other coordinate. A curve
+     * parameter (a point-on-line's distance, a point-on-circle's angle) is deliberately *not* one: it is
+     * relative to a curve that itself follows the frame, so such a point is carried rigidly.
+     */
+    private fun deformingMembers(g: Group): List<Element> {
+        val local = g.captures.mapTo(HashSet()) { it.local }
+        val orthoCoords = HashSet<SourceNode>()
+        for (p in orthoPaths) {
+            for (v in p.vertices) {
+                orthoCoords.add(v.corner.xNode)
+                orthoCoords.add(v.corner.yNode)
+            }
+        }
+        return groupMembers(g).filter { m ->
+            ancestors(listOf(m.ref.node)).filterIsInstance<SourceNode>().any { s ->
+                s.boundTo == null && s !in local && (s.value is PointValue || s in orthoCoords)
+            }
+        }
+    }
+
+    /**
+     * Unplace [g]: its captured points become free again exactly where they now are, and the frame is
+     * dropped — the inverse of [placeGroup], world-invariant in the same way. The group survives as a
+     * flat one, and its `place` step goes (like [ungroup] drops the `group` step).
+     */
+    fun unplaceGroup(g: Group): Boolean {
+        if (!g.placed) return false
+        val ev = Evaluator()
+        val world = g.captures.map { pointOf(it.original, ev) }
+        for ((i, c) in g.captures.withIndex()) {
+            c.original.boundTo = null
+            world[i]?.let { c.original.value = PointValue(it) }
+            c.restoreHandle()
+        }
+        g.captures.clear()
+        g.frame = null
+        g.frameHandle = null
+        g.placeStep?.let { s -> journal.removeAll { it === s } }
+        g.placeStep = null
+        return true
+    }
+
+    /** [node]'s effective point value — its literal, or whatever drives it. */
+    private fun pointOf(
+        node: Node,
+        ev: Evaluator,
+    ): Vec2? = ((ev.eval(node) as? EvalResult.Ok)?.value as? PointValue)?.p
+
+    /** Whether the element that *displays* [node] is one of [members] — see [analysePlacement]. */
+    private fun ownedBy(
+        node: SourceNode,
+        members: Set<Element>,
+    ): Boolean {
+        val owner = elements.lastOrNull { it.ref.node === node } ?: return true
+        return owner in members
+    }
+
+    /** How to name a source node to the user: the element showing it, else the node's own id. */
+    private fun labelOf(node: Node): String = elements.lastOrNull { it.ref.node === node }?.id ?: node.id
+
+    /** [roots] and every node they (transitively) depend on. */
+    private fun ancestors(roots: List<Node>): List<Node> {
+        val out = ArrayList<Node>()
+        val seen = HashSet<String>()
+
+        fun walk(n: Node) {
+            if (!seen.add(n.id)) return
+            out.add(n)
+            n.inputs.forEach { walk(it) }
+        }
+        roots.forEach { walk(it) }
+        return out
+    }
+
+    /**
+     * The centre of [els]' bounding box — where a fresh frame starts.
+     *
+     * A deliberate choice, not the only one: the origin is where the group *rotates about* and what its
+     * local coordinates are measured from, and the box centre is the one candidate that needs no extra
+     * pick. Moving it afterwards is *relocate-origin*, a world-invariant refactoring rather than an edit
+     * (OP-16), and belongs to step 3.
+     */
+    private fun boundsCentre(els: List<Element>): Vec2? {
+        val ev = Evaluator()
+        val box = GeomMath.bbox(els.flatMap { extentPoints(ev, it) }) ?: return null
+        return (box.first + box.second) * 0.5
+    }
+
+    /** The extreme points of [el]'s geometry, per value kind — what its bounding box is taken over. */
+    private fun extentPoints(
+        ev: Evaluator,
+        el: Element,
+    ): List<Vec2> =
+        when (val v = ev.valueOf(el.ref)) {
+            is PointValue -> listOf(v.p)
+            is SegmentValue -> listOf(v.seg.a, v.seg.b)
+            is CircleValue -> GeomMath.bounds(ProfileElement.CircleE(v.circle)).toList()
+            is ArcValue -> GeomMath.bounds(ProfileElement.ArcE(v.arc)).toList()
+            is BezierValue -> GeomMath.bounds(ProfileElement.BezierE(v.bezier)).toList()
+            // an infinite carrier has no extent of its own; its defining point stands for it
+            is LineValue -> listOf(v.line.origin)
+            is RayValue -> listOf(v.ray.origin)
+            is LoopValue -> v.loop.elements.flatMap { GeomMath.bounds(it).toList() }
+            is RegionValue ->
+                (v.region.outer.elements + v.region.holes.flatMap { it.elements }).flatMap { GeomMath.bounds(it).toList() }
+            else -> emptyList()
+        }
 
     // ---- wiring: reduce a parameter's DOF by binding it to another scalar (equality by reference) ----
 
@@ -675,9 +981,15 @@ class Document {
 
     // ---- welding: join two points by aliasing one onto the other (point-level wiring) ----
 
-    /** True if [el] is a free point currently welded onto a master. */
+    /**
+     * True if [el] is a free point currently welded onto a master.
+     *
+     * A *framed* point is bound too (onto its frame — OP-16 step 2) but is not an alias of anything: it
+     * stays visible and draggable, so the two cases must not be confused (hiding one is by construction,
+     * placing one is not).
+     */
     fun isWelded(el: Element): Boolean =
-        el.kind == ElementKind.POINT && (el.ref.node as? SourceNode)?.boundTo != null
+        el.kind == ElementKind.POINT && (el.ref.node as? SourceNode)?.boundTo != null && !isFramed(el)
 
     /**
      * Weld free point [alias] onto [master] so they coincide: [alias] becomes a driven alias of

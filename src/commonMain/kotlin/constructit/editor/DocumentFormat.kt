@@ -2,6 +2,7 @@ package constructit.editor
 
 import constructit.core.EvalResult
 import constructit.core.Evaluator
+import constructit.core.FrameValue
 import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.dsl.PointRef
@@ -74,7 +75,7 @@ object DocumentFormat {
         val names = HashMap<String, String>() // element id -> script name
         val out = StringBuilder(HEADER).append('\n')
         for (step in doc.journal) {
-            val args = restate(step, ev, present, names).joinToString(" ") { encode(it, names) }
+            val args = restate(doc, step, ev, present, names).joinToString(" ") { encode(it, names) }
             val created = step.creates.map { el -> "e${names.size + 1}".also { names[el.id] = it } }
             out.append(step.kind)
             if (args.isNotEmpty()) out.append(' ').append(args)
@@ -93,6 +94,7 @@ object DocumentFormat {
      * which intersection branch — is kept verbatim, since replay must make the same choice.
      */
     private fun restate(
+        doc: Document,
         step: Step,
         ev: Evaluator,
         present: Set<Element>,
@@ -114,6 +116,20 @@ object DocumentFormat {
                     val els = (arg as? Arg.Keyed)?.value as? Arg.Els
                     if (arg is Arg.Keyed && els != null) Arg.Keyed(arg.key, Arg.Els(els.els.filter { it.id in names })) else arg
                 }
+            // a placement's frame is state (OP-16 step 2): the origin and angle are re-read from the frame
+            // source, so a dragged or typed group comes back where it now is. The members' own `point`
+            // steps keep restating **world** positions — they are replayed *before* this step retrofits
+            // them, and the retrofit derives the locals from world position and frame, so the script
+            // needs no local coordinates in it at all.
+            "place" -> {
+                val g = doc.groups.firstOrNull { it.name == (step.args.firstOrNull() as? Arg.Label)?.s }
+                val f = g?.frameNode?.let { (ev.eval(it) as? EvalResult.Ok)?.value as? FrameValue }
+                if (f == null) {
+                    step.args
+                } else {
+                    listOf(step.args[0], Arg.Keyed("at", Arg.Pos(f.origin)), Arg.Keyed("angle", Arg.Num(Quantity.rad(f.angle))))
+                }
+            }
             "param" -> {
                 val e = (step.args[0] as Arg.Sc).entry
                 listOf(step.args[0], Arg.Text("="), Arg.Num(value(e, ev)))
@@ -286,6 +302,7 @@ object DocumentFormat {
             "pointoncurve" -> doc.pointOnCurve(el(1), parsePos(words[2]))
             "tool" -> applyTool(doc, words, byName)
             "group" -> applyGroup(doc, words, byName)
+            "place" -> applyPlace(doc, words)
             else -> throw LoadError("unknown step '$kind'")
         }
     }
@@ -331,6 +348,30 @@ object DocumentFormat {
                 .map { byName[it] ?: throw LoadError("unknown element '$it'") }
         doc.createGroup(unquote(words.getOrElse(1) { throw LoadError("group is missing a name") }), members)
             ?: throw LoadError("group '${unquote(words[1])}' has no members, or one of them is already grouped")
+    }
+
+    /**
+     * Replay a placement (OP-16 step 2): the group's frame is restored at the recorded origin and angle,
+     * and the retrofit re-runs over the members' free points — which the earlier steps have just put back
+     * at their **world** positions, so the locals come out the same and the geometry is unchanged.
+     */
+    private fun applyPlace(
+        doc: Document,
+        words: List<String>,
+    ) {
+        val name = unquote(words.getOrElse(1) { throw LoadError("place is missing a group name") })
+        val g = doc.groups.firstOrNull { it.name == name } ?: throw LoadError("unknown group '$name'")
+        var at = Vec2(0.0, 0.0)
+        var angle = 0.0
+        for (w in words.drop(2)) {
+            val v = w.substringAfter('=', "")
+            when (w.substringBefore('=')) {
+                "at" -> at = parsePos(v)
+                "angle" -> angle = quantity(v).base
+                else -> throw LoadError("unknown place argument '${w.substringBefore('=')}'")
+            }
+        }
+        doc.placeGroup(g, at, angle) ?: throw LoadError("group '$name' cannot be placed")
     }
 
     /** A thick path's justification, defaulting to centred for a script written before it was recorded. */

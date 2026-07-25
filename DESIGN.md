@@ -330,11 +330,14 @@ afterwards. Three consequences fall out of the shared-coordinate model:
    magnet doesn't yet cover — see *Welding*); Arrays — linear (repeat N along a vector) and circular
    (around a centre), the interactive generalization of the bolt-circle/hole-pattern macros
    (needs a count input).
-4. **Selection & grouping (OP-16).** **Multi-select and flat named groups are done** — a selection
-   set with a primary element, a marquee (panning moved to middle/Space+drag), bulk hide/delete, and
-   `group` steps that survive save/load and stay consistent when a member is deleted. Remaining:
-   **placed groups** (a frame source node; moving a group edits the frame, not its points), then
-   relocate-origin / re-parent / constructed frames.
+4. **Selection & grouping (OP-16).** **Multi-select, flat named groups and placed groups are done** — a
+   selection set with a primary element, a marquee (panning moved to middle/Space+drag), bulk
+   hide/delete, `group` steps that survive save/load and stay consistent when a member is deleted, and
+   a **frame**: placing a group retrofits the free points it owns to frame-relative form, after which
+   moving the group is one literal write on the frame (drag, or typed x/y/angle) and its derived
+   geometry follows for free. Remaining: **relocate-origin / re-parent / constructed frames (mates)**,
+   group → macro promotion, and capturing an **ortho path's** shared coordinate nodes under a frame
+   (the rotated project frame — walls do not yet follow a frame, and say so).
 5. **Result layer (OP-14) — done end to end.** Trim ops, `Loop`/`Region`, areas, the *Outline* tool,
    derived scaffolding + a dim toggle, and cubic Béziers (OP-15) taking part in a boundary. Remaining
    here: **rework the wall as an output feature** (OP-21), regions with holes from traced outlines
@@ -390,6 +393,12 @@ A step need not create geometry: `group "kitchen" els=e1,e3` records flat-group 
 element name and declares nothing. Membership is *state*, so the step is written with the members the
 script still declares — which is how deleting a member leaves a consistent group, and how a group whose
 members are all gone leaves no step at all.
+
+`place "kitchen" at=30,50 angle=15deg` is the same kind of step one level up (OP-16 step 2): it names a
+group and restates its frame, and replay re-runs the same retrofit. The members' `point` steps keep
+restating **world** positions — they replay before the placement, which then derives the local
+coordinates from world position and frame — so a placed group adds no local coordinates and no node
+names to the file, and a `place` step whose group step is gone goes with it.
 
 ### Junctions own the freedom at a meeting point (OP-20 — RESOLVED)
 
@@ -902,7 +911,7 @@ plus placement — at two dimensions. Building group frames in 2D therefore **pr
    independently useful (bulk hide / delete).
 1. **Flat group — DONE.** A named set. No frame, no closure analysis. Buys select-together, naming,
    tree structure; the container everything else attaches to.
-2. **Placed group** — frame + the frame-relative retrofit of free sources in the closure.
+2. **Placed group — DONE.** Frame + the frame-relative retrofit of free sources in the closure.
 3. **Relocate-origin, re-parent, constructed frames (mates), group → macro promotion.**
 
 ### Implementation status (as built — multi-select & flat groups)
@@ -951,6 +960,68 @@ undo step, because the file is a construction and has no viewing section; a weld
 because it is hidden by construction. A marquee takes elements, not groups (it selects exactly what it
 covers). No bulk *move*: that is the frame (step 2), and doing it by rewriting N literals is the model
 this design rejects.
+
+### Implementation status (as built — placed groups)
+
+**A frame is one source node holding one value.** `FrameValue(origin, angle)` (angle in rad, the base
+unit) with `frameApply(frame, localPoint) → Point` as the single new op. Not three scalar parameters:
+moving a group has to be *one* literal write, which is what makes it O(1), one undo entry and
+structurally the same operation as dragging a free point. `transformValue` deliberately has **no** rule
+for a frame — composing a frame with a construction transform is *re-parenting* (step 3), not a mirror
+of what it carries, so it raises instead of doing something plausible-looking.
+
+**Placing is a retrofit on the weld substrate, not new machinery.** For each free point source the group
+owns, a fresh local source is created at the frame-inverse of where that point already is, and the
+**original node is bound** onto `frameApply(frame, local)` (`SourceNode.boundTo`). Nothing is rewired
+(OP-5): every reference to the original — segments, midpoints, intersections, loops — transparently
+follows the frame, which is why *derived* geometry needs no rule of its own. The retrofit is therefore
+world-invariant (the headline test compares every evaluated position before and after), DOF-preserving
+(one local per captured point, plus the frame's three) and invertible: `unplace` writes each point's
+current world value back into its own node and drops the frame.
+
+**A framed point is bound but is not a welded alias**, and the two had to be told apart in one place
+(`isWelded` now excludes framed points): a framed point stays visible, still drags — through a
+`FramedPointHandle` that **inverse-maps the cursor into the frame** and writes the local source — and
+still shows *world* x/y in the panel, so placing a group changes no number the user can see. Its drag
+also no longer offers the weld magnet: its position is already derived, so a weld would be refused on
+release and a halo promising one would be a lie.
+
+**Membership analysis: owned, shared, or outside.** A free point in the members' closure is the group's
+own only if the element *displaying* it is a member. That single rule separates the two OP-16 cases
+cleanly: a point owned by a non-member is that non-member's DOF, so it is left alone (a member bound to
+it simply does not follow the frame — the group deforms, correctly), while a point the group owns that a
+non-member also depends on is refused, naming both sides ("Can't place half: e1, e2 are also used by e8
+— include them, or this group cannot move independently"). Deformation is *reported at placement time*,
+since on canvas it is invisible until the group moves: a member is flagged when its closure contains a
+free point source the frame does not drive, or an **ortho vertex coordinate** — the two kinds of source
+that pin a position in world coordinates. A curve parameter (a point-on-line distance, a
+point-on-circle angle) is deliberately not one of them: it is relative to a curve that follows.
+
+**Gesture: the group/member cycle is a click semantic.** Clicking a member selects the group and shows
+the *frame's* x/y/angle in the inspector; dragging it moves the frame; clicking the same member again
+reaches it alone, and then dragging edits that member inside the frame. The cycle is therefore applied
+**on release, and only when the gesture did not move** — exactly the discipline Shift's toggle already
+uses — because deciding the drag's subject *after* re-picking made "click a member, then drag it" move
+the member instead of the group.
+
+**Persistence: a `place "name" at=x,y angle=Ndeg` step** (OP-18), with origin and angle restated from
+the live frame (literals-as-current-values). The members' own `point` steps keep restating **world**
+positions: they replay before the placement, and the retrofit re-derives the locals from world position
+and frame — so the file contains no local coordinates and no node names at all, and `save → load → save`
+stays byte-equal after a frame drag *and* after a member drag. Delete follows the `group` step's rule
+one hop further: a `place` step whose group step went, goes. Unplace drops the step outright (like
+ungroup), and ungrouping a placed group unplaces it first.
+
+**Deliberate omissions at this step.** The frame starts at the members' bounding-box centre and stays
+there: moving it is *relocate-origin*, the world-invariant refactoring of step 3, not an edit. No
+rotation grip on canvas — rotation is the angle **field**; a grip needs picking for something that is
+not an element, which buys a gesture and no capability. **Ortho paths and walls are not captured**: their
+positions live in shared *scalar* coordinate nodes, and capturing those means re-pointing the very
+bindings that hold a leg axis-aligned (and that break/join re-point), plus frame-aware corner handles —
+a separate piece of work, and the *ortho-path bonus* above is precisely it. Until then such a member is
+reported as not following its frame rather than silently pretending to. Placing is also refused when a
+group owns no free point at all: a frame with nothing to carry is three degrees of freedom that move
+nothing.
 
 ## Going to 3D
 
@@ -1182,10 +1253,13 @@ Three broad families (see OP-9 decision above):
       relocate-origin / re-parent** are one code path with three invariants (only relocate-origin is
       O(N) and touches internal free coordinates). A **constructed** frame is a *mate* — so phase-3
       assemblies need no solver. Group frame ≡ sketch plane (OP-17) one dimension down. Build order:
-      multi-select → flat group → placed group → relocate/re-parent/mates/macro promotion. **Steps 0–1
+      multi-select → flat group → placed group → relocate/re-parent/mates/macro promotion. **Steps 0–2
       built**: a selection set with a primary element, a marquee (panning moved to the middle button),
-      bulk hide/delete, and flat named groups recorded as a `group` step; see that section's
-      implementation status. Remaining: the frame itself and everything that hangs off it.
+      bulk hide/delete, flat named groups recorded as a `group` step, and the **frame** — one
+      `FrameValue` source node plus a `frameApply` op, with placement binding the group's own free
+      points onto it through the existing weld substrate (world-invariant, DOF-preserving, invertible);
+      see that section's implementation status. Remaining: relocate-origin / re-parent / constructed
+      frames (mates), macro promotion, and ortho paths under a frame.
 - [x] **OP-21 A wall is an output feature** — RESOLVED: a wall belongs to the **result layer**
       (OP-14), and the same description must feed the seam (OP-17), because a floor plan is a route
       into 3D. The first wall implementation needed rework for two independent reasons: it was
