@@ -231,17 +231,18 @@ Consequences, which is why this is worth stating as a principle rather than a UI
 
 ### Editor tool roadmap
 
-**Implemented** (data-driven `ToolDef` registry, categorized palette; scalar tools use the
-active parameter/measurement; existing-only slots never create stray points; scalar names are
+**Implemented** (data-driven `ToolDef` registry, categorized palette; a tool declares an ordered list
+of scalar inputs taken from the panel; existing-only slots never create stray points; scalar names are
 auto-uniquified so wiring is unambiguous):
 - Points: Point, Midpoint, Intersect, Project-to-line, Point-on-circle & Point-on-line
-  (1-DOF draggable), Point-at-distance (0-DOF, side by click), Key points (sub-entity extract),
-  Join points (weld two points into one — see *Welding* below)
+  (1-DOF draggable), Point-at-distance (0-DOF, side by click), Point (x, y) (no clicks — two scalar
+  inputs), Key points (sub-entity extract), Join points (weld two points into one — see *Welding* below)
 - Curves: Line, Segment, Ray, Circle (c,pt), Circle (c,r), Circle (3pt), Arc (3pt),
-  Arc (centre,ends), Concentric circle
+  Arc (centre,ends), Concentric circle, Rectangle, Rounded rectangle (the `roundedRect` macro as a
+  tool), Regular polygon
 - Construct: Perp/Parallel-through, Perp-bisector, Angle-bisector, Parallel-at-distance,
-  Tangent-from-point, Tangent-at-point (1 click), Fillet, Outer/Inner common tangents
-- Transform: Mirror, Rotate, Scale, Translate-by-vector
+  Tangent-from-point, Tangent-at-point (1 click), Fillet, Chamfer, Outer/Inner common tangents
+- Transform: Mirror, Rotate, Scale, Translate-by-vector, Linear array, Circular array
 - Measure: Distance, Angle (3pt), Angle (2 lines), Length, Radius, X/Y coordinate
 - Parameter **wiring** (reduce DOF; equality by shared reference), measurement-as-scalar-input.
 - Any `LINE` slot also accepts a segment/ray (carrier line).
@@ -300,12 +301,63 @@ afterwards. Three consequences fall out of the shared-coordinate model:
   start. The path being drawn is excluded from its own snap targets, since attaching a path to its own
   leg could only ever be refused as a cycle.
 
+#### Tool inputs — scalar slots, and the structural count (as built)
+
+A tool is a *declaration* (`ToolDef`), so finishing the everyday tool set was mostly a matter of the
+declaration being able to say what these tools need. Two extensions, both deliberately generic:
+
+**Several scalar inputs.** `ToolDef.scalars` is an ordered list of **named** inputs (`listOf("x", "y")`)
+where there used to be a single `scalar = true` flag consuming the active parameter. Collecting them
+needed no second mechanism: picking a parameter row appends to a short ordered memory of panel picks
+(`Editor.activeScalar`'s setter), and a tool needing *k* scalars consumes the **last k in pick order**.
+So a one-scalar tool means exactly "the active parameter" as it always did, a two-scalar tool means "x,
+then y", the status line names what is still wanted (`click a parameter … for y (x picked)`), and
+correcting a mis-pick needs no reset gesture — pick the right ones again. The `build` lambda receives the
+list, so no scalar is privileged. Persistence needed only that the `tool` step's `scalar=` argument became
+an ordered list of quoted names, which for a single scalar is byte-identical to what it wrote before.
+
+*Point (x, y)* also has **no geometry slots at all** — both its inputs are scalars, so the click only
+says "now". That falls out of the same completion path (an empty slot list is complete immediately)
+rather than being a special case in the controller.
+
+**A structural count.** A polygon's side count and an array's instance count decide **how many nodes
+exist**, exactly as an ortho path's vertex count does. It is therefore a property of the *gesture*, not a
+parameter: `Editor.count` is a tool option like the wall justification (there is no slot to click it
+into), it is recorded in the tool step as `count=n`, and replay re-runs the tool with it verbatim — the
+loader's element-count check then vouches for it. Changing a count later means using the tool again.
+
+That is the honest answer here, and the alternative is worth naming: a **live** count — a parameter that
+adds and removes copies as you edit it — cannot be one node per copy, because the number of nodes would
+depend on a value. It needs a *compound* value (one node yielding a list of geometry) plus accessors into
+it, i.e. a new value kind and an addressing scheme for "the k-th instance" — OP-8's territory, and a
+possible OP of its own later. It is deliberately not smuggled in here: a half-live count would make the
+document stop being a pure function of its parameters at exactly one point, which is the property
+recompute, undo and reload all rest on.
+
+**Shapes by construction.** The new tools add no ops and no geometry code — they compose what was there,
+which is the test of whether the algebra is closed:
+
+- *Rectangle* clicks two diagonal corners and derives the other two as `pointXY(x(a), y(c))` and
+  `pointXY(x(c), y(a))`. It is rectangular **by construction** — dragging or typing either clicked corner
+  reshapes the whole figure, and no gesture can shear it, because the shear is not expressible. Same trick
+  as an ortho leg, one dimension up.
+- *Rounded rectangle* is the existing `roundedRect` macro (OP-6) with its centre = the clicks' midpoint
+  and width/height = their coordinate spans, so the two clicks keep driving it; the radius is an ordinary
+  parameter, so editing it re-rounds live with no node replaced.
+- *Regular polygon* is the general `rotate` applied *count-1* times to the clicked vertex.
+- *Chamfer* shares the fillet's clicked-quadrant sign resolution (a stored discrete choice, OP-1) and is
+  otherwise `intersectLL` + `Select` for the corner and `pointAlongLine` for each bevel end.
+- *Arrays* are a **fan, not a chain**: copy *k* is `k·v` (or `k·360°/n`) from the original, so no copy
+  depends on a sibling, every copy recomputes straight from the original, and the copies are the
+  original's dependents — deleting it takes them (OP-18).
+
 **Remaining — build order (all planned; ordered, not deferred):**
 
-1. **Tool completions.** Point-from-coordinates (needs two scalar inputs — extend the slot
-   model beyond a single active scalar), Chamfer (straight bevel between two legs), Rectangle,
-   Regular polygon, Rounded-rectangle (expose the existing macro), Area measurement (needs an
-   area op).
+1. **Tool completions — done.** Point-from-coordinates, Chamfer, Rectangle, Regular polygon and
+   Rounded-rectangle are built, together with the two input-model extensions they needed: an **ordered
+   list of scalar inputs** per tool and a **structural count** (see *Tool inputs* above). Area
+   measurement fell out of OP-14 (`loopArea` / `regionArea`) earlier. Remaining here: nothing —
+   further tools are additions to the `ToolDef` table, not work on the model.
 2. **Editing & persistence — done.** Save/load (OP-18, see *Document format* below), plus undo/redo
    and dependency-aware delete. Undo is a stack of **document-format snapshots** — one per committed
    user-level operation (a tool build, a drag's release with its welds/joins, a typed write, a whole
@@ -324,12 +376,14 @@ afterwards. Three consequences fall out of the shared-coordinate model:
    drops the later opening steps). The filtered journal is re-saved and replayed, so the survivors
    are exactly what still constructs, `save → load → save` stays byte-stable afterwards, and the
    status line reports what else went ("deleted e3 and 2 dependents").
-3. **Productivity.** Remaining snap modes — key points of *derived* geometry (endpoint/midpoint/
+3. **Productivity.** **Arrays are done** — linear (repeat N along a vector) and circular (evenly round a
+   centre), the interactive generalization of the bolt-circle/hole-pattern macros: each copy is a
+   transform node over the original (a fan, not a chain), any element kind works with no per-kind case,
+   the copies recompute live and delete as the original's dependents, and the count is structural (see
+   *Tool inputs* above). Remaining: snap modes — key points of *derived* geometry (endpoint/midpoint/
    quadrant, which need the derived point materialized, not just its coordinate) and arcs (no carrier
    circle yet); drag-to-attach onto **arcs** and onto **derived points** (the two cases the weld
-   magnet doesn't yet cover — see *Welding*); Arrays — linear (repeat N along a vector) and circular
-   (around a centre), the interactive generalization of the bolt-circle/hole-pattern macros
-   (needs a count input).
+   magnet doesn't yet cover — see *Welding*).
 4. **Selection & grouping (OP-16).** **Multi-select, flat named groups and placed groups are done** — a
    selection set with a primary element, a marquee (panning moved to middle/Space+drag), bulk
    hide/delete, `group` steps that survive save/load and stay consistent when a member is deleted, and
@@ -371,7 +425,10 @@ for free, and nothing synthetic is stored —
   since replay must make the same choice.
 
 One `tool <id>` step covers every tool, replayed through the same `ToolDef.build` the click ran, so
-the format needs no per-tool case and new tools round-trip for free. Elements are named
+the format needs no per-tool case and new tools round-trip for free. Its arguments are all generic in
+the same way: `pts=` / `els=` / `clicks=` for the picks, `scalar=` as an **ordered list** of the panel
+scalars the tool consumed, `dofs=` for a tool's own degrees of freedom (a dimension's offset), and
+`count=` for a structural count (how many copies or vertices were built — see *Tool inputs* above). Elements are named
 script-locally (`e1`, `e2`, …) by the step that creates them, so the file does not depend on runtime
 id generation, and a step that creates a different number of elements than the script declares is a
 **load error** rather than a silently different drawing.

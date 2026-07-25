@@ -26,8 +26,13 @@ first-class goal and the current implementation focus.
 - **Unit-aware scalars** — dimensional analysis over Length / Angle / Dimensionless (+ Area /
   Volume); base units mm and rad.
 - **Rich 2D tool set** — points, midpoints, intersections, projections, perpendiculars, parallels,
-  bisectors, tangents (from a point / common), fillets, circles (centre+point / centre+radius /
-  3-point), arcs, transforms (mirror / rotate / scale / translate), and measurements.
+  bisectors, tangents (from a point / common), fillets and chamfers, circles (centre+point /
+  centre+radius / 3-point), arcs, rectangles (rounded or not) and regular polygons, transforms
+  (mirror / rotate / scale / translate), linear and circular **arrays**, and measurements.
+- **Shapes by construction** — a rectangle's other two corners *share* the clicked corners'
+  coordinates and a polygon's vertices are rotations of one, so they cannot stop being rectangular or
+  regular however you drag them; an array copy is a transform node over the original, so the copies
+  follow it live.
 - **Constrained, draggable points** — point-on-line / point-on-circle (1-DOF), and *drag-to-weld*:
   drag a free point onto another to join them, or onto a curve to attach it as a sliding point.
 - **Dimensions** — linear (aligned), radial and angular dimension graphics whose value *is* a

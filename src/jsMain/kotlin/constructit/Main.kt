@@ -283,6 +283,14 @@ private fun setupApp() {
         editor.justification = Justification.entries.first { it.name.lowercase() == picked }
         repaint()
     })
+    // the structural count a polygon / array tool builds with (see Editor.count). A tool *option*, like
+    // the wall justification and the active parameter — there is no slot to click it into.
+    val countField = document.getElementById("t-count") as HTMLInputElement
+    countField.addEventListener("change", {
+        editor.count = countField.value.toIntOrNull() ?: editor.count
+        countField.value = editor.count.toString() // the editor clamps it; show what it actually took
+        repaint()
+    })
     (document.getElementById("f-copy") as HTMLElement).addEventListener("click", {
         val text = DocumentFormat.save(editor.doc)
         window.navigator.clipboard.writeText(text).then(

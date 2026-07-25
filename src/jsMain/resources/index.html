@@ -49,6 +49,8 @@
         #file-actions { display: flex; gap: 4px; }
         #file-actions button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
         #file-actions button:hover { background: #f0f0f0; }
+        #tool-options, #wall-options, #view-actions { font-size: 12px; padding: 3px 0; }
+        #tool-options input { width: 48px; font-size: 12px; }
         #file-note { font-size: 11px; color: #999; padding: 4px 4px 0; }
         #file-note.err { color: #d62728; }
         .frow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; font-size: 12px; }
@@ -108,6 +110,12 @@
                         <option value="left">left</option>
                         <option value="right">right</option>
                     </select>
+                </label>
+            </div>
+            <div id="tool-options">
+                <label title="How many vertices a polygon or instances an array builds. Structural: it is recorded with the tool, so changing it applies to the next use, not to what is already drawn.">
+                    Count
+                    <input id="t-count" type="number" min="2" max="512" step="1" value="6">
                 </label>
             </div>
             <h3>Selection</h3>

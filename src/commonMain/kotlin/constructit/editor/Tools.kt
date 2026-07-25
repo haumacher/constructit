@@ -25,18 +25,30 @@ class Picks(
      * instead; the clicks keep encoding the *choices* (which side, which sector), which never change.
      */
     val dofs: List<Quantity> = emptyList(),
+    /**
+     * How many copies/vertices the tool is to build — a **structural** number, not a parameter: it
+     * decides how many nodes exist, exactly as an ortho path's vertex count does, so it is recorded in
+     * the tool step and re-run rather than edited afterwards (see *Structural count* in DESIGN.md).
+     */
+    val count: Int = 0,
 )
 
 /**
- * A data-driven tool: geometry [slots] to pick by clicking (plus an optional [scalar] from the
- * active parameter), a [help] line for the status bar, then a [build] action.
+ * A data-driven tool: geometry [slots] to pick by clicking, [scalars] to take from the panel, a [help]
+ * line for the status bar, then a [build] action.
  */
 class ToolDef(
     val id: String,
     val label: String,
     val category: ToolCategory,
     val slots: List<SlotKind>,
-    val scalar: Boolean = false,
+    /**
+     * The scalar inputs this tool consumes, **in order**, named for the status line ("select radius").
+     * A list rather than a flag: a tool may need two (point from coordinates wants x, then y), and the
+     * single-scalar majority is simply a list of one, so there is one rule for collecting them and one
+     * rule for recording them (OP-18).
+     */
+    val scalars: List<String> = emptyList(),
     val help: String = "",
     /**
      * When true the **last** slot repeats: the tool keeps collecting picks until the user finishes
@@ -44,7 +56,12 @@ class ToolDef(
      * *Outline* data-driven instead of another special case in the controller.
      */
     val repeating: Boolean = false,
-    val build: (Document, Picks, ScalarRef?) -> Unit,
+    /**
+     * The smallest sensible [Picks.count] for this tool, or 0 when it needs no count at all — a polygon
+     * needs three vertices, an array two instances. Non-zero is what makes the count field apply.
+     */
+    val minCount: Int = 0,
+    val build: (Document, Picks, List<ScalarRef>) -> Unit,
 )
 
 object Tools {
@@ -61,6 +78,7 @@ object Tools {
     const val POINT_ON_CIRCLE = "ptoncircle"
     const val POINT_ON_LINE = "ptonline"
     const val POINT_AT_DIST = "ptatdist"
+    const val POINT_XY = "ptxy"
     const val CENTRE = "centre"
     const val KEY_POINTS = "keypoints"
     const val JOIN = "join"
@@ -83,6 +101,9 @@ object Tools {
     const val ARC_CS = "arccs"
     const val CONCENTRIC = "concentric"
     const val BEZIER = "bezier"
+    const val RECTANGLE = "rect"
+    const val ROUNDED_RECT = "roundrect"
+    const val POLYGON = "polygon"
 
     // Result layer (OP-14)
     const val OUTLINE = "outline"
@@ -96,6 +117,7 @@ object Tools {
     const val TANGENT = "tangent"
     const val TANGENT_AT = "tangentat"
     const val FILLET = "fillet"
+    const val CHAMFER = "chamfer"
     const val OUTER_TANGENTS = "outertan"
     const val INNER_TANGENTS = "innertan"
 
@@ -104,6 +126,8 @@ object Tools {
     const val ROTATE = "rotate"
     const val SCALE = "scale"
     const val TRANSLATE_V = "translatev"
+    const val ARRAY_LINEAR = "arraylinear"
+    const val ARRAY_CIRCULAR = "arraycircular"
 
     // Measure
     const val DISTANCE = "mdist"
@@ -128,7 +152,10 @@ object Tools {
             ToolDef(PROJECT, "Project to line", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), help = "Click a point, then a line, for the perpendicular foot.") { d, p, _ -> d.projectToLine(p.points[0], p.elements[0]) },
             ToolDef(POINT_ON_CIRCLE, "Point on circle", ToolCategory.POINTS, listOf(SlotKind.CIRCLE), help = "Click a circle to add a point on it; drag it around the circle in Select mode.") { d, p, _ -> d.pointOnCircle(p.elements[0], p.at) },
             ToolDef(POINT_ON_LINE, "Point on line", ToolCategory.POINTS, listOf(SlotKind.LINE), help = "Click a line to add a point on it; drag it along the line in Select mode.") { d, p, _ -> d.pointOnLine(p.elements[0], p.at) },
-            ToolDef(POINT_AT_DIST, "Point at distance", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), scalar = true, help = "Select a distance, click the reference point, then click the line on the side you want.") { d, p, s -> d.pointAlongLine(p.elements[0], p.points[0], s!!, p.at) },
+            ToolDef(POINT_AT_DIST, "Point at distance", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), scalars = listOf("distance"), help = "Select a distance, click the reference point, then click the line on the side you want.") { d, p, s -> d.pointAlongLine(p.elements[0], p.points[0], s[0], p.at) },
+            // no slots at all: its inputs are both scalars, so it is complete as soon as the panel has
+            // supplied x and y and a click merely says "now"
+            ToolDef(POINT_XY, "Point (x, y)", ToolCategory.POINTS, emptyList(), scalars = listOf("x", "y"), help = "Select two parameters in the panel — x, then y — then click anywhere: the point follows both, so editing either moves it.") { d, _, s -> d.pointFromCoordinates(s[0], s[1]) },
             ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTRIC), help = "Click a circle or arc to add its centre point.") { d, p, _ -> d.centerOf(p.elements[0]) },
             ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.CURVE), help = "Click a curve to add its defining points (endpoints, centre) — even on mirrored/derived geometry.") { d, p, _ -> d.extractPoints(p.elements[0]) },
             ToolDef(JOIN, "Join points", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), help = "Click the point to keep, then a free point to weld onto it (they become one).") { d, p, _ -> d.weld(p.elements[1], p.elements[0]) },
@@ -138,32 +165,42 @@ object Tools {
             ToolDef(RAY, "Ray", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click the origin, then a second point, to draw a ray.") { d, p, _ -> d.ray(p.points[0], p.points[1]) },
             ToolDef(ORTHO_PATH, "Ortho path", ToolCategory.CURVES, emptyList(), help = "Click to chain axis-aligned segments (each leg snaps horizontal/vertical, length is a parameter). Esc or double-click to finish.") { _, _, _ -> },
             ToolDef(BREAK_LEG, "Break segment", ToolCategory.CURVES, emptyList(), help = "Click a segment of an ortho path to split it there, inserting a zero-length corner you can then pull into a jog.") { _, _, _ -> },
-            ToolDef(WALL, "Wall", ToolCategory.CURVES, emptyList(), scalar = true, help = "Select a thickness, then click to chain an axis-aligned wall centerline; its footprint (mitred corners, end caps) is computed on finish. Esc or double-click to finish.") { _, _, _ -> },
-            ToolDef(OPENING, "Opening (door/window)", ToolCategory.CURVES, emptyList(), scalar = true, help = "Select a width, then click on a wall to place a door/window there (position, width, sill and head stay editable; in plan the gap is a drawing convention, the wall itself stays whole).") { _, _, _ -> },
+            ToolDef(WALL, "Wall", ToolCategory.CURVES, emptyList(), scalars = listOf("thickness"), help = "Select a thickness, then click to chain an axis-aligned wall centerline; its footprint (mitred corners, end caps) is computed on finish. Esc or double-click to finish.") { _, _, _ -> },
+            ToolDef(OPENING, "Opening (door/window)", ToolCategory.CURVES, emptyList(), scalars = listOf("width"), help = "Select a width, then click on a wall to place a door/window there (position, width, sill and head stay editable; in plan the gap is a drawing convention, the wall itself stays whole).") { _, _, _ -> },
             ToolDef(CIRCLE, "Circle (centre, point)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click the centre, then a point on the circle.") { d, p, _ -> d.circle(p.points[0], p.points[1]) },
-            ToolDef(CIRCLE_R, "Circle (centre, radius)", ToolCategory.CURVES, listOf(SlotKind.POINT), scalar = true, help = "Select a radius parameter, then click the centre.") { d, p, s -> d.circleCR(p.points[0], s!!) },
+            ToolDef(CIRCLE_R, "Circle (centre, radius)", ToolCategory.CURVES, listOf(SlotKind.POINT), scalars = listOf("radius"), help = "Select a radius parameter, then click the centre.") { d, p, s -> d.circleCR(p.points[0], s[0]) },
             ToolDef(CIRCLE_3, "Circle (3 points)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click three points the circle passes through.") { d, p, _ -> d.circle3(p.points[0], p.points[1], p.points[2]) },
             ToolDef(ARC_3, "Arc (3 points)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click start, a point on the arc, then the end.") { d, p, _ -> d.arc3(p.points[0], p.points[1], p.points[2]) },
             ToolDef(ARC_CS, "Arc (centre, ends)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the centre, the start point, then the end (sweeps counter-clockwise).") { d, p, _ -> d.arcCenterStartEnd(p.points[0], p.points[1], p.points[2]) },
             ToolDef(BEZIER, "Bezier curve", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the start, two control points, then the end. Control points may be existing constructed points.") { d, p, _ -> d.bezierCurve(p.points[0], p.points[1], p.points[2], p.points[3]) },
             ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.") { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
-            ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalar = true, help = "Select a distance, click a circle, then click inside or outside for the concentric circle.") { d, p, s -> d.concentricCircle(p.elements[0], s!!, p.at) },
+            ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf("distance"), help = "Select a distance, click a circle, then click inside or outside for the concentric circle.") { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at) },
+            // rectangular *by construction* — the two other corners share the clicked corners' coordinates,
+            // so no gesture and no parameter edit can shear it (see [Document.rectangle])
+            ToolDef(RECTANGLE, "Rectangle", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two diagonally opposite corners; the other two follow them, so it stays a rectangle however you drag it.") { d, p, _ -> d.rectangle(p.points[0], p.points[1]) },
+            ToolDef(ROUNDED_RECT, "Rounded rectangle", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf("radius"), help = "Select a corner radius, then click two diagonally opposite corners; centre and size follow those two points.") { d, p, s -> d.roundedRectangle(p.points[0], p.points[1], s[0]) },
+            ToolDef(POLYGON, "Regular polygon", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), minCount = 3, help = "Set the number of sides, then click the centre and one vertex; the other vertices are that one rotated about the centre.") { d, p, _ -> d.regularPolygon(p.points[0], p.points[1], p.count) },
             // ----- Construct -----
             ToolDef(PERP_BISECTOR, "Perp. bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points for their perpendicular bisector.") { d, p, _ -> d.perpBisector(p.points[0], p.points[1]) },
             ToolDef(ANGLE_BISECTOR, "Angle bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click a point, the vertex, then another point.") { d, p, _ -> d.angleBisector(p.points[0], p.points[1], p.points[2]) },
             ToolDef(PERPENDICULAR, "Perpendicular", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the perpendicular through it.") { d, p, _ -> d.perpendicularThrough(p.elements[0], p.points[0]) },
             ToolDef(PARALLEL, "Parallel", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the parallel through it.") { d, p, _ -> d.parallelThrough(p.elements[0], p.points[0]) },
-            ToolDef(PARALLEL_AT, "Parallel at distance", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.SIDE), scalar = true, help = "Select a distance, click the base line, then click the side you want the parallel on.") { d, p, s -> d.parallelAtDistance(p.elements[0], s!!, p.at) },
+            ToolDef(PARALLEL_AT, "Parallel at distance", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.SIDE), scalars = listOf("distance"), help = "Select a distance, click the base line, then click the side you want the parallel on.") { d, p, s -> d.parallelAtDistance(p.elements[0], s[0], p.at) },
             ToolDef(TANGENT, "Tangent from point", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.CIRCLE), help = "Click an external point, then a circle.") { d, p, _ -> d.tangentFromPoint(p.points[0], p.elements[0]) },
             ToolDef(TANGENT_AT, "Tangent at point", ToolCategory.CONSTRUCT, listOf(SlotKind.ON_CIRCLE_POINT), help = "Click a point that lies on a circle for the tangent there (use Point on circle).") { d, p, _ -> d.tangentAtPointOnCircle(p.elements[0]) },
-            ToolDef(FILLET, "Fillet", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.LINE), scalar = true, help = "Select a radius, then click the two legs on the sides of the corner you want rounded.") { d, p, s -> d.filletBetweenLines(p.elements[0], p.elements[1], s!!, p.clicks[0], p.clicks[1]) },
+            ToolDef(FILLET, "Fillet", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.LINE), scalars = listOf("radius"), help = "Select a radius, then click the two legs on the sides of the corner you want rounded.") { d, p, s -> d.filletBetweenLines(p.elements[0], p.elements[1], s[0], p.clicks[0], p.clicks[1]) },
+            ToolDef(CHAMFER, "Chamfer", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.LINE), scalars = listOf("distance"), help = "Select a chamfer distance, then click the two legs on the sides of the corner you want bevelled.") { d, p, s -> d.chamferBetweenLines(p.elements[0], p.elements[1], s[0], p.clicks[0], p.clicks[1]) },
             ToolDef(OUTER_TANGENTS, "Outer tangents", ToolCategory.CONSTRUCT, listOf(SlotKind.CIRCLE, SlotKind.CIRCLE), help = "Click two circles for their outer common tangents.") { d, p, _ -> d.commonTangents(p.elements[0], p.elements[1], inner = false) },
             ToolDef(INNER_TANGENTS, "Inner tangents", ToolCategory.CONSTRUCT, listOf(SlotKind.CIRCLE, SlotKind.CIRCLE), help = "Click two circles for their inner (crossing) common tangents.") { d, p, _ -> d.commonTangents(p.elements[0], p.elements[1], inner = true) },
             // ----- Transform -----
             ToolDef(MIRROR, "Mirror", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.LINE), help = "Click geometry, then a line to mirror it across.") { d, p, _ -> d.mirror(p.elements[0], p.elements[1]) },
-            ToolDef(ROTATE, "Rotate", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), scalar = true, help = "Select an angle parameter, click geometry, then the centre.") { d, p, s -> d.rotate(p.elements[0], p.points[0], s!!) },
-            ToolDef(SCALE, "Scale", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), scalar = true, help = "Select a factor parameter, click geometry, then the centre.") { d, p, s -> d.scale(p.elements[0], p.points[0], s!!) },
+            ToolDef(ROTATE, "Rotate", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), scalars = listOf("angle"), help = "Select an angle parameter, click geometry, then the centre.") { d, p, s -> d.rotate(p.elements[0], p.points[0], s[0]) },
+            ToolDef(SCALE, "Scale", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), scalars = listOf("factor"), help = "Select a factor parameter, click geometry, then the centre.") { d, p, s -> d.scale(p.elements[0], p.points[0], s[0]) },
             ToolDef(TRANSLATE_V, "Translate by vector", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT, SlotKind.POINT), help = "Click geometry, then two points defining the translation vector.") { d, p, _ -> d.translateByVector(p.elements[0], p.points[0], p.points[1]) },
+            // arrays: the interactive generalization of the boltCircle / holePattern macros (OP-6) — the
+            // count is structural, so a different count is a different construction, not an edited value
+            ToolDef(ARRAY_LINEAR, "Linear array", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT, SlotKind.POINT), minCount = 2, help = "Set the number of instances, then click the geometry and two points giving the step vector; every copy follows both.") { d, p, _ -> d.linearArray(p.elements[0], p.points[0], p.points[1], p.count) },
+            ToolDef(ARRAY_CIRCULAR, "Circular array", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), minCount = 2, help = "Set the number of instances, then click the geometry and the centre; the copies are spaced evenly round it.") { d, p, _ -> d.circularArray(p.elements[0], p.points[0], p.count) },
             // ----- Measure -----
             ToolDef(DISTANCE, "Distance", ToolCategory.MEASURE, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to measure their distance.") { d, p, _ -> d.measureDistance(p.points[0], p.points[1]) },
             ToolDef(ANGLE, "Angle", ToolCategory.MEASURE, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click a point, the vertex, then another point.") { d, p, _ -> d.measureAngle(p.points[0], p.points[1], p.points[2]) },

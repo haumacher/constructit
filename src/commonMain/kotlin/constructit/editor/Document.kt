@@ -27,8 +27,11 @@ import constructit.dsl.PointRef
 import constructit.dsl.PointSetRef
 import constructit.dsl.RayRef
 import constructit.dsl.Ref
+import constructit.dsl.RoundedRectArgs
 import constructit.dsl.ScalarRef
 import constructit.dsl.SegmentRef
+import constructit.dsl.instance
+import constructit.dsl.roundedRect
 import constructit.dsl.valueOf
 import constructit.geom.GeomMath
 import constructit.geom.Justification
@@ -37,6 +40,7 @@ import constructit.geom.Segment
 import constructit.geom.ThickFaces
 import constructit.geom.Vec2
 import constructit.units.Quantity
+import constructit.units.deg
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.abs
@@ -388,7 +392,7 @@ class Document {
     fun <T> recordingTool(
         toolId: String,
         picks: Picks,
-        scalar: ScalarEntry?,
+        scalars: List<ScalarEntry>,
         body: () -> T,
     ): T =
         recording(
@@ -398,7 +402,12 @@ class Document {
                 Arg.Keyed("pts", Arg.Els(picks.points.mapNotNull { elementFor(it) })).takeIf { picks.points.isNotEmpty() },
                 Arg.Keyed("els", Arg.Els(picks.elements)).takeIf { picks.elements.isNotEmpty() },
                 Arg.Keyed("clicks", Arg.Positions(picks.clicks)).takeIf { picks.clicks.isNotEmpty() },
-                scalar?.let { Arg.Keyed("scalar", Arg.Sc(it)) },
+                // one ordered list, however many scalars the tool declares — a single-scalar tool writes
+                // exactly what it always did (`scalar="r"`), so older files keep loading
+                Arg.Keyed("scalar", Arg.Scs(scalars)).takeIf { scalars.isNotEmpty() },
+                // the structural count (how many copies/vertices were built), so replay is exact and the
+                // loader's element-count check can vouch for it — never re-derived from anything
+                Arg.Keyed("count", Arg.Text(picks.count.toString())).takeIf { picks.count > 0 },
             ).toTypedArray(),
             skipIfEmpty = true,
             body = body,
@@ -432,6 +441,7 @@ class Document {
         fun walk(a: Arg) {
             when (a) {
                 is Arg.Sc -> out.add(a.entry)
+                is Arg.Scs -> out.addAll(a.entries)
                 is Arg.Keyed -> walk(a.value)
                 else -> {}
             }
@@ -2452,20 +2462,181 @@ class Document {
     ): Element {
         val l1 = carrierLine(leg1)
         val l2 = carrierLine(leg2)
-        val ev = Evaluator()
-        val la = (ev.eval(l1.node) as? EvalResult.Ok)?.value as? LineValue
-        val lb = (ev.eval(l2.node) as? EvalResult.Ok)?.value as? LineValue
-        var sign1 = 1
-        var sign2 = 1
-        if (la != null && lb != null) {
-            val denom = la.line.dir.cross(lb.line.dir)
-            if (kotlin.math.abs(denom) > Vec2.EPS) {
-                val corner = la.line.origin + la.line.dir * ((lb.line.origin - la.line.origin).cross(lb.line.dir) / denom)
-                sign1 = if ((clickA - corner).dot(la.line.dir) < 0) -1 else 1
-                sign2 = if ((clickB - corner).dot(lb.line.dir) < 0) -1 else 1
-            }
-        }
+        val (sign1, sign2) = legSigns(l1, l2, clickA, clickB)
         return add(cx.filletBetweenLines(l1, l2, radius, sign1, sign2), ElementKind.ARC, Styles.CURVE)
+    }
+
+    /**
+     * A straight bevel across the corner of two legs: the points at [distance] from the corner along each
+     * leg, joined by a segment. The corner quadrant comes from where the legs were clicked, exactly as a
+     * fillet's does ([legSigns]).
+     *
+     * Composed entirely of ops that already existed — `intersectLL` + `Select` for the corner (a persisted
+     * branch, OP-1) and `pointAlongLine` for each bevel end — so a chamfer needs no geometry of its own:
+     * both ends stay on their legs, and the bevel follows every later edit of either.
+     */
+    fun chamferBetweenLines(
+        leg1: Element,
+        leg2: Element,
+        distance: ScalarRef,
+        clickA: Vec2,
+        clickB: Vec2,
+    ): Element {
+        val l1 = carrierLine(leg1)
+        val l2 = carrierLine(leg2)
+        val (sign1, sign2) = legSigns(l1, l2, clickA, clickB)
+        // two lines meet in a single point, so the branch is not a choice at all
+        val corner = cx.select(cx.intersectLL(l1, l2), +1)
+        val a = addDerived(cx.pointAlongLine(l1, corner, distance, sign1))
+        val b = addDerived(cx.pointAlongLine(l2, corner, distance, sign2))
+        return segment(a, b)
+    }
+
+    /**
+     * Which way along each of two legs the clicked corner opens: `+1` along the leg's own direction, `-1`
+     * against it. A stored discrete choice (OP-1) — the quadrant is decided once, when the tool is used,
+     * and never re-derived as the legs move. Shared by the fillet and the chamfer, which differ only in
+     * what they put in that corner.
+     */
+    private fun legSigns(
+        l1: LineRef,
+        l2: LineRef,
+        clickA: Vec2,
+        clickB: Vec2,
+    ): Pair<Int, Int> {
+        val ev = Evaluator()
+        val la = ((ev.eval(l1.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: return 1 to 1
+        val lb = ((ev.eval(l2.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: return 1 to 1
+        val denom = la.dir.cross(lb.dir)
+        if (abs(denom) <= Vec2.EPS) return 1 to 1 // parallel legs: no corner to sit in
+        val corner = la.origin + la.dir * ((lb.origin - la.origin).cross(lb.dir) / denom)
+        return (if ((clickA - corner).dot(la.dir) < 0) -1 else 1) to (if ((clickB - corner).dot(lb.dir) < 0) -1 else 1)
+    }
+
+    // ---- shapes: several elements built round shared nodes, so the *shape* is invariant ----
+
+    /**
+     * A rectangle from two diagonally opposite corners — rectangular **by construction**.
+     *
+     * The other two corners are not points of their own: each takes one coordinate from each clicked
+     * corner (`pointXY(x(a), y(c))` and `pointXY(x(c), y(a))`), so the four corners cannot stop forming a
+     * rectangle. Dragging or typing either clicked corner reshapes the whole figure, and no gesture can
+     * shear it — the same trick as an ortho leg, whose endpoints share a coordinate and are therefore
+     * axis-aligned without anything being asserted (OP-5).
+     *
+     * Both clicked corners keep their handles, so a corner is editable by drag *and* by number (OP-13).
+     */
+    fun rectangle(
+        a: PointRef,
+        c: PointRef,
+    ): List<Element> {
+        val ax = cx.measureX(a)
+        val ay = cx.measureY(a)
+        val cx0 = cx.measureX(c)
+        val cy = cx.measureY(c)
+        val b = addDerived(cx.pointXY(cx0, ay))
+        val d = addDerived(cx.pointXY(ax, cy))
+        return listOf(segment(a, b), segment(b, c), segment(c, d), segment(d, a))
+    }
+
+    /**
+     * A `count`-sided regular polygon: [vertex] plus its rotations about [center] by multiples of
+     * 360°/count, chained by segments.
+     *
+     * Regular by construction, with no new op: it is the existing general [Construction.rotate] applied
+     * count-1 times, so dragging the centre or the vertex keeps every side equal and every angle the same.
+     * [count] is **structural** — it decides how many nodes exist — so changing it means re-running the
+     * tool, not editing a value (see *Structural count* in DESIGN.md).
+     */
+    fun regularPolygon(
+        center: PointRef,
+        vertex: PointRef,
+        count: Int,
+    ): List<Element> {
+        if (count < 3) return emptyList()
+        val vertices = ArrayList<PointRef>(count)
+        vertices.add(vertex)
+        for (k in 1 until count) {
+            vertices.add(addDerived(cx.rotate(vertex, center, cx.const((360.0 * k / count).deg))))
+        }
+        return (0 until count).map { segment(vertices[it], vertices[(it + 1) % count]) }
+    }
+
+    /**
+     * The [roundedRect] macro (OP-6) as a tool: a rounded rectangle spanning two diagonally opposite
+     * corners, with corner radius [radius].
+     *
+     * Driven by construction like [rectangle] rather than by a copied-out centre and size: the macro's
+     * centre is the clicked corners' midpoint and its width/height are their coordinate spans, so the two
+     * clicked points keep driving the shape afterwards. The radius is an ordinary parameter, so editing it
+     * re-rounds the corners live — nothing is regenerated.
+     */
+    fun roundedRectangle(
+        a: PointRef,
+        c: PointRef,
+        radius: ScalarRef,
+    ): List<Element> {
+        val center = cx.midpoint(a, c)
+        val width = cx.absS(cx.sub(cx.measureX(c), cx.measureX(a)))
+        val height = cx.absS(cx.sub(cx.measureY(c), cx.measureY(a)))
+        val rr = cx.instance(roundedRect, nextId("rr"), RoundedRectArgs(center, width, height, radius))
+        return rr.segments.map { add(it, ElementKind.SEGMENT, Styles.CURVE) } +
+            rr.arcs.map { add(it, ElementKind.ARC, Styles.CURVE) }
+    }
+
+    /**
+     * A point at the two given scalars — the case that made the slot model take a *list* of scalar inputs
+     * rather than one active parameter. It owns no DOF of its own: editing either parameter moves it, and
+     * two points sharing a parameter stay aligned *because* they share it (OP-5).
+     */
+    fun pointFromCoordinates(
+        x: ScalarRef,
+        y: ScalarRef,
+    ): PointRef = addDerived(cx.pointXY(x, y))
+
+    // ---- arrays: the interactive generalization of the boltCircle / holePattern macros (OP-6) ----
+
+    /**
+     * [count]-1 copies of [geom], each translated by a whole multiple of the vector [from] → [to].
+     *
+     * A **fan, not a chain**: copy *k* is `k·v` from the original rather than one step from copy *k-1*, so
+     * no copy depends on a sibling — deleting one leaves the rest, and every copy recomputes directly from
+     * the original and the two vector points. The copy keeps the source's kind and style, so an array of a
+     * circle is circles and an array of a segment is segments, with no per-kind case anywhere.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun linearArray(
+        geom: Element,
+        from: PointRef,
+        to: PointRef,
+        count: Int,
+    ): List<Element> {
+        if (count < 2) return emptyList()
+        val dx = cx.sub(cx.measureX(to), cx.measureX(from))
+        val dy = cx.sub(cx.measureY(to), cx.measureY(from))
+        return (1 until count).map { k ->
+            val step = k.toDouble()
+            add(cx.translateGeom(geom.ref as Ref<Value>, cx.scale(dx, step), cx.scale(dy, step)), geom.kind, geom.style)
+        }
+    }
+
+    /**
+     * [count]-1 copies of [geom] rotated about [center], evenly spaced round the full turn — the
+     * interactive form of the bolt circle, whose macro does exactly this with points and holes.
+     *
+     * The angles are constants because [count] is structural: `360°/count` is not a value the user edits
+     * afterwards, it is what "six of them, evenly spaced" *means*.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun circularArray(
+        geom: Element,
+        center: PointRef,
+        count: Int,
+    ): List<Element> {
+        if (count < 2) return emptyList()
+        return (1 until count).map { k ->
+            add(cx.rotate(geom.ref as Ref<Value>, center, cx.const((360.0 * k / count).deg)), geom.kind, geom.style)
+        }
     }
 
     /** Both external (or internal) common tangents of two circles. */

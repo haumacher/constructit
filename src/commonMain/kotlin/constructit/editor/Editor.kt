@@ -16,6 +16,12 @@ private const val UNDO_CAP = 100
 /** Below this screen distance a press-and-release is a *click*, not a drag. */
 private const val CLICK_SLOP_PX = 3.0
 
+/** How many panel picks are remembered — no tool asks for more scalars than this. */
+private const val SCALAR_PICK_MEMORY = 4
+
+/** Upper bound on a structural count, so a slip of the keyboard cannot build a million nodes. */
+private const val MAX_COUNT = 512
+
 /**
  * Which button a pointer gesture uses. In SELECT mode they mean different things (OP-16): PRIMARY
  * picks, rubber-bands a marquee and drags geometry; MIDDLE pans, in *every* tool — panning is a
@@ -54,6 +60,7 @@ class Editor(
         doc = fresh
         clearSelection()
         activeScalar = null
+        scalarPicks.clear() // they name entries of the document being replaced
         resetPicks()
     }
 
@@ -164,7 +171,47 @@ class Editor(
     var camera: Camera = Camera.centered(canvasW, canvasH)
     var toolId: String = Tools.SELECT
         private set
+
+    /**
+     * The scalar most recently picked in the panel — the "active parameter". Setting it also appends to
+     * [scalarPicks], which is what lets a tool ask for **several** scalars in order without a second
+     * mechanism: one pick is one click on a parameter row, whatever the tool needs.
+     */
     var activeScalar: ScalarEntry? = null
+        set(value) {
+            field = value
+            // The *same* entry picked again is one pick, not two: the panel selects a scalar on every click
+            // and on every focus of its value field, so counting a re-visit would silently corrupt a
+            // half-collected pair. A point whose x and y are meant to be one value is made by wiring the two
+            // parameters together, which is how sharing a DOF is expressed everywhere else (OP-5).
+            if (value != null && scalarPicks.lastOrNull() !== value) {
+                scalarPicks.add(value)
+                // bounded: only the last few can ever be consumed, and an unbounded list would grow with
+                // the session for no benefit
+                while (scalarPicks.size > SCALAR_PICK_MEMORY) scalarPicks.removeAt(0)
+            }
+        }
+
+    /**
+     * The panel picks, oldest first. A tool needing *k* scalars consumes the **last k** in pick order, so
+     * a single-scalar tool means exactly "the active parameter" as before, a two-scalar tool means "x, then
+     * y", and picking a wrong row is corrected by simply picking the right ones again. Deliberately not
+     * cleared by [setTool]: the usual order is to pick the parameter and then the tool.
+     */
+    private val scalarPicks = ArrayList<ScalarEntry>()
+
+    /**
+     * How many instances a structural-count tool builds (a polygon's sides, an array's copies).
+     *
+     * **Structural, not a parameter**: it decides how many nodes the tool creates, exactly as an ortho
+     * path's vertex count does, so it belongs to the *gesture* and is recorded in the tool step (OP-18)
+     * rather than being a value that can be edited afterwards. Editing it later means re-running the tool.
+     */
+    var count: Int = 6
+        set(value) {
+            field = value.coerceIn(2, MAX_COUNT)
+        }
+
     var onChange: () -> Unit = {}
     var showGrid: Boolean = false
 
@@ -621,7 +668,13 @@ class Editor(
     /** Help line for the active tool — shown in the status bar whenever there's no transient hint. */
     fun currentHelp(): String {
         snapHint?.let { if (it.linked) return "Snap: ${it.label} — Alt to place freely" }
-        return if (toolId == Tools.SELECT) Tools.SELECT_HELP else Tools.byId(toolId)?.help ?: ""
+        if (toolId == Tools.SELECT) return Tools.SELECT_HELP
+        val tool = Tools.byId(toolId) ?: return ""
+        // the panel is as much an input as the canvas (OP-13), so a tool still waiting for a scalar says
+        // which one it wants next rather than describing clicks that will be thrown away
+        if (toolScalars(tool) == null) return scalarPrompt(tool)
+        val n = toolCount(tool)
+        return if (n == 0) tool.help else "${tool.help} (count $n)"
     }
 
     fun render(target: DrawTarget) {
@@ -1303,17 +1356,42 @@ class Editor(
         val tool = Tools.byId(toolId) ?: return false
         if (!tool.repeating || filledSlots == 0) return false
         val picks = Picks(pickedPoints.toList(), pickedElements.toList(), pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0), pickedClicks.toList())
-        if (filledSlots >= 2) {
-            doc.recordingTool(tool.id, picks, activeScalar) { tool.build(doc, picks, activeScalar?.ref) }
-            checkpoint()
-            statusHint = ""
-        } else {
-            statusHint = "${tool.label}: needs at least two curves"
+        val scalars = toolScalars(tool)
+        when {
+            scalars == null -> statusHint = scalarPrompt(tool)
+            filledSlots >= 2 -> {
+                doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+                checkpoint()
+                statusHint = ""
+            }
+            else -> statusHint = "${tool.label}: needs at least two curves"
         }
         resetPicks()
         onChange()
         return true
     }
+
+    /**
+     * The scalars [tool] consumes: the last of the panel picks, in pick order. Null when too few have been
+     * picked — the caller then says which ones are still wanted ([scalarPrompt]).
+     */
+    private fun toolScalars(tool: ToolDef): List<ScalarEntry>? {
+        val need = tool.scalars.size
+        if (scalarPicks.size < need) return null
+        return scalarPicks.takeLast(need)
+    }
+
+    /** What is still missing for [tool]'s scalar inputs, in the user's terms. */
+    private fun scalarPrompt(tool: ToolDef): String {
+        val have = scalarPicks.size
+        val wanted = tool.scalars
+        val missing = wanted.drop(have)
+        val had = if (have == 0 || wanted.size == 1) "" else " (${wanted.take(have).joinToString(", ")} picked)"
+        return "${tool.label}: click a parameter or measurement in the panel for ${missing.joinToString(", then ")}$had"
+    }
+
+    /** The structural count [tool] will build with — see [count]. Zero for a tool that needs none. */
+    private fun toolCount(tool: ToolDef): Int = if (tool.minCount == 0) 0 else maxOf(count, tool.minCount)
 
     private fun runToolClick(screen: Vec2) {
         val tool = Tools.byId(toolId) ?: return
@@ -1326,9 +1404,13 @@ class Editor(
                 return
             }
         }
-        val slot = if (tool.repeating) tool.slots.last() else tool.slots[filledSlots]
+        // A tool may have *no* geometry slots at all: its inputs are scalars (point from coordinates), so
+        // the click only says "now". Handled by the same completion path below rather than as a special
+        // case, which is why the slot lookup is allowed to come back empty.
+        val slot = if (tool.repeating) tool.slots.lastOrNull() else tool.slots.getOrNull(filledSlots)
         val picked =
             when (slot) {
+                null -> true
                 SlotKind.PLACE_POINT, SlotKind.POINT -> {
                     pickedPoints.add(placePoint(world))
                     true
@@ -1349,23 +1431,26 @@ class Editor(
             onChange()
             return
         }
-        filledSlots++
-        pickedClicks.add(world)
+        if (slot != null) {
+            filledSlots++
+            pickedClicks.add(world)
+        }
 
         if (tool.repeating) {
             statusHint = "${tool.help} ($filledSlots picked)"
             onChange()
             return
         }
-        if (filledSlots == tool.slots.size) {
-            if (tool.scalar && activeScalar == null) {
-                statusHint = "${tool.label}: select a parameter or measurement in the panel first"
+        if (filledSlots >= tool.slots.size) {
+            val scalars = toolScalars(tool)
+            if (scalars == null) {
+                statusHint = scalarPrompt(tool)
                 resetPicks()
                 onChange()
                 return
             }
-            val picks = Picks(pickedPoints.toList(), pickedElements.toList(), world, pickedClicks.toList())
-            doc.recordingTool(tool.id, picks, activeScalar) { tool.build(doc, picks, activeScalar?.ref) }
+            val picks = Picks(pickedPoints.toList(), pickedElements.toList(), world, pickedClicks.toList(), count = toolCount(tool))
+            doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
             checkpoint() // the tool application — earlier slot clicks were only halves of it
             resetPicks()
             statusHint = ""

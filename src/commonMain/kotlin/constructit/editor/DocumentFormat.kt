@@ -17,6 +17,12 @@ sealed interface Arg {
 
     class Sc(val entry: ScalarEntry) : Arg
 
+    /**
+     * Several scalars in one argument, in the order the tool consumes them (x, then y). A list of one
+     * encodes exactly as [Sc] does, so the step text of every single-scalar tool is unchanged by this.
+     */
+    class Scs(val entries: List<ScalarEntry>) : Arg
+
     class Pos(val p: Vec2) : Arg
 
     class Num(val q: Quantity) : Arg
@@ -195,6 +201,7 @@ object DocumentFormat {
             is Arg.El -> names[arg.el.id] ?: "?${arg.el.id}"
             is Arg.Els -> arg.els.joinToString(",") { names[it.id] ?: "?${it.id}" }
             is Arg.Sc -> quote(arg.entry.name)
+            is Arg.Scs -> arg.entries.joinToString(",") { quote(it.name) }
             is Arg.Pos -> pos(arg.p)
             is Arg.Positions -> arg.ps.joinToString(";") { pos(it) }
             is Arg.Nums -> arg.qs.joinToString(";") { num(it) }
@@ -413,7 +420,8 @@ object DocumentFormat {
         var elements = emptyList<Element>()
         var clicks = emptyList<Vec2>()
         var dofs = emptyList<Quantity>()
-        var scalar: ScalarEntry? = null
+        var scalars = emptyList<ScalarEntry>()
+        var count = 0
         for (w in words.drop(2)) {
             val key = w.substringBefore('=')
             val v = w.substringAfter('=', "")
@@ -427,18 +435,28 @@ object DocumentFormat {
                 "els" -> elements = v.split(',').filter { it.isNotEmpty() }.map { byName[it] ?: throw LoadError("unknown element '$it'") }
                 "clicks" -> clicks = v.split(';').filter { it.isNotEmpty() }.map { parsePos(it) }
                 "dofs" -> dofs = v.split(';').filter { it.isNotEmpty() }.map { quantity(it) }
-                "scalar" -> {
-                    val name = unquote(v)
-                    scalar = doc.scalars.firstOrNull { it.name == name } ?: throw LoadError("unknown scalar '$name'")
-                }
+                // an ordered list, so a two-scalar tool needs no key of its own; names are quoted, hence
+                // split on the quotes rather than on the comma (a name may contain one)
+                "scalar" ->
+                    scalars =
+                        scalarNames(v).map { name ->
+                            doc.scalars.firstOrNull { it.name == name } ?: throw LoadError("unknown scalar '$name'")
+                        }
+                // structural (OP-18): how many copies/vertices the tool built, replayed verbatim
+                "count" -> count = v.toIntOrNull() ?: throw LoadError("malformed count '$v'")
                 else -> throw LoadError("unknown tool argument '$key'")
             }
         }
         val at = clicks.lastOrNull() ?: Vec2(0.0, 0.0)
-        val picks = Picks(points, elements, at, clicks, dofs)
+        val picks = Picks(points, elements, at, clicks, dofs, count)
         // replay through the same recorder the click used, so the reloaded document can be saved again
-        doc.recordingTool(tool.id, picks, scalar) { tool.build(doc, picks, scalar?.ref) }
+        doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
     }
+
+    /** The scalar names in a `scalar=` argument: `"a","b"` -> [a, b]. Names are quoted, so the quotes and
+     *  not the comma delimit them — a name may contain a comma. A bare word is accepted defensively. */
+    private fun scalarNames(v: String): List<String> =
+        if (v.startsWith("\"")) Regex("\"([^\"]*)\"").findAll(v).map { it.groupValues[1] }.toList() else listOf(v)
 
     private fun unquote(s: String) = s.removeSurrounding("\"")
 
