@@ -13,20 +13,31 @@ import constructit.units.Quantity
 
 /** A typed value flowing through the graph (OP-5). Strongly typed, one output per node. */
 sealed interface Value
+
 data class ScalarValue(val q: Quantity) : Value
+
 data class PointValue(val p: Vec2) : Value
+
 data class LineValue(val line: Line) : Value
+
 data class RayValue(val ray: Ray) : Value
+
 data class SegmentValue(val seg: Segment) : Value
+
 data class CircleValue(val circle: Circle) : Value
+
 data class ArcValue(val arc: Arc) : Value
+
 data class PointSetValue(val set: PointSet) : Value
+
 data class DirectionValue(val dir: Direction) : Value
+
 data class ProfileValue(val profile: Profile) : Value
 
 /** Result of evaluating a node: valid value or invalid with a reason (OP-3). */
 sealed interface EvalResult {
     data class Ok(val value: Value) : EvalResult
+
     data class Invalid(val reason: String) : EvalResult
 }
 
@@ -47,6 +58,7 @@ abstract class Node(val id: String) {
  */
 class SourceNode(id: String, var value: Value, var boundTo: Node? = null) : Node(id) {
     override val inputs: List<Node> get() = boundTo?.let { listOf(it) } ?: emptyList()
+
     override fun compute(args: List<Value>): EvalResult =
         if (boundTo != null) EvalResult.Ok(args[0]) else EvalResult.Ok(value)
 }
@@ -58,6 +70,7 @@ class SourceNode(id: String, var value: Value, var boundTo: Node? = null) : Node
  */
 class ParameterNode(id: String, var literal: ScalarValue, var boundTo: Node? = null) : Node(id) {
     override val inputs: List<Node> get() = boundTo?.let { listOf(it) } ?: emptyList()
+
     override fun compute(args: List<Value>): EvalResult =
         if (boundTo != null) EvalResult.Ok(args[0]) else EvalResult.Ok(literal)
 }

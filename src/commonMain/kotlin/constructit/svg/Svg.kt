@@ -32,7 +32,6 @@ data class Drawable(val ref: Ref<*>, val stroke: String = "#1f77b4", val fill: S
  * Math space is y-up; screen space is y-down, so y is negated on output.
  */
 object Svg {
-
     private const val PRECISION = 3
     private const val SCALE = 1000L // 10^PRECISION
     private const val STROKE_WIDTH = 0.5
@@ -56,31 +55,48 @@ object Svg {
         return r
     }
 
-    fun render(ev: Evaluator, items: List<Drawable>, margin: Double = 6.0): String {
+    fun render(
+        ev: Evaluator,
+        items: List<Drawable>,
+        margin: Double = 6.0,
+    ): String {
         // 1. gather geometry + bbox sample points (math space).
         val samples = ArrayList<Vec2>()
+
         data class Prepared(val kind: String, val d: Drawable, val geom: Any)
         val prepared = ArrayList<Prepared>()
 
         for (d in items) {
             when (val v = ev.valueOf(d.ref)) {
-                is PointValue -> { samples.add(v.p); prepared.add(Prepared("point", d, v.p)) }
-                is SegmentValue -> { samples.add(v.seg.a); samples.add(v.seg.b); prepared.add(Prepared("segment", d, v.seg)) }
+                is PointValue -> {
+                    samples.add(v.p)
+                    prepared.add(Prepared("point", d, v.p))
+                }
+                is SegmentValue -> {
+                    samples.add(v.seg.a)
+                    samples.add(v.seg.b)
+                    prepared.add(Prepared("segment", d, v.seg))
+                }
                 is CircleValue -> {
                     val c = v.circle
-                    samples.add(c.center + Vec2(c.radius, c.radius)); samples.add(c.center - Vec2(c.radius, c.radius))
+                    samples.add(c.center + Vec2(c.radius, c.radius))
+                    samples.add(c.center - Vec2(c.radius, c.radius))
                     prepared.add(Prepared("circle", d, c))
                 }
                 is ArcValue -> {
                     val a = v.arc
-                    samples.add(a.center + Vec2(a.radius, a.radius)); samples.add(a.center - Vec2(a.radius, a.radius))
+                    samples.add(a.center + Vec2(a.radius, a.radius))
+                    samples.add(a.center - Vec2(a.radius, a.radius))
                     prepared.add(Prepared("arc", d, a))
                 }
                 is LineValue -> prepared.add(Prepared("line", d, v.line)) // clipped later; not in bbox
                 is RayValue -> prepared.add(Prepared("ray", d, v.ray))
                 is ProfileValue -> {
                     for (el in v.profile.elements) when (el) {
-                        is ProfileElement.Seg -> { samples.add(el.segment.a); samples.add(el.segment.b) }
+                        is ProfileElement.Seg -> {
+                            samples.add(el.segment.a)
+                            samples.add(el.segment.b)
+                        }
                         is ProfileElement.ArcE -> {
                             samples.add(el.arc.center + Vec2(el.arc.radius, el.arc.radius))
                             samples.add(el.arc.center - Vec2(el.arc.radius, el.arc.radius))
@@ -88,15 +104,24 @@ object Svg {
                     }
                     prepared.add(Prepared("profile", d, v.profile))
                 }
-                is PointSetValue -> for (p in v.set.points) { samples.add(p); prepared.add(Prepared("point", d, p)) }
+                is PointSetValue -> for (p in v.set.points) {
+                    samples.add(p)
+                    prepared.add(Prepared("point", d, p))
+                }
                 else -> {} // scalars, directions etc. not drawable
             }
         }
 
         if (samples.isEmpty()) samples.add(Vec2(0.0, 0.0))
-        var minX = samples[0].x; var minY = samples[0].y; var maxX = samples[0].x; var maxY = samples[0].y
+        var minX = samples[0].x
+        var minY = samples[0].y
+        var maxX = samples[0].x
+        var maxY = samples[0].y
         for (p in samples) {
-            minX = min(minX, p.x); minY = min(minY, p.y); maxX = max(maxX, p.x); maxY = max(maxY, p.y)
+            minX = min(minX, p.x)
+            minY = min(minY, p.y)
+            maxX = max(maxX, p.x)
+            maxY = max(maxY, p.y)
         }
         // math bbox for line clipping (with margin)
         val clipMin = Vec2(minX - margin, minY - margin)
@@ -122,13 +147,15 @@ object Svg {
                 }
                 "segment" -> {
                     val seg = p.geom as Segment
-                    val a = screen(seg.a); val b = screen(seg.b)
+                    val a = screen(seg.a)
+                    val b = screen(seg.b)
                     sb.append(lineTag(a, b, p.d.stroke))
                 }
                 "line" -> {
                     val clipped = clipLineToRect(p.geom as Line, clipMin, clipMax)
                     if (clipped != null) {
-                        val a = screen(clipped.a); val b = screen(clipped.b)
+                        val a = screen(clipped.a)
+                        val b = screen(clipped.b)
                         sb.append(lineTag(a, b, p.d.stroke))
                     }
                 }
@@ -154,13 +181,21 @@ object Svg {
         return sb.toString()
     }
 
-    private fun lineTag(a: Vec2, b: Vec2, stroke: String): String =
+    private fun lineTag(
+        a: Vec2,
+        b: Vec2,
+        stroke: String,
+    ): String =
         "  <line x1=\"${fmt(a.x)}\" y1=\"${fmt(a.y)}\" x2=\"${fmt(b.x)}\" y2=\"${fmt(b.y)}\" stroke=\"$stroke\" stroke-width=\"${fmt(STROKE_WIDTH)}\"/>\n"
 
-    private fun arcTag(arc: constructit.geom.Arc, stroke: String): String {
+    private fun arcTag(
+        arc: constructit.geom.Arc,
+        stroke: String,
+    ): String {
         val p0 = arc.center + Vec2(arc.radius * cos(arc.startAngle), arc.radius * sin(arc.startAngle))
         val p1 = arc.center + Vec2(arc.radius * cos(arc.endAngle), arc.radius * sin(arc.endAngle))
-        val s0 = screen(p0); val s1 = screen(p1)
+        val s0 = screen(p0)
+        val s1 = screen(p1)
         val sweepAngle = if (arc.ccw) norm2pi(arc.endAngle - arc.startAngle) else norm2pi(arc.startAngle - arc.endAngle)
         val largeArc = if (sweepAngle > kotlin.math.PI) 1 else 0
         // We emit in screen space (y negated). SVG sweep-flag=1 is increasing screen-angle;
@@ -170,10 +205,15 @@ object Svg {
     }
 
     /** Liang-Barsky style clip of an infinite line to an axis-aligned rectangle. */
-    private fun clipLineToRect(line: Line, lo: Vec2, hi: Vec2): Segment? {
+    private fun clipLineToRect(
+        line: Line,
+        lo: Vec2,
+        hi: Vec2,
+    ): Segment? {
         var tMin = Double.NEGATIVE_INFINITY
         var tMax = Double.POSITIVE_INFINITY
-        val o = line.origin; val dir = line.dir
+        val o = line.origin
+        val dir = line.dir
         for (axis in 0..1) {
             val od = if (axis == 0) dir.x else dir.y
             val oo = if (axis == 0) o.x else o.y
@@ -193,10 +233,15 @@ object Svg {
     }
 
     /** Clip a forward ray (t >= 0) to an axis-aligned rectangle. */
-    private fun clipRayToRect(ray: Ray, lo: Vec2, hi: Vec2): Segment? {
+    private fun clipRayToRect(
+        ray: Ray,
+        lo: Vec2,
+        hi: Vec2,
+    ): Segment? {
         var tMin = 0.0
         var tMax = Double.POSITIVE_INFINITY
-        val o = ray.origin; val dir = ray.dir
+        val o = ray.origin
+        val dir = ray.dir
         for (axis in 0..1) {
             val od = if (axis == 0) dir.x else dir.y
             val oo = if (axis == 0) o.x else o.y

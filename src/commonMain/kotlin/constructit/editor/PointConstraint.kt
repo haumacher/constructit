@@ -18,12 +18,18 @@ import constructit.units.Quantity
  * parameter is an ordinary free source node that the drag simply writes).
  */
 interface PointConstraint {
-    fun update(world: Vec2, ev: Evaluator)
+    fun update(
+        world: Vec2,
+        ev: Evaluator,
+    )
 }
 
 /** Point on a line: internal parameter is signed distance along the line's direction. */
 class OnLineConstraint(private val line: LineRef, private val t: SourceNode) : PointConstraint {
-    override fun update(world: Vec2, ev: Evaluator) {
+    override fun update(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
         val l = (ev.valueOf(line) as? LineValue)?.line ?: return
         t.value = ScalarValue(Quantity.mm((world - l.origin).dot(l.dir)))
     }
@@ -39,10 +45,15 @@ class OnLineConstraint(private val line: LineRef, private val t: SourceNode) : P
 class OrthoCornerConstraint(val xNode: SourceNode, val yNode: SourceNode) : PointConstraint {
     /** True while this vertex terminates its path (degree 1) — the case that may weld/attach. */
     var isEndpoint: Boolean = true
+
     /** Which coordinate is this vertex's *own* (not shared with a neighbour): 0 = x, 1 = y. The one
      *  to bind when attaching to a line, so the shared coordinate stays free for the neighbour. */
     var ownCoord: Int = 0
-    override fun update(world: Vec2, ev: Evaluator) {
+
+    override fun update(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
         xNode.value = ScalarValue(Quantity.mm(world.x))
         yNode.value = ScalarValue(Quantity.mm(world.y))
     }
@@ -50,7 +61,10 @@ class OrthoCornerConstraint(val xNode: SourceNode, val yNode: SourceNode) : Poin
 
 /** Point on a circle: internal parameter is the angle around the centre. */
 class OnCircleConstraint(val circle: CircleRef, private val angle: SourceNode) : PointConstraint {
-    override fun update(world: Vec2, ev: Evaluator) {
+    override fun update(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
         val c = (ev.valueOf(circle) as? CircleValue)?.circle ?: return
         angle.value = ScalarValue(Quantity.rad((world - c.center).angle()))
     }

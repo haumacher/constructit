@@ -1,7 +1,10 @@
 package constructit
 
 import constructit.core.Evaluator
-import constructit.dsl.*
+import constructit.dsl.Construction
+import constructit.dsl.PointRef
+import constructit.dsl.scalar
+import constructit.dsl.segment
 import constructit.svg.Drawable
 import constructit.svg.Svg
 import constructit.units.deg
@@ -10,13 +13,13 @@ import kotlin.test.Test
 
 /** Showcase: regular hexagon built by rotating one vertex about the centre (Tier 1 transforms). */
 class PolygonTest {
-
     private fun hexagon(c: Construction): Pair<PointRef, List<PointRef>> {
         val center = c.freePoint("O", 0.mm, 0.mm)
         val p0 = c.translate(center, c.parameter("r", 40.mm), c.const(0.mm)) // (40,0)
-        val pts = (0 until 6).map { k ->
-            if (k == 0) p0 else c.rotate(p0, center, c.const((k * 60.0).deg))
-        }
+        val pts =
+            (0 until 6).map { k ->
+                if (k == 0) p0 else c.rotate(p0, center, c.const((k * 60.0).deg))
+            }
         return center to pts
     }
 
@@ -30,7 +33,8 @@ class PolygonTest {
             val side = ev.scalar(c.measureLength(c.segment(pts[k], pts[(k + 1) % 6]))).mm
             assertClose(side, 40.0, tol = 1e-6, msg = "side $k")
             // interior angle = (6-2)*180/6 = 120 deg
-            val prev = pts[(k + 5) % 6]; val next = pts[(k + 1) % 6]
+            val prev = pts[(k + 5) % 6]
+            val next = pts[(k + 1) % 6]
             assertClose(ev.scalar(c.measureAngle(prev, pts[k], next)).deg, 120.0, tol = 1e-6, msg = "angle $k")
         }
     }

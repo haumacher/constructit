@@ -3,11 +3,11 @@ package constructit
 import constructit.core.Evaluator
 import constructit.dsl.BoltCircleArgs
 import constructit.dsl.Construction
-import constructit.svg.Drawable
 import constructit.dsl.boltCircle
 import constructit.dsl.circle
 import constructit.dsl.instance
 import constructit.dsl.point
+import constructit.svg.Drawable
 import constructit.svg.Svg
 import constructit.units.deg
 import constructit.units.mm
@@ -18,15 +18,16 @@ import kotlin.test.assertEquals
 
 /** DoD example 3: bolt circle — N equally spaced holes on a pitch-circle. */
 class BoltCircleTest {
-
     @Test
     fun holesAtExpectedRadiusAndAngles() {
         val c = Construction()
         val center = c.freePoint("C", 0.mm, 0.mm)
-        val bc = c.instance(
-            boltCircle, "bc",
-            BoltCircleArgs(center, pitchDiameter = c.parameter("pcd", 100.mm), count = 6, startAngle = c.parameter("a0", 0.deg), holeDiameter = c.parameter("hd", 8.mm)),
-        )
+        val bc =
+            c.instance(
+                boltCircle,
+                "bc",
+                BoltCircleArgs(center, pitchDiameter = c.parameter("pcd", 100.mm), count = 6, startAngle = c.parameter("a0", 0.deg), holeDiameter = c.parameter("hd", 8.mm)),
+            )
         val ev = Evaluator()
         val origin = ev.point(center)
 
@@ -48,10 +49,12 @@ class BoltCircleTest {
     fun svgGolden() {
         val c = Construction()
         val center = c.freePoint("C", 0.mm, 0.mm)
-        val bc = c.instance(
-            boltCircle, "bc",
-            BoltCircleArgs(center, c.parameter("pcd", 100.mm), 6, c.parameter("a0", 0.deg), c.parameter("hd", 8.mm)),
-        )
+        val bc =
+            c.instance(
+                boltCircle,
+                "bc",
+                BoltCircleArgs(center, c.parameter("pcd", 100.mm), 6, c.parameter("a0", 0.deg), c.parameter("hd", 8.mm)),
+            )
         val items = ArrayList<Drawable>()
         // pitch circle (construction geometry) + holes + hole centres
         items.add(Drawable(c.circleCR(center, c.parameter("pr", 50.mm)), stroke = "#bbbbbb"))

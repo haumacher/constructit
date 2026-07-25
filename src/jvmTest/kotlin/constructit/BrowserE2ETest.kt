@@ -15,7 +15,6 @@ import kotlin.test.assertTrue
  * `jvmTest` runs need no browser. Produces screenshots under build/e2e/ for visual inspection.
  */
 class BrowserE2ETest {
-
     @Test
     fun buildAndDragInBrowser() {
         assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
@@ -25,9 +24,10 @@ class BrowserE2ETest {
         File("build/e2e").mkdirs()
 
         Playwright.create().use { pw ->
-            val browser = pw.chromium().launch(
-                BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true),
-            )
+            val browser =
+                pw.chromium().launch(
+                    BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true),
+                )
             val page = browser.newPage()
             page.setViewportSize(1000, 700)
             page.navigate(index.toURI().toString())

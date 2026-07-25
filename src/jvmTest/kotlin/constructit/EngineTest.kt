@@ -9,11 +9,9 @@ import constructit.units.deg
 import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 /** Core engine behaviours: units/dimensions (OP-7), measurements (OP-4), invalid propagation (OP-3). */
 class EngineTest {
-
     @Test
     fun unitConversion() {
         val c = Construction()
@@ -51,7 +49,7 @@ class EngineTest {
     @Test
     fun invalidPropagatesTransitively() {
         val c = Construction()
-        val zeroR = c.parameter("r", 0.mm)              // non-positive radius -> invalid circle
+        val zeroR = c.parameter("r", 0.mm) // non-positive radius -> invalid circle
         val circle = c.circleCR(c.freePoint("C", 0.mm, 0.mm), zeroR)
         val pair = c.intersectCC(circle, c.circleCR(c.freePoint("D", 10.mm, 0.mm), c.parameter("r2", 5.mm)))
         val pt = c.select(pair, +1)

@@ -42,6 +42,7 @@ class Element(
         (kind == ElementKind.POINT && (ref.node as? SourceNode)?.boundTo == null) || kind == ElementKind.ON_CURVE
     val isCurve: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY || kind == ElementKind.ARC
     val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT || kind == ElementKind.ON_CURVE
+
     /** Line / segment / ray — anything that determines an infinite line. */
     val isLinear: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY
 }
@@ -79,11 +80,16 @@ class Document {
     val elements = ArrayList<Element>()
     val scalars = ArrayList<ScalarEntry>()
     private var counter = 0
+
     private fun nextId(prefix: String) = "$prefix${++counter}"
 
     val freePoints: List<Element> get() = elements.filter { it.kind == ElementKind.POINT }
 
-    private fun add(ref: Ref<*>, kind: ElementKind, style: Style): Element {
+    private fun add(
+        ref: Ref<*>,
+        kind: ElementKind,
+        style: Style,
+    ): Element {
         val el = Element(nextId("e"), ref, kind, style)
         elements.add(el)
         return el
@@ -96,15 +102,19 @@ class Document {
 
     /** Coerce a line/segment/ray element to its infinite carrier line. */
     @Suppress("UNCHECKED_CAST")
-    private fun carrierLine(el: Element): LineRef = when (el.kind) {
-        ElementKind.SEGMENT -> cx.lineOfSegment(el.ref as SegmentRef)
-        ElementKind.RAY -> cx.lineOfRay(el.ref as RayRef)
-        else -> el.ref as LineRef
-    }
+    private fun carrierLine(el: Element): LineRef =
+        when (el.kind) {
+            ElementKind.SEGMENT -> cx.lineOfSegment(el.ref as SegmentRef)
+            ElementKind.RAY -> cx.lineOfRay(el.ref as RayRef)
+            else -> el.ref as LineRef
+        }
 
     // ---- free points & scalars ----
 
-    fun freePoint(x: Quantity, y: Quantity): PointRef =
+    fun freePoint(
+        x: Quantity,
+        y: Quantity,
+    ): PointRef =
         cx.freePoint("P${counter + 1}", x, y).also { add(it, ElementKind.POINT, Styles.FREE_POINT) }
 
     /** Ensure scalar names are unique so the wiring dropdown is never ambiguous. */
@@ -116,18 +126,29 @@ class Document {
         return "$b$i"
     }
 
-    fun newParameter(name: String, value: Quantity): ScalarEntry {
+    fun newParameter(
+        name: String,
+        value: Quantity,
+    ): ScalarEntry {
         val node = ParameterNode(nextId("pn"), ScalarValue(value))
         val e = ScalarEntry(nextId("s"), uniqueScalarName(name), Ref<ScalarValue>(node), editable = true)
-        scalars.add(e); return e
+        scalars.add(e)
+        return e
     }
 
-    private fun measurement(name: String, ref: ScalarRef): ScalarEntry {
+    private fun measurement(
+        name: String,
+        ref: ScalarRef,
+    ): ScalarEntry {
         val e = ScalarEntry(nextId("m"), uniqueScalarName(name), ref, editable = false)
-        scalars.add(e); return e
+        scalars.add(e)
+        return e
     }
 
-    fun setParameter(e: ScalarEntry, value: Quantity) {
+    fun setParameter(
+        e: ScalarEntry,
+        value: Quantity,
+    ) {
         require(e.editable) { "not an editable parameter" }
         (e.ref.node as ParameterNode).literal = ScalarValue(value)
     }
@@ -144,7 +165,11 @@ class Document {
     private fun dimOf(node: Node): constructit.units.Dimension? =
         (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.dim }
 
-    private fun dependsOn(from: Node, target: Node, seen: MutableSet<String>): Boolean {
+    private fun dependsOn(
+        from: Node,
+        target: Node,
+        seen: MutableSet<String>,
+    ): Boolean {
         if (from === target) return true
         if (!seen.add(from.id)) return false
         for (i in from.inputs) if (dependsOn(i, target, seen)) return true
@@ -152,12 +177,16 @@ class Document {
     }
 
     /** Wire parameter [e] to track [target]. Rejected on type mismatch or if it would cycle. */
-    fun wireParameter(e: ScalarEntry, target: ScalarEntry): Boolean {
+    fun wireParameter(
+        e: ScalarEntry,
+        target: ScalarEntry,
+    ): Boolean {
         val node = e.ref.node as? ParameterNode ?: return false
         if (target.ref.node === node) return false
-        val myDim = dimOf(node); val tgtDim = dimOf(target.ref.node)
-        if (myDim != null && tgtDim != null && myDim != tgtDim) return false      // same type only
-        if (dependsOn(target.ref.node, node, HashSet())) return false             // no cycles
+        val myDim = dimOf(node)
+        val tgtDim = dimOf(target.ref.node)
+        if (myDim != null && tgtDim != null && myDim != tgtDim) return false // same type only
+        if (dependsOn(target.ref.node, node, HashSet())) return false // no cycles
         node.boundTo = target.ref.node
         return true
     }
@@ -170,7 +199,10 @@ class Document {
         node.boundTo = null
     }
 
-    fun moveFreePoint(el: Element, world: Vec2) {
+    fun moveFreePoint(
+        el: Element,
+        world: Vec2,
+    ) {
         require(el.kind == ElementKind.POINT) { "not a free point" }
         (el.ref.node as SourceNode).value = PointValue(world)
     }
@@ -188,12 +220,15 @@ class Document {
      * via [unweld]. Rejected unless [alias] is an un-welded free point, differs from [master], and
      * welding would not create a cycle.
      */
-    fun weld(alias: Element, master: Element): Boolean {
+    fun weld(
+        alias: Element,
+        master: Element,
+    ): Boolean {
         val node = alias.ref.node as? SourceNode ?: return false
         if (alias.kind != ElementKind.POINT || node.boundTo != null) return false
         if (!master.isPoint || master === alias) return false
         val masterNode = master.ref.node
-        if (masterNode === node || dependsOn(masterNode, node, HashSet())) return false   // no cycles
+        if (masterNode === node || dependsOn(masterNode, node, HashSet())) return false // no cycles
         node.boundTo = masterNode
         alias.visible = false
         return true
@@ -219,7 +254,10 @@ class Document {
      * un-welded free point, [curve] is not a line/segment/ray/circle, or [curve] is built from
      * [pt] (which would cycle). Used for the drag magnet's eligibility + halo position.
      */
-    fun attachTargetPos(pt: Element, curve: Element): Vec2? {
+    fun attachTargetPos(
+        pt: Element,
+        curve: Element,
+    ): Vec2? {
         val node = pt.ref.node as? SourceNode ?: return null
         if (pt.kind != ElementKind.POINT || node.boundTo != null) return null
         return curveProjection(pt, curve)
@@ -230,7 +268,10 @@ class Document {
      * null if [curve] is built from [pt] (would cycle) or isn't a line/circle. Works for any point,
      * so both free points and ortho endpoints can use it for the drag magnet.
      */
-    fun curveProjection(pt: Element, curve: Element): Vec2? {
+    fun curveProjection(
+        pt: Element,
+        curve: Element,
+    ): Vec2? {
         val p = (Evaluator().eval(pt.ref.node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p } ?: return null
         return when {
             curve.isLinear -> {
@@ -245,8 +286,11 @@ class Document {
                 val c = (Evaluator().eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue ?: return null
                 val d = p - c.circle.center
                 val len = d.length()
-                if (len < Vec2.EPS) c.circle.center + Vec2(c.circle.radius, 0.0)
-                else c.circle.center + d * (c.circle.radius / len)
+                if (len < Vec2.EPS) {
+                    c.circle.center + Vec2(c.circle.radius, 0.0)
+                } else {
+                    c.circle.center + d * (c.circle.radius / len)
+                }
             }
             else -> null
         }
@@ -258,7 +302,10 @@ class Document {
      * driven by a hidden parameter, so everything already referencing the point now slides with it.
      * Reversible via [unweld]. Same validity rules as [attachTargetPos].
      */
-    fun attachToCurve(pt: Element, curve: Element): Boolean {
+    fun attachToCurve(
+        pt: Element,
+        curve: Element,
+    ): Boolean {
         val node = pt.ref.node as? SourceNode ?: return false
         if (attachTargetPos(pt, curve) == null) return false
         val ev = Evaluator()
@@ -272,7 +319,7 @@ class Document {
                 node.boundTo = cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode)).node
                 pt.constraint = OnLineConstraint(lr, tNode)
             }
-            else -> {   // circle
+            else -> { // circle
                 val cr = curve.ref as CircleRef
                 val c = (ev.eval(cr.node) as EvalResult.Ok).value as CircleValue
                 val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
@@ -294,7 +341,10 @@ class Document {
      * point-on-curve, so the endpoint — and the neighbour sharing one coordinate — follow the curve,
      * and dragging it now slides along the curve. The ortho analogue of [attachToCurve].
      */
-    fun attachOrthoEndpointToCurve(el: Element, curve: Element): Boolean {
+    fun attachOrthoEndpointToCurve(
+        el: Element,
+        curve: Element,
+    ): Boolean {
         val corner = orthoEndpoint(el) ?: return false
         val ev = Evaluator()
         if (curve.isLinear) {
@@ -304,14 +354,14 @@ class Document {
             // Bind only the OWN coordinate, derived as where the line crosses the (free, shared) one —
             // so the shared coordinate stays writable and the neighbour keeps its DOF. Works while the
             // line isn't parallel to the own axis; otherwise fall back to pinning both onto the line.
-            if (corner.ownCoord == 0 && abs(dir.y) > Vec2.EPS) {           // own x from shared y
+            if (corner.ownCoord == 0 && abs(dir.y) > Vec2.EPS) { // own x from shared y
                 val sy = Ref<ScalarValue>(corner.yNode)
                 val cut = cx.lineThrough(cx.pointXY(cx.const(0.0.mm), sy), cx.pointXY(cx.const(1.0.mm), sy))
                 corner.xNode.boundTo = cx.measureX(cx.select(cx.intersectLL(lr, cut), +1)).node
                 corner.isEndpoint = false
                 return true
             }
-            if (corner.ownCoord == 1 && abs(dir.x) > Vec2.EPS) {           // own y from shared x
+            if (corner.ownCoord == 1 && abs(dir.x) > Vec2.EPS) { // own y from shared x
                 val sx = Ref<ScalarValue>(corner.xNode)
                 val cut = cx.lineThrough(cx.pointXY(sx, cx.const(0.0.mm)), cx.pointXY(sx, cx.const(1.0.mm)))
                 corner.yNode.boundTo = cx.measureY(cx.select(cx.intersectLL(lr, cut), +1)).node
@@ -344,7 +394,10 @@ class Document {
     }
 
     /** Weld an ortho path endpoint [el] onto point [target]: its coordinates track the target. */
-    fun weldOrthoEndpointToPoint(el: Element, target: Element): Boolean {
+    fun weldOrthoEndpointToPoint(
+        el: Element,
+        target: Element,
+    ): Boolean {
         val corner = orthoEndpoint(el) ?: return false
         val tref = target.ref as? PointRef ?: return false
         if (!target.isPoint || target === el || dependsOn(tref.node, el.ref.node, HashSet())) return false
@@ -354,27 +407,43 @@ class Document {
         return true
     }
 
-    fun remove(el: Element) { elements.remove(el) }
+    fun remove(el: Element) {
+        elements.remove(el)
+    }
 
     // ---- points ----
 
-    fun midpoint(a: PointRef, b: PointRef) = addDerived(cx.midpoint(a, b))
+    fun midpoint(
+        a: PointRef,
+        b: PointRef,
+    ) = addDerived(cx.midpoint(a, b))
 
     /** The centre of a circle or arc as a derived point (works on 3-point circles etc.). */
-    fun centerOf(el: Element): PointRef? = when (el.kind) {
-        ElementKind.CIRCLE -> addDerived(cx.circleCenter(el.ref as CircleRef))
-        ElementKind.ARC -> addDerived(cx.arcCenter(el.ref as ArcRef))
-        else -> null
-    }
-    fun projectToLine(p: PointRef, line: Element) = addDerived(cx.projectToLine(p, carrierLine(line)))
+    fun centerOf(el: Element): PointRef? =
+        when (el.kind) {
+            ElementKind.CIRCLE -> addDerived(cx.circleCenter(el.ref as CircleRef))
+            ElementKind.ARC -> addDerived(cx.arcCenter(el.ref as ArcRef))
+            else -> null
+        }
 
-    private fun addConstrained(ref: PointRef, constraint: PointConstraint): PointRef {
+    fun projectToLine(
+        p: PointRef,
+        line: Element,
+    ) = addDerived(cx.projectToLine(p, carrierLine(line)))
+
+    private fun addConstrained(
+        ref: PointRef,
+        constraint: PointConstraint,
+    ): PointRef {
         elements.add(Element(nextId("e"), ref, ElementKind.ON_CURVE, Styles.ON_CURVE, constraint = constraint))
         return ref
     }
 
     /** Point that slides along a line; created at the projection of [at], draggable along the line. */
-    fun pointOnLine(line: Element, at: Vec2): PointRef {
+    fun pointOnLine(
+        line: Element,
+        at: Vec2,
+    ): PointRef {
         val lineRef = carrierLine(line)
         val l = (Evaluator().eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
         val t0 = if (l != null) (at - l.line.origin).dot(l.line.dir) else 0.0
@@ -383,21 +452,32 @@ class Document {
     }
 
     /** Fully-determined point on a line at [distance] from [from]; direction from the click side of [at]. */
-    fun pointAlongLine(line: Element, from: PointRef, distance: ScalarRef, at: Vec2): PointRef {
+    fun pointAlongLine(
+        line: Element,
+        from: PointRef,
+        distance: ScalarRef,
+        at: Vec2,
+    ): PointRef {
         val lineRef = carrierLine(line)
         val ev = Evaluator()
         val l = (ev.eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
         val fromP = (ev.eval(from.node) as? EvalResult.Ok)?.value as? PointValue
-        val sign = if (l != null && fromP != null) {
-            val geom = l.line
-            val proj = geom.origin + geom.dir * (fromP.p - geom.origin).dot(geom.dir)
-            if ((at - proj).dot(geom.dir) >= 0) 1 else -1
-        } else 1
+        val sign =
+            if (l != null && fromP != null) {
+                val geom = l.line
+                val proj = geom.origin + geom.dir * (fromP.p - geom.origin).dot(geom.dir)
+                if ((at - proj).dot(geom.dir) >= 0) 1 else -1
+            } else {
+                1
+            }
         return addDerived(cx.pointAlongLine(lineRef, from, distance, sign))
     }
 
     /** Point that slides along a circle; created at the click angle, draggable around the circle. */
-    fun pointOnCircle(circle: Element, at: Vec2): PointRef {
+    fun pointOnCircle(
+        circle: Element,
+        at: Vec2,
+    ): PointRef {
         val circleRef = circle.ref as CircleRef
         val c = (Evaluator().eval(circleRef.node) as? EvalResult.Ok)?.value as? CircleValue
         val a0 = if (c != null) (at - c.circle.center).angle() else 0.0
@@ -409,18 +489,25 @@ class Document {
      * Intersect two curves. Segments/rays are treated as their carrier line. Branch count
      * follows the pair type (line-like ∩ line-like: 1 point, else: 2).
      */
-    fun intersect(a: Element, b: Element): List<PointRef> {
-        val aLin = a.isLinear; val bLin = b.isLinear
-        val aCirc = a.kind == ElementKind.CIRCLE; val bCirc = b.kind == ElementKind.CIRCLE
+    fun intersect(
+        a: Element,
+        b: Element,
+    ): List<PointRef> {
+        val aLin = a.isLinear
+        val bLin = b.isLinear
+        val aCirc = a.kind == ElementKind.CIRCLE
+        val bCirc = b.kind == ElementKind.CIRCLE
         val lineLine = aLin && bLin
+
         @Suppress("UNCHECKED_CAST")
-        val set: PointSetRef = when {
-            lineLine -> cx.intersectLL(carrierLine(a), carrierLine(b))
-            aCirc && bCirc -> cx.intersectCC(a.ref as CircleRef, b.ref as CircleRef)
-            aLin && bCirc -> cx.intersectLC(carrierLine(a), b.ref as CircleRef)
-            aCirc && bLin -> cx.intersectLC(carrierLine(b), a.ref as CircleRef)
-            else -> return emptyList()
-        }
+        val set: PointSetRef =
+            when {
+                lineLine -> cx.intersectLL(carrierLine(a), carrierLine(b))
+                aCirc && bCirc -> cx.intersectCC(a.ref as CircleRef, b.ref as CircleRef)
+                aLin && bCirc -> cx.intersectLC(carrierLine(a), b.ref as CircleRef)
+                aCirc && bLin -> cx.intersectLC(carrierLine(b), a.ref as CircleRef)
+                else -> return emptyList()
+            }
         val refs = ArrayList<PointRef>()
         refs.add(cx.select(set, +1))
         if (!lineLine) refs.add(cx.select(set, -1))
@@ -430,18 +517,22 @@ class Document {
 
     /** Materialize a curve's defining points as derived points (works on transformed geometry too). */
     fun extractPoints(el: Element): List<PointRef> {
-        val refs: List<PointRef> = when (el.kind) {
-            ElementKind.SEGMENT -> listOf(cx.segmentStart(el.ref as SegmentRef), cx.segmentEnd(el.ref as SegmentRef))
-            ElementKind.CIRCLE -> listOf(cx.circleCenter(el.ref as CircleRef))
-            ElementKind.ARC -> listOf(cx.arcCenter(el.ref as ArcRef), cx.arcStart(el.ref as ArcRef), cx.arcEnd(el.ref as ArcRef))
-            ElementKind.RAY -> listOf(cx.rayOrigin(el.ref as RayRef))
-            else -> emptyList()
-        }
+        val refs: List<PointRef> =
+            when (el.kind) {
+                ElementKind.SEGMENT -> listOf(cx.segmentStart(el.ref as SegmentRef), cx.segmentEnd(el.ref as SegmentRef))
+                ElementKind.CIRCLE -> listOf(cx.circleCenter(el.ref as CircleRef))
+                ElementKind.ARC -> listOf(cx.arcCenter(el.ref as ArcRef), cx.arcStart(el.ref as ArcRef), cx.arcEnd(el.ref as ArcRef))
+                ElementKind.RAY -> listOf(cx.rayOrigin(el.ref as RayRef))
+                else -> emptyList()
+            }
         refs.forEach { addDerived(it) }
         return refs
     }
 
-    fun tangentFromPoint(p: PointRef, circle: Element): List<PointRef> {
+    fun tangentFromPoint(
+        p: PointRef,
+        circle: Element,
+    ): List<PointRef> {
         val set = cx.tangentPointsFromPoint(p, circle.ref as CircleRef)
         val refs = listOf(cx.select(set, +1), cx.select(set, -1))
         refs.forEach { addDerived(it) }
@@ -450,16 +541,27 @@ class Document {
 
     // ---- curves ----
 
-    fun line(a: PointRef, b: PointRef) = add(cx.lineThrough(a, b), ElementKind.LINE, Styles.CURVE)
-    fun segment(a: PointRef, b: PointRef) = add(cx.segment(a, b), ElementKind.SEGMENT, Styles.CURVE)
+    fun line(
+        a: PointRef,
+        b: PointRef,
+    ) = add(cx.lineThrough(a, b), ElementKind.LINE, Styles.CURVE)
+
+    fun segment(
+        a: PointRef,
+        b: PointRef,
+    ) = add(cx.segment(a, b), ElementKind.SEGMENT, Styles.CURVE)
 
     // ---- architectural: ortho path (shared-coordinate rectilinear polyline) ----
 
     private fun scalarSource(value: Double): SourceNode = SourceNode(nextId("oc"), ScalarValue(value.mm))
 
-    private fun orthoVertex(x: SourceNode, y: SourceNode, ownAxis: Int): OrthoVertex {
+    private fun orthoVertex(
+        x: SourceNode,
+        y: SourceNode,
+        ownAxis: Int,
+    ): OrthoVertex {
         val corner = OrthoCornerConstraint(x, y)
-        corner.ownCoord = if (ownAxis == -1) 0 else ownAxis   // start: fixed once its first edge is drawn
+        corner.ownCoord = if (ownAxis == -1) 0 else ownAxis // start: fixed once its first edge is drawn
         val ref = cx.pointXY(Ref<ScalarValue>(x), Ref<ScalarValue>(y))
         addConstrained(ref, corner)
         return OrthoVertex(ref, corner, ownAxis)
@@ -474,21 +576,40 @@ class Document {
      * the edge stays axis-aligned and a later drag of either endpoint moves only it and its
      * neighbours). Returns the new vertex, or null for a zero-length step.
      */
-    fun addOrthoVertex(prev: OrthoVertex, to: Vec2): OrthoVertex? {
+    fun addOrthoVertex(
+        prev: OrthoVertex,
+        to: Vec2,
+    ): OrthoVertex? {
         val p = (Evaluator().eval(prev.ref.node) as? EvalResult.Ok)?.value as? PointValue ?: return null
-        val dx = to.x - p.p.x; val dy = to.y - p.p.y
+        val dx = to.x - p.p.x
+        val dy = to.y - p.p.y
         if (abs(dx) < Vec2.EPS && abs(dy) < Vec2.EPS) return null
         // horizontal edge: new x node, share prev's y node (ownAxis 0); vertical: share x, new y (ownAxis 1)
-        val xNode: SourceNode; val yNode: SourceNode; val ownAxis: Int
-        if (abs(dx) >= abs(dy)) { xNode = scalarSource(to.x); yNode = prev.corner.yNode; ownAxis = 0 }
-        else                    { xNode = prev.corner.xNode; yNode = scalarSource(to.y); ownAxis = 1 }
-        if (prev.ownAxis != -1) prev.corner.isEndpoint = false   // prev now has two edges (unless it is the start)
-        else prev.corner.ownCoord = ownAxis                      // the start's own coord = the one V1 didn't share
+        val xNode: SourceNode
+        val yNode: SourceNode
+        val ownAxis: Int
+        if (abs(dx) >= abs(dy)) {
+            xNode = scalarSource(to.x)
+            yNode = prev.corner.yNode
+            ownAxis = 0
+        } else {
+            xNode = prev.corner.xNode
+            yNode = scalarSource(to.y)
+            ownAxis = 1
+        }
+        if (prev.ownAxis != -1) {
+            prev.corner.isEndpoint = false // prev now has two edges (unless it is the start)
+        } else {
+            prev.corner.ownCoord = ownAxis // the start's own coord = the one V1 didn't share
+        }
         return orthoVertex(xNode, yNode, ownAxis).also { segment(prev.ref, it.ref) }
     }
 
     /** Where an ortho leg from [from] toward [to] lands (rubber-band preview): snapped to H or V. */
-    fun orthoLegPreview(from: PointRef, to: Vec2): Pair<Vec2, Vec2>? {
+    fun orthoLegPreview(
+        from: PointRef,
+        to: Vec2,
+    ): Pair<Vec2, Vec2>? {
         val p = (Evaluator().eval(from.node) as? EvalResult.Ok)?.value as? PointValue ?: return null
         val end = if (abs(to.x - p.p.x) >= abs(to.y - p.p.y)) Vec2(to.x, p.p.y) else Vec2(p.p.x, to.y)
         return p.p to end
@@ -501,15 +622,23 @@ class Document {
      * so dragging the last vertex moves the start with it (2 DOF, symmetric with every other corner)
      * rather than being pinned. Both vertices stop being endpoints.
      */
-    fun closeOrthoPath(first: OrthoVertex, last: OrthoVertex) {
+    fun closeOrthoPath(
+        first: OrthoVertex,
+        last: OrthoVertex,
+    ) {
         val el = elements.firstOrNull { it.ref === last.ref } ?: return
-        val redirect = when (last.ownAxis) {
-            0 -> { last.corner.xNode.boundTo = first.corner.xNode      // own x -> vertical closing edge
-                   OrthoCornerConstraint(first.corner.xNode, last.corner.yNode) }
-            1 -> { last.corner.yNode.boundTo = first.corner.yNode      // own y -> horizontal closing edge
-                   OrthoCornerConstraint(last.corner.xNode, first.corner.yNode) }
-            else -> return
-        }
+        val redirect =
+            when (last.ownAxis) {
+                0 -> {
+                    last.corner.xNode.boundTo = first.corner.xNode // own x -> vertical closing edge
+                    OrthoCornerConstraint(first.corner.xNode, last.corner.yNode)
+                }
+                1 -> {
+                    last.corner.yNode.boundTo = first.corner.yNode // own y -> horizontal closing edge
+                    OrthoCornerConstraint(last.corner.xNode, first.corner.yNode)
+                }
+                else -> return
+            }
         redirect.isEndpoint = false
         first.corner.isEndpoint = false
         el.constraint = redirect
@@ -524,7 +653,11 @@ class Document {
      * the [Wall] so openings can be added later. A straight run (collinear legs) yields parallel
      * offsets whose miter is undefined and simply renders invalid.
      */
-    fun buildWall(vertices: List<PointRef>, thickness: ScalarRef, closed: Boolean = false): Wall? {
+    fun buildWall(
+        vertices: List<PointRef>,
+        thickness: ScalarRef,
+        closed: Boolean = false,
+    ): Wall? {
         if (vertices.size < 2) return null
         val w = Wall(vertices.toList(), thickness, closed && vertices.size >= 3)
         walls.add(w)
@@ -536,14 +669,22 @@ class Document {
         (Evaluator().eval(ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.mm } ?: 0.0
 
     /** The face point at centerline distance [dist] from leg [legI]'s start, on face line [faceLine]. */
-    private fun facePointAt(legLine: LineRef, legStart: PointRef, dist: ScalarRef, faceLine: LineRef): PointRef =
+    private fun facePointAt(
+        legLine: LineRef,
+        legStart: PointRef,
+        dist: ScalarRef,
+        faceLine: LineRef,
+    ): PointRef =
         cx.projectToLine(cx.pointAlongLine(legLine, legStart, dist, +1), faceLine)
 
     /** (Re)build a wall's face/cap/jamb geometry from its centerline, thickness and openings. */
     fun regenerateWall(w: Wall) {
         elements.removeAll { it.id in w.ownedIds }
         w.ownedIds.clear()
-        fun own(ref: SegmentRef) { w.ownedIds.add(add(ref, ElementKind.SEGMENT, Styles.WALL).id) }
+
+        fun own(ref: SegmentRef) {
+            w.ownedIds.add(add(ref, ElementKind.SEGMENT, Styles.WALL).id)
+        }
 
         val v = w.vertices
         val closed = w.closed && v.size >= 3
@@ -553,28 +694,31 @@ class Document {
         val flBySide = intArrayOf(+1, -1).map { s -> legLines.map { cx.parallelAtDistance(it, half, s) } }
 
         // corner points per side: closed -> one miter per vertex (wraps); open -> start cap, miters, end cap
-        val cornersBySide = flBySide.map { fl ->
-            val c = ArrayList<PointRef>()
-            if (closed) {
-                for (j in 0 until legCount) c.add(cx.select(cx.intersectLL(fl[(j - 1 + legCount) % legCount], fl[j]), +1))
-            } else {
-                c.add(cx.projectToLine(v.first(), fl.first()))
-                for (j in 1 until legCount) c.add(cx.select(cx.intersectLL(fl[j - 1], fl[j]), +1))
-                c.add(cx.projectToLine(v.last(), fl.last()))
+        val cornersBySide =
+            flBySide.map { fl ->
+                val c = ArrayList<PointRef>()
+                if (closed) {
+                    for (j in 0 until legCount) c.add(cx.select(cx.intersectLL(fl[(j - 1 + legCount) % legCount], fl[j]), +1))
+                } else {
+                    c.add(cx.projectToLine(v.first(), fl.first()))
+                    for (j in 1 until legCount) c.add(cx.select(cx.intersectLL(fl[j - 1], fl[j]), +1))
+                    c.add(cx.projectToLine(v.last(), fl.last()))
+                }
+                c
             }
-            c
-        }
 
         // face pieces per side, split by the openings on each leg
         for (side in 0..1) {
-            val fl = flBySide[side]; val corners = cornersBySide[side]
+            val fl = flBySide[side]
+            val corners = cornersBySide[side]
             for (legI in 0 until legCount) {
                 val ops = w.openings.filter { it.legIndex == legI }.sortedBy { evalMm(it.position) }
                 var prev = corners[legI]
                 for (op in ops) {
                     val js = facePointAt(legLines[legI], v[legI], op.position, fl[legI])
                     val je = facePointAt(legLines[legI], v[legI], cx.add(op.position, op.width), fl[legI])
-                    own(cx.segment(prev, js)); prev = je   // solid piece then gap
+                    own(cx.segment(prev, js))
+                    prev = je // solid piece then gap
                 }
                 own(cx.segment(prev, corners[if (closed) (legI + 1) % legCount else legI + 1]))
             }
@@ -586,12 +730,21 @@ class Document {
         }
         // jambs (reveal lines) across the wall at each opening edge
         for (op in w.openings) {
-            val leg = legLines[op.legIndex]; val start = v[op.legIndex]
+            val leg = legLines[op.legIndex]
+            val start = v[op.legIndex]
             val sEnd = cx.add(op.position, op.width)
-            own(cx.segment(facePointAt(leg, start, op.position, flBySide[0][op.legIndex]),
-                           facePointAt(leg, start, op.position, flBySide[1][op.legIndex])))
-            own(cx.segment(facePointAt(leg, start, sEnd, flBySide[0][op.legIndex]),
-                           facePointAt(leg, start, sEnd, flBySide[1][op.legIndex])))
+            own(
+                cx.segment(
+                    facePointAt(leg, start, op.position, flBySide[0][op.legIndex]),
+                    facePointAt(leg, start, op.position, flBySide[1][op.legIndex]),
+                ),
+            )
+            own(
+                cx.segment(
+                    facePointAt(leg, start, sEnd, flBySide[0][op.legIndex]),
+                    facePointAt(leg, start, sEnd, flBySide[1][op.legIndex]),
+                ),
+            )
         }
     }
 
@@ -601,63 +754,129 @@ class Document {
      * position and width are editable and the wall regenerates around them. No-op if no wall leg is
      * within tolerance.
      */
-    fun addOpeningAt(at: Vec2, width: ScalarRef, tol: Double): Boolean {
+    fun addOpeningAt(
+        at: Vec2,
+        width: ScalarRef,
+        tol: Double,
+    ): Boolean {
         val ev = Evaluator()
-        var best: Wall? = null; var bestLeg = -1; var bestPos = 0.0; var bestD = Double.MAX_VALUE
+        var best: Wall? = null
+        var bestLeg = -1
+        var bestPos = 0.0
+        var bestD = Double.MAX_VALUE
         for (w in walls) {
-            val threshold = tol + evalMm(w.thickness) / 2   // clicking anywhere on the wall body counts
+            val threshold = tol + evalMm(w.thickness) / 2 // clicking anywhere on the wall body counts
             for (i in 0 until w.vertices.size - 1) {
                 val a = (ev.eval(w.vertices[i].node) as? EvalResult.Ok)?.value as? PointValue ?: continue
                 val b = (ev.eval(w.vertices[i + 1].node) as? EvalResult.Ok)?.value as? PointValue ?: continue
-                val ab = b.p - a.p; val len = ab.length()
+                val ab = b.p - a.p
+                val len = ab.length()
                 if (len < Vec2.EPS) continue
                 val t = ((at - a.p).dot(ab) / (len * len)).coerceIn(0.0, 1.0)
                 val d = (at - (a.p + ab * t)).length()
-                if (d <= threshold && d < bestD) { bestD = d; best = w; bestLeg = i; bestPos = t * len }
+                if (d <= threshold && d < bestD) {
+                    bestD = d
+                    best = w
+                    bestLeg = i
+                    bestPos = t * len
+                }
             }
         }
         val w = best ?: return false
         val widthVal = evalMm(width)
-        val legLen = run {
-            val a = (ev.eval(w.vertices[bestLeg].node) as EvalResult.Ok).value as PointValue
-            val b = (ev.eval(w.vertices[bestLeg + 1].node) as EvalResult.Ok).value as PointValue
-            (b.p - a.p).length()
-        }
-        val pos = (bestPos - widthVal / 2).coerceIn(0.0, maxOf(0.0, legLen - widthVal))   // centre on the click
+        val legLen =
+            run {
+                val a = (ev.eval(w.vertices[bestLeg].node) as EvalResult.Ok).value as PointValue
+                val b = (ev.eval(w.vertices[bestLeg + 1].node) as EvalResult.Ok).value as PointValue
+                (b.p - a.p).length()
+            }
+        val pos = (bestPos - widthVal / 2).coerceIn(0.0, maxOf(0.0, legLen - widthVal)) // centre on the click
         val posRef = newParameter("op", pos.mm).ref
         w.openings.add(Opening(bestLeg, posRef, width))
         regenerateWall(w)
         return true
     }
-    fun ray(a: PointRef, b: PointRef) = add(cx.ray(a, b), ElementKind.RAY, Styles.CURVE)
-    fun circle(center: PointRef, through: PointRef) = add(cx.circleCP(center, through), ElementKind.CIRCLE, Styles.CURVE)
-    fun circleCR(center: PointRef, radius: ScalarRef) = add(cx.circleCR(center, radius), ElementKind.CIRCLE, Styles.CURVE)
-    fun circle3(a: PointRef, b: PointRef, c: PointRef) = add(cx.circle3(a, b, c), ElementKind.CIRCLE, Styles.CURVE)
-    fun arc3(a: PointRef, b: PointRef, c: PointRef) = add(cx.arc3(a, b, c), ElementKind.ARC, Styles.CURVE)
-    fun arcCenterStartEnd(center: PointRef, start: PointRef, end: PointRef) = add(cx.arcCenterStartEnd(center, start, end), ElementKind.ARC, Styles.CURVE)
+
+    fun ray(
+        a: PointRef,
+        b: PointRef,
+    ) = add(cx.ray(a, b), ElementKind.RAY, Styles.CURVE)
+
+    fun circle(
+        center: PointRef,
+        through: PointRef,
+    ) = add(cx.circleCP(center, through), ElementKind.CIRCLE, Styles.CURVE)
+
+    fun circleCR(
+        center: PointRef,
+        radius: ScalarRef,
+    ) = add(cx.circleCR(center, radius), ElementKind.CIRCLE, Styles.CURVE)
+
+    fun circle3(
+        a: PointRef,
+        b: PointRef,
+        c: PointRef,
+    ) = add(cx.circle3(a, b, c), ElementKind.CIRCLE, Styles.CURVE)
+
+    fun arc3(
+        a: PointRef,
+        b: PointRef,
+        c: PointRef,
+    ) = add(cx.arc3(a, b, c), ElementKind.ARC, Styles.CURVE)
+
+    fun arcCenterStartEnd(
+        center: PointRef,
+        start: PointRef,
+        end: PointRef,
+    ) = add(cx.arcCenterStartEnd(center, start, end), ElementKind.ARC, Styles.CURVE)
 
     // ---- relational constructions ----
 
-    fun perpBisector(a: PointRef, b: PointRef) = add(cx.perpBisector(a, b), ElementKind.LINE, Styles.CONSTRUCT)
-    fun angleBisector(a: PointRef, v: PointRef, b: PointRef) = add(cx.angleBisector(a, v, b), ElementKind.LINE, Styles.CONSTRUCT)
-    fun perpendicularThrough(line: Element, p: PointRef) = add(cx.perpendicularThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
+    fun perpBisector(
+        a: PointRef,
+        b: PointRef,
+    ) = add(cx.perpBisector(a, b), ElementKind.LINE, Styles.CONSTRUCT)
+
+    fun angleBisector(
+        a: PointRef,
+        v: PointRef,
+        b: PointRef,
+    ) = add(cx.angleBisector(a, v, b), ElementKind.LINE, Styles.CONSTRUCT)
+
+    fun perpendicularThrough(
+        line: Element,
+        p: PointRef,
+    ) = add(cx.perpendicularThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
+
     /** Tangent at a point-on-circle — the circle is inferred from the point's constraint. */
     fun tangentAtPointOnCircle(pointEl: Element) {
         val c = pointEl.constraint
         if (c is OnCircleConstraint) add(cx.tangentAtCircle(c.circle, pointEl.ref as PointRef), ElementKind.LINE, Styles.CONSTRUCT)
     }
-    fun parallelThrough(line: Element, p: PointRef) = add(cx.parallelThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
+
+    fun parallelThrough(
+        line: Element,
+        p: PointRef,
+    ) = add(cx.parallelThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
 
     /**
      * Fillet between two legs (lines/segments/rays). The corner is their intersection; the
      * quadrant is chosen by which side of the corner each leg was clicked ([clickA]/[clickB]).
      */
-    fun filletBetweenLines(leg1: Element, leg2: Element, radius: ScalarRef, clickA: Vec2, clickB: Vec2): Element {
-        val l1 = carrierLine(leg1); val l2 = carrierLine(leg2)
+    fun filletBetweenLines(
+        leg1: Element,
+        leg2: Element,
+        radius: ScalarRef,
+        clickA: Vec2,
+        clickB: Vec2,
+    ): Element {
+        val l1 = carrierLine(leg1)
+        val l2 = carrierLine(leg2)
         val ev = Evaluator()
         val la = (ev.eval(l1.node) as? EvalResult.Ok)?.value as? LineValue
         val lb = (ev.eval(l2.node) as? EvalResult.Ok)?.value as? LineValue
-        var sign1 = 1; var sign2 = 1
+        var sign1 = 1
+        var sign2 = 1
         if (la != null && lb != null) {
             val denom = la.line.dir.cross(lb.line.dir)
             if (kotlin.math.abs(denom) > Vec2.EPS) {
@@ -670,15 +889,24 @@ class Document {
     }
 
     /** Both external (or internal) common tangents of two circles. */
-    fun commonTangents(c1: Element, c2: Element, inner: Boolean): List<Element> {
-        val a = c1.ref as CircleRef; val b = c2.ref as CircleRef
+    fun commonTangents(
+        c1: Element,
+        c2: Element,
+        inner: Boolean,
+    ): List<Element> {
+        val a = c1.ref as CircleRef
+        val b = c2.ref as CircleRef
         return listOf(+1, -1).map {
             add(if (inner) cx.innerTangent(a, b, it) else cx.outerTangent(a, b, it), ElementKind.LINE, Styles.CONSTRUCT)
         }
     }
 
     /** Concentric circle offset by [distance]; shrinks if [at] is inside the circle, else grows. */
-    fun concentricCircle(circle: Element, distance: ScalarRef, at: Vec2): Element {
+    fun concentricCircle(
+        circle: Element,
+        distance: ScalarRef,
+        at: Vec2,
+    ): Element {
         val ref = circle.ref as CircleRef
         val c = (Evaluator().eval(ref.node) as? EvalResult.Ok)?.value as? CircleValue
         val sign = if (c != null && (at - c.circle.center).length() < c.circle.radius) -1 else 1
@@ -686,7 +914,11 @@ class Document {
     }
 
     /** Parallel to [line] offset by [distance]; side chosen by which side of the line [at] is on. */
-    fun parallelAtDistance(line: Element, distance: ScalarRef, at: Vec2): Element {
+    fun parallelAtDistance(
+        line: Element,
+        distance: ScalarRef,
+        at: Vec2,
+    ): Element {
         val lineRef = carrierLine(line)
         val l = (Evaluator().eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
         val sign = if (l != null && (at - l.line.origin).dot(l.line.dir.perp()) < 0) -1 else 1
@@ -696,26 +928,57 @@ class Document {
     // ---- transforms (preserve source kind & style) ----
 
     @Suppress("UNCHECKED_CAST")
-    fun mirror(geom: Element, axis: Element) = add(cx.mirror(geom.ref as Ref<Value>, axis.ref as LineRef), geom.kind, geom.style)
+    fun mirror(
+        geom: Element,
+        axis: Element,
+    ) = add(cx.mirror(geom.ref as Ref<Value>, axis.ref as LineRef), geom.kind, geom.style)
 
     @Suppress("UNCHECKED_CAST")
-    fun rotate(geom: Element, center: PointRef, angle: ScalarRef) = add(cx.rotate(geom.ref as Ref<Value>, center, angle), geom.kind, geom.style)
+    fun rotate(
+        geom: Element,
+        center: PointRef,
+        angle: ScalarRef,
+    ) = add(cx.rotate(geom.ref as Ref<Value>, center, angle), geom.kind, geom.style)
 
     @Suppress("UNCHECKED_CAST")
-    fun scale(geom: Element, center: PointRef, factor: ScalarRef) = add(cx.scaleGeom(geom.ref as Ref<Value>, center, factor), geom.kind, geom.style)
+    fun scale(
+        geom: Element,
+        center: PointRef,
+        factor: ScalarRef,
+    ) = add(cx.scaleGeom(geom.ref as Ref<Value>, center, factor), geom.kind, geom.style)
 
     @Suppress("UNCHECKED_CAST")
-    fun translateByVector(geom: Element, from: PointRef, to: PointRef) = add(cx.translateByVector(geom.ref as Ref<Value>, from, to), geom.kind, geom.style)
+    fun translateByVector(
+        geom: Element,
+        from: PointRef,
+        to: PointRef,
+    ) = add(cx.translateByVector(geom.ref as Ref<Value>, from, to), geom.kind, geom.style)
 
     // ---- measurements ----
 
-    fun measureDistance(a: PointRef, b: PointRef) = measurement("dist", cx.measureDistance(a, b))
-    fun measureAngle(a: PointRef, v: PointRef, b: PointRef) = measurement("angle", cx.measureAngle(a, v, b))
+    fun measureDistance(
+        a: PointRef,
+        b: PointRef,
+    ) = measurement("dist", cx.measureDistance(a, b))
+
+    fun measureAngle(
+        a: PointRef,
+        v: PointRef,
+        b: PointRef,
+    ) = measurement("angle", cx.measureAngle(a, v, b))
+
     fun measureLength(seg: Element) = measurement("len", cx.measureLength(seg.ref as SegmentRef))
+
     fun measureRadius(circle: Element) = measurement("radius", cx.measureRadius(circle.ref as CircleRef))
+
     fun measureX(p: PointRef) = measurement("x", cx.measureX(p))
+
     fun measureY(p: PointRef) = measurement("y", cx.measureY(p))
-    fun measureAngleLines(l1: Element, l2: Element) = measurement("angle", cx.measureAngleLines(carrierLine(l1), carrierLine(l2)))
+
+    fun measureAngleLines(
+        l1: Element,
+        l2: Element,
+    ) = measurement("angle", cx.measureAngleLines(carrierLine(l1), carrierLine(l2)))
 }
 
 /** Default element styles. */

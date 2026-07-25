@@ -30,7 +30,6 @@ import kotlin.math.sin
  * (OP-3) simply produce no value and are skipped (hidden).
  */
 object SceneRenderer {
-
     private const val POINT_PX = 4.0
     private const val TWO_PI = 2.0 * kotlin.math.PI
 
@@ -39,7 +38,17 @@ object SceneRenderer {
 
     private val previewStyle = Style("#ff7f0e", 1.5)
 
-    fun render(doc: Document, ev: Evaluator, cam: Camera, target: DrawTarget, wPx: Double, hPx: Double, grid: Boolean = false, highlight: Vec2? = null, preview: Pair<Vec2, Vec2>? = null) {
+    fun render(
+        doc: Document,
+        ev: Evaluator,
+        cam: Camera,
+        target: DrawTarget,
+        wPx: Double,
+        hPx: Double,
+        grid: Boolean = false,
+        highlight: Vec2? = null,
+        preview: Pair<Vec2, Vec2>? = null,
+    ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
         if (grid) drawGrid(cam, target, view)
@@ -67,7 +76,11 @@ object SceneRenderer {
         target.end()
     }
 
-    private fun norm2pi(a: Double): Double { var r = a % TWO_PI; if (r < 0) r += TWO_PI; return r }
+    private fun norm2pi(a: Double): Double {
+        var r = a % TWO_PI
+        if (r < 0) r += TWO_PI
+        return r
+    }
 
     fun tessellate(arc: Arc): List<Vec2> {
         val sweep = if (arc.ccw) norm2pi(arc.endAngle - arc.startAngle) else -norm2pi(arc.startAngle - arc.endAngle)
@@ -86,11 +99,22 @@ object SceneRenderer {
         val worldPerTarget = 40.0 / scale
         val mag = 10.0.pow(floor(log10(worldPerTarget)))
         val norm = worldPerTarget / mag
-        val factor = if (norm < 2) 1.0 else if (norm < 5) 2.0 else 5.0
+        val factor =
+            if (norm < 2) {
+                1.0
+            } else if (norm < 5) {
+                2.0
+            } else {
+                5.0
+            }
         return factor * mag
     }
 
-    private fun drawGrid(cam: Camera, target: DrawTarget, view: Rect) {
+    private fun drawGrid(
+        cam: Camera,
+        target: DrawTarget,
+        view: Rect,
+    ) {
         val step = niceStep(cam.scale)
         var x = floor(view.lo.x / step) * step
         while (x <= view.hi.x) {
@@ -108,16 +132,32 @@ object SceneRenderer {
 
     private data class Rect(val lo: Vec2, val hi: Vec2)
 
-    private fun worldViewRect(cam: Camera, wPx: Double, hPx: Double): Rect {
+    private fun worldViewRect(
+        cam: Camera,
+        wPx: Double,
+        hPx: Double,
+    ): Rect {
         val a = cam.screenToWorld(Vec2(0.0, 0.0))
         val b = cam.screenToWorld(Vec2(wPx, hPx))
         return Rect(Vec2(min(a.x, b.x), min(a.y, b.y)), Vec2(max(a.x, b.x), max(a.y, b.y)))
     }
 
-    private fun clipLine(line: Line, r: Rect): Segment? = clipParam(line.origin, line.dir, r, Double.NEGATIVE_INFINITY)
-    private fun clipRay(ray: Ray, r: Rect): Segment? = clipParam(ray.origin, ray.dir, r, 0.0)
+    private fun clipLine(
+        line: Line,
+        r: Rect,
+    ): Segment? = clipParam(line.origin, line.dir, r, Double.NEGATIVE_INFINITY)
 
-    private fun clipParam(o: Vec2, dir: Vec2, r: Rect, tStart: Double): Segment? {
+    private fun clipRay(
+        ray: Ray,
+        r: Rect,
+    ): Segment? = clipParam(ray.origin, ray.dir, r, 0.0)
+
+    private fun clipParam(
+        o: Vec2,
+        dir: Vec2,
+        r: Rect,
+        tStart: Double,
+    ): Segment? {
         var tMin = tStart
         var tMax = Double.POSITIVE_INFINITY
         for (axis in 0..1) {
@@ -128,8 +168,10 @@ object SceneRenderer {
             if (abs(od) < Vec2.EPS) {
                 if (oo < lo || oo > hi) return null
             } else {
-                val t1 = (lo - oo) / od; val t2 = (hi - oo) / od
-                tMin = max(tMin, min(t1, t2)); tMax = min(tMax, max(t1, t2))
+                val t1 = (lo - oo) / od
+                val t2 = (hi - oo) / od
+                tMin = max(tMin, min(t1, t2))
+                tMax = min(tMax, max(t1, t2))
             }
         }
         if (tMin > tMax) return null

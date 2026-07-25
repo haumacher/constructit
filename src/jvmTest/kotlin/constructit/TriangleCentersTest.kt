@@ -1,7 +1,9 @@
 package constructit
 
 import constructit.core.Evaluator
-import constructit.dsl.*
+import constructit.dsl.Construction
+import constructit.dsl.point
+import constructit.dsl.segment
 import constructit.geom.Vec2
 import constructit.svg.Drawable
 import constructit.svg.Svg
@@ -16,8 +18,11 @@ import kotlin.test.assertTrue
  * Invariant: circumcentre O, centroid G, orthocentre H are collinear and H = O + 3·(G − O).
  */
 class TriangleCentersTest {
-
-    private fun dist(p: Vec2, origin: Vec2, dir: Vec2) = abs((p - origin).cross(dir))
+    private fun dist(
+        p: Vec2,
+        origin: Vec2,
+        dir: Vec2,
+    ) = abs((p - origin).cross(dir))
 
     @Test
     fun eulerLineAndIncenter() {
@@ -36,24 +41,34 @@ class TriangleCentersTest {
         val I = c.select(c.intersectLL(c.angleBisector(B, A, C), c.angleBisector(A, B, C)), +1)
 
         val ev = Evaluator()
-        val g = ev.point(G); val o = ev.point(O); val h = ev.point(H); val i = ev.point(I)
+        val g = ev.point(G)
+        val o = ev.point(O)
+        val h = ev.point(H)
+        val i = ev.point(I)
 
         // known coordinates
-        assertClose(g.x, 25.0); assertClose(g.y, 40.0 / 3.0)
-        assertClose(o.x, 30.0); assertClose(o.y, 11.5625)
-        assertClose(h.x, 15.0); assertClose(h.y, 16.875)
+        assertClose(g.x, 25.0)
+        assertClose(g.y, 40.0 / 3.0)
+        assertClose(o.x, 30.0)
+        assertClose(o.y, 11.5625)
+        assertClose(h.x, 15.0)
+        assertClose(h.y, 16.875)
 
         // Euler line: collinear, and H = O + 3(G-O)
         assertClose((g - o).cross(h - o), 0.0, tol = 1e-6)
         val predictedH = o + (g - o) * 3.0
-        assertClose(h.x, predictedH.x); assertClose(h.y, predictedH.y)
+        assertClose(h.x, predictedH.x)
+        assertClose(h.y, predictedH.y)
 
         // incentre equidistant from the three sides
-        val va = ev.point(A); val vb = ev.point(B); val vc = ev.point(C)
+        val va = ev.point(A)
+        val vb = ev.point(B)
+        val vc = ev.point(C)
         val dAB = dist(i, va, (vb - va).normalized())
         val dBC = dist(i, vb, (vc - vb).normalized())
         val dCA = dist(i, vc, (va - vc).normalized())
-        assertClose(dAB, dBC); assertClose(dBC, dCA)
+        assertClose(dAB, dBC)
+        assertClose(dBC, dCA)
         assertTrue(dAB > 0.0)
     }
 
@@ -67,16 +82,19 @@ class TriangleCentersTest {
         val G = c.select(c.intersectLL(c.lineThrough(A, c.midpoint(B, C)), c.lineThrough(B, c.midpoint(C, A))), +1)
         val H = c.select(c.intersectLL(c.perpendicularThrough(c.lineThrough(B, C), A), c.perpendicularThrough(c.lineThrough(A, C), B)), +1)
 
-        val svg = Svg.render(
-            Evaluator(),
-            listOf(
-                Drawable(c.circleCP(O, A), stroke = "#dddddd"),         // circumcircle
-                Drawable(c.segment(A, B)), Drawable(c.segment(B, C)), Drawable(c.segment(C, A)),
-                Drawable(c.lineThrough(O, H), stroke = "#d62728"),      // Euler line
-                Drawable(A), Drawable(B), Drawable(C),
-                Drawable(O, stroke = "#d62728"), Drawable(G, stroke = "#2ca02c"), Drawable(H, stroke = "#9467bd"),
-            ),
-        )
+        val svg =
+            Svg.render(
+                Evaluator(),
+                listOf(
+                    // circumcircle
+                    Drawable(c.circleCP(O, A), stroke = "#dddddd"),
+                    Drawable(c.segment(A, B)), Drawable(c.segment(B, C)), Drawable(c.segment(C, A)),
+                    // Euler line
+                    Drawable(c.lineThrough(O, H), stroke = "#d62728"),
+                    Drawable(A), Drawable(B), Drawable(C),
+                    Drawable(O, stroke = "#d62728"), Drawable(G, stroke = "#2ca02c"), Drawable(H, stroke = "#9467bd"),
+                ),
+            )
         Golden.check("triangle_centers", svg)
     }
 }

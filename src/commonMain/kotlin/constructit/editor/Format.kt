@@ -7,15 +7,15 @@ import kotlin.math.round
 
 /** Human-readable, unit-aware formatting of quantities for the properties panel. */
 object Format {
-
-    fun quantity(q: Quantity): String = when (q.dim) {
-        Dimension.LENGTH -> num(q.mm) + " mm"
-        Dimension.ANGLE -> num(q.deg) + "°"
-        Dimension.NONE -> num(q.value)
-        Dimension.AREA -> num(q.base) + " mm²"
-        Dimension.VOLUME -> num(q.base) + " mm³"
-        else -> num(q.base) + " [" + q.dim + "]"
-    }
+    fun quantity(q: Quantity): String =
+        when (q.dim) {
+            Dimension.LENGTH -> num(q.mm) + " mm"
+            Dimension.ANGLE -> num(q.deg) + "°"
+            Dimension.NONE -> num(q.value)
+            Dimension.AREA -> num(q.base) + " mm²"
+            Dimension.VOLUME -> num(q.base) + " mm³"
+            else -> num(q.base) + " [" + q.dim + "]"
+        }
 
     /** Round to 3 decimals, trimming trailing zeros; deterministic across platforms. */
     fun num(x: Double): String {

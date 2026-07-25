@@ -80,7 +80,12 @@ private fun setupApp() {
         val name = (document.getElementById("p-name") as HTMLInputElement).value.ifBlank { "p" }
         val v = (document.getElementById("p-value") as HTMLInputElement).value.toDoubleOrNull() ?: 0.0
         val unit = (document.getElementById("p-unit") as HTMLSelectElement).value
-        val q = when (unit) { "deg" -> Quantity.deg(v); "num" -> Quantity.number(v); else -> Quantity.mm(v) }
+        val q =
+            when (unit) {
+                "deg" -> Quantity.deg(v)
+                "num" -> Quantity.number(v)
+                else -> Quantity.mm(v)
+            }
         editor.activeScalar = editor.doc.newParameter(name, q)
         repaint()
     })
@@ -116,8 +121,11 @@ private fun setupApp() {
             }
             t is HTMLSelectElement && t.className.contains("pbind") -> {
                 val target = editor.doc.scalars.firstOrNull { s -> s.id == t.value }
-                if (target == null) editor.doc.unwireParameter(entry)
-                else if (!editor.doc.wireParameter(entry, target)) editor.note("Can't wire ${entry.name}: type mismatch or would create a cycle")
+                if (target == null) {
+                    editor.doc.unwireParameter(entry)
+                } else if (!editor.doc.wireParameter(entry, target)) {
+                    editor.note("Can't wire ${entry.name}: type mismatch or would create a cycle")
+                }
                 repaint()
             }
         }
@@ -168,53 +176,67 @@ private fun renderPanel(editor: Editor) {
 
     // parameters (editable)
     val plist = document.getElementById("params-list") as HTMLElement
-    plist.innerHTML = editor.doc.scalars.filter { it.editable }.joinToString("") { s ->
-        val active = if (s === editor.activeScalar) " active" else ""
-        val q = ev.scalar(s.ref)
-        val boundId = editor.doc.boundEntry(s)?.id ?: ""
-        // wire options: other scalars of the same dimension
-        val opts = StringBuilder("<option value=\"\">free</option>")
-        for (t in editor.doc.scalars) {
-            if (t === s) continue
-            val td = (ev.eval(t.ref.node) as? constructit.core.EvalResult.Ok)?.let { (it.value as? constructit.core.ScalarValue)?.q?.dim }
-            if (td == null || td != q.dim) continue
-            opts.append("<option value=\"${t.id}\"${if (t.id == boundId) " selected" else ""}>=${t.name}</option>")
+    plist.innerHTML =
+        editor.doc.scalars.filter { it.editable }.joinToString("") { s ->
+            val active = if (s === editor.activeScalar) " active" else ""
+            val q = ev.scalar(s.ref)
+            val boundId = editor.doc.boundEntry(s)?.id ?: ""
+            // wire options: other scalars of the same dimension
+            val opts = StringBuilder("<option value=\"\">free</option>")
+            for (t in editor.doc.scalars) {
+                if (t === s) continue
+                val td = (ev.eval(t.ref.node) as? constructit.core.EvalResult.Ok)?.let { (it.value as? constructit.core.ScalarValue)?.q?.dim }
+                if (td == null || td != q.dim) continue
+                opts.append("<option value=\"${t.id}\"${if (t.id == boundId) " selected" else ""}>=${t.name}</option>")
+            }
+            val disabled = if (editor.doc.isBound(s)) " disabled" else ""
+            "<div class=\"prow$active\" data-sid=\"${s.id}\">" +
+                "<span class=\"pname\">${s.name}</span>" +
+                "<input class=\"pval\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"$disabled>" +
+                "<span class=\"punit\">${unitLabel(q.dim)}</span>" +
+                "<select class=\"pbind\" data-sid=\"${s.id}\">$opts</select>" +
+                "</div>"
         }
-        val disabled = if (editor.doc.isBound(s)) " disabled" else ""
-        "<div class=\"prow$active\" data-sid=\"${s.id}\">" +
-            "<span class=\"pname\">${s.name}</span>" +
-            "<input class=\"pval\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"$disabled>" +
-            "<span class=\"punit\">${unitLabel(q.dim)}</span>" +
-            "<select class=\"pbind\" data-sid=\"${s.id}\">$opts</select>" +
-            "</div>"
-    }
 
     // measurements (read-only)
     val mlist = document.getElementById("measure-list") as HTMLElement
-    mlist.innerHTML = editor.doc.scalars.filter { !it.editable }.joinToString("") { s ->
-        val active = if (s === editor.activeScalar) " active" else ""
-        val value = (ev.eval(s.ref.node) as? constructit.core.EvalResult.Ok)?.let { Format.quantity((it.value as constructit.core.ScalarValue).q) } ?: "—"
-        "<div class=\"mrow$active\" data-sid=\"${s.id}\"><span>${s.name}</span><span class=\"mval\">$value</span></div>"
-    }
+    mlist.innerHTML =
+        editor.doc.scalars.filter { !it.editable }.joinToString("") { s ->
+            val active = if (s === editor.activeScalar) " active" else ""
+            val value = (ev.eval(s.ref.node) as? constructit.core.EvalResult.Ok)?.let { Format.quantity((it.value as constructit.core.ScalarValue).q) } ?: "—"
+            "<div class=\"mrow$active\" data-sid=\"${s.id}\"><span>${s.name}</span><span class=\"mval\">$value</span></div>"
+        }
 
     // element tree
     val tree = document.getElementById("tree") as HTMLElement
-    tree.innerHTML = editor.doc.elements.joinToString("") {
-        "<div class=\"item\">${it.kind.name.lowercase()}<span class=\"eid\">${it.id}</span></div>"
+    tree.innerHTML =
+        editor.doc.elements.joinToString("") {
+            "<div class=\"item\">${it.kind.name.lowercase()}<span class=\"eid\">${it.id}</span></div>"
+        }
+}
+
+private fun unitLabel(dim: Dimension): String =
+    when (dim) {
+        Dimension.LENGTH -> "mm"
+        Dimension.ANGLE -> "°"
+        else -> ""
     }
-}
 
-private fun unitLabel(dim: Dimension): String = when (dim) {
-    Dimension.LENGTH -> "mm"; Dimension.ANGLE -> "°"; else -> ""
-}
+private fun displayValue(q: Quantity): String =
+    when (q.dim) {
+        Dimension.ANGLE -> Format.num(q.deg)
+        Dimension.LENGTH -> Format.num(q.mm)
+        else -> Format.num(q.value)
+    }
 
-private fun displayValue(q: Quantity): String = when (q.dim) {
-    Dimension.ANGLE -> Format.num(q.deg)
-    Dimension.LENGTH -> Format.num(q.mm)
-    else -> Format.num(q.value)
-}
-
-private fun quantityIn(entry: ScalarEntry, value: Double): Quantity {
+private fun quantityIn(
+    entry: ScalarEntry,
+    value: Double,
+): Quantity {
     val dim = (Evaluator().eval(entry.ref.node) as? constructit.core.EvalResult.Ok)?.let { (it.value as constructit.core.ScalarValue).q.dim } ?: Dimension.LENGTH
-    return when (dim) { Dimension.ANGLE -> Quantity.deg(value); Dimension.LENGTH -> Quantity.mm(value); else -> Quantity.number(value) }
+    return when (dim) {
+        Dimension.ANGLE -> Quantity.deg(value)
+        Dimension.LENGTH -> Quantity.mm(value)
+        else -> Quantity.number(value)
+    }
 }

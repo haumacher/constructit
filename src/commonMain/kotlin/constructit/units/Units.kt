@@ -11,16 +11,18 @@ import kotlin.math.tan
  */
 data class Dimension(val length: Int, val angle: Int) {
     operator fun times(o: Dimension) = Dimension(length + o.length, angle + o.angle)
+
     operator fun div(o: Dimension) = Dimension(length - o.length, angle - o.angle)
 
-    override fun toString(): String = when (this) {
-        NONE -> "1"
-        LENGTH -> "L"
-        AREA -> "L^2"
-        VOLUME -> "L^3"
-        ANGLE -> "A"
-        else -> "L^$length A^$angle"
-    }
+    override fun toString(): String =
+        when (this) {
+            NONE -> "1"
+            LENGTH -> "L"
+            AREA -> "L^2"
+            VOLUME -> "L^3"
+            ANGLE -> "A"
+            else -> "L^$length A^$angle"
+        }
 
     companion object {
         val NONE = Dimension(0, 0)
@@ -39,7 +41,6 @@ class DimensionError(message: String) : RuntimeException(message)
  * Dimensional analysis (OP-7): + and - require equal dimension; * and / combine dimensions.
  */
 data class Quantity(val base: Double, val dim: Dimension) {
-
     operator fun plus(o: Quantity): Quantity {
         if (dim != o.dim) throw DimensionError("cannot add $dim and ${o.dim}")
         return Quantity(base + o.base, dim)
@@ -51,11 +52,17 @@ data class Quantity(val base: Double, val dim: Dimension) {
     }
 
     operator fun times(o: Quantity) = Quantity(base * o.base, dim * o.dim)
+
     operator fun div(o: Quantity) = Quantity(base / o.base, dim / o.dim)
+
     operator fun times(factor: Double) = Quantity(base * factor, dim)
+
     operator fun unaryMinus() = Quantity(-base, dim)
 
-    fun requireDim(expected: Dimension, what: String): Quantity {
+    fun requireDim(
+        expected: Dimension,
+        what: String,
+    ): Quantity {
         if (dim != expected) throw DimensionError("$what requires $expected but got $dim")
         return this
     }
@@ -71,9 +78,13 @@ data class Quantity(val base: Double, val dim: Dimension) {
 
     companion object {
         fun mm(v: Double) = Quantity(v, Dimension.LENGTH)
+
         fun cm(v: Double) = Quantity(v * 10.0, Dimension.LENGTH)
+
         fun deg(v: Double) = Quantity(v * PI / 180.0, Dimension.ANGLE)
+
         fun rad(v: Double) = Quantity(v, Dimension.ANGLE)
+
         fun number(v: Double) = Quantity(v, Dimension.NONE)
     }
 }
@@ -88,5 +99,7 @@ val Int.deg get() = Quantity.deg(this.toDouble())
 
 // Dimension-aware transcendental helpers (angle -> dimensionless).
 fun sin(q: Quantity): Quantity = Quantity(sin(q.requireDim(Dimension.ANGLE, "sin").base), Dimension.NONE)
+
 fun cos(q: Quantity): Quantity = Quantity(cos(q.requireDim(Dimension.ANGLE, "cos").base), Dimension.NONE)
+
 fun tan(q: Quantity): Quantity = Quantity(tan(q.requireDim(Dimension.ANGLE, "tan").base), Dimension.NONE)

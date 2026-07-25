@@ -1,0 +1,11 @@
+root = true
+
+[*.{kt,kts}]
+ktlint_code_style = ktlint_official
+
+# The data-driven ToolDef table (Tools.kt) is intentionally one wide line per tool,
+# reaching ~300 chars. Wide lines are a deliberate style choice here.
+max_line_length = off
+
+# Geometric single-capital names (X1, C1, P2, ...) mirror the maths and are intentional.
+ktlint_standard_property-naming = disabled

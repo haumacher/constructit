@@ -2,11 +2,16 @@ package constructit
 
 import java.io.File
 import kotlin.math.abs
-import kotlin.test.assertTrue
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /** Numeric closeness assertion for geometry (base units: mm, rad). */
-fun assertClose(actual: Double, expected: Double, tol: Double = 1e-6, msg: String = "") {
+fun assertClose(
+    actual: Double,
+    expected: Double,
+    tol: Double = 1e-6,
+    msg: String = "",
+) {
     assertTrue(abs(actual - expected) <= tol, "expected $expected but was $actual. $msg")
 }
 
@@ -18,7 +23,10 @@ fun assertClose(actual: Double, expected: Double, tol: Double = 1e-6, msg: Strin
 object Golden {
     private val dir = File("src/jvmTest/resources/golden")
 
-    fun check(name: String, svg: String) {
+    fun check(
+        name: String,
+        svg: String,
+    ) {
         val file = File(dir, "$name.svg")
         if (!file.exists()) {
             dir.mkdirs()

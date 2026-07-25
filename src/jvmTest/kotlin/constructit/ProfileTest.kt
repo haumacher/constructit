@@ -1,7 +1,10 @@
 package constructit
 
 import constructit.core.Evaluator
-import constructit.dsl.*
+import constructit.dsl.Construction
+import constructit.dsl.arc
+import constructit.dsl.profile
+import constructit.dsl.segment
 import constructit.geom.ProfileElement
 import constructit.geom.Vec2
 import constructit.units.mm
@@ -12,15 +15,16 @@ import kotlin.test.assertTrue
 
 /** Tier 3: Profile — an ordered closed chain that will feed extrude/revolve in phase 2. */
 class ProfileTest {
-
-    private fun endpoints(e: ProfileElement): Pair<Vec2, Vec2> = when (e) {
-        is ProfileElement.Seg -> e.segment.a to e.segment.b
-        is ProfileElement.ArcE -> {
-            val a = e.arc; val s = Vec2(a.center.x + a.radius * Math.cos(a.startAngle), a.center.y + a.radius * Math.sin(a.startAngle))
-            val t = Vec2(a.center.x + a.radius * Math.cos(a.endAngle), a.center.y + a.radius * Math.sin(a.endAngle))
-            s to t
+    private fun endpoints(e: ProfileElement): Pair<Vec2, Vec2> =
+        when (e) {
+            is ProfileElement.Seg -> e.segment.a to e.segment.b
+            is ProfileElement.ArcE -> {
+                val a = e.arc
+                val s = Vec2(a.center.x + a.radius * Math.cos(a.startAngle), a.center.y + a.radius * Math.sin(a.startAngle))
+                val t = Vec2(a.center.x + a.radius * Math.cos(a.endAngle), a.center.y + a.radius * Math.sin(a.endAngle))
+                s to t
+            }
         }
-    }
 
     private fun assertClosedChain(elements: List<ProfileElement>) {
         for (k in elements.indices) {
