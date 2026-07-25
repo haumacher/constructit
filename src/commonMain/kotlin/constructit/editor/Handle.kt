@@ -4,6 +4,7 @@ import constructit.core.CircleValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.LineValue
+import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.core.SourceNode
 import constructit.dsl.CircleRef
@@ -113,6 +114,30 @@ fun explainImmovable(el: Element): String {
         "(a welded or attached end, or a closed loop). Move what drives it instead.$alternative"
 }
 
+/** The effective point value of [node] — its literal, or whatever drives it. */
+private fun pointOf(
+    node: SourceNode,
+    ev: Evaluator,
+): Vec2? = ((ev.eval(node) as? EvalResult.Ok)?.value as? PointValue)?.p
+
+/**
+ * A free point. Its two coordinates are the only DOF, and giving it a handle like everything else is
+ * what lets a point's position be typed as well as dragged (OP-13) — and saved by the same mechanism
+ * that saves every other value.
+ */
+class FreePointHandle(private val node: SourceNode) : Handle {
+    override val dragNodes: List<SourceNode> get() = listOf(node)
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        node.value = PointValue(world)
+    }
+
+    override fun fields(): List<HandleField> = listOf(pointCoordField("x", node, 0), pointCoordField("y", node, 1))
+}
+
 /** The effective value of [node] in base units — its literal, or whatever drives it. */
 private fun baseOf(
     node: SourceNode,
@@ -129,6 +154,22 @@ fun coordField(
     Dimension.LENGTH,
     { ev -> baseOf(node, ev)?.let { Quantity.mm(it) } },
     { q -> node.value = ScalarValue(Quantity.mm(q.mm)) },
+)
+
+/** A field over one component of a point-valued source node: [axis] 0 = x, 1 = y. */
+fun pointCoordField(
+    label: String,
+    node: SourceNode,
+    axis: Int,
+) = HandleField(
+    label,
+    node,
+    Dimension.LENGTH,
+    { ev -> pointOf(node, ev)?.let { Quantity.mm(if (axis == 0) it.x else it.y) } },
+    { q ->
+        val p = pointOf(node, Evaluator()) ?: Vec2(0.0, 0.0)
+        node.value = PointValue(if (axis == 0) Vec2(q.mm, p.y) else Vec2(p.x, q.mm))
+    },
 )
 
 /** A field for an angle-valued [node]. */

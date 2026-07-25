@@ -46,8 +46,7 @@ class Element(
      */
     val draggable: Boolean get() =
         when (kind) {
-            ElementKind.POINT -> (ref.node as? SourceNode)?.boundTo == null
-            ElementKind.ON_CURVE -> hasFreeDof
+            ElementKind.POINT, ElementKind.ON_CURVE -> hasFreeDof
             else -> false
         }
 
@@ -173,7 +172,10 @@ class Document {
         x: Quantity,
         y: Quantity,
     ): PointRef =
-        cx.freePoint("P${counter + 1}", x, y).also { add(it, ElementKind.POINT, Styles.FREE_POINT) }
+        cx.freePoint("P${counter + 1}", x, y).also { ref ->
+            val el = add(ref, ElementKind.POINT, Styles.FREE_POINT)
+            el.handle = FreePointHandle(ref.node as SourceNode) // its position is a handle field too
+        }
 
     /** Ensure scalar names are unique so the wiring dropdown is never ambiguous. */
     private fun uniqueScalarName(base: String): String {
@@ -262,7 +264,7 @@ class Document {
         world: Vec2,
     ) {
         require(el.kind == ElementKind.POINT) { "not a free point" }
-        (el.ref.node as SourceNode).value = PointValue(world)
+        el.handle?.drag(world, Evaluator())
     }
 
     // ---- welding: join two points by aliasing one onto the other (point-level wiring) ----
@@ -299,7 +301,7 @@ class Document {
         node.boundTo = null
         if (cur != null) node.value = PointValue(cur)
         alias.kind = ElementKind.POINT
-        alias.handle = null
+        alias.handle = FreePointHandle(node) // an independent free point again, handle included
         alias.style = Styles.FREE_POINT
         alias.visible = true
     }

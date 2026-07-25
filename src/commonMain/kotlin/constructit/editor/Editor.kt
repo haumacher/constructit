@@ -450,22 +450,9 @@ class Editor(
             dragTarget != null -> {
                 val el = dragTarget!!
                 val world = axisLocked(camera.screenToWorld(screen), el)
-                val c = el.handle
-                when {
-                    // an open ortho-path end drags normally AND shows the weld/attach magnet
-                    c is OrthoCornerHandle && c.isEndpoint -> {
-                        c.drag(world, ev())
-                        updateMagnet(el, world)
-                    }
-                    c != null -> {
-                        c.drag(world, ev())
-                        clearMagnet()
-                    }
-                    else -> {
-                        doc.moveFreePoint(el, world)
-                        updateMagnet(el, world)
-                    }
-                }
+                el.handle?.drag(world, ev())
+                // a free point and an open path end can connect on release; nothing else can
+                if (canConnect(el)) updateMagnet(el, world) else clearMagnet()
                 onChange()
             }
             panning -> {
@@ -521,6 +508,10 @@ class Editor(
             Vec2(start.x, world.y)
         }
     }
+
+    /** Whether dropping [el] can join it to something: a free point, or an open path end. */
+    private fun canConnect(el: Element): Boolean =
+        el.kind == ElementKind.POINT || (el.handle as? OrthoCornerHandle)?.isEndpoint == true
 
     /** True when the active tool's next slot creates a point — the case a snap marker is useful for. */
     private fun placesAPoint(): Boolean {

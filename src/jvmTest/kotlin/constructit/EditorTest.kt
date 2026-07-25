@@ -1504,7 +1504,9 @@ class EditorTest {
         // detaching restores an independent free point at the current position
         ed.doc.unweld(p)
         assertEquals(ElementKind.POINT, p.kind)
-        assertEquals(null, p.handle)
+        // a free point carries a handle too, so its position is typeable as well as draggable
+        assertEquals(listOf("x", "y"), p.handle!!.fields().map { it.label })
+        assertTrue(p.handle!!.fields().all { it.writable })
         val pf = Evaluator().point(p.ref as constructit.dsl.PointRef)
         assertClose(pf.y, 0.0)
         assertClose(pf.x, -20.0)
