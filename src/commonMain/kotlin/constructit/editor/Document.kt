@@ -23,10 +23,12 @@ import constructit.dsl.CircleRef
 import constructit.dsl.Construction
 import constructit.dsl.FrameRef
 import constructit.dsl.LineRef
+import constructit.dsl.LoopRef
 import constructit.dsl.PointRef
 import constructit.dsl.PointSetRef
 import constructit.dsl.RayRef
 import constructit.dsl.Ref
+import constructit.dsl.RegionRef
 import constructit.dsl.RoundedRectArgs
 import constructit.dsl.ScalarRef
 import constructit.dsl.SegmentRef
@@ -68,6 +70,12 @@ enum class ElementKind {
 
     /** An area — an outline with holes (OP-14), what the 2D→3D seam consumes. */
     AREA,
+
+    /**
+     * A **solid**: an extrusion or revolution of a sketch (OP-17). Its home is the 3D view; the 2D
+     * canvas draws only the footprint of the sketch it came from — see [SceneRenderer].
+     */
+    SOLID,
 
     /**
      * A **dimension**: annotation, showing a measurement node's live value (OP-4). Neither scaffolding
@@ -122,7 +130,10 @@ class Element(
             kind == ElementKind.RAY || kind == ElementKind.ARC || kind == ElementKind.BEZIER
 
     /** An output of the construction rather than scaffolding for it (OP-14). */
-    val isResult: Boolean get() = kind == ElementKind.OUTLINE || kind == ElementKind.AREA
+    val isResult: Boolean get() = kind == ElementKind.OUTLINE || kind == ElementKind.AREA || kind == ElementKind.SOLID
+
+    /** A region-valued or loop-valued result — what the 2D→3D seam can consume (OP-17). */
+    val isArea: Boolean get() = kind == ElementKind.OUTLINE || kind == ElementKind.AREA
 
     /**
      * Annotation: it says something *about* the drawing instead of being part of it (OP-14's third
@@ -2227,6 +2238,66 @@ class Document {
         return tp
     }
 
+    // ---- the 2D->3D seam as tools (OP-17) ----
+
+    /**
+     * The region [el] hands to a sketch, or null when it is not an area at all.
+     *
+     * An `AREA` element (a thick path's footprint) already *is* a region; an `OUTLINE` is a single loop,
+     * so it is wrapped by the ordinary [Construction.region] op — a coercion exactly like the
+     * line-carrier one above, and one that creates a node but no element, so the tool step still
+     * accounts for precisely one creation.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun regionOf(el: Element): RegionRef? =
+        when (el.kind) {
+            ElementKind.AREA -> el.ref as RegionRef
+            ElementKind.OUTLINE -> cx.region(el.ref as LoopRef)
+            else -> null
+        }
+
+    /**
+     * Extrude the area [el] by [depth] into a solid (OP-17 slice 1).
+     *
+     * **The sketch plane is the world XY plane** in this slice: a 2D drawing *is* the plan, so that is
+     * where its regions live, and the alternative — asking the user to pick a plane before there is any
+     * way to make one — would be a datum-management UI before there is a datum to manage. Sketching on a
+     * face (and therefore choosing a plane) arrives with the provenance accessors, which is the point of
+     * `facePlane` already existing in the engine.
+     *
+     * The depth stays a **panel parameter**: it is the feature's degree of freedom, and OP-13 is
+     * satisfied through the parameter rather than through a 3D drag handle, which there is no picking in
+     * this view to grab (see [Viewport3]).
+     */
+    fun extrudeSolid(
+        el: Element,
+        depth: ScalarRef,
+    ): Element? {
+        val region = regionOf(el) ?: return null
+        return add(cx.extrude(cx.sketchOn(cx.planeXY(), region), depth), ElementKind.SOLID, Styles.SOLID)
+    }
+
+    /**
+     * Revolve the area [el] through [angle] about the axis carried by the line element [axis] (OP-17
+     * slice 2).
+     *
+     * The axis is the picked line's own origin and direction as *derived nodes*, so the axis moves with
+     * the line: drag the centreline and the turned part follows. A profile touching the axis is legal, one
+     * crossing it makes the node invalid with a reason and heals when it is dragged back (OP-3) — all of
+     * that is [constructit.geom.Geom3.revolve]'s, unchanged.
+     */
+    fun revolveSolid(
+        el: Element,
+        axis: Element,
+        angle: ScalarRef,
+    ): Element? {
+        val region = regionOf(el) ?: return null
+        if (!axis.isLinear) return null
+        val line = carrierLine(axis)
+        val ref = cx.revolve(cx.sketchOn(cx.planeXY(), region), cx.lineOrigin(line), cx.lineDirection(line), angle)
+        return add(ref, ElementKind.SOLID, Styles.SOLID)
+    }
+
     /** The named entry driving [ref] — every scalar a tool consumes came from the panel. */
     private fun scalarEntryFor(ref: ScalarRef): ScalarEntry =
         scalars.firstOrNull { it.ref.node === ref.node }
@@ -2841,6 +2912,13 @@ object Styles {
 
     /** The result layer (OP-14): the drawing itself, weighted so it reads above its scaffolding. */
     val RESULT = Style(stroke = "#111111", width = 2.6)
+
+    /**
+     * A solid's **footprint hint** in the 2D canvas (OP-17): the boundary of the sketch it was made
+     * from, drawn light. Thin on purpose — the solid's home is the 3D view — but present, because it is
+     * what makes the solid pickable, and therefore selectable and deletable, in the view that has picking.
+     */
+    val SOLID = Style(stroke = "#8fa6c4", width = 1.2)
 
     /** Scaffolding, once a result exists to contrast it with — dimmed, not hidden. */
     val DIMMED = Style(stroke = "#c9c9c9", width = 1.0)

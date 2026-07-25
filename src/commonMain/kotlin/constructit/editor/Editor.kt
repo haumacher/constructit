@@ -617,6 +617,20 @@ class Editor(
         return true
     }
 
+    /**
+     * Select [el] outright — the panel's way in, as [selectGroup] is for a group.
+     *
+     * Needed because two elements can share a position exactly: a solid's footprint hint *is* the area
+     * it was extruded from (OP-17), so a canvas click can only ever reach the topmost of the two. The
+     * element tree addresses either one by name, which is the honest answer — biasing the pick would
+     * just make the other one unreachable instead.
+     */
+    fun selectElement(el: Element) {
+        select(listOf(el), el)
+        statusHint = "${selectionLabel()} selected"
+        onChange()
+    }
+
     /** Select every member of [g] — what clicking a member on the canvas does. */
     fun selectGroup(g: Group) {
         val members = doc.groupMembers(g)
@@ -1423,6 +1437,9 @@ class Editor(
                 SlotKind.GEOMETRY -> pickElement(world) { true }
                 SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.handle is OnCircleHandle }
                 SlotKind.CENTRIC -> pickElement(world) { it.kind == ElementKind.CIRCLE || it.kind == ElementKind.ARC }
+                // the seam's slot (OP-17): a traced outline or a thick path's footprint, both of which
+                // bound an area — the coercion between them is the document's, not the pick's
+                SlotKind.AREA -> pickElement(world) { it.isArea }
                 SlotKind.SIDE -> true // captures the click position only; creates nothing
             }
         // existing-only slots do NOT create anything on a miss — just hint and wait

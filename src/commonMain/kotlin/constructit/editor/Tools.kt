@@ -5,10 +5,16 @@ import constructit.dsl.ScalarRef
 import constructit.geom.Vec2
 import constructit.units.Quantity
 
-/** What the next click of a tool must supply. SIDE just captures a click position (creates nothing). */
-enum class SlotKind { PLACE_POINT, POINT, EXISTING_POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT, SIDE, CENTRIC }
+/**
+ * What the next click of a tool must supply. SIDE just captures a click position (creates nothing).
+ *
+ * AREA is the 2D→3D seam's slot (OP-17): it takes a result-layer element that *bounds an area* — a
+ * traced `Outline` (one loop) or a thick path's footprint (a region with holes). One slot for both,
+ * because the difference is a coercion the document performs (`Document.regionOf`), not a different pick.
+ */
+enum class SlotKind { PLACE_POINT, POINT, EXISTING_POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT, SIDE, CENTRIC, AREA }
 
-enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, ANNOTATE, RESULT }
+enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, ANNOTATE, RESULT, SOLIDS }
 
 /**
  * Geometry picked so far for the active tool (split by kind), [at] = the last click's world
@@ -108,6 +114,10 @@ object Tools {
     // Result layer (OP-14)
     const val OUTLINE = "outline"
 
+    // Solids — the 2D->3D seam (OP-17)
+    const val EXTRUDE = "extrude"
+    const val REVOLVE = "revolve"
+
     // Construct
     const val PERP_BISECTOR = "perpbis"
     const val ANGLE_BISECTOR = "anglebis"
@@ -180,6 +190,11 @@ object Tools {
             ToolDef(RECTANGLE, "Rectangle", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two diagonally opposite corners; the other two follow them, so it stays a rectangle however you drag it.") { d, p, _ -> d.rectangle(p.points[0], p.points[1]) },
             ToolDef(ROUNDED_RECT, "Rounded rectangle", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf("radius"), help = "Select a corner radius, then click two diagonally opposite corners; centre and size follow those two points.") { d, p, s -> d.roundedRectangle(p.points[0], p.points[1], s[0]) },
             ToolDef(POLYGON, "Regular polygon", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), minCount = 3, help = "Set the number of sides, then click the centre and one vertex; the other vertices are that one rotated about the centre.") { d, p, _ -> d.regularPolygon(p.points[0], p.points[1], p.count) },
+            // ----- Solids: the 2D->3D seam (OP-17). The sketch plane is the world XY plane in this
+            // slice; the depth/angle is a panel parameter, which is where the feature's DOF is edited
+            // (OP-13) since the 3D view has no picking yet.
+            ToolDef(EXTRUDE, "Extrude", ToolCategory.SOLIDS, listOf(SlotKind.AREA), scalars = listOf("depth"), help = "Select a depth parameter, then click an outline or wall footprint: it becomes a solid, shown in the 3D view.") { d, p, s -> d.extrudeSolid(p.elements[0], s[0]) },
+            ToolDef(REVOLVE, "Revolve", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.LINE), scalars = listOf("angle"), help = "Select an angle parameter, click an outline or footprint, then a line to spin it about (the profile must not cross the axis).") { d, p, s -> d.revolveSolid(p.elements[0], p.elements[1], s[0]) },
             // ----- Construct -----
             ToolDef(PERP_BISECTOR, "Perp. bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points for their perpendicular bisector.") { d, p, _ -> d.perpBisector(p.points[0], p.points[1]) },
             ToolDef(ANGLE_BISECTOR, "Angle bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click a point, the vertex, then another point.") { d, p, _ -> d.angleBisector(p.points[0], p.points[1], p.points[2]) },

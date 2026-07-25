@@ -11,6 +11,7 @@ import constructit.core.PointValue
 import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.SegmentValue
+import constructit.core.SolidValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
 import constructit.geom.GeomMath
@@ -119,6 +120,13 @@ object HitTest {
             is RegionValue ->
                 (v.region.outer.elements + v.region.holes.flatMap { it.elements })
                     .minOfOrNull { distToPiece(world, it) }
+            // A solid is picked by the footprint hint the renderer draws for it (OP-17) — measured to the
+            // same geometry, so what looks pickable is pickable. Its mesh is not consulted: there is no
+            // 3D picking in this slice, and a 2D distance to a projected mesh would depend on the 3D camera.
+            is SolidValue ->
+                v.solid.feature.sketch.regions
+                    .flatMap { r -> r.outer.elements + r.holes.flatMap { it.elements } }
+                    .minOfOrNull { distToPiece(world, it) }
             else -> null
         }
 
@@ -215,6 +223,12 @@ object HitTest {
             is RegionValue ->
                 v.region.outer.elements.any { pieceMeets(it, lo, hi) } ||
                     v.region.holes.any { h -> h.elements.any { pieceMeets(it, lo, hi) } }
+            // the same footprint hint the pick uses, so a marquee takes what it visibly covers
+            is SolidValue ->
+                v.solid.feature.sketch.regions.any { r ->
+                    r.outer.elements.any { pieceMeets(it, lo, hi) } ||
+                        r.holes.any { h -> h.elements.any { pieceMeets(it, lo, hi) } }
+                }
             is PointSetValue -> v.set.points.any { inRect(it, lo, hi) }
             else -> false
         }

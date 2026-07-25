@@ -13,6 +13,7 @@ import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.ScalarValue
 import constructit.core.SegmentValue
+import constructit.core.SolidValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
 import constructit.geom.GeomMath
@@ -105,6 +106,12 @@ object SceneRenderer {
                         for (h in v.region.holes) drawChain(h.elements, cam, target, style)
                     }
                 }
+                // A solid's home is the 3D view; in plan it leaves a **footprint hint** — the boundary
+                // of the sketch it was made from, drawn light (OP-17). Not a projection of the mesh: a
+                // shaded or hidden-line view is a *chosen* projection, which is the 3D view's job, and
+                // the hint is what makes the solid pickable here — hence selectable and deletable in
+                // the one view that has picking.
+                is SolidValue -> drawSketchHint(v, cam, target, style)
                 is PointSetValue -> v.set.points.forEach { target.dot(cam.worldToScreen(it), POINT_PX, style.stroke) }
                 // a dimension's value is a scalar (OP-4), so what is drawn is the graphic it prescribes
                 is ScalarValue -> el.annotation?.let { drawDimension(it, ev, cam, target, style) }
@@ -184,6 +191,26 @@ object SceneRenderer {
             target.circle(s, 6.0, haloInner)
         }
         target.end()
+    }
+
+    /**
+     * A solid's footprint hint: the loops of the sketch it was extruded or revolved from.
+     *
+     * The sketch's own 2D coordinates are used directly, which is exact **because the sketch plane is
+     * the world XY plane** in this slice (OP-17) — the only plane the extrude/revolve tools offer. When
+     * sketch-on-face lands, this becomes a projection through the plane and the hint stops being the
+     * region itself; the cut is recorded in DESIGN.md.
+     */
+    private fun drawSketchHint(
+        v: SolidValue,
+        cam: Camera,
+        target: DrawTarget,
+        style: Style,
+    ) {
+        for (region in v.solid.feature.sketch.regions) {
+            drawChain(region.outer.elements, cam, target, style)
+            for (h in region.holes) drawChain(h.elements, cam, target, style)
+        }
     }
 
     /** Screen length of an arrowhead's barbs, and their half-angle: a drawing mark, so it never scales. */

@@ -26,6 +26,12 @@
 
         #canvas-area { flex: 1; position: relative; background: #fff; }
         #canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+        /* the 3D viewport shares the canvas area; exactly one of the two is shown at a time */
+        #canvas3 { display: block; width: 100%; height: 100%; cursor: grab; }
+        #canvas[hidden], #canvas3[hidden] { display: none; }
+        #view-mode button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
+        #view-mode button:hover { background: #f0f0f0; }
+        #view-mode button.active { background: #1f77b4; color: #fff; border-color: #1f77b4; }
 
         /* right panel */
         #panel { width: 250px; border-left: 1px solid #ddd; overflow: auto; background: #fafafa; padding: 10px; }
@@ -70,7 +76,9 @@
         .grow .gname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         .grow .gcount { color: #999; }
         .grow button { border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; font-size: 11px; line-height: 1; padding: 2px 4px; }
-        #tree .item { font-size: 12px; padding: 2px 4px; border-radius: 4px; }
+        #tree .item { font-size: 12px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+        #tree .item:hover { background: #eef4fb; }
+        #tree .item.active { background: #e2eefb; outline: 1px solid #1f77b4; }
         #tree .item .eid { color: #bbb; float: right; }
     </style>
 </head>
@@ -83,11 +91,15 @@
             <button id="e-redo" title="Redo (Ctrl+Y / Ctrl+Shift+Z)">Redo</button>
             <button id="e-delete" title="Delete the selection and everything built on it (Del)">Delete</button>
         </span>
+        <span id="view-mode">
+            <button id="v-2d" class="active" title="The drawing: construct, drag, dimension">2D</button>
+            <button id="v-3d" title="The solids, shaded: drag to orbit, wheel to zoom, Space+drag to pan">3D</button>
+        </span>
         <span id="status"></span>
     </div>
     <div id="main">
         <nav id="palette"></nav>
-        <div id="canvas-area"><canvas id="canvas"></canvas></div>
+        <div id="canvas-area"><canvas id="canvas"></canvas><canvas id="canvas3" hidden></canvas></div>
         <aside id="panel">
             <h3>Drawing</h3>
             <div id="file-actions">

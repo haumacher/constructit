@@ -28,6 +28,24 @@ class BrowserCanvasDrawTarget(private val ctx: CanvasRenderingContext2D) : DrawT
         ctx.stroke()
     }
 
+    override fun polygon(
+        points: List<Vec2>,
+        style: Style,
+    ) {
+        if (points.isEmpty()) return
+        ctx.beginPath()
+        ctx.moveTo(points[0].x, points[0].y)
+        for (i in 1 until points.size) ctx.lineTo(points[i].x, points[i].y)
+        ctx.closePath()
+        style.fill?.let {
+            ctx.fillStyle = it
+            ctx.fill()
+        }
+        ctx.strokeStyle = style.stroke
+        ctx.lineWidth = style.width
+        ctx.stroke()
+    }
+
     override fun circle(
         center: Vec2,
         radiusPx: Double,

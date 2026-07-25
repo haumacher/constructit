@@ -57,15 +57,20 @@ Kotlin Multiplatform, layered so the UI/shell is a late, reversible choice:
 |-------|----------|-------|
 | Core engine | `src/commonMain` | model, type system, DAG eval, geometry ops, DSL — zero UI deps |
 | Editor core | `src/commonMain/.../editor` | document, tools, camera, hit-testing, scene renderer (behind a `DrawTarget` seam) |
-| Browser shell | `src/jsMain` | HTML5 canvas `DrawTarget` + DOM chrome (palette, panels) |
+| Browser shell | `src/jsMain` | HTML5 canvas `DrawTarget` + DOM chrome (palette, panels) + one WebGL program for the 3D view |
 | Tests | `src/jvmTest` | headless gesture tests, SVG golden snapshots, opt-in Playwright E2E |
 
 The renderer draws through a backend-agnostic `DrawTarget` (SVG for tests, Canvas2D in the browser),
-so the interaction core is fully headless-testable by simulating pointer gestures.
+so the interaction core is fully headless-testable by simulating pointer gestures. The 3D view works
+the same way: the orbit camera, the scene extraction and a painter's-algorithm projector all live in
+`commonMain`, so a 3D scene has SVG goldens and orbit gestures have headless tests — the browser
+contributes only the GL calls, using the very same projection matrices.
 
-3D is designed up front: the analytic layer will feed a mesh-boolean sink (Manifold) for output and
-3D printing; measurements taken from a mesh may drive new analytic construction. See
-[`DESIGN.md`](DESIGN.md) for the full design record and open questions.
+Solids are built by construction too: an outline or a wall footprint plus a depth or a sweep angle
+gives a watertight, manifold mesh, which is a terminal **sink** — render/print/export only, never
+lifted back to analytic geometry, while measurements taken *from* it may drive new construction.
+Mesh booleans (Manifold) and mesh export are next. See [`DESIGN.md`](DESIGN.md) for the full design
+record and open questions.
 
 ## Build & run
 

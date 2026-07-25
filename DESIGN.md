@@ -183,11 +183,12 @@ Elastic layering — everything except pixel-drawing and native events is pure K
 (`commonMain`, portable to any target); only the last two layers are platform-specific/thin:
 
 ```
-Platform shell (thin)  — jsMain: DOM toolbar/tree, native event plumbing, repaint
+Platform shell (thin)  — jsMain: DOM toolbar/tree, native event plumbing, repaint, WebGL calls
 DrawTarget (interface) — screen-space draw ops; impls: SvgDrawTarget (tests), BrowserCanvas (jsMain)
-InteractionController  — Editor: tool state machine, hit-testing, drag; abstract pointer events
-Camera                 — world<->screen (pan/zoom about cursor)
+InteractionController  — Editor (2D) / Viewport3 (3D): tool + gesture state; abstract pointer events
+Camera / Camera3       — world<->screen (2D pan/zoom about cursor) / orbit camera + matrices (3D)
 SceneRenderer          — world->screen projection, arc tessellation, line/ray clipping, grid
+Scene3 + Painter3      — solids/grid as a value; painter's-algorithm projector onto DrawTarget
 Document               — retained construction + display metadata; enumerable; the file-format seam
 Engine                 — Construction DAG + Evaluator (unchanged)
 ```
@@ -200,6 +201,50 @@ Engine                 — Construction DAG + Evaluator (unchanged)
   adapter; layers Document..InteractionController are untouched.
 - Run locally: `./gradlew jsBrowserDevelopmentRun`. MVP tools: Select/drag, Point, Line,
   Circle, Intersect; live parametric recompute on drag; pan + zoom; grid + axes.
+
+### The 3D viewport (as built)
+
+OP-12's "Canvas2D for 2D → WebGL for 3D" made concrete. The rule that keeps this honest: **there is
+exactly one projection pipeline**, and it lives in `commonMain`.
+
+```
+Camera3    — orbit camera: target, distance, yaw, pitch (+ fovY); near/far follow the distance
+Mat4       — column-major 4x4; perspective + lookAt; toFloatArray() feeds uniformMatrix4fv untransposed
+Scene3     — a value: every visible SOLID element's mesh + a stable colour, plus grid and axes as lines
+Painter3   — painter's-algorithm projector onto DrawTarget: back-face cull, depth-sort, shade, polygon
+Viewport3  — the pure gesture controller (Editor's pointer API, one dimension up)
+WebGlRenderer3 (jsMain) — one program: position+normal+colour, uniform MVP, headlight; ~200 lines
+```
+
+- **The camera is four numbers, not a matrix.** An orbit camera is the same discipline the model
+  follows (OP-5): every gesture writes one of `target/distance/yaw/pitch`, so a view is reproducible,
+  a drag is assertable (`Viewport3Test`), and no accumulated transform can drift. Pitch is clamped
+  short of straight down, where the up vector would collapse.
+- **The painter's projector exists to make the projection testable.** It renders a `Scene3` through the
+  ordinary `DrawTarget` seam using the *same* `Camera3` matrices the GPU is handed, so an SVG golden of
+  a 3D scene (`Painter3Test`, `scene3-box-and-turned-part.svg`) is evidence about what the browser
+  draws. It is deliberately not the fast path: **no depth buffer** — triangles and grid segments are
+  sorted back-to-front by centroid depth, which is exact for a convex solid and can mis-order
+  interleaving triangles of a concave one. (This is also why the grid is emitted one cell at a time: a
+  full-length line has one depth for its whole length and would paint over a part standing on it.) The
+  GPU path has a real depth test, so the artifact is confined to goldens.
+- **One new `DrawTarget` primitive: `polygon`.** A shaded triangle is an *area*, so it cannot be
+  expressed with the stroke primitives 2D drawing needed. Both back ends implement it.
+- **Flat shading by duplicated vertices** in the WebGL path: each triangle carries its own face normal.
+  No derivative extension, no vertex-normal averaging that would round off a machined edge — a solid's
+  facets are what it *is* (OP-9: the mesh is the sink, shown as it will be printed). Both renderers use
+  the same shading law (headlight diffuse + a 0.35 ambient floor).
+- **The repaint "version counter" is `Editor.onChange`.** GPU buffers are rebuilt exactly when the
+  editor reports a document change; an orbit never goes through the editor, so it only re-issues the
+  draw call with a new matrix. No dirty flag on the document was needed.
+- **Cut, deliberately: no picking in the 3D view.** A click there selects nothing, and the status line
+  says the drawing tools apply to the 2D view. Picking in 3D needs a ray/mesh intersection *and* an
+  answer to "what does selecting a face mean for a construction" — that answer is the sketch-on-face
+  task, and guessing it now would put a second, weaker selection model beside the 2D one.
+- Consequence handled rather than ignored: a solid's 2D **footprint hint** sits exactly on the area it
+  was extruded from, so a canvas click can only reach the topmost of the two. The **element tree**
+  therefore selects by name (`Editor.selectElement`). Biasing the pick would merely make the other one
+  unreachable.
 
 ### Handles — dragging and typing are one operation (OP-13 — RESOLVED)
 
@@ -244,8 +289,12 @@ auto-uniquified so wiring is unambiguous):
   Tangent-from-point, Tangent-at-point (1 click), Fillet, Chamfer, Outer/Inner common tangents
 - Transform: Mirror, Rotate, Scale, Translate-by-vector, Linear array, Circular array
 - Measure: Distance, Angle (3pt), Angle (2 lines), Length, Radius, X/Y coordinate
+- Solids (the seam, OP-17): Extrude (an area + a depth parameter), Revolve (an area + an in-plane axis
+  line + an angle parameter) — see *Implementation status (as built — the seam's tools and the viewport)*
 - Parameter **wiring** (reduce DOF; equality by shared reference), measurement-as-scalar-input.
 - Any `LINE` slot also accepts a segment/ray (carrier line).
+- An `AREA` slot accepts either result-layer element that bounds an area: a traced `Outline` (one loop,
+  coerced with `region(...)`) or a thick path's footprint (already a region).
 
 #### Welding (joining two points) — point-level wiring
 
@@ -1192,8 +1241,8 @@ bbox). **3D walls are a later application of the same machinery, not the proof o
 
 The engine half of the seam ships (`geom/Geom3.kt`, three value types in `core/Model.kt`, the
 `Tier 5` ops in `dsl/Construction.kt`, `SolidTest`). All three slices are reachable end to end, minus
-the counterbore — booleans are the next task. **No UI, no viewport, no document-format support**: 3D
-tools arrive with the viewport, deliberately, so this slice touches nothing the 2D editor depends on.
+the counterbore — booleans are the next task. At the time this was written there was no UI; the tools
+and the viewport followed in the next slice (below), so nothing here had to be revisited.
 
 - **Types.** `Vec3`; `Plane3(origin, u, v)` (orthonormal, `normal = u×v`, with `translated`/`flipped`);
   `Sketch3(plane, regions)`; `Feature3.Extrusion` / `Feature3.Revolution` — the *analytic* description;
@@ -1263,6 +1312,47 @@ tools arrive with the viewport, deliberately, so this slice touches nothing the 
   - Deliberately **not** cut, because the general algorithm covered them: a profile *touching* the axis
     (the collapsed quads are simply dropped), a partial revolve's two flat end caps, and a revolved
     region *with a hole* — the toroidal cavity is closed and its volume checks out against `2π²Rr²`.
+
+### Implementation status (as built — the seam's tools and the viewport)
+
+The seam became **reachable**: two tools cross it, and a second viewport shows what came out. The
+viewport's own architecture is recorded under *The 3D viewport (as built)* in the editor section; this
+note is about the seam.
+
+- **Two `ToolDef`s, no controller code.** `Extrude` = an `AREA` slot + a `depth` scalar; `Revolve` =
+  an `AREA` slot + a `LINE` slot (the axis) + an `angle` scalar. Adding them needed one new `SlotKind`
+  (`AREA`), one new `ToolCategory` (`SOLIDS`), one new `ElementKind` (`SOLID`) and two `Document`
+  methods — the data-driven tool table did the rest, and the generic `tool` step (OP-18) gave
+  save/load/undo/delete for free (`SolidToolTest` asserts save→load→save byte-equality with both
+  features present).
+- **The `AREA` slot takes either kind of area.** A thick path's footprint already *is* a `Region`; a
+  traced `Outline` is a single `Loop`, coerced by the ordinary `region(...)` op. That coercion creates a
+  node but **no element**, so the tool step still accounts for exactly one creation and the loader's
+  element-count check still vouches for the replay.
+- **The revolve axis is a picked line, kept parametric.** `lineOrigin(line)` + `lineDirection(line)`
+  are new provenance accessors (OP-8), so the axis is derived nodes rather than captured numbers: drag
+  the centreline and the turned part follows. A profile crossing its axis stays invalid *with a reason*
+  and heals (OP-3) — `Geom3.revolve`'s rule, unchanged, now visible in the UI.
+- **The sketch plane is the world XY plane, and only that** (the decision to record). A 2D drawing *is*
+  the plan, so that is where its regions live; asking the user to choose a plane before there is any way
+  to *make* one would be datum management with no datums. Choosing a plane arrives with sketch-on-face,
+  which is exactly what `facePlane` already exists for. Consequence: the 2D footprint hint and the 2D
+  pick geometry read the sketch's own coordinates directly, which is exact only while the plane is XY —
+  when a plane can be chosen, both become a projection through it.
+- **The feature's DOF is a panel parameter, not a 3D drag handle** (OP-13 satisfied through the
+  parameter). With no picking in the 3D view there is nothing to grab there, and a 2D handle for a depth
+  along the view normal would be a fiction. Editing the parameter recomputes the one solid node; a depth
+  of zero refuses the feature and heals when it is raised again.
+- **A solid draws a light footprint hint in the 2D canvas** — the boundary of the sketch it came from,
+  not a projection of its mesh (a shaded or hidden-line view is a *chosen* projection, which is the 3D
+  view's job). The hint is what makes the solid pickable, hence selectable and deletable, in the one
+  view that has picking.
+- **Deletion runs the normal cone.** Deleting the area drops the solid with it (the tool step names the
+  area as an argument); deleting the solid leaves the drawing — the dependency runs one way. Undo
+  restores the whole cone, because undo is the saved script (OP-18).
+- **Cuts in this slice:** no 3D picking (above); no plane choice (above); no STL/3MF export yet (the
+  mesh is ready for it — it is a file-format task, not a geometry one); the 2D toolset is inert while
+  the 3D view is shown, and says so.
 
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
@@ -1385,6 +1475,9 @@ Three broad families (see OP-9 decision above):
       JavaFX harness, file persistence). Client stack = Kotlin (TL-as-shell a non-requirement,
       so GWT/J2CL not indicated; Flutter would sacrifice the shared engine). TL module and
       server-side 3D compute remain valid non-driving later options.
+      **Both halves of "hand-rendered canvas" are now built**: Canvas2D for the drawing and one WebGL
+      program for the solids, with the whole 3D pipeline except the GL calls in `commonMain` — so the
+      projection has SVG goldens and the orbit gestures have headless tests. See *The 3D viewport*.
 - [x] **OP-20 Where things meet** — RESOLVED: a meeting point is a `Junction` that **owns** the shared
       freedom, with everything meeting there bound to it. Fixes the order-dependent *attribution* of
       DOF that made two runs at one junction behave differently; drags and typed values both reach the
@@ -1469,8 +1562,13 @@ Three broad families (see OP-9 decision above):
       **Engine core built** (`geom/Geom3.kt`, `SolidTest`): planes, `sketchOn`, extrude, revolve, an
       indexed watertight mesh sink, `facePlane` provenance accessors and volume/bbox measurements — all
       three slices run, with deterministic hole-bridged ear clipping and a documented 0.02 mm world
-      tessellation tolerance. See *Implementation status (as built — 3D engine core)*. Cut from this
-      slice: booleans (the counterbore), 3D transforms, any UI/viewport/document-format support.
+      tessellation tolerance. See *Implementation status (as built — 3D engine core)*.
+      **Reachable from the UI**: `Extrude` and `Revolve` as ordinary `ToolDef`s over a new `AREA` slot
+      (an outline or a footprint), riding the generic `tool` step, plus an orbiting shaded 3D view
+      (`Camera3`/`Scene3`/`Painter3`/`Viewport3` in `commonMain`, one WebGL program in `jsMain`). See
+      *Implementation status (as built — the seam's tools and the viewport)* and *The 3D viewport*.
+      Cut so far: booleans (the counterbore), 3D transforms, 3D picking, any sketch plane other than
+      world XY, and mesh export (STL/3MF).
 
 ## Prior art to keep in mind
 

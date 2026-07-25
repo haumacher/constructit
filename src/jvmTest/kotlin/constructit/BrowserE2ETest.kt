@@ -127,6 +127,51 @@ class BrowserE2ETest {
             assertTrue(fieldLabels.contains("offset"), "the dimension's own DOF is a panel field; got: $fieldLabels")
             assertTrue(fieldLabels.contains("distance"), "and its measured value reads beside it; got: $fieldLabels")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/05-dimension.png")))
+
+            // ---- the 3D view (OP-17 + OP-12): a wall, extruded, then orbited in the WebGL canvas ----
+            //
+            // Only a real browser can say whether WebGL produced pixels at all, which is exactly the part
+            // the headless painter's projector cannot vouch for. The construction itself is covered by
+            // SolidToolTest; this checks the *shell*: the toggle, the second canvas, and an orbit drag.
+            page.click("#tool-select")
+            page.fill("#p-name", "t")
+            page.fill("#p-value", "10")
+            page.click("#p-add")
+            page.click("#tool-wall")
+            // well clear of everything drawn so far, so no vertex snaps onto it
+            val wx = box.x + box.width * 0.85
+            val wy1 = box.y + box.height * 0.15
+            val wy2 = box.y + box.height * 0.45
+            page.mouse().click(wx, wy1)
+            page.mouse().click(wx + 3.0, wy2)
+            page.keyboard().press("Escape")
+            page.fill("#p-name", "depth")
+            page.fill("#p-value", "20")
+            page.click("#p-add")
+            page.click("#tool-extrude")
+            // an area is picked by its *boundary*, so the click goes on a face: half of the 10 mm
+            // thickness off the centreline, at the default 4 px/mm
+            page.mouse().click(wx + 20.0, (wy1 + wy2) / 2)
+            assertTrue(
+                page.querySelectorAll("#tree .item").map { it.textContent() }.any { it.startsWith("solid") },
+                "the extrude tool should add a solid to the tree",
+            )
+
+            page.click("#v-3d")
+            page.waitForSelector("#canvas3:visible")
+            val blank = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
+            val cx3 = box.x + box.width * 0.5
+            val cy3 = box.y + box.height * 0.5
+            page.mouse().move(cx3, cy3)
+            page.mouse().down()
+            page.mouse().move(cx3 + 90.0, cy3 - 40.0)
+            page.mouse().up()
+            val orbited = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
+            assertTrue(blank != orbited, "dragging in the 3D view should orbit the camera and redraw")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/06-solid-3d.png")))
+            page.click("#v-2d")
+            page.waitForSelector("#canvas:visible")
+
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()
         }

@@ -32,6 +32,19 @@ interface DrawTarget {
         style: Style,
     )
 
+    /**
+     * A **filled** closed polygon: `style.fill` paints the interior, `style.stroke` its edge (the
+     * closing edge included — unlike [polyline], which leaves the ring open).
+     *
+     * The one primitive the 3D view needs that 2D drawing never did (OP-12): a shaded triangle is an
+     * *area*, not a stroke, so the painter's projector of [Painter3] cannot be expressed in terms of the
+     * other primitives. Screen pixels like everything else.
+     */
+    fun polygon(
+        points: List<Vec2>,
+        style: Style,
+    )
+
     fun circle(
         center: Vec2,
         radiusPx: Double,

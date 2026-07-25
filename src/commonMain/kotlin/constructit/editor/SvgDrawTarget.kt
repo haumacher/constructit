@@ -31,6 +31,15 @@ class SvgDrawTarget : DrawTarget {
         sb.append("  <polyline points=\"$pts\" fill=\"none\" stroke=\"${style.stroke}\" stroke-width=\"${fmt(style.width)}\"/>\n")
     }
 
+    override fun polygon(
+        points: List<Vec2>,
+        style: Style,
+    ) {
+        if (points.isEmpty()) return
+        val pts = points.joinToString(" ") { "${fmt(it.x)},${fmt(it.y)}" }
+        sb.append("  <polygon points=\"$pts\" fill=\"${style.fill ?: "none"}\" stroke=\"${style.stroke}\" stroke-width=\"${fmt(style.width)}\"/>\n")
+    }
+
     override fun circle(
         center: Vec2,
         radiusPx: Double,

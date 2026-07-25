@@ -9,7 +9,10 @@ import constructit.editor.Editor
 import constructit.editor.Format
 import constructit.editor.PointerButton
 import constructit.editor.ScalarEntry
+import constructit.editor.Scene3
 import constructit.editor.Tools
+import constructit.editor.Viewport3
+import constructit.editor.WebGlRenderer3
 import constructit.editor.quantityOf
 import constructit.geom.Justification
 import constructit.geom.Vec2
@@ -35,16 +38,17 @@ fun main() {
 
 private fun setupApp() {
     val canvas = document.getElementById("canvas") as HTMLCanvasElement
+    val canvas3 = document.getElementById("canvas3") as HTMLCanvasElement
     val ctx = canvas.getContext("2d") as CanvasRenderingContext2D
 
-    fun fit(): Boolean {
-        val area = canvas.parentElement as HTMLElement
-        if (canvas.width == area.clientWidth && canvas.height == area.clientHeight) return false
-        canvas.width = area.clientWidth
-        canvas.height = area.clientHeight
+    fun fit(c: HTMLCanvasElement): Boolean {
+        val area = c.parentElement as HTMLElement
+        if (c.width == area.clientWidth && c.height == area.clientHeight) return false
+        c.width = area.clientWidth
+        c.height = area.clientHeight
         return true
     }
-    fit()
+    fit(canvas)
 
     val editor = Editor(canvasW = canvas.width.toDouble(), canvasH = canvas.height.toDouble())
     editor.showGrid = true
@@ -53,18 +57,81 @@ private fun setupApp() {
 
     buildPalette()
 
+    // ---- the 3D view (OP-12: Canvas2D for 2D, WebGL for 3D) ----
+    //
+    // A second canvas over the same area, and a pure [Viewport3] driving it — the shell contributes only
+    // event plumbing and the GL calls, so orbit/zoom/pan are the headless-tested gestures of the
+    // controller and nothing about *what a drag means* lives here.
+    val viewport = Viewport3()
+    val gl = WebGlRenderer3(canvas3)
+    var view3d = false
+    // The document's own "version counter" is [Editor.onChange]: geometry is rebuilt exactly when the
+    // editor reports a change, and an orbit — which does not go through the editor at all — only
+    // re-issues the draw call with a new matrix.
+    var glDirty = true
+
+    fun draw3d() {
+        if (fit(canvas3)) glDirty = true
+        viewport.widthPx = canvas3.width.toDouble()
+        viewport.heightPx = canvas3.height.toDouble()
+        if (glDirty) {
+            gl.upload(Scene3.extract(editor.doc))
+            glDirty = false
+        }
+        gl.draw(viewport.camera)
+    }
+
     fun repaint() {
         // the drawing buffer must match the element's CSS size on *every* paint, not only on window
         // resize: panel content or a wrapping status line changes the canvas box too, and a stale buffer
         // is silently scaled by CSS — which offsets every hit test from what the user sees
-        if (fit()) {
+        if (fit(canvas)) {
             editor.canvasW = canvas.width.toDouble()
             editor.canvasH = canvas.height.toDouble()
         }
-        editor.render(target)
-        renderPanel(editor)
+        if (view3d) {
+            glDirty = true
+            draw3d()
+        } else {
+            editor.render(target)
+        }
+        renderPanel(editor, view3d, viewport)
     }
     editor.onChange = { repaint() }
+    viewport.onChange = {
+        draw3d()
+        renderPanel(editor, view3d, viewport)
+    }
+
+    fun setView3d(on: Boolean) {
+        view3d = on
+        canvas.hidden = on
+        canvas3.hidden = !on
+        (document.getElementById("v-2d") as HTMLElement).className = if (on) "" else "active"
+        (document.getElementById("v-3d") as HTMLElement).className = if (on) "active" else ""
+        if (on) {
+            glDirty = true
+            // frame the solids the first time there is something to look at, so switching over does not
+            // land on an empty view with the part behind the camera
+            viewport.widthPx = canvas3.width.toDouble()
+            viewport.heightPx = canvas3.height.toDouble()
+            val scene = Scene3.extract(editor.doc)
+            if (!scene.isEmpty) viewport.frame(scene)
+            editor.note(
+                if (scene.isEmpty) {
+                    "Nothing solid yet — trace an Outline (or a Wall), then use Extrude or Revolve in the 2D view."
+                } else {
+                    viewport.help()
+                },
+            )
+            if (!gl.available) editor.note("This browser gave no WebGL context, so the 3D view cannot draw.")
+        } else {
+            editor.note("")
+        }
+        repaint()
+    }
+    (document.getElementById("v-2d") as HTMLElement).addEventListener("click", { setView3d(false) })
+    (document.getElementById("v-3d") as HTMLElement).addEventListener("click", { setView3d(true) })
 
     // ---- canvas pointer input ----
     fun pos(e: MouseEvent): Vec2 {
@@ -91,6 +158,28 @@ private fun setupApp() {
         editor.wheel(pos(e), e.deltaY)
     })
     canvas.addEventListener("dblclick", { editor.finishPath() })
+
+    // ---- 3D canvas input: the same three gestures, routed to the pure Viewport3 ----
+    fun pos3(e: MouseEvent): Vec2 {
+        val r = canvas3.getBoundingClientRect()
+        return Vec2(e.clientX - r.left, e.clientY - r.top)
+    }
+    canvas3.addEventListener("mousedown", {
+        val e = it as MouseEvent
+        if (e.button.toInt() == 1) e.preventDefault()
+        viewport.panMode = spaceDown
+        viewport.pointerDown(pos3(e), if (e.button.toInt() == 1 || spaceDown) PointerButton.MIDDLE else PointerButton.PRIMARY)
+    })
+    canvas3.addEventListener("mousemove", { viewport.pointerMove(pos3(it as MouseEvent)) })
+    canvas3.addEventListener("mouseup", { viewport.pointerUp(pos3(it as MouseEvent)) })
+    canvas3.addEventListener("mouseleave", { viewport.pointerUp(pos3(it as MouseEvent)) })
+    canvas3.addEventListener("wheel", {
+        val e = it as WheelEvent
+        e.preventDefault()
+        viewport.wheel(pos3(e), e.deltaY)
+    })
+    // double-click reframes: the cheap way back when an orbit has wandered off the part
+    canvas3.addEventListener("dblclick", { viewport.frame(Scene3.extract(editor.doc)) })
     document.addEventListener("keydown", {
         val e = it as org.w3c.dom.events.KeyboardEvent
         val key = e.key
@@ -121,8 +210,9 @@ private fun setupApp() {
         }
         if (key == " " && !spaceDown) {
             spaceDown = true
+            viewport.panMode = true // the same key means the same thing in both views
             e.preventDefault() // Space would otherwise scroll the page
-            editor.note("Space: drag to pan (release to resume selecting)")
+            editor.note(if (view3d) "Space: drag to move what the view looks at" else "Space: drag to pan (release to resume selecting)")
             repaint()
         }
         if (key == "Alt" && editor.snapEnabled) {
@@ -141,7 +231,8 @@ private fun setupApp() {
         }
         if (key == " " && spaceDown) {
             spaceDown = false
-            editor.note("")
+            viewport.panMode = false
+            editor.note(if (view3d) viewport.help() else "")
             repaint()
         }
         if (key == "Alt" && !editor.snapEnabled) {
@@ -318,6 +409,14 @@ private fun setupApp() {
         }
     })
 
+    // the element tree selects by name — the way to reach an element a click cannot, such as the area
+    // under a solid's footprint hint (they occupy exactly the same place; see Editor.selectElement)
+    (document.getElementById("tree") as HTMLElement).addEventListener("click", {
+        val row = (it.target as? HTMLElement)?.closest(".item") ?: return@addEventListener
+        val el = editor.doc.elements.firstOrNull { e -> e.id == row.getAttribute("data-eid") } ?: return@addEventListener
+        editor.selectElement(el)
+    })
+
     // a measurement can drive a new construction: click it to make it the active scalar (OP-4)
     (document.getElementById("measure-list") as HTMLElement).addEventListener("click", {
         val row = (it.target as? HTMLElement)?.closest(".mrow") ?: return@addEventListener
@@ -343,9 +442,19 @@ private fun buildPalette() {
     palette.innerHTML = sb.toString()
 }
 
-private fun renderPanel(editor: Editor) {
+private fun renderPanel(
+    editor: Editor,
+    view3d: Boolean,
+    viewport: Viewport3,
+) {
+    // In the 3D view the drawing tools are inert (there is no 3D picking in this slice), so the status
+    // line says what the view *does* rather than describing clicks that will not happen.
     (document.getElementById("status") as HTMLElement).textContent =
-        if (editor.statusHint.isNotEmpty()) editor.statusHint else editor.currentHelp()
+        when {
+            editor.statusHint.isNotEmpty() -> editor.statusHint
+            view3d -> viewport.help()
+            else -> editor.currentHelp()
+        }
 
     // edit buttons mirror the editor's stacks and selection
     (document.getElementById("e-undo") as org.w3c.dom.HTMLButtonElement).disabled = !editor.canUndo
@@ -440,7 +549,8 @@ private fun renderPanel(editor: Editor) {
     val tree = document.getElementById("tree") as HTMLElement
     tree.innerHTML =
         editor.doc.elements.joinToString("") {
-            "<div class=\"item\">${it.kind.name.lowercase()}<span class=\"eid\">${it.id}</span></div>"
+            val active = if (editor.isSelected(it)) " active" else ""
+            "<div class=\"item$active\" data-eid=\"${it.id}\">${it.kind.name.lowercase()}<span class=\"eid\">${it.id}</span></div>"
         }
 }
 

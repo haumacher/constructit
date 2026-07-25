@@ -1268,6 +1268,17 @@ class Construction {
             }
         }
 
+    /**
+     * A line's own origin point. Together with [lineDirection] this is what turns a *drawn* line into a
+     * revolve axis (OP-17): the axis is then an ordinary pair of derived nodes, so it moves with the line
+     * and the line stays the thing the user picked.
+     */
+    fun lineOrigin(l: LineRef): PointRef = op(l) { EvalResult.Ok(PointValue(ln(it[0]).origin)) }
+
+    /** A line's unit direction — the other half of an axis built from a picked line. */
+    fun lineDirection(l: LineRef): DirectionRef =
+        op(l) { EvalResult.Ok(DirectionValue(Direction(ln(it[0]).dir))) }
+
     /** The infinite line carrying a ray. */
     fun lineOfRay(r: RayRef): LineRef =
         op(r) {
