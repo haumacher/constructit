@@ -556,6 +556,8 @@ class EditorTest {
         ed.click(Vec2(-30.0, -10.0))
         ed.click(Vec2(30.0, 10.0))
         ed.setTool(Tools.CIRCLE)
+        // (0,0) lies exactly on that line, so the centre snaps onto it and is drawn as an on-curve
+        // point rather than a free one — the golden records that
         ed.click(Vec2(0.0, 0.0))
         ed.click(Vec2(25.0, 0.0))
 
@@ -648,6 +650,141 @@ class EditorTest {
         assertClose(s2.b.x, 40.0)
         assertClose(s2.b.y, 30.0) // vertical (x stays 40)
         assertEquals(3, ed.doc.elements.count { it.kind == ElementKind.ON_CURVE }, "every vertex is draggable")
+    }
+
+    @Test
+    fun placingAPointOnACurveAttachesItInsteadOfLeavingItFloating() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(-50.0, 0.0))
+        ed.click(Vec2(50.0, 20.0))
+        ed.setTool(Tools.LINE)
+        ed.click(Vec2(-50.0, 0.0))
+        ed.click(Vec2(50.0, 20.0))
+
+        // place a point right on the line: it must become an on-curve slider, i.e. actually depend on
+        // the line, not merely start out coincident with it
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(0.0, 10.0))
+        val placed = ed.doc.elements.last()
+        assertEquals(ElementKind.ON_CURVE, placed.kind)
+        val p = Evaluator().point(placed.ref as constructit.dsl.PointRef)
+        assertClose(p.x, 0.0)
+        assertClose(p.y, 10.0)
+
+        // proof of the dependency: move the line's far end and the placed point follows it
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(50.0, 20.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(50.0, 60.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(50.0, 60.0)))
+        val moved = Evaluator().point(placed.ref as constructit.dsl.PointRef)
+        assertTrue(kotlin.math.abs(moved.y - 10.0) > 1.0, "the attached point rides the line it was placed on")
+    }
+
+    @Test
+    fun placingAPointWhereTwoCurvesCrossMaterializesTheIntersection() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(-40.0, 0.0))
+        ed.click(Vec2(40.0, 0.0)) // horizontal line
+        ed.click(Vec2(0.0, -40.0))
+        ed.click(Vec2(0.0, 40.0)) // vertical line
+        ed.setTool(Tools.LINE)
+        ed.click(Vec2(-40.0, 0.0))
+        ed.click(Vec2(40.0, 0.0))
+        ed.click(Vec2(0.0, -40.0))
+        ed.click(Vec2(0.0, 40.0))
+
+        // click where they cross: one derived point, and only the branch clicked
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(0.6, -0.4))
+        val derived = ed.doc.elements.filter { it.kind == ElementKind.DERIVED_POINT }
+        assertEquals(1, derived.size)
+        val p = Evaluator().point(derived[0].ref as constructit.dsl.PointRef)
+        assertClose(p.x, 0.0)
+        assertClose(p.y, 0.0)
+    }
+
+    @Test
+    fun snappingIsSuppressibleAndReportsWhatItWouldHit() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(-50.0, 0.0))
+        ed.click(Vec2(50.0, 0.0))
+        ed.setTool(Tools.LINE)
+        ed.click(Vec2(-50.0, 0.0))
+        ed.click(Vec2(50.0, 0.0)) // horizontal line y=0
+
+        // hovering over the line reports the snap before any click commits to it
+        ed.setTool(Tools.POINT)
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(10.0, 0.0)))
+        assertEquals(constructit.editor.SnapKind.ON_CURVE, ed.snapHint?.kind)
+        assertTrue(ed.currentHelp().contains("on curve"))
+
+        // with snapping off, the same click places an ordinary free point
+        ed.snapEnabled = false
+        ed.click(Vec2(10.0, 0.0))
+        assertEquals(ElementKind.POINT, ed.doc.elements.last().kind)
+    }
+
+    @Test
+    fun anOrthoPathStartedOnAPointIsWeldedToIt() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(20.0, 30.0)) // a corner to build from
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(20.4, 29.6)) // near enough to snap onto it
+        ed.click(Vec2(120.0, 32.0))
+        ed.finishPath()
+
+        val path = ed.doc.orthoPaths.single()
+        val start = Evaluator().point(path.vertices[0].ref)
+        assertClose(start.x, 20.0) // exactly on the point, not merely near it
+        assertClose(start.y, 30.0)
+
+        // and it is welded, not just coincident: drag the point and the path start follows
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(20.0, 30.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(-10.0, 55.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(-10.0, 55.0)))
+        val moved = Evaluator().point(path.vertices[0].ref)
+        assertClose(moved.x, -10.0)
+        assertClose(moved.y, 55.0)
+    }
+
+    @Test
+    fun aLegContinuingTheSameDirectionExtendsInsteadOfDoublingTheCorner() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(40.0, 2.0)) // horizontal leg to (40,0)
+        ed.click(Vec2(90.0, -1.0)) // straight on: must extend, not add a collinear leg
+        ed.finishPath()
+
+        val path = ed.doc.orthoPaths.single()
+        assertEquals(2, path.vertices.size, "no straight-through corner was created")
+        assertEquals(1, path.legCount)
+        assertClose(Evaluator().point(path.vertices[1].ref).x, 90.0) // the leg simply got longer
+
+        // every element still evaluates — a collinear pair would have produced an undefined miter
+        val ev = Evaluator()
+        assertTrue(ed.doc.elements.all { ev.eval(it.ref.node) is constructit.core.EvalResult.Ok })
+    }
+
+    @Test
+    fun aFullyDrivenVertexIsNotGrabbableSoItsMasterStaysReachable() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(20.0, 30.0))
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(20.0, 30.0)) // snaps + welds the start onto that point
+        ed.click(Vec2(120.0, 32.0))
+        ed.finishPath()
+
+        val master = ed.doc.elements.first { it.kind == ElementKind.POINT }
+        val start = ed.doc.elements.first { it.ref === ed.doc.orthoPaths.single().vertices[0].ref }
+        assertFalse(start.draggable, "both its coordinates are driven, so dragging it could do nothing")
+        assertTrue(master.draggable, "and the point that drives it is still grabbable at the same spot")
     }
 
     @Test

@@ -38,8 +38,18 @@ class Element(
     /** For [ElementKind.ON_CURVE] (and draggable legs): the grabbable DOF — see [Handle]. */
     var handle: Handle? = null,
 ) {
+    /**
+     * Whether grabbing this element can actually move anything. An on-curve point qualifies only
+     * while its handle still has a writable field: once every coordinate is driven — welded onto a
+     * point, or shared by a loop closure — dragging it is inert, and a dead handle must not steal the
+     * grab from the geometry that *can* move (which sits at the same place, being what drives it).
+     */
     val draggable: Boolean get() =
-        (kind == ElementKind.POINT && (ref.node as? SourceNode)?.boundTo == null) || kind == ElementKind.ON_CURVE
+        when (kind) {
+            ElementKind.POINT -> (ref.node as? SourceNode)?.boundTo == null
+            ElementKind.ON_CURVE -> handle?.fields()?.any { it.writable } ?: false
+            else -> false
+        }
     val isCurve: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY || kind == ElementKind.ARC
     val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT || kind == ElementKind.ON_CURVE
 
@@ -528,27 +538,67 @@ class Document {
         a: Element,
         b: Element,
     ): List<PointRef> {
-        val aLin = a.isLinear
-        val bLin = b.isLinear
-        val aCirc = a.kind == ElementKind.CIRCLE
-        val bCirc = b.kind == ElementKind.CIRCLE
-        val lineLine = aLin && bLin
-
-        @Suppress("UNCHECKED_CAST")
-        val set: PointSetRef =
-            when {
-                lineLine -> cx.intersectLL(carrierLine(a), carrierLine(b))
-                aCirc && bCirc -> cx.intersectCC(a.ref as CircleRef, b.ref as CircleRef)
-                aLin && bCirc -> cx.intersectLC(carrierLine(a), b.ref as CircleRef)
-                aCirc && bLin -> cx.intersectLC(carrierLine(b), a.ref as CircleRef)
-                else -> return emptyList()
-            }
+        val (set, lineLine) = intersectionSet(a, b) ?: return emptyList()
         val refs = ArrayList<PointRef>()
         refs.add(cx.select(set, +1))
         if (!lineLine) refs.add(cx.select(set, -1))
         refs.forEach { addDerived(it) }
         return refs
     }
+
+    /** The intersection solution set of [a] and [b], plus whether it holds a single branch. */
+    @Suppress("UNCHECKED_CAST")
+    private fun intersectionSet(
+        a: Element,
+        b: Element,
+    ): Pair<PointSetRef, Boolean>? {
+        val aLin = a.isLinear
+        val bLin = b.isLinear
+        val aCirc = a.kind == ElementKind.CIRCLE
+        val bCirc = b.kind == ElementKind.CIRCLE
+        val lineLine = aLin && bLin
+        val set: PointSetRef =
+            when {
+                lineLine -> cx.intersectLL(carrierLine(a), carrierLine(b))
+                aCirc && bCirc -> cx.intersectCC(a.ref as CircleRef, b.ref as CircleRef)
+                aLin && bCirc -> cx.intersectLC(carrierLine(a), b.ref as CircleRef)
+                aCirc && bLin -> cx.intersectLC(carrierLine(b), a.ref as CircleRef)
+                else -> return null
+            }
+        return set to lineLine
+    }
+
+    /**
+     * The single intersection of [a] and [b] nearest [near], as a derived point — the branch the
+     * click indicated, persisted as its `Select(sign)` (OP-1), never re-guessed later.
+     */
+    fun intersectNear(
+        a: Element,
+        b: Element,
+        near: Vec2,
+    ): PointRef? {
+        val (set, lineLine) = intersectionSet(a, b) ?: return null
+        val ev = Evaluator()
+        val candidates = if (lineLine) listOf(+1) else listOf(+1, -1)
+        val best =
+            candidates
+                .map { it to cx.select(set, it) }
+                .mapNotNull { (sign, ref) ->
+                    ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? PointValue)?.let { Triple(sign, ref, (it.p - near).length()) }
+                }.minByOrNull { it.third } ?: return null
+        return addDerived(best.second)
+    }
+
+    /** A point that slides along [el] at [at] — the on-curve form of a click landing on a curve. */
+    fun pointOnCurve(
+        el: Element,
+        at: Vec2,
+    ): PointRef? =
+        when {
+            el.isLinear -> pointOnLine(el, at)
+            el.kind == ElementKind.CIRCLE -> pointOnCircle(el, at)
+            else -> null
+        }
 
     /** Materialize a curve's defining points as derived points (works on transformed geometry too). */
     fun extractPoints(el: Element): List<PointRef> {
@@ -617,15 +667,42 @@ class Document {
         if (path.vertices.size < 2) orthoPaths.remove(path)
     }
 
-    /** Append a leg to [path] toward [to] (see the [prev]-based overload); records the leg segment. */
+    /**
+     * Append a leg to [path] toward [to] (see the [prev]-based overload); records the leg segment.
+     *
+     * A step continuing along the *previous* leg's axis would leave two collinear legs meeting at a
+     * straight "corner" — whose wall miter is the intersection of two parallel offsets, i.e.
+     * undefined. Such a step extends the previous leg instead, which is also what it looks like it
+     * should do. Returns the vertex the leg now ends at, or null if the step is degenerate or that
+     * vertex's coordinate is driven and cannot be extended.
+     */
     fun addOrthoVertex(
         path: OrthoPath,
         to: Vec2,
     ): OrthoVertex? {
-        val v = addOrthoVertex(path.vertices.last(), to) ?: return null
+        val last = path.vertices.last()
+        if (!path.closed && path.vertices.size >= 2 && stepAxis(last.ref, to) == last.ownAxis) {
+            val node = last.corner.ownNode
+            if (node.boundTo != null) return null
+            node.value = ScalarValue(Quantity.mm(if (last.ownAxis == 0) to.x else to.y))
+            return last
+        }
+        val v = addOrthoVertex(last, to) ?: return null
         path.vertices.add(v)
         path.legs.add(dragLeg(path, lastSegment()))
         return v
+    }
+
+    /** Which axis a step from [from] to [to] runs along: 0 = horizontal, 1 = vertical, -1 = neither. */
+    private fun stepAxis(
+        from: PointRef,
+        to: Vec2,
+    ): Int {
+        val p = ((Evaluator().eval(from.node) as? EvalResult.Ok)?.value as? PointValue)?.p ?: return -1
+        val dx = abs(to.x - p.x)
+        val dy = abs(to.y - p.y)
+        if (dx < Vec2.EPS && dy < Vec2.EPS) return -1
+        return if (dx >= dy) 0 else 1
     }
 
     /** Make [leg] a draggable leg of [path] (moves perpendicular; see [OrthoEdgeHandle]). */

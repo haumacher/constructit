@@ -76,10 +76,22 @@ private fun setupApp() {
             editor.note("Axis lock: the drag is restricted to one axis (release Shift to free it)")
             repaint()
         }
+        if (key == "Alt" && editor.snapEnabled) {
+            e.preventDefault() // Alt alone would otherwise reach the browser menu bar
+            editor.snapEnabled = false
+            editor.note("Snapping off: clicks place at the cursor (release Alt to snap again)")
+            repaint()
+        }
     })
     document.addEventListener("keyup", {
-        if ((it as org.w3c.dom.events.KeyboardEvent).key == "Shift" && editor.axisLock) {
+        val key = (it as org.w3c.dom.events.KeyboardEvent).key
+        if (key == "Shift" && editor.axisLock) {
             editor.axisLock = false
+            editor.note("")
+            repaint()
+        }
+        if (key == "Alt" && !editor.snapEnabled) {
+            editor.snapEnabled = true
             editor.note("")
             repaint()
         }

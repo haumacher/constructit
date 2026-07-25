@@ -68,6 +68,24 @@ object HitTest {
         return best
     }
 
+    /**
+     * Screen-independent distance from [world] to [el]'s geometry, or null if it has no distance
+     * (an invalid node, or a value kind that isn't pickable).
+     */
+    fun distanceTo(
+        ev: Evaluator,
+        el: Element,
+        world: Vec2,
+    ): Double? =
+        when (val v = ev.valueOf(el.ref)) {
+            is PointValue -> (v.p - world).length()
+            is LineValue -> abs((world - v.line.origin).cross(v.line.dir))
+            is CircleValue -> abs((world - v.circle.center).length() - v.circle.radius)
+            is SegmentValue -> distToSegment(world, v.seg.a, v.seg.b)
+            is ArcValue -> distToArc(world, v.arc)
+            else -> null
+        }
+
     /** Nearest element (point or curve) satisfying [filter], within [tol]. */
     fun nearest(
         doc: Document,
@@ -80,15 +98,7 @@ object HitTest {
         var bestD = tol
         for (el in doc.elements) {
             if (!el.visible || !filter(el)) continue
-            val d =
-                when (val v = ev.valueOf(el.ref)) {
-                    is PointValue -> (v.p - world).length()
-                    is LineValue -> abs((world - v.line.origin).cross(v.line.dir))
-                    is CircleValue -> abs((world - v.circle.center).length() - v.circle.radius)
-                    is SegmentValue -> distToSegment(world, v.seg.a, v.seg.b)
-                    is ArcValue -> distToArc(world, v.arc)
-                    else -> continue
-                }
+            val d = distanceTo(ev, el, world) ?: continue
             if (d <= bestD) {
                 bestD = d
                 best = el
@@ -102,26 +112,7 @@ object HitTest {
         ev: Evaluator,
         world: Vec2,
         tol: Double,
-    ): Element? {
-        var best: Element? = null
-        var bestD = tol
-        for (el in doc.elements) {
-            if (!el.visible) continue
-            val d =
-                when (val v = ev.valueOf(el.ref)) {
-                    is LineValue -> abs((world - v.line.origin).cross(v.line.dir))
-                    is CircleValue -> abs((world - v.circle.center).length() - v.circle.radius)
-                    is SegmentValue -> distToSegment(world, v.seg.a, v.seg.b)
-                    is ArcValue -> distToArc(world, v.arc)
-                    else -> continue
-                }
-            if (d <= bestD) {
-                bestD = d
-                best = el
-            }
-        }
-        return best
-    }
+    ): Element? = nearest(doc, ev, world, tol) { it.isCurve }
 
     private fun distToSegment(
         p: Vec2,

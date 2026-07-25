@@ -273,6 +273,21 @@ over curves when both are in snap range. `unweld` detaches either kind back to a
 Remaining: attach onto **arcs** (needs the arc's carrier circle) and onto a **derived/intersection
 point** (alias, 2→0 DOF).
 
+#### Snapping while placing (`Snap`)
+
+Attaching after the fact is not enough: a click that *lands on* geometry should link to it there and
+then. One resolver serves every point-producing click — tool slots and ortho-path clicks alike — in
+CAD osnap precedence: an existing **point** (reused, no new node) → the **intersection** of the two
+curves under the cursor (a derived point, 0 DOF, keeping only the branch clicked as its persisted
+`Select`) → the nearest attachable **curve** (an on-curve slider, 1 DOF) → the **grid** → the raw
+cursor. Hovering previews the snap (marker + status line) and Alt places freely.
+
+The point is the dependency, not the alignment: coinciding by coordinate alone would come apart the
+moment the other geometry moved, which is what a construction exists to prevent. Hover-time
+intersections are computed with `GeomMath`, so previewing never touches the graph. An ortho path
+started on a point is **welded** to it, so the path follows that point rather than merely beginning at
+its coordinates.
+
 **Remaining — build order (all planned; ordered, not deferred):**
 
 1. **Tool completions.** Point-from-coordinates (needs two scalar inputs — extend the slot
@@ -282,9 +297,10 @@ point** (alias, 2→0 DOF).
 2. **Editing & persistence.** Delete (dependency-aware — removing a node invalidates/removes
    dependents), undo/redo (snapshot source values + element list), save/load — the `Document`
    is the file-format seam.
-3. **Productivity.** Auto-snapping (ordinary point clicks snap to key points, intersections,
-   grid); drag-to-attach onto **arcs** and onto **derived points** (the two cases the weld magnet
-   doesn't yet cover — see *Welding*); Arrays — linear (repeat N along a vector) and circular
+3. **Productivity.** Remaining snap modes — key points of *derived* geometry (endpoint/midpoint/
+   quadrant, which need the derived point materialized, not just its coordinate) and arcs (no carrier
+   circle yet); drag-to-attach onto **arcs** and onto **derived points** (the two cases the weld
+   magnet doesn't yet cover — see *Welding*); Arrays — linear (repeat N along a vector) and circular
    (around a centre), the interactive generalization of the bolt-circle/hole-pattern macros
    (needs a count input).
 4. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
@@ -761,8 +777,10 @@ Then 3D walls = extrude + boolean.
   shared coordinate is genuinely pinned (falls back to a point-on-line slider).
 - **Next (ortho editing):** a shared snap resolver for point placement (see the tool roadmap — today a path
   click uses the raw cursor, so a wall cannot be started exactly on an existing corner), and the
-  robustness gaps: consecutive same-axis legs are accepted and yield collinear legs whose wall miter
-  is undefined; closing moves the last vertex without previewing the closing edge; no insert/delete
-  vertex.
+  robustness gaps: closing moves the last vertex without previewing the closing edge, and there is no
+  insert-vertex-on-leg / delete-vertex yet. Two are closed: a step continuing along the previous leg's
+  axis now *extends* that leg instead of creating a collinear pair with an undefined miter, and a
+  fully driven vertex is no longer grabbable (dragging it was inert while it stole the grab from the
+  geometry that drives it).
 - **Next (architectural):** wall-to-wall junction cleanup (T/L merges), opening sill/head heights
   (for 3D), and 3D walls (extrude + boolean-subtract openings).

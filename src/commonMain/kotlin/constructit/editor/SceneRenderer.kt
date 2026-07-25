@@ -38,6 +38,8 @@ object SceneRenderer {
 
     private val previewStyle = Style("#ff7f0e", 1.5)
 
+    private val snapStyle = Style("#d62728", 1.5)
+
     private val selectionStyle = Style("#1f77b4", 3.0)
     private val selectionRing = Style("#1f77b4", 1.5)
 
@@ -52,6 +54,7 @@ object SceneRenderer {
         highlight: Vec2? = null,
         preview: Pair<Vec2, Vec2>? = null,
         selected: Element? = null,
+        snap: Vec2? = null,
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
@@ -79,6 +82,15 @@ object SceneRenderer {
         }
         // rubber-band preview of the next ortho-path leg
         preview?.let { target.polyline(listOf(cam.worldToScreen(it.first), cam.worldToScreen(it.second)), previewStyle) }
+        // snap marker: a small square where a placing click would land (and what it would link to)
+        snap?.let {
+            val c = cam.worldToScreen(it)
+            val r = 5.0
+            target.polyline(
+                listOf(Vec2(c.x - r, c.y - r), Vec2(c.x + r, c.y - r), Vec2(c.x + r, c.y + r), Vec2(c.x - r, c.y + r), Vec2(c.x - r, c.y - r)),
+                snapStyle,
+            )
+        }
         // weld magnet: a double ring around the point a dragged point will snap/join onto
         highlight?.let {
             val s = cam.worldToScreen(it)
@@ -105,6 +117,9 @@ object SceneRenderer {
 
     private val gridStyle = Style("#eeeeee", 1.0)
     private val axisStyle = Style("#c8c8c8", 1.0)
+
+    /** The world grid spacing in use at [scale] — also what a grid snap rounds to. */
+    fun gridStep(scale: Double): Double = niceStep(scale)
 
     /** A "nice" world grid spacing (1/2/5 x 10^k mm) so screen spacing is roughly 40 px. */
     private fun niceStep(scale: Double): Double {

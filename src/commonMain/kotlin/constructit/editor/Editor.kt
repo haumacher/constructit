@@ -33,6 +33,17 @@ class Editor(
     var axisLock: Boolean = false
 
     /**
+     * While set, a click being *placed* resolves through [Snap] — so geometry can be put onto other
+     * geometry as it is drawn, with a real dependency, instead of only being attached afterwards by
+     * dragging. Cleared (Alt in the browser shell) to place at the raw cursor.
+     */
+    var snapEnabled: Boolean = true
+
+    /** Where the last hover would land, for the snap marker and the status bar. */
+    var snapHint: SnapResult? = null
+        private set
+
+    /**
      * The element last picked in SELECT mode. Selecting is what makes a handle's numeric fields
      * addressable: the drag is on the canvas, the typed form is in the inspector, and both write the
      * same nodes (OP-13).
@@ -47,6 +58,32 @@ class Editor(
     private fun tolWorld() = tolPx / camera.scale
 
     private fun ev() = Evaluator()
+
+    /** Resolve a click position through [Snap] (grid included only while the grid is shown). */
+    private fun snap(world: Vec2): SnapResult =
+        if (!snapEnabled) {
+            SnapResult(world, SnapKind.FREE)
+        } else {
+            Snap.resolve(doc, ev(), world, tolWorld(), if (showGrid) SceneRenderer.gridStep(camera.scale) else null)
+        }
+
+    /**
+     * The point a placing click should use: reuse the snapped point, materialize the intersection, or
+     * attach to the curve — so the placed point *depends* on what it was placed on. Only a miss (or a
+     * grid snap) makes a new free point.
+     */
+    private fun placePoint(world: Vec2): PointRef {
+        val s = snap(world)
+        val ref =
+            when (s.kind) {
+                SnapKind.POINT -> s.target?.ref as? PointRef
+                SnapKind.INTERSECTION -> doc.intersectNear(s.target!!, s.other!!, s.pos)
+                SnapKind.ON_CURVE -> doc.pointOnCurve(s.target!!, s.pos)
+                else -> null
+            }
+        if (ref != null) statusHint = "Snapped to ${s.label}"
+        return ref ?: doc.freePoint(s.pos.x.mm, s.pos.y.mm)
+    }
 
     // transient state
     private var dragTarget: Element? = null // a point, or a whole ortho leg
@@ -102,6 +139,7 @@ class Editor(
         pathThickness = null
         hoverWorld = null
         numericEntry = ""
+        snapHint = null
     }
 
     /** The typed views of the selection's handle — the same writes its drag performs (OP-13). */
@@ -141,11 +179,13 @@ class Editor(
     }
 
     /** Help line for the active tool — shown in the status bar whenever there's no transient hint. */
-    fun currentHelp(): String =
-        if (toolId == Tools.SELECT) Tools.SELECT_HELP else Tools.byId(toolId)?.help ?: ""
+    fun currentHelp(): String {
+        snapHint?.let { if (it.linked) return "Snap: ${it.label} — Alt to place freely" }
+        return if (toolId == Tools.SELECT) Tools.SELECT_HELP else Tools.byId(toolId)?.help ?: ""
+    }
 
     fun render(target: DrawTarget) {
-        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selection)
+        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selection, snapHint?.pos)
     }
 
     fun wheel(
@@ -191,10 +231,18 @@ class Editor(
     }
 
     /** One click of a path tool (ortho path / wall): start a chain, append a leg, or close the loop. */
-    private fun pathClick(world: Vec2) {
+    private fun pathClick(raw: Vec2) {
         val path = activePath
+        val s = snap(raw)
+        val world = s.pos
         if (path == null) {
             activePath = doc.startOrthoPath(world)
+            // starting *on* an existing point should mean starting *at* it: weld the start vertex so
+            // the path follows that point rather than merely beginning at its coordinates
+            if (s.kind == SnapKind.POINT) {
+                val startEl = doc.elements.last { it.ref === activePath!!.vertices.first().ref }
+                if (doc.weldOrthoEndpointToPoint(startEl, s.target!!)) statusHint = "Path starts at ${s.target.id}"
+            }
             if (toolId == Tools.WALL) pathThickness = activeScalar?.ref
             statusHint = "${if (toolId == Tools.WALL) "Wall" else "Ortho path"}: click the next point; click the start to close (Esc/double-click to finish)"
         } else {
@@ -208,6 +256,7 @@ class Editor(
         }
         hoverWorld = world
         previewSeg = null
+        snapHint = null
         onChange()
     }
 
@@ -315,8 +364,16 @@ class Editor(
 
     fun pointerMove(screen: Vec2) {
         if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {
-            hoverWorld = camera.screenToWorld(screen)
+            val world = camera.screenToWorld(screen)
+            // only the first vertex is free to snap anywhere; later ones are axis-projected from it
+            snapHint = if (activePath == null) snap(world).takeIf { it.linked } else null
+            hoverWorld = snapHint?.pos ?: world
             refreshPreview()
+            onChange()
+            return
+        }
+        if (placesAPoint()) {
+            snapHint = snap(camera.screenToWorld(screen)).takeIf { it.linked }
             onChange()
             return
         }
@@ -396,6 +453,13 @@ class Editor(
         }
     }
 
+    /** True when the active tool's next slot creates a point — the case a snap marker is useful for. */
+    private fun placesAPoint(): Boolean {
+        val tool = Tools.byId(toolId) ?: return false
+        val slot = tool.slots.getOrNull(filledSlots) ?: return false
+        return slot == SlotKind.PLACE_POINT || slot == SlotKind.POINT
+    }
+
     private fun clearMagnet() {
         weldTarget = null
         attachTarget = null
@@ -457,12 +521,8 @@ class Editor(
         val slot = tool.slots[filledSlots]
         val picked =
             when (slot) {
-                SlotKind.PLACE_POINT -> {
-                    pickedPoints.add(doc.freePoint(world.x.mm, world.y.mm))
-                    true
-                }
-                SlotKind.POINT -> {
-                    pickedPoints.add(pointOrCreate(world))
+                SlotKind.PLACE_POINT, SlotKind.POINT -> {
+                    pickedPoints.add(placePoint(world))
                     true
                 }
                 SlotKind.EXISTING_POINT -> pickElement(world) { it.isPoint }
@@ -507,12 +567,5 @@ class Editor(
         val el = HitTest.nearest(doc, ev(), world, tolWorld(), filter) ?: return false
         pickedElements.add(el)
         return true
-    }
-
-    private fun pointOrCreate(world: Vec2): PointRef {
-        val hit = HitTest.nearestAnyPoint(doc, ev(), world, tolWorld())
-        @Suppress("UNCHECKED_CAST")
-        if (hit != null) return hit.ref as PointRef
-        return doc.freePoint(world.x.mm, world.y.mm)
     }
 }
