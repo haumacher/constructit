@@ -1067,10 +1067,11 @@ Three broad families (see OP-9 decision above):
       freedom, with everything meeting there bound to it. Fixes the order-dependent *attribution* of
       DOF that made two runs at one junction behave differently; drags and typed values both reach the
       shared freedom through the junction, in closed form. See *Junctions own the freedom*.
-- [ ] **OP-19 Break / join legs** — mechanics agreed, not yet built: threshold-triggered topology
-      edits by gesture (join on collapse, break as a tool inserting a zero-length perpendicular).
-      Requires ortho coordinates to move from *shared* nodes to *bound* ones — a binding can be
-      re-pointed in place, which is what makes a jog expressible. See *Break and join legs*.
+- [x] **OP-19 Break / join legs** — RESOLVED and built: threshold-triggered topology edits by
+      gesture (join on jog collapse, committed on release; break as a tool inserting a zero-length
+      perpendicular). Required ortho coordinates to move from *shared* nodes to *bound* ones — a
+      binding can be re-pointed in place, which is what makes a jog expressible. See *Break and
+      join legs*.
 - [x] **OP-18 Document format** — RESOLVED: a **construction script** — the sequence of steps that
       built the drawing, replayed on load. Stores no node kinds, nothing synthetic (handles, styles,
       path/wall structure) and no separate values section: a step's literals are written as the
@@ -1300,6 +1301,19 @@ Three broad families (see OP-9 decision above):
   geometry no result uses is simply unused rather than scaffolding. Verified in a real browser
   (screenshots under `tmp/`): trace an arch over a construction line, then dim the construction and only
   the drawing remains. 151 jvm tests green.
+- **Session 3 kickoff — scope directives (user).** Four persona showcases were proposed (parametric
+  gear → STL; floor plan → 3D house; reverse-engineered spare part; papercraft net for a plotter)
+  and accepted **as examples only**: every feature must be **generic**, never trimmed to a use
+  case. Concrete corrections recorded: (a) the "wall" implementation is too specific, *even its
+  name* — it is a convenience for **"thick" paths**; the UI may say "wall", the model must not.
+  (b) Multi-storey + roof is a showcase of a **multi-step 2D→3D→2D→3D dependency chain** and must
+  need no special code. (c) **No unfolding algorithm** for papercraft: the user constructs the net
+  *manually* from the 3D model — measurements taken from 3D drive a 2D construction (the OP-9
+  scalar-forward rule doing real work), output goes to a plotter. (d) **No format compliance yet**:
+  concentrate on modeling features, UI/UX, 2D *and 3D* visualization, and workflow; import/export
+  may exist informally. (e) Gear: a **sampled involute** (deterministic approximation at tolerance)
+  in a macro — OP-15 proceeds independently, not as a gate. (f) Ordering of the editor baseline is
+  delegated, with one rule: **deliver nothing half-done**.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
