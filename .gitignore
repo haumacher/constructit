@@ -4,6 +4,10 @@ build/
 .idea/
 *.iml
 
-# local verification artifacts
+# Scratch / verification artifacts (screenshots, scratch scripts, throwaway output).
+# Put all such transient files under tmp/ — its contents are ignored, the folder is kept.
+/tmp/*
+!/tmp/.gitkeep
+
+# Playwright MCP session artifacts (tool-managed)
 .playwright-mcp/
-/*.png
