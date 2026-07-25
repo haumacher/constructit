@@ -329,11 +329,14 @@ class Editor(
                     "$what: click the next point; click the start to close (Esc/double-click to finish)"
                 }
         } else {
-            val v0 = (ev().valueOf(path.vertices.first().ref) as? PointValue)?.p
-            if (v0 != null && path.vertices.size >= 3 && (world - v0).length() <= tolWorld() * 2) {
+            // clicked the start -> close the loop. Through the shared search like every other pick, with
+            // a doubled tolerance because closing is a deliberate act worth making easy to hit.
+            val start = path.vertices.first().ref
+            val onStart = HitTest.nearest(doc, ev(), world, tolWorld() * 2) { it.ref === start } != null
+            if (onStart && path.vertices.size >= 3) {
                 pathClosed = true
                 finishPath()
-                return // clicked the start -> close the loop
+                return
             }
             val v = doc.addOrthoVertex(path, world)
             // reaching other geometry ends the run: connect this end and finish, the open analogue of
@@ -619,41 +622,23 @@ class Editor(
         world: Vec2,
     ) {
         val ev = ev()
-        var best: Element? = null
-        var bestPos: Vec2? = null
-        var bestD = tolWorld()
-        for (el in doc.elements) { // points win over curves at equal distance (checked first)
-            if (el === dragged || !el.visible || !el.isPoint) continue
-            val p = (ev.valueOf(el.ref) as? PointValue)?.p ?: continue
-            val d = (p - world).length()
-            if (d <= bestD) {
-                bestD = d
-                best = el
-                bestPos = p
-            }
-        }
-        if (best != null) {
-            weldTarget = best
+        // points win over curves at equal distance, so they are asked for first. Both go through the
+        // one shared search, so a position past a segment's end is as much a miss here as it is when
+        // placing geometry — the magnet used to measure to the infinite carrier line and match anyway.
+        HitTest.nearest(doc, ev, world, tolWorld()) { it !== dragged && it.isPoint }?.let { point ->
+            weldTarget = point
             attachTarget = null
-            haloPos = bestPos
+            haloPos = (ev.valueOf(point.ref) as? PointValue)?.p
             return
         }
-
-        bestD = tolWorld()
-        for (el in doc.elements) {
-            if (el === dragged || !el.visible || !el.isCurve) continue
-            val pos = doc.curveProjection(dragged, el) ?: continue
-            val d = (pos - world).length()
-            if (d <= bestD) {
-                bestD = d
-                best = el
-                bestPos = pos
+        val curve =
+            HitTest.nearest(doc, ev, world, tolWorld()) {
+                it !== dragged && it.isCurve && doc.curveProjection(dragged, it) != null
             }
-        }
-        if (best != null) {
-            attachTarget = best
+        if (curve != null) {
+            attachTarget = curve
             weldTarget = null
-            haloPos = bestPos
+            haloPos = doc.curveProjection(dragged, curve)
         } else {
             clearMagnet()
         }

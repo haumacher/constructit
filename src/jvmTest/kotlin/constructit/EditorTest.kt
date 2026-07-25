@@ -1342,6 +1342,43 @@ class EditorTest {
     }
 
     @Test
+    fun draggingAndPlacingAgreeOnWhatCountsAsNearASegment() {
+        // reported: placing a point correctly ignored positions past a segment's end, but *dragging* a
+        // point there matched anyway — the magnet had its own distance rule, measuring to the infinite
+        // carrier line instead of to the segment
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(-40.0, 0.0))
+        ed.click(Vec2(0.0, 0.0))
+        ed.setTool(Tools.SEGMENT)
+        ed.click(Vec2(-40.0, 0.0))
+        ed.click(Vec2(0.0, 0.0)) // a segment spanning x -40..0 at y=0
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(60.0, 60.0)) // a free point to drag about
+        val loose = ed.doc.freePoints.last()
+
+        // well beyond the segment's end, but exactly on its infinite extension
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(60.0, 60.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(60.0, 0.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(60.0, 0.0)))
+        assertEquals(ElementKind.POINT, loose.kind, "past the end is not on the segment, so no attach")
+        assertClose(Evaluator().point(loose.ref as constructit.dsl.PointRef).x, 60.0)
+
+        // and placing agrees: the same position offers no snap either
+        ed.setTool(Tools.POINT)
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(90.0, 0.0)))
+        assertEquals(null, ed.snapHint, "placement must judge nearness the same way")
+
+        // over the segment's body, both do attach
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(60.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(-20.0, 0.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(-20.0, 0.0)))
+        assertEquals(ElementKind.ON_CURVE, loose.kind, "on the segment itself, the magnet attaches")
+    }
+
+    @Test
     fun aLegPinnedByAJunctionStillDragsByMovingWhatDrivesIt() {
         // reported: a horizontal run ending on a slanted segment, with a vertical run hanging off that
         // junction. The horizontal leg dragged (its far end slides along the segment) but the vertical

@@ -74,13 +74,9 @@ object Snap {
             }
         }
 
-        // the attachable curves under the cursor, nearest first
-        val near =
-            doc.elements
-                .filter { !exclude(it) && it.visible && attachable(it) }
-                .mapNotNull { el -> HitTest.distanceTo(ev, el, world)?.let { el to it } }
-                .filter { it.second <= tol }
-                .sortedBy { it.second }
+        // the attachable curves under the cursor, nearest first — the shared search, so "near a segment"
+        // means the same here as everywhere else
+        val near = HitTest.nearestAll(doc, ev, world, tol) { !exclude(it) && attachable(it) }
 
         // two curves crossing under the cursor: prefer their intersection over either curve
         if (near.size >= 2) {

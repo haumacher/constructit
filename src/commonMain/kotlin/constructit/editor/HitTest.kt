@@ -14,27 +14,20 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** Picking helpers: find the nearest free point or curve to a world position within a tolerance. */
+/**
+ * Picking: **one** distance rule ([distanceTo]) and **one** search over it ([nearestAll]); everything
+ * else here is a filter. Placement, dragging, the weld/attach magnet and the snap resolver all go
+ * through it, so a world position is near a segment in exactly one sense — clamped to the segment
+ * itself, never to its infinite carrier.
+ */
 object HitTest {
+    /** Draggable points only — the pick for a drag in SELECT mode. */
     fun nearestFreePoint(
         doc: Document,
         ev: Evaluator,
         world: Vec2,
         tol: Double,
-    ): Element? {
-        var best: Element? = null
-        var bestD = tol
-        for (el in doc.elements) {
-            if (!el.visible || !el.draggable) continue
-            val p = (ev.valueOf(el.ref) as? PointValue)?.p ?: continue
-            val d = (p - world).length()
-            if (d <= bestD) {
-                bestD = d
-                best = el
-            }
-        }
-        return best
-    }
+    ): Element? = nearest(doc, ev, world, tol) { it.isPoint && it.draggable }
 
     /**
      * Nearest curve that is itself draggable — an ortho leg. Only consulted after
@@ -61,20 +54,7 @@ object HitTest {
         ev: Evaluator,
         world: Vec2,
         tol: Double,
-    ): Element? {
-        var best: Element? = null
-        var bestD = tol
-        for (el in doc.elements) {
-            if (!el.visible || !el.isPoint) continue
-            val p = (ev.valueOf(el.ref) as? PointValue)?.p ?: continue
-            val d = (p - world).length()
-            if (d <= bestD) {
-                bestD = d
-                best = el
-            }
-        }
-        return best
-    }
+    ): Element? = nearest(doc, ev, world, tol) { it.isPoint }
 
     /**
      * Screen-independent distance from [world] to [el]'s geometry, or null if it has no distance
@@ -94,6 +74,27 @@ object HitTest {
             else -> null
         }
 
+    /**
+     * Every visible element satisfying [filter] within [tol] of [world], nearest first; ties go to the
+     * most recently created, which is the one drawn on top.
+     */
+    fun nearestAll(
+        doc: Document,
+        ev: Evaluator,
+        world: Vec2,
+        tol: Double,
+        filter: (Element) -> Boolean,
+    ): List<Pair<Element, Double>> =
+        doc.elements
+            .asSequence()
+            .withIndex()
+            .filter { (_, el) -> el.visible && filter(el) }
+            .mapNotNull { (i, el) -> distanceTo(ev, el, world)?.let { Triple(el, it, i) } }
+            .filter { it.second <= tol }
+            .sortedWith(compareBy({ it.second }, { -it.third }))
+            .map { it.first to it.second }
+            .toList()
+
     /** Nearest element (point or curve) satisfying [filter], within [tol]. */
     fun nearest(
         doc: Document,
@@ -101,19 +102,7 @@ object HitTest {
         world: Vec2,
         tol: Double,
         filter: (Element) -> Boolean,
-    ): Element? {
-        var best: Element? = null
-        var bestD = tol
-        for (el in doc.elements) {
-            if (!el.visible || !filter(el)) continue
-            val d = distanceTo(ev, el, world) ?: continue
-            if (d <= bestD) {
-                bestD = d
-                best = el
-            }
-        }
-        return best
-    }
+    ): Element? = nearestAll(doc, ev, world, tol, filter).firstOrNull()?.first
 
     fun nearestCurve(
         doc: Document,
