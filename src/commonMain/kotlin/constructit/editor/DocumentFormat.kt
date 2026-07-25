@@ -101,7 +101,7 @@ object DocumentFormat {
                 val e = (step.args[0] as Arg.Sc).entry
                 listOf(step.args[0], Arg.Text("="), Arg.Num(value(e, ev)))
             }
-            "point", "orthostart", "orthovertex" ->
+            "point", "orthostart", "orthovertex", "orthoprepend" ->
                 step.creates.firstOrNull()?.let { posOf(it) }?.let { listOf(Arg.Pos(it)) } ?: step.args
             // both of a break's positions are state: where the leg was split, and how far the jog has
             // since been pulled open
@@ -230,6 +230,11 @@ object DocumentFormat {
             "point" -> parsePos(words[1]).let { doc.freePoint(it.x.let(Quantity::mm), it.y.let(Quantity::mm)) }
             "orthostart" -> doc.startOrthoPath(parsePos(words[1]))
             "orthovertex" -> doc.addOrthoVertex(currentPath(doc), parsePos(words[1]))
+            "orthoprepend" -> doc.prependOrthoVertex(currentPath(doc), parsePos(words[1]))
+            "orthoresume" -> {
+                val (path, atEnd) = doc.resumableEnd(el(1)) ?: throw LoadError("'${words[1]}' is not an open path end")
+                doc.resumeOrthoPath(path, atEnd)
+            }
             "orthoclose" -> doc.closeOrthoPath(currentPath(doc))
             "orthojoin" -> {
                 val (path, i) = doc.legOf(el(1)) ?: throw LoadError("'${words[1]}' is not an ortho segment")
@@ -259,7 +264,8 @@ object DocumentFormat {
         }
     }
 
-    private fun currentPath(doc: Document): OrthoPath = doc.orthoPaths.lastOrNull() ?: throw LoadError("no path is being drawn")
+    private fun currentPath(doc: Document): OrthoPath =
+        doc.currentOrthoPath ?: doc.orthoPaths.lastOrNull() ?: throw LoadError("no path is being drawn")
 
     /**
      * Replay a tool application through the very same [ToolDef.build] the click ran, so every tool —

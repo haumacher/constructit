@@ -1292,6 +1292,15 @@ Then 3D walls = extrude + boolean.
     Esc cancels the entry before it finishes the path). The preview shows the typed length, and the
     placed leg is indistinguishable from a clicked one — same construction, so the length is
     afterwards editable by dragging, per OP-13. `Editor.key` keeps this in the pure controller.
+  - **Extending** — clicking a *dangling* end continues that path, from either end (appending or
+    prepending, with the same straight-on coalescing at both). Starting a separate path welded there
+    instead left a phantom corner, because two paths cannot coalesce a straight-on step. An end that is
+    already *connected* is a terminus rather than a loose thread, so clicking that one starts a branch —
+    which is the only way to make a T-junction, and the other thing a click on an endpoint can mean.
+  - **A grab holds its offset.** Picking has a tolerance, so writing the cursor's position outright made
+    geometry jump to it on the first move; the drag applies the offset from where the grab landed
+    instead. A repeat click on the growing end is ignored for the same family of reasons — it is the
+    second half of a double-click, and used to leave a hairline segment behind before the path finished.
   - Rubber-band preview; Esc / double-click / click-start to finish.
 - **Slice 2 — walls** (`Tools.WALL`, `Document.buildWall`): centerline + thickness → two offset
   faces with `intersectLL` miter corners + end caps; retained as a `Wall` so it can be regenerated.

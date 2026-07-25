@@ -97,7 +97,7 @@ class Editor(
     private fun pathSnap(raw: Vec2): SnapResult {
         val own = activePathParts()
         val s = snap(raw) { it in own }
-        val last = activePath?.vertices?.lastOrNull() ?: return s
+        val last = activePath?.let { if (pathAtEnd) it.vertices.lastOrNull() else it.vertices.firstOrNull() } ?: return s
         if (s.kind != SnapKind.ON_CURVE) return s
         val from = (ev().valueOf(last.ref) as? PointValue)?.p ?: return s
         val axis = if (kotlin.math.abs(raw.x - from.x) >= kotlin.math.abs(raw.y - from.y)) 0 else 1
@@ -146,7 +146,8 @@ class Editor(
 
     // transient state
     private var dragTarget: Element? = null // a point, or a whole ortho leg
-    private var dragStart: Vec2? = null // where the drag began, in world space — the axis-lock origin
+    private var dragStart: Vec2? = null // where on the geometry the drag began — the axis-lock origin
+    private var grabOffset: Vec2 = Vec2(0.0, 0.0) // cursor minus that, so a grab never jumps
     private var joinHints: List<Vec2> = emptyList() // corners this drag has flattened, marked on canvas
     private var weldTarget: Element? = null // a point to weld onto
     private var attachTarget: Element? = null // a curve to attach onto
@@ -160,6 +161,7 @@ class Editor(
 
     // ortho-path (turtle) state — the path itself is retained in the document while being drawn
     private var activePath: OrthoPath? = null
+    private var pathAtEnd = true // which end of a resumed path is growing
     private var pathClosed = false
     private var previewSeg: Pair<Vec2, Vec2>? = null
     private var pathThickness: constructit.dsl.ScalarRef? = null // set for the WALL tool
@@ -189,12 +191,14 @@ class Editor(
         filledSlots = 0
         dragTarget = null
         dragStart = null
+        grabOffset = Vec2(0.0, 0.0)
         joinHints = emptyList()
         weldTarget = null
         attachTarget = null
         haloPos = null
         panning = false
         activePath = null
+        pathAtEnd = true
         pathClosed = false
         previewSeg = null
         pathThickness = null
@@ -270,7 +274,12 @@ class Editor(
             when {
                 movable != null -> {
                     dragTarget = movable
-                    dragStart = world
+                    // drag by the *offset* from where the grab landed, not to the cursor outright:
+                    // picking has a tolerance, so writing the cursor position made the geometry jump to
+                    // it on the first move and then follow from there
+                    val anchor = grabAnchor(movable, world)
+                    grabOffset = world - anchor
+                    dragStart = anchor
                     statusHint = ""
                 }
                 hit != null -> statusHint = explainImmovable(hit)
@@ -316,29 +325,49 @@ class Editor(
         val world = s.pos
         val what = if (toolId == Tools.WALL) "Wall" else "Ortho path"
         if (path == null) {
-            val started = doc.startOrthoPath(world)
-            activePath = started
-            if (toolId == Tools.WALL) pathThickness = activeScalar?.ref
-            // starting *on* something should mean starting *at* it — link, so the path follows that
-            // geometry instead of merely beginning at its coordinates
-            val linked = s.linked && linkPathVertex(started.vertices.first().ref, s)
-            statusHint =
-                if (linked) {
-                    "$what starts on ${s.target?.id} (${s.label}); click the next point"
-                } else {
-                    "$what: click the next point; click the start to close (Esc/double-click to finish)"
-                }
+            // clicking an open end of an existing path *continues* that path. Starting a separate path
+            // welded there instead left a phantom corner: two paths cannot coalesce a straight-on step,
+            // so extending produced a corner where the drawing read as one straight run.
+            val resume = if (s.kind == SnapKind.POINT) s.target?.let { doc.resumableEnd(it) } else null
+            if (resume != null) {
+                val (existing, atEnd) = resume
+                activePath = doc.resumeOrthoPath(existing, atEnd)
+                pathAtEnd = atEnd
+                if (toolId == Tools.WALL) pathThickness = activeScalar?.ref
+                statusHint = "$what: extending this path — a step straight on lengthens the last segment"
+            } else {
+                val started = doc.startOrthoPath(world)
+                activePath = started
+                pathAtEnd = true
+                if (toolId == Tools.WALL) pathThickness = activeScalar?.ref
+                // starting *on* something should mean starting *at* it — link, so the path follows that
+                // geometry instead of merely beginning at its coordinates
+                val linked = s.linked && linkPathVertex(started.vertices.first().ref, s)
+                statusHint =
+                    if (linked) {
+                        "$what starts on ${s.target?.id} (${s.label}); click the next point"
+                    } else {
+                        "$what: click the next point; click the start to close (Esc/double-click to finish)"
+                    }
+            }
         } else {
-            // clicked the start -> close the loop. Through the shared search like every other pick, with
-            // a doubled tolerance because closing is a deliberate act worth making easy to hit.
-            val start = path.vertices.first().ref
-            val onStart = HitTest.nearest(doc, ev(), world, tolWorld() * 2) { it.ref === start } != null
-            if (onStart && path.vertices.size >= 3) {
+            // clicked the far end -> close the loop. Through the shared search like every other pick,
+            // with a doubled tolerance because closing is a deliberate act worth making easy to hit.
+            val far = (if (pathAtEnd) path.vertices.first() else path.vertices.last()).ref
+            val onFar = HitTest.nearest(doc, ev(), world, tolWorld() * 2) { it.ref === far } != null
+            if (onFar && path.vertices.size >= 3) {
                 pathClosed = true
                 finishPath()
                 return
             }
-            val v = doc.addOrthoVertex(path, world)
+            // a click back on the growing end is a repeat — the second half of a double-click, whose
+            // dblclick then finishes the path — and must not leave a hairline leg behind
+            val growing = (if (pathAtEnd) path.vertices.last() else path.vertices.first()).ref
+            if (HitTest.nearest(doc, ev(), world, tolWorld()) { it.ref === growing } != null) {
+                onChange()
+                return
+            }
+            val v = doc.extendOrthoPath(path, pathAtEnd, world)
             // reaching other geometry ends the run: connect this end and finish, the open analogue of
             // closing a loop by clicking the start
             if (v != null && s.linked && linkPathVertex(v.ref, s)) {
@@ -416,7 +445,7 @@ class Editor(
             previewSeg = null
             return
         }
-        val base = doc.orthoLegPreview(path, hover) ?: return
+        val base = doc.orthoLegPreview(path, hover, pathAtEnd) ?: return
         val typed = numericEntry.toDoubleOrNull()
         previewSeg =
             if (typed == null) {
@@ -478,7 +507,7 @@ class Editor(
         when {
             dragTarget != null -> {
                 val el = dragTarget!!
-                val world = axisLocked(camera.screenToWorld(screen), el)
+                val world = axisLocked(camera.screenToWorld(screen) - grabOffset, el)
                 el.handle?.drag(world, ev())
                 // a free point and an open path end can connect on release; nothing else can
                 if (canConnect(el)) updateMagnet(el, world) else clearMagnet()
@@ -591,6 +620,16 @@ class Editor(
         val seg = (ev().valueOf(path.legs[i].ref) as? constructit.core.SegmentValue)?.seg ?: return null
         return if (path.legAxis(i) == 0) seg.a.y else seg.a.x
     }
+
+    /**
+     * Where on [el] a grab at [world] landed: the point itself, or the point of the curve under the
+     * cursor. The difference between that and the cursor is held for the rest of the drag, so geometry
+     * moves *with* the pointer instead of snapping to it.
+     */
+    private fun grabAnchor(
+        el: Element,
+        world: Vec2,
+    ): Vec2 = (ev().valueOf(el.ref) as? PointValue)?.p ?: Snap.legPoint(ev(), el, world) ?: world
 
     /** Where a (possibly zero-length) leg sits, for marking it on the canvas. */
     private fun legPoint(el: Element): Vec2? =

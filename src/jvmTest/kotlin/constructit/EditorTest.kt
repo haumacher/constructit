@@ -1394,6 +1394,109 @@ class EditorTest {
     }
 
     @Test
+    fun aGrabDoesNotJumpTheGeometryToTheCursor() {
+        // reported: clicking an end and moving made it jump away before following the mouse. Picking has
+        // a tolerance, so writing the cursor position outright moved the geometry by the grab offset.
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(80.0, 2.0))
+        ed.finishPath()
+        val end = ed.doc.orthoPaths.single().vertices[1].ref
+
+        // grab it 2mm off-centre and move the cursor exactly 10mm: the endpoint must move 10mm too
+        ed.setTool(Tools.SELECT)
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(82.0, 0.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(92.0, 0.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(92.0, 0.0)))
+        assertClose(Evaluator().point(end).x, 90.0, tol = 1e-6)
+
+        // and a leg grabbed off its axis keeps that offset rather than snapping under the cursor
+        val leg = ed.doc.orthoPaths.single().legs[0]
+        ed.pointerDown(ed.camera.worldToScreen(Vec2(40.0, 2.0)))
+        ed.pointerMove(ed.camera.worldToScreen(Vec2(40.0, 22.0)))
+        ed.pointerUp(ed.camera.worldToScreen(Vec2(40.0, 22.0)))
+        assertClose(Evaluator().segment(leg.ref as SegmentRef).a.y, 20.0, tol = 1e-6)
+    }
+
+    @Test
+    fun clickingADanglingEndContinuesThatPathInsteadOfStartingAnother() {
+        // reported: extending an open end added a segment that was not perpendicular to the one extended.
+        // A separate path was being started there, and two paths cannot coalesce a straight-on step.
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(60.0, 2.0)) // horizontal
+        ed.click(Vec2(58.0, 40.0)) // then vertical
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+        assertEquals(listOf(0, 1), path.legAxes.toList())
+
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(60.0, 40.0)) // the dangling end
+        assertEquals(1, ed.doc.orthoPaths.size, "the same path is continued, not a second one begun")
+        ed.click(Vec2(60.0, 90.0)) // straight on: lengthens the last leg rather than adding a corner
+        assertEquals(2, path.legCount, "no phantom corner")
+        assertEquals(listOf(0, 1), path.legAxes.toList())
+        assertClose(Evaluator().point(path.vertices.last().ref).y, 90.0)
+
+        ed.click(Vec2(120.0, 88.0)) // now perpendicular: a real corner
+        assertEquals(3, path.legCount)
+        assertEquals(listOf(0, 1, 0), path.legAxes.toList())
+        ed.finishPath()
+    }
+
+    @Test
+    fun aPathCanBeContinuedFromItsStartToo() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(60.0, 2.0))
+        ed.click(Vec2(58.0, 40.0))
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+
+        // clicking the *other* dangling end extends the same path from the front, symmetrically
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        assertEquals(1, ed.doc.orthoPaths.size)
+        ed.click(Vec2(-40.0, 1.0)) // straight on -> lengthens the first leg
+        assertEquals(2, path.legCount)
+        assertClose(Evaluator().point(path.vertices.first().ref).x, -40.0)
+        ed.click(Vec2(-38.0, -50.0)) // perpendicular -> a corner at the front
+        assertEquals(3, path.legCount)
+        assertEquals(listOf(1, 0, 1), path.legAxes.toList())
+        ed.finishPath()
+
+        // every leg is still axis-aligned after growing from the front
+        val ev = Evaluator()
+        for (i in 0 until path.legCount) {
+            val l = ev.segment(path.legs[i].ref as SegmentRef)
+            assertTrue(kotlin.math.abs(l.b.y - l.a.y) < 1e-6 || kotlin.math.abs(l.b.x - l.a.x) < 1e-6, "leg $i")
+        }
+    }
+
+    @Test
+    fun aDoubleClickFinishesWithoutLeavingAHairlineSegment() {
+        // reported: ending a path with a double-click dropped two points instead of one. The second
+        // click of the pair landed a near-zero leg before dblclick finished the path.
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(60.0, 2.0))
+        ed.click(Vec2(58.0, 40.0))
+        // the double-click: two clicks a pixel apart, then the dblclick that finishes
+        ed.click(Vec2(60.0, 40.0))
+        ed.click(Vec2(60.2, 40.1))
+        ed.finishPath()
+
+        val path = ed.doc.orthoPaths.single()
+        assertEquals(3, path.vertices.size, "no extra vertex from the repeat click")
+        assertEquals(2, path.legCount)
+        assertClose(Evaluator().point(path.vertices.last().ref).y, 40.0)
+    }
+
+    @Test
     fun bothRunsAtAJunctionDragTheSameWay() {
         // reported twice: a horizontal run ending on a slanted segment with a vertical run hanging off
         // that junction behaved asymmetrically — first the legs, then the corners. The cause was that

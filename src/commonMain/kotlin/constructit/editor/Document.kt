@@ -891,12 +891,98 @@ class Document {
 
     val orthoPaths = ArrayList<OrthoPath>()
 
+    /** The path being drawn or extended — what a following vertex step belongs to. */
+    var currentOrthoPath: OrthoPath? = null
+        private set
+
+    /**
+     * The open ortho path that [el] terminates, and whether it is that path's *last* vertex.
+     *
+     * Clicking an open end continues that path rather than starting a new one welded onto it. Two paths
+     * meeting head-on could not coalesce a straight-on step, so extending produced a phantom corner
+     * where the drawing looked like one straight run.
+     */
+    fun resumableEnd(el: Element): Pair<OrthoPath, Boolean>? {
+        // only a *dangling* end continues. An end already connected to something is a terminus — a run
+        // meeting a wall — and clicking it starts a branch there, which is the other thing a click on an
+        // endpoint can mean and the only way to get a T-junction.
+        if (orthoEndpoint(el) == null) return null
+        for (path in orthoPaths) {
+            if (path.closed || path.vertices.size < 2) continue
+            if (path.vertices.last().ref === el.ref) return path to true
+            if (path.vertices.first().ref === el.ref) return path to false
+        }
+        return null
+    }
+
+    /** Continue [path] from one of its ends — see [resumableEnd]. */
+    fun resumeOrthoPath(
+        path: OrthoPath,
+        atEnd: Boolean,
+    ): OrthoPath {
+        val end = if (atEnd) path.vertices.last() else path.vertices.first()
+        recording("orthoresume", Arg.El(elementFor(end.ref) ?: return path)) { currentOrthoPath = path }
+        return path
+    }
+
+    /** Add a leg at either end of [path]: appending, or prepending when resumed at its start. */
+    fun extendOrthoPath(
+        path: OrthoPath,
+        atEnd: Boolean,
+        to: Vec2,
+    ): OrthoVertex? = if (atEnd) addOrthoVertex(path, to) else prependOrthoVertex(path, to)
+
+    /**
+     * Prepend a leg before [path]'s first vertex — the mirror of [addOrthoVertex], including its
+     * coalescing: a step continuing along the first leg's axis extends that leg instead of leaving a
+     * straight-through corner. The new vertex follows the old start on the perpendicular coordinate,
+     * exactly as an appended one follows the old end, so every invariant holds either way.
+     */
+    fun prependOrthoVertex(
+        path: OrthoPath,
+        to: Vec2,
+    ): OrthoVertex? = recording("orthoprepend", Arg.Pos(to), skipIfEmpty = true) { prependOrthoVertexNow(path, to) }
+
+    private fun prependOrthoVertexNow(
+        path: OrthoPath,
+        to: Vec2,
+    ): OrthoVertex? {
+        val first = path.vertices.first()
+        val p = ((Evaluator().eval(first.ref.node) as? EvalResult.Ok)?.value as? PointValue)?.p ?: return null
+        val dx = to.x - p.x
+        val dy = to.y - p.y
+        if (abs(dx) < Vec2.EPS && abs(dy) < Vec2.EPS) return null
+        val axis = if (abs(dx) >= abs(dy)) 0 else 1
+        if (path.legCount > 0 && path.legAxis(0) == axis) { // straight on: lengthen the first leg
+            val node = writableMaster(if (axis == 0) first.corner.xNode else first.corner.yNode) ?: return null
+            node.value = ScalarValue(Quantity.mm(if (axis == 0) to.x else to.y))
+            return first
+        }
+        val xNode: SourceNode
+        val yNode: SourceNode
+        if (axis == 0) {
+            xNode = scalarSource(to.x)
+            yNode = scalarSource(p.y).also { it.boundTo = first.corner.yNode }
+        } else {
+            xNode = scalarSource(p.x).also { it.boundTo = first.corner.xNode }
+            yNode = scalarSource(to.y)
+        }
+        val v = orthoVertex(xNode, yNode, axis)
+        v.corner.legAnchor = if (axis == 0) first.corner.xNode else first.corner.yNode
+        first.corner.isEndpoint = false
+        path.vertices.add(0, v)
+        path.legs.add(0, dragLeg(path, segment(v.ref, first.ref)))
+        path.legAxes.add(0, axis)
+        return v
+    }
+
     /** Start a retained ortho path at [at] with a fresh, draggable vertex owning both coordinates. */
     fun startOrthoPath(at: Vec2): OrthoPath =
         recording("orthostart", Arg.Pos(at)) {
             val path = OrthoPath()
             path.vertices.add(orthoVertex(scalarSource(at.x), scalarSource(at.y), -1))
             orthoPaths.add(path)
+            currentOrthoPath = path
             path
         }
 
@@ -1200,11 +1286,12 @@ class Document {
         return breakOrthoLeg(path, i, at, at)
     }
 
-    /** Where the next leg of [path] would land (rubber-band preview). */
+    /** Where the next leg of [path] would land (rubber-band preview), from whichever end is growing. */
     fun orthoLegPreview(
         path: OrthoPath,
         to: Vec2,
-    ): Pair<Vec2, Vec2>? = orthoLegPreview(path.vertices.last().ref, to)
+        atEnd: Boolean = true,
+    ): Pair<Vec2, Vec2>? = orthoLegPreview(if (atEnd) path.vertices.last().ref else path.vertices.first().ref, to)
 
     /** Where an ortho leg from [from] toward [to] lands (rubber-band preview): snapped to H or V. */
     fun orthoLegPreview(
