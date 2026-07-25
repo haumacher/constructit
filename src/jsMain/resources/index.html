@@ -42,6 +42,13 @@
         .mrow:hover { background: #eef4fb; }
         .mrow.active { background: #e2eefb; outline: 1px solid #1f77b4; }
         .mrow .mval { color: #2ca02c; }
+        .frow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; font-size: 12px; }
+        .frow .flabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        .frow .fval { width: 58px; }
+        .frow .fval:disabled { background: #eee; color: #888; }
+        .frow .funit { width: 18px; color: #999; }
+        #inspector .selname { font-size: 12px; color: #1f77b4; padding: 0 4px 2px; }
+        #inspector .hint { font-size: 11px; color: #999; padding: 0 4px; }
         #tree .item { font-size: 12px; padding: 2px 4px; border-radius: 4px; }
         #tree .item .eid { color: #bbb; float: right; }
     </style>
@@ -56,6 +63,8 @@
         <nav id="palette"></nav>
         <div id="canvas-area"><canvas id="canvas"></canvas></div>
         <aside id="panel">
+            <h3>Selection</h3>
+            <div id="inspector"></div>
             <h3>Parameters</h3>
             <div id="params-form">
                 <input id="p-name" placeholder="name" value="r">

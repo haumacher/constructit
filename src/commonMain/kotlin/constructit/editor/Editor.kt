@@ -31,6 +31,14 @@ class Editor(
      * Read live, so it can be engaged or released mid-drag.
      */
     var axisLock: Boolean = false
+
+    /**
+     * The element last picked in SELECT mode. Selecting is what makes a handle's numeric fields
+     * addressable: the drag is on the canvas, the typed form is in the inspector, and both write the
+     * same nodes (OP-13).
+     */
+    var selection: Element? = null
+        private set
     var statusHint: String = ""
         private set
 
@@ -85,6 +93,37 @@ class Editor(
         pathThickness = null
     }
 
+    /** The typed views of the selection's handle — the same writes its drag performs (OP-13). */
+    fun selectionFields(): List<HandleField> = selection?.handle?.fields() ?: emptyList()
+
+    /** Short name for the selection, for the inspector header. */
+    fun selectionLabel(): String {
+        val el = selection ?: return ""
+        val kind =
+            when (el.handle) {
+                is OrthoEdgeHandle -> "leg"
+                is OrthoCornerHandle -> "corner"
+                else -> el.kind.name.lowercase()
+            }
+        return "$kind ${el.id}"
+    }
+
+    /**
+     * Write [value] (in the display unit of the field's dimension) into selection field [index].
+     * False when there is no such field or it is driven by another node, which is the same answer
+     * dragging gives.
+     */
+    fun writeSelectionField(
+        index: Int,
+        value: Double,
+    ): Boolean {
+        val f = selectionFields().getOrNull(index) ?: return false
+        if (!f.writable) return false
+        f.write(quantityOf(f.dim, value))
+        onChange()
+        return true
+    }
+
     /** Set a transient status-bar note (e.g. panel feedback). */
     fun note(message: String) {
         statusHint = message
@@ -95,7 +134,7 @@ class Editor(
         if (toolId == Tools.SELECT) Tools.SELECT_HELP else Tools.byId(toolId)?.help ?: ""
 
     fun render(target: DrawTarget) {
-        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg)
+        SceneRenderer.render(doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selection)
     }
 
     fun wheel(
@@ -113,6 +152,7 @@ class Editor(
             val hit =
                 HitTest.nearestFreePoint(doc, ev(), world, tolWorld())
                     ?: HitTest.nearestDraggableCurve(doc, ev(), world, tolWorld())
+            selection = hit // a miss clears it, so clicking empty space deselects
             if (hit != null) {
                 dragTarget = hit
                 dragStart = world
@@ -120,6 +160,7 @@ class Editor(
                 panning = true
                 lastScreen = screen
             }
+            onChange()
             return
         }
         if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {

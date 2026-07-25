@@ -651,6 +651,40 @@ class EditorTest {
     }
 
     @Test
+    fun clickingSelectsAndTheInspectorWritesTheSameNodeAsTheDrag() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0)) // V0
+        ed.click(Vec2(40.0, 3.0)) // V1 (40,0)  leg 0 horizontal
+        ed.click(Vec2(38.0, 30.0)) // V2 (40,30)
+        ed.finishPath()
+        val path = ed.doc.orthoPaths.single()
+        val verts = ed.doc.elements.filter { it.kind == ElementKind.ON_CURVE }
+
+        fun p(i: Int) = Evaluator().point(verts[i].ref as constructit.dsl.PointRef)
+
+        // click the middle of leg 0 -> the leg is selected and offers its three fields
+        ed.setTool(Tools.SELECT)
+        ed.click(Vec2(20.0, 0.0))
+        assertTrue(ed.selection === path.legs[0], "clicking a leg selects it")
+        assertEquals("leg ${path.legs[0].id}", ed.selectionLabel())
+        assertEquals(listOf("y", "length (move end)", "length (move start)"), ed.selectionFields().map { it.label })
+
+        // typing into "length (move end)" is the same write as dragging V1 along the leg
+        assertTrue(ed.writeSelectionField(1, 65.0))
+        assertClose(p(1).x, 65.0)
+        assertClose(p(2).x, 65.0)
+
+        // clicking a corner selects that instead; clicking empty space clears the selection
+        ed.click(Vec2(0.0, 0.0))
+        assertTrue(ed.selection === verts[0], "clicking a corner selects the corner")
+        ed.click(Vec2(-200.0, -200.0))
+        assertEquals(null, ed.selection)
+        assertTrue(ed.selectionFields().isEmpty())
+        assertFalse(ed.writeSelectionField(0, 1.0), "nothing selected -> nothing to write")
+    }
+
+    @Test
     fun axisLockRestrictsAVertexDragToOneAxis() {
         val ed = Editor()
         ed.setTool(Tools.ORTHO_PATH)

@@ -38,6 +38,9 @@ object SceneRenderer {
 
     private val previewStyle = Style("#ff7f0e", 1.5)
 
+    private val selectionStyle = Style("#1f77b4", 3.0)
+    private val selectionRing = Style("#1f77b4", 1.5)
+
     fun render(
         doc: Document,
         ev: Evaluator,
@@ -48,6 +51,7 @@ object SceneRenderer {
         grid: Boolean = false,
         highlight: Vec2? = null,
         preview: Pair<Vec2, Vec2>? = null,
+        selected: Element? = null,
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
@@ -62,6 +66,14 @@ object SceneRenderer {
                 is CircleValue -> target.circle(cam.worldToScreen(v.circle.center), v.circle.radius * cam.scale, el.style)
                 is ArcValue -> target.polyline(tessellate(v.arc).map { cam.worldToScreen(it) }, el.style)
                 is PointSetValue -> v.set.points.forEach { target.dot(cam.worldToScreen(it), POINT_PX, el.style.stroke) }
+                else -> {}
+            }
+        }
+        // the selection, redrawn on top: what the inspector's numeric fields refer to
+        if (selected != null && selected.visible) {
+            when (val v = ev.valueOf(selected.ref)) {
+                is PointValue -> target.circle(cam.worldToScreen(v.p), 7.0, selectionRing)
+                is SegmentValue -> target.polyline(listOf(cam.worldToScreen(v.seg.a), cam.worldToScreen(v.seg.b)), selectionStyle)
                 else -> {}
             }
         }

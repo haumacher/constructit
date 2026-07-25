@@ -64,6 +64,20 @@ class HandleField(
     }
 }
 
+/**
+ * Interpret a number typed in a UI field as a [Quantity] of [dim]. The display units are mm and
+ * degrees; base units stay mm and radians (see the units policy).
+ */
+fun quantityOf(
+    dim: Dimension,
+    value: Double,
+): Quantity =
+    when (dim) {
+        Dimension.ANGLE -> Quantity.deg(value)
+        Dimension.LENGTH -> Quantity.mm(value)
+        else -> Quantity.number(value)
+    }
+
 /** The effective value of [node] in base units — its literal, or whatever drives it. */
 private fun baseOf(
     node: SourceNode,

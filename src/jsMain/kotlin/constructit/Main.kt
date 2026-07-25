@@ -8,6 +8,7 @@ import constructit.editor.Editor
 import constructit.editor.Format
 import constructit.editor.ScalarEntry
 import constructit.editor.Tools
+import constructit.editor.quantityOf
 import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.Quantity
@@ -143,6 +144,15 @@ private fun setupApp() {
         }
     })
 
+    // inspector: typing a value writes exactly what dragging the selected handle writes (OP-13)
+    (document.getElementById("inspector") as HTMLElement).addEventListener("change", {
+        val t = it.target as? HTMLInputElement ?: return@addEventListener
+        val idx = t.getAttribute("data-fidx")?.toIntOrNull() ?: return@addEventListener
+        val v = t.value.toDoubleOrNull() ?: return@addEventListener
+        if (!editor.writeSelectionField(idx, v)) editor.note("That value is determined by the construction and can't be set here")
+        repaint()
+    })
+
     // a measurement can drive a new construction: click it to make it the active scalar (OP-4)
     (document.getElementById("measure-list") as HTMLElement).addEventListener("click", {
         val row = (it.target as? HTMLElement)?.closest(".mrow") ?: return@addEventListener
@@ -185,6 +195,27 @@ private fun renderPanel(editor: Editor) {
     }
 
     val ev = Evaluator()
+
+    // selection inspector: one row per handle field — the numeric form of the selection's drag
+    val insp = document.getElementById("inspector") as HTMLElement
+    val fields = editor.selectionFields()
+    insp.innerHTML =
+        if (editor.selection == null) {
+            "<div class=\"hint\">Click a corner or a leg to read and set its values.</div>"
+        } else {
+            "<div class=\"selname\">${editor.selectionLabel()}</div>" +
+                fields.withIndex().joinToString("") { (i, f) ->
+                    val q = f.read(ev)
+                    val shown = q?.let { displayValue(it) } ?: ""
+                    val disabled = if (f.writable) "" else " disabled"
+                    "<div class=\"frow\">" +
+                        "<span class=\"flabel\">${f.label}</span>" +
+                        "<input class=\"fval\" data-fidx=\"$i\" value=\"$shown\"$disabled>" +
+                        "<span class=\"funit\">${unitLabel(f.dim)}</span>" +
+                        "</div>"
+                } +
+                if (fields.isEmpty()) "<div class=\"hint\">No editable values — this element is fully derived.</div>" else ""
+        }
 
     // parameters (editable)
     val plist = document.getElementById("params-list") as HTMLElement
@@ -246,9 +277,5 @@ private fun quantityIn(
     value: Double,
 ): Quantity {
     val dim = (Evaluator().eval(entry.ref.node) as? constructit.core.EvalResult.Ok)?.let { (it.value as constructit.core.ScalarValue).q.dim } ?: Dimension.LENGTH
-    return when (dim) {
-        Dimension.ANGLE -> Quantity.deg(value)
-        Dimension.LENGTH -> Quantity.mm(value)
-        else -> Quantity.number(value)
-    }
+    return quantityOf(dim, value)
 }

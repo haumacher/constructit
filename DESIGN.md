@@ -722,6 +722,10 @@ Then 3D walls = extrude + boolean.
     (`SourceNode.boundTo`, so the geometry snaps to fit) *and* its drag handle is redirected to
     write the start's node — so the vertex before the closing edge keeps 2 DOF like every other
     corner. Closing is triggered by clicking the start.
+  - **Axis-locked dragging** — with `Editor.axisLock` (Shift in the browser shell) a drag keeps only
+    the component its gesture is dominated by, measured from where the drag began, so one coordinate
+    of a corner can be changed without disturbing the other. Filtering the position before dispatch
+    means it works for every handle kind; a leg, already single-axis, is exempt.
   - **Leg dragging** — a whole leg is a handle too (`OrthoEdgeHandle`). Its endpoints share the
     coordinate perpendicular to it, so the leg has exactly one DOF of its own: dragging it writes
     that single node, moving both ends together and stretching the two neighbouring legs. This is
@@ -730,7 +734,9 @@ Then 3D walls = extrude + boolean.
     `x`, `y` and the length of the leg that created it; a leg offers its perpendicular position plus
     its length *from either end* (`length (move end)` / `length (move start)`), because a length
     spans two vertices and each end is a separate write. A field over a driven node (welded,
-    attached, loop-closed) reports itself unwritable.
+    attached, loop-closed) reports itself unwritable. Clicking in SELECT mode sets `Editor.selection`
+    (a corner, or a leg — corners win) and the shell renders its fields as an inspector, so the
+    numeric form of every drag is reachable without any per-tool UI code.
   - The path is retained as an `OrthoPath` (vertices in draw order + a segment element per leg), so
     legs are addressable — which is what lets a leg's length find the neighbour supplying its other
     end. A `Wall` keeps a reference to the centerline path it was built from.
@@ -748,10 +754,11 @@ Then 3D walls = extrude + boolean.
   *own* coordinate (derived as where the line crosses the still-free shared coordinate), so the
   neighbour keeps its DOF; a connecting edge parallel to the target line is the one case where the
   shared coordinate is genuinely pinned (falls back to a point-on-line slider).
-- **Next (ortho editing):** selection + a handle inspector in the shell (so the typed fields are
-  reachable from the UI), axis-locked vertex dragging, direct distance entry while drawing, a shared
-  snap resolver for point placement (see the tool roadmap), and the robustness gaps — consecutive
-  same-axis legs are accepted today and yield collinear legs whose wall miter is undefined; closing
-  moves the last vertex without previewing the closing edge; no insert/delete vertex.
+- **Next (ortho editing):** direct distance entry while drawing (type a leg length instead of
+  clicking its end), a shared snap resolver for point placement (see the tool roadmap — today a path
+  click uses the raw cursor, so a wall cannot be started exactly on an existing corner), and the
+  robustness gaps: consecutive same-axis legs are accepted and yield collinear legs whose wall miter
+  is undefined; closing moves the last vertex without previewing the closing edge; no insert/delete
+  vertex.
 - **Next (architectural):** wall-to-wall junction cleanup (T/L merges), opening sill/head heights
   (for 3D), and 3D walls (extrude + boolean-subtract openings).
