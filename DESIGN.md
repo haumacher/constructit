@@ -2122,6 +2122,167 @@ that section extruded on storey 1's own **top face** becomes storey 2.
   wants a plane-valued slot, which wants datum-plane UI); the **bottom** face as a stacking target; and
   `project(edge, plane)` — the seam's third downward accessor, which nothing has needed yet.
 
+### Implementation status (as built — sketch spaces, and a sketch on any planar face)
+
+The seam's last missing half: **a 2D drawing can now live somewhere other than the plan.** A document has
+named **sketch spaces**, one of them active; a space derived from a solid's *side* face makes vertical
+planes nameable from the toolbar, and with them the whole class of features mechanical work reaches
+immediately — the user's back-side drill, end to end, by clicking. `FaceSketchTest` is the record;
+`FaceSketchTest.aDrillOnASideFaceLandsWhereTheFaceCoordinatesPutIt` is the acceptance test.
+
+- **A space is organisation and view state, and the engine is untouched.** OP-17's decision — 2D stays
+  abstract and a `SketchOn(plane, regions)` node does the embedding — is exactly what makes this cheap:
+  a space contributes *one thing* to a construction, the plane its features sketch on, which is the
+  argument `sketchOn` has always taken. `SketchSpace(name, plane, anchor, piece)` therefore adds no value
+  type, no op and no evaluation rule; it is OP-14's third column (the organizational one) plus a camera.
+  Every element records the space it was drawn in (`Element.space`, stamped by the one `Document.add`),
+  the default being the **plan** (world XY) — so nothing about an existing drawing, or an existing file,
+  changed. **One canvas shows one space**: `SceneRenderer` skips the others and `HitTest` will not
+  address them, because the coordinates do not even mean the same thing in two spaces.
+- **The face pick is one click, on a footprint edge** — the pick a plan-view editor can actually make. A
+  vertical side face *projects to exactly one footprint edge*, so that edge names the face and the solid
+  it belongs to at once, and clicking it twice (once for the solid, once for the edge) would be asking the
+  user to repeat themselves. The identity is the **boundary-piece index** (OP-8): regions in order, outer
+  loop then holes, pieces in loop order — a constructed accessor, `sideFacePlane(solid, piece)`, with
+  `piece` a stored discrete choice exactly like a `Select` sign (OP-1). Nothing is re-identified from mesh
+  topology, and the plane is recomputed from the feature's own parameters.
+  - **Arming the tool returns to the plan view, and that is provable rather than convenient.** A footprint
+    edge is drawn in the space its solid's plan is drawn in — and only a solid extruded **vertically** has a
+    planar side face at all (`Geom3.sideFace` refuses every other axis), while a vertical axis means the
+    sketch plane is horizontal, i.e. the plan. So the plan is the *only* space where this pick can ever
+    succeed, and refusing the click where the user happens to be standing would refuse a pick that could not
+    have worked there. It also closes a trap a review probe fell into: in a face view the tool found nothing,
+    said so quietly, and the drawing that followed went into the *old* space — two bores on one face, looking
+    like a second face that had not been created.
+  - The honest caveat: a `Loop` is normalised counter-clockwise (OP-14), so a ring the user turns *inside
+    out* — dragging a rectangle's corner past its opposite — comes back reversed and renames its own
+    edges. That is the same order-of-traversal limit OP-20 records for a reversed host line, and it is
+    unreachable for a footprint that keeps its handedness.
+- **The frame, and the flip convention, stated once.** `Geom3.sideFace(feature, piece)` returns the face's
+  plane with its normal pointing **out of the material** — the convention `facePlane` already uses for
+  `TOP`/`BOTTOM` — with `u` along the picked edge and `v` = world **+Z**. The **sketch** plane is that
+  plane *flipped*, so its normal points **into** the material and a positive extrude depth **drills
+  inward** by default. The flip is `Plane3.flipped`, which mirrors `v` (a right-handed frame cannot flip
+  its normal and keep its 2D coordinates — there is no third option), and that fixes the rest of the
+  convention: the frame is anchored at the edge's start corner **at the face's top edge**, because only a
+  top anchor leaves the face itself at `v ∈ 0..height` once `v` is mirrored. So in the space the user
+  draws in, **`u` runs along the edge from its start and `v` runs down from the top face**, and the tool's
+  help, the status line and the space's own note all say so.
+  - Two consequences worth naming rather than discovering: the face view is a mirror of standing in front
+    of the part (the canvas viewer sits on the +normal side, which is *inside* the material — unavoidable
+    once the normal points in), and thickening the plate moves a hole dimensioned from its top face. The
+    alternative frame (`u` reversed, `v` up) trades the first wart for the second one's mirror image; the
+    axes were chosen the way OP-17 states them and the consequence is written down.
+  - Refused with a reason and healing (OP-3): a **curved** boundary piece, whose swept face is a cylinder
+    (a rounded rectangle's corner, a circle's whole side); a solid with **no prism form** (a revolve, a
+    general boolean — its faces are emergent, OP-9); a solid whose axis is **not vertical**, where "v =
+    world +Z" is not a direction in the face at all; and a solid of no height.
+- **Face-RELATIVE positioning is the honest intent here, and that is the opposite of OP-20's rule.** The
+  frame is derived, so the sketch's literal coordinates are *relative to the part*: stretch the plate and
+  the bore stays 25 mm from the edge's start and 8 mm below the top face — it rides the face. OP-20
+  concluded the reverse for a rider on a wall ("where a thing sits along its host is an absolute quantity,
+  never a share of the host") and both are right, because the *intent* differs: a plan rider is placed
+  where it is in the world and must not move when a wall on the other side of the room is dragged, whereas
+  **a hole is dimensioned from the part's own edge** — that is what the drawing says and what the machinist
+  does. The distinction is recorded here because the two rules look contradictory and are not: absolute
+  when the host merely *carries* the thing, relative when the host is what the thing is *measured from*.
+- **What the face view renders.** Its own space's elements in their own (u, v), plus one piece of reference
+  context: the **rectangle the face covers** (width = the edge's length, height = the solid's z-extent),
+  drawn at the grid's weight, so the user can see where the face *is* before drawing on it. That rectangle
+  is also where a pick of the base solid lands — the one deliberate cross-space affordance, and the reason
+  it exists is *Subtract*: the plate has no plan in these coordinates, but it does have this face, and
+  "the solid this face belongs to" is exactly what the user means by clicking it. One rule, so what is
+  visible is pickable: `Document.faceOutline` serves the renderer, the distance test and the marquee.
+  A solid's footprint hint is drawn **in the space its sketch was drawn in**, which discharges the caveat
+  the earlier slice recorded: a drill sketched on a face shows its circle in the face view, where it
+  belongs, instead of being projected into a plan it has no honest projection into.
+- **Features from a face space: one rule.** The *Extrude* and *Revolve* tools sketch on
+  `Document.activePlane()` — the active space's plane, which for the plan is the world XY plane exactly as
+  before. So no tool grew an argument, and "sketch on a face" is a *space* decision rather than a per-tool
+  one. *Extrude on face* stays as it was for the top-face stacking case (a storey, a boss): it names a
+  solid instead of switching spaces, because that plan is drawn in the plan.
+  - The drill's subtraction is **cross-axis**, so it takes the general engine (OP-9's `MeshBool`) — which
+    has worked since session 5 but was unreachable from the toolbar, because there was no way to *name* a
+    vertical plane. That gap, named in OP-9's own "what remains", is closed.
+  - **`Cut`** is the same thing in one gesture: extrude on the face's plane, subtract from the part the
+    face belongs to. Kept because the *space already says which part is being cut*, so asking for the pick
+    again asks the user to repeat what choosing the face said; it is two existing document methods and
+    creates two solids (the tool and the part), so nothing about the format, the delete cone or the 3D view
+    needed a case for it.
+- **The sequential-feature rule: a feature CHAINS onto the part, it does not fork it** (found by a review
+  probe, and general). A second cut — on a second face, or on the same one — must subtract from **the part**,
+  not from the plate the part started as. Anchoring the boolean to the space's original base forked the
+  model: two coincident one-hole solids, each claiming to be the part, with the final volume short by
+  exactly the first bore, and two shells z-fighting in the 3D view because their only *shared* material was
+  the plate. The rule, in three parts:
+  - **The operand is the current tip, resolved at tool time.** `Document.facePartTip()` is the most recent
+    visible solid made *of* the space's base — material, not ancestry, so the same solid-valued-input rule
+    the 3D view uses (`Document.isMaterial`) answers both questions — or the base itself while nothing has
+    consumed it yet. It has one obvious answer at the moment the user asks for it, which is exactly why it is
+    asked *then*.
+  - **The step records that solid by name** (`tool cut els=e13,e15 …`), so replay is exact and nothing is
+    ever re-resolved on load: the choice is structural, in OP-18's sense, like a `Select` sign or an array's
+    count. A tool declares that it takes the part as `ToolDef.facePartOperand`, and the editor feeds it in as
+    `elements[0]` — the same shape as `groupOperand`, a promise about how `build` indexes its picks.
+  - **The plane keeps a different answer, deliberately: it stays anchored to the original base.** The face's
+    *geometry* is that solid's face (and stays valid: a bore does not move the plate's edge), so only the
+    boolean's operand advances. Two answers to two different questions, and conflating them is what the
+    defect was.
+  - The same rule reaches the **manual** path, because the face rectangle now stands for the part at its tip:
+    a `Subtract` pick in the face view takes the cut, not the plate. That matters more than it looks — a
+    cross-axis result is mesh-only and has *no footprint*, so the rectangle is the only place it can be
+    picked at all.
+- **A defect the face space made glaring, and it was never about faces.** `Scene3` hid any solid another
+  *visible* solid was built from (OP-14's scaffolding rule, one level up) — and a face plane makes the base
+  an **ancestor** of the drill without making it its **material**, so the plate vanished from the 3D view
+  the moment anything was sketched on it (and a wall vanished under the storey stacked on it, which had
+  been true all along). Material now means a **solid-valued** input, which is precisely what a boolean
+  takes: a frame accessor (`facePlane`, `sideFacePlane`) or a `section` passes through a plane or a region,
+  so the base stays an output in its own right until a boolean actually consumes it. Asserted from both
+  sides — plate *and* drill drawn before the cut, only the part after it.
+- **Persistence (OP-18): a step for the space, and the *ordering* for everything else.** `sketchspace
+  "face1" el=e9 piece=0` declares a space — the solid and the boundary-piece index its plane is derived
+  from, never the plane itself, so a part edited since comes back with its faces where they now are. Which
+  space a *step* was built in is carried by ordering, with a `space "name"` switch step, exactly the
+  ortho path's "current path" precedent. Two decisions inside that:
+  - **The switch is written lazily**, just before a step that needs it (`Document.noteSpace`), because
+    switching views is *view state*: flipping back and forth records nothing, is not an undo step, and only
+    a step that is actually **built** somewhere says where. A replay puts the switches back verbatim
+    (`switchSpace(record = true)`), so `save → load → save` is byte-equal even for a trailing switch that
+    a delete can leave behind — asserted, with geometry in two spaces.
+  - **Undo keeps the view.** A replayed script ends in whatever space its last step was built in, which
+    after an undo is not where the user is looking, so the *view* wins where its space still exists and the
+    replayed answer stands where it does not (undo the space itself and the plan comes back). Loading a
+    file leaves you in the space the script ends in — the same argument as OP-18's visibility reversal: the
+    file records what the user arranged.
+  - **The delete cascade is honest.** The `sketchspace` step names its solid as an argument, so the
+    ordinary explicit rule drops it when that solid goes; from there **everything drawn in that space goes
+    with it**, because the space *is* what those coordinates mean. Unlike a group's membership that is not
+    a matter of degree, and it is one more forward pass in `Document.dependentSteps` (the loader's ordering
+    rule mirrored, so a delete and a replay agree on what belongs where). Undo restores the whole cone.
+- **The shell.** A `<select>` in the topbar next to 2D/3D: the view indicator *and* the way back to the
+  plan, listing every space with the face's solid beside its name. The Editor keeps **one camera per
+  space** (so returning to the plan returns to the plan's own zoom and pan) and frames a face the first
+  time it is shown, which is what makes switching over land on the material instead of beside it. The
+  browser E2E drills for real: over **http** — where the WASM engine can load at all — a rectangle, an
+  extrude, *Sketch on face*, a circle in the face view, *Cut*, and the bore in the 3D view. That is also
+  the first browser coverage of a **cross-axis boolean**, which was previously unreachable by clicking.
+- **Cuts in this slice, deliberately:**
+  - **No ghosting of the other spaces.** A plan dimmed behind a face view is a projection decision (which
+    of the other spaces, projected how?) and the reference outline already answers the question the user
+    actually has, which is *where on the part am I drawing*.
+  - **A face is one whole side.** A solid whose face is split by several z-slabs (a wall with an opening
+    cut through it) offers its full extent as one rectangle rather than one space per slab; the sketch is
+    still exact, but the outline can show material that is not there. Splitting it wants a per-slab face
+    identity, which is a second index in the provenance name and is not built.
+  - **No keyboard shortcut for switching spaces** (single letters are tool keys, and a cipher for spaces
+    would be worse than the topbar control), no space **renaming** (a name is what the file refers to and
+    nothing needs it), and no space **on a top or bottom face** — `facePlane` already names those and
+    *Extrude on face* already uses them; a space on one is the same construction and no more.
+  - A **mesh-only** solid (the general boolean's result) still has no footprint, so the drilled part is not
+    pickable in 2D at all — OP-9's own open point, unchanged, and the reason the drill flow ends in the 3D
+    view. Picking it wants 3D picking, which is still cut.
+
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
 **Decision:** an **analytic construction layer is the source of truth**; the mesh is an
@@ -2252,9 +2413,11 @@ knows which is running.
   Two former refusals became hand-offs and are asserted from both sides (engine present / absent):
   `PrismBooleanTest`'s revolve operand and cross-axis pair, and — the one that reads like a feature —
   `HouseChainTest`, where **the roof now fuses onto the walls**.
-- **What remains.** The editor tooling: there is no way to *name a vertical plane* in the UI yet, so a
-  cross-axis boolean is reachable from the DSL but not from the toolbar (the same gap the house's roof has
-  had all along — a datum-plane UI, not an engine limit). A mesh-only solid has no footprint, so it cannot be
+- **What remains.** ~~The editor tooling: there is no way to *name a vertical plane* in the UI yet, so a
+  cross-axis boolean is reachable from the DSL but not from the toolbar~~ (the same gap the house's roof has
+  had all along — a datum-plane UI, not an engine limit). **Closed** by sketch spaces: a space on a solid's
+  side face names a vertical plane by clicking one footprint edge, so the drill is a gesture — see
+  *Implementation status (as built — sketch spaces, and a sketch on any planar face)* under OP-17. A mesh-only solid has no footprint, so it cannot be
   picked in plan or marquee-selected; picking it wants 3D picking, which is cut. Manifold's face-ID/property
   propagation (OP-8's route to naming a *boolean's* faces) is not read yet. Windows and arm64 have no
   published jar, where `available` is false and the path refuses with that as the reason. And the mesh export
@@ -3174,6 +3337,64 @@ Three broad families (see OP-9 decision above):
   remember a handle for) and what keeps the E2E on the fallback path, asserting the download's name instead of
   hanging on a native dialog. 583 headless tests green (19 new: `GroupArrayTest`, `DocumentNameTest`), and the
   browser E2E extended with the name field, a fallback Save and a group array fed from the panel.
+- **Session 8 — "drill a hole in the back side": sketch spaces, and a sketch on any planar face.** The user
+  asked for the one mechanical gesture the editor could not make. The engine could: OP-9's general boolean
+  has cut a cross-axis bore since session 5, and OP-8's provenance identity always said *"side faces by
+  boundary-piece index"*. What was missing was a way to **name a vertical plane by clicking**, and the
+  answer turned out to be organizational rather than geometric — which is OP-17's decision paying off a
+  third time. A document now has named **2D sketch spaces**, one active; a space contributes exactly one
+  thing to a construction, the plane its features sketch on, so `SketchSpace` adds no value type, no op and
+  no evaluation rule. It is OP-14's third column plus a camera. Six things are worth recording.
+  (1) **The pick is one click on a footprint edge**, because a vertical side face projects to exactly that
+  edge — so the edge names the face *and* its solid, and asking for both separately would ask the user to
+  repeat themselves. Identity is the boundary-piece index (OP-8), a stored discrete choice like a `Select`
+  sign, never re-identified from mesh topology. The caveat is written down: a ring turned inside out
+  renames its edges, the same order-of-traversal limit OP-20 records for a reversed host line.
+  (2) **The flip convention, forced rather than chosen.** The face's plane has its normal out of the
+  material (as `facePlane` does); the *sketch* plane is that plane flipped, so a positive extrude depth
+  drills **inward**. A right-handed frame cannot reverse its normal and keep its 2D coordinates, so the
+  flip mirrors `v` — which then *forces* the anchor to the face's **top** edge, since only there does the
+  mirrored `v` leave the face at `v ≥ 0`. Hence: `u` along the edge from its start, `v` down from the top
+  face. The two consequences (the face view is seen from inside the material; thickening the plate moves a
+  hole measured from its top) are recorded rather than discovered — the alternative frame trades one for
+  the other and neither is free.
+  (3) **Face-RELATIVE, which is the opposite of OP-20's rule, and both are right.** The frame is derived,
+  so the bore rides the face: stretch the plate and the hole stays 25 mm from the edge and 8 mm below the
+  top. OP-20 concluded the reverse for a rider on a wall, and the distinction is the *intent*: absolute
+  when the host merely carries the thing, relative when the host is what the thing is **measured from** —
+  a hole is dimensioned from the part's own edge, which is what the drawing says and what the machinist
+  does.
+  (4) **One deliberate cross-space affordance, and it is what makes `Subtract` reachable.** Each canvas
+  draws and picks one space; the exception is that the solid a face belongs to is addressable *as that
+  face* — the rectangle drawn as reference context is also its pick target, so the base can be clicked for
+  the boolean. `Cut` (extrude + subtract in one step) was kept as well, since the space already names the
+  solid being cut into. Ghosting the other spaces is cut: the reference outline answers the question the
+  user actually has.
+  (5) **A latent defect the feature made glaring.** `Scene3` hid any solid another visible solid was built
+  from — and a face plane makes the base an *ancestor* of the drill without making it its *material*, so
+  the plate vanished from the 3D view as soon as anything was sketched on it (a wall had been vanishing
+  under its storey all along). Material now means a **solid-valued input**, which is exactly a boolean's
+  operands; a frame accessor or a section passes through a plane or a region and consumes nothing.
+  Regression-tested from both sides.
+  (6) **Persistence needed one step kind and one ordering rule** (OP-18): `sketchspace "face1" el=e9
+  piece=0` declares the space as a *description* (never the plane), and which space a step was built in
+  rides the ordering, with a `space "name"` switch step — the ortho path's "current path" precedent
+  exactly. The switch is written **lazily**, just before a step that needs it, because switching views is
+  view state: it records nothing, is no undo step, and an undo keeps the view it can. Deleting the face's
+  solid drops the space and everything drawn in it, because the space *is* what those coordinates mean.
+  A **review probe caught the one semantic defect**, and it was the sequential-feature rule: with two faces
+  and a cut on each, the second cut subtracted from the *original plate* instead of from the first cut's
+  result — the model **forked** into two coincident one-hole solids (volume short by exactly the first bore)
+  instead of chaining. The fix is recorded above as a rule rather than a patch: a feature's operand is **the
+  current tip** of the part's boolean chain, resolved at tool time and *recorded in the step by name* so
+  replay never re-resolves it, while the *plane* keeps its own answer and stays anchored to the original base
+  (the face's geometry is that solid's). The probe also walked into a trap worth closing: it picked the second
+  edge while still in the first face's view, where the tool found nothing and said so too quietly, so the
+  drawing that followed went into the old space. Arming *Sketch on face* now returns to the plan — provably
+  the only space where that pick can succeed, since only a vertically extruded solid has a planar side face.
+  604 headless tests green (19 new: `FaceSketchTest`, the review probe, and a second browser E2E), and the
+  E2E now serves the distribution over **http** from the JDK's own server so the WASM engine can load — the
+  first browser coverage of a cross-axis boolean, screenshotted with the bore in it.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

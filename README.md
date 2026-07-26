@@ -118,6 +118,18 @@ dimensioned, measured, or extruded again: storey 2 is built from the section of 
 ground-floor wall reshapes both. Volume and per-axis extent land in the panel as read-only values that may
 drive *new* construction — forward only, never back into their own solid.
 
+**And on any planar face.** A drawing lives in a **sketch space**: the plan (world XY) by default, or a
+space on a solid's *side* face — created by clicking one of its footprint edges, because that edge is what
+the face projects to seen from above. The 2D canvas switches to that face and draws in its own coordinates:
+`u` along the picked edge, `v` down from the top face, with the plane's normal pointing **into** the
+material, so *Extrude* there drills inward (and *Cut* extrudes and subtracts in one gesture). The frame is
+derived from the part, not captured from it — stretch the plate and the hole rides the face, still 25 mm
+from the edge. That is what makes the plainest mechanical feature there is, a hole drilled in an edge, a
+matter of four clicks; the cut across the part's own axis is the general engine's, and the file records
+which space each step was drawn in. Features **chain**: each cut takes the part as it now stands, so a
+second bore on a second face lands in the part with the first bore in it rather than beside it, and the step
+records which solid it cut so a reload rebuilds the same chain.
+
 Mesh export is next. See [`DESIGN.md`](DESIGN.md) for the full design record and open questions.
 
 ## Build & run

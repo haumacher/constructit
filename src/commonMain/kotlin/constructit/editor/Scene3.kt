@@ -74,18 +74,27 @@ class Scene3(val solids: List<SolidItem>, val lines: List<Line3>) {
             ev: Evaluator = Evaluator(),
         ): Scene3 {
             val candidates = doc.elements.filter { it.visible && ev.valueOf(it.ref) is SolidValue }
-            // A solid another visible solid is built FROM is that solid's construction material —
+            // A solid another visible solid is made OF is that solid's construction material —
             // OP-14's scaffolding rule one level up: a boolean's raw operand, the counterbore's
             // cylinder. Drawing both paints two coincident shells fighting per pixel, and the operand
             // is not an output; delete or hide the consumer and the operand shows again on its own.
+            //
+            // **Material, not merely ancestry** — the distinction the seam forces (OP-17). A solid reaches
+            // another solid as material only along *solid-valued* inputs, which is exactly what a boolean
+            // takes; a frame accessor (`facePlane`, `sideFacePlane`) or a section passes through a plane or
+            // a region, so the base is an ancestor without being the material. Without that distinction a
+            // plate vanished the moment anything was sketched on one of its faces, and a wall vanished
+            // under the storey stacked on it: the consumer is a *boss on* the base, or a *drill through*
+            // it — the base is still an output in its own right until a boolean consumes it.
             val consumedIds = HashSet<String>()
             val visited = HashSet<String>()
 
             fun walk(node: constructit.core.Node) {
                 if (!visited.add(node.id)) return
-                node.inputs.forEach {
-                    consumedIds.add(it.id)
-                    walk(it)
+                for (input in node.inputs) {
+                    if (!Document.isMaterial(ev, input)) continue
+                    consumedIds.add(input.id)
+                    walk(input)
                 }
             }
             candidates.forEach { walk(it.ref.node) }

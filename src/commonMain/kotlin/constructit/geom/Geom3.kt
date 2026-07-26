@@ -1189,6 +1189,94 @@ object Geom3 {
             is Feature3.MeshBoolean -> null to "a general boolean's result is mesh-only, so it has no named faces (OP-9)"
         }
 
+    // ---- side faces: the planar faces a boundary piece sweeps (OP-8 provenance, OP-17's frame) ----
+
+    /**
+     * One **planar side face** of a prismatic solid: the frame it spans, and how big it is.
+     *
+     * [plane]'s normal points **out of the material** — the same convention [facePlane] uses for `TOP`
+     * and `BOTTOM` — and its axes are `u` along the boundary piece, `v` = world **+Z**. The origin is the
+     * piece's start corner at the face's **top** edge, which is a deliberate choice and not an accident:
+     * a sketch on this face wants the *flipped* plane (normal into the material, so a positive extrude
+     * depth drills inward), the flip mirrors `v` ([Plane3.flipped]), and only a top anchor leaves the face
+     * itself at `v` in `0..height` in those flipped coordinates. So in the space a user sketches in, `u`
+     * runs along the picked edge from its start and `v` runs **down the face from its top edge**.
+     *
+     * [length] is the piece's length, [height] the solid's own z-extent — together the rectangle the face
+     * covers, which is what a sketch space draws as its reference outline.
+     */
+    data class SideFace(val plane: Plane3, val length: Double, val height: Double)
+
+    /**
+     * The footprint boundary pieces of [feature] in **provenance order** (OP-8): regions in order, each
+     * region's outer loop then its holes, pieces in loop order. A side face is named by its index into
+     * this list — a constructed accessor, so nothing is ever re-identified from mesh topology.
+     *
+     * The order is the *construction's* (OP-14 forbids discovering a boundary), with one honest caveat: a
+     * `Loop` is normalised counter-clockwise, so a ring the user turns inside out — dragging a rectangle's
+     * corner past its opposite — comes back reversed and renames its own edges. That is the same
+     * order-of-traversal limit OP-20 records for a reversed host line, and it is unreachable for a
+     * footprint that keeps its handedness.
+     */
+    fun boundaryPieces(feature: Feature3): List<ProfileElement> =
+        feature.footprint.flatMap { r -> r.outer.elements + r.holes.flatMap { it.elements } }
+
+    /** The plane a prismatic feature is swept along, with its axis span — null when it has no prism form. */
+    private fun prismSpan(feature: Feature3): Triple<Plane3, Double, Double>? =
+        when (feature) {
+            is Feature3.Extrusion -> Triple(feature.sketch.plane, 0.0, feature.depth)
+            is Feature3.Prism -> Triple(feature.plane, feature.minZ, feature.maxZ)
+            is Feature3.Revolution -> null
+            is Feature3.MeshBoolean -> null
+        }
+
+    /**
+     * The side face over boundary piece [piece] of [feature] (OP-8), or null with a reason (OP-3).
+     *
+     * Refused rather than approximated: a solid with no prism form (a revolve, a general boolean — its
+     * faces are emergent, OP-9); a solid whose axis is **not vertical**, where "v = world +Z" is not a
+     * direction in the face at all; and a **curved** boundary piece, whose swept face is a cylinder and not
+     * a plane. Each heals when the geometry changes, since all of it is a function of the feature.
+     */
+    fun sideFace(
+        feature: Feature3,
+        piece: Int,
+    ): Pair<SideFace?, String?> {
+        val span =
+            prismSpan(feature)
+                ?: return null to "this solid is not a prism, so it has no constructed side faces (OP-8)"
+        val (plane, s0, s1) = span
+        val n = plane.normal.normalized()
+        if (abs(abs(n.z) - 1.0) > 1e-9) {
+            return null to "this solid is not extruded vertically, so its side faces are not upright"
+        }
+        val pieces = boundaryPieces(feature)
+        val p =
+            pieces.getOrNull(piece)
+                ?: return null to "this solid has no boundary piece #${piece + 1} (it has ${pieces.size})"
+        val seg =
+            (p as? ProfileElement.Seg)?.segment
+                ?: return null to "that boundary edge is curved, so the face it sweeps is not planar — pick a straight edge"
+        // n is ±Z, and the frame's u/v therefore lie in the plan, so a point's world height is the plane's
+        // own origin height plus its axis coordinate along n.
+        val zA = plane.origin.z + n.z * s0
+        val zB = plane.origin.z + n.z * s1
+        val zLo = min(zA, zB)
+        val zHi = max(zA, zB)
+        if (zHi - zLo <= WELD_TOL) return null to "this solid has no height, so its side faces have no area"
+        // A plane whose normal is −Z maps 2D orientation-reversingly into the world, so the boundary runs
+        // the other way round there: traversing the piece backwards is what keeps the material on the left
+        // in the world, and hence what makes u × v point *out* of it.
+        val forward = n.z > 0.0
+        val wa = plane.toWorld(if (forward) seg.a else seg.b)
+        val wb = plane.toWorld(if (forward) seg.b else seg.a)
+        val d = Vec2(wb.x - wa.x, wb.y - wa.y)
+        val len = d.length()
+        if (len <= WELD_TOL) return null to "that boundary edge has no length"
+        val u = Vec3(d.x / len, d.y / len, 0.0)
+        return SideFace(Plane3(Vec3(wa.x, wa.y, zHi), u, Vec3.Z), len, zHi - zLo) to null
+    }
+
     // ---- sections: the downward half of the seam (OP-17), exact for prisms (OP-22) ----
 
     /**

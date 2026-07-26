@@ -325,6 +325,15 @@ object DocumentFormat {
             // its interval features (OP-21) — a pure description, never the geometry it computes
             "wall" -> doc.buildThickPath(currentPath(doc), scalar(1).ref, justification(words.getOrNull(2)))
             "opening" -> applyInterval(doc, words, el(1))
+            // sketch spaces (OP-17). `sketchspace` *declares* one — the solid and the boundary-piece index
+            // its plane is derived from (OP-8) — and makes it current, exactly as `orthostart` does for a
+            // path; `space` switches back. Both create nothing, so they declare nothing, and steps belong
+            // to the last space named — the ordering rule the writer relies on ([Document.noteSpace]).
+            "sketchspace" -> applySketchSpace(doc, words, byName)
+            "space" ->
+                if (!doc.switchSpace(unquote(words.getOrElse(1) { throw LoadError("space is missing a name") }), record = true)) {
+                    throw LoadError("unknown sketch space '${unquote(words[1])}'")
+                }
             "weld" -> doc.weld(el(1), el(2))
             "attach" -> doc.attachToCurve(el(1), el(2))
             "weldortho" -> doc.weldOrthoEndpointToPoint(el(1), el(2))
@@ -341,6 +350,36 @@ object DocumentFormat {
             "place" -> applyPlace(doc, words)
             else -> throw LoadError("unknown step '$kind'")
         }
+    }
+
+    /**
+     * Replay a **sketch space on a face** (OP-17): `sketchspace "name" el=e7 piece=2`.
+     *
+     * The step carries the *description* of the frame — which solid, which boundary piece — and never the
+     * frame itself, so the plane is re-derived on load and a part edited since comes back with its faces
+     * where they now are. The piece index is a **discrete choice** and is therefore recorded verbatim
+     * (OP-18), not re-derived from the click that made it: the click was a position, and a position that
+     * lands on one edge today can land on its neighbour after an edit.
+     */
+    private fun applySketchSpace(
+        doc: Document,
+        words: List<String>,
+        byName: Map<String, Element>,
+    ) {
+        val name = unquote(words.getOrElse(1) { throw LoadError("sketchspace is missing a name") })
+        var solid: Element? = null
+        var piece = -1
+        for (w in words.drop(2)) {
+            val v = w.substringAfter('=', "")
+            when (w.substringBefore('=')) {
+                "el" -> solid = byName[v] ?: throw LoadError("unknown element '$v'")
+                "piece" -> piece = v.toIntOrNull() ?: throw LoadError("malformed piece index '$v'")
+                else -> throw LoadError("unknown sketchspace argument '${w.substringBefore('=')}'")
+            }
+        }
+        val on = solid ?: throw LoadError("sketchspace is missing 'el='")
+        doc.createFaceSpace(on, piece, named = name)
+            ?: throw LoadError("'${words.getOrNull(2)}' has no planar side face #${piece + 1}")
     }
 
     /**

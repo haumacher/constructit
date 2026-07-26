@@ -40,6 +40,8 @@
         #view-mode button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
         #view-mode button:hover { background: #f0f0f0; }
         #view-mode button.active { background: #1f77b4; color: #fff; border-color: #1f77b4; }
+        /* which 2D sketch space the canvas shows (OP-17) — a view indicator, and the way back to the plan */
+        #v-space { font: inherit; font-size: 12px; padding: 1px 4px; border: 1px solid #ccc; border-radius: 6px; background: #fff; color: #444; }
 
         /* right panel */
         #panel { width: 250px; border-left: 1px solid #ddd; overflow: auto; background: #fafafa; padding: 10px; }
@@ -124,6 +126,7 @@
         <span id="view-mode">
             <button id="v-2d" class="active" title="The drawing: construct, drag, dimension">2D</button>
             <button id="v-3d" title="The solids, shaded: drag to orbit, wheel to zoom, Space+drag to pan">3D</button>
+            <select id="v-space" title="Which 2D sketch space the canvas shows and tools draw into: the plan, or a face (Sketch on face)"></select>
         </span>
         <span id="status"></span>
     </div>

@@ -1513,6 +1513,27 @@ class Construction {
         }
 
     /**
+     * The plane of the **planar side face** over boundary piece [piece] of [solid] (OP-8) — what makes a
+     * *vertical* face reachable, and with it the cross-axis features mechanical work needs (a drilled hole
+     * in a plate's edge, a pocket on a flat).
+     *
+     * The twin of [facePlane] in every respect that matters: `piece` is a stored discrete choice (like a
+     * `Select` sign, OP-1), the plane is recomputed from the feature's own parameters — so stretching the
+     * part moves the face and everything sketched on it — and its normal points **out** of the material.
+     * A sketch on the face therefore wants [planeFlipped], so that a positive extrude depth cuts inward;
+     * see [constructit.geom.Geom3.SideFace] for the frame's axes and origin, and for what is refused
+     * (a curved edge, a non-vertical axis, a solid with no prism form).
+     */
+    fun sideFacePlane(
+        solid: SolidRef,
+        piece: Int,
+    ): PlaneRef =
+        op(solid) {
+            val (face, why) = Geom3.sideFace((it[0] as SolidValue).solid.feature, piece)
+            if (face == null) EvalResult.Invalid(why ?: "no such side face") else EvalResult.Ok(PlaneValue(face.plane))
+        }
+
+    /**
      * The **cross-section** of [solid] at world height [height] — the downward half of the seam (OP-17),
      * and an ordinary 2D [RegionRef] from that moment on: it can be outlined, dimensioned, measured, and
      * extruded again, because nothing about it remembers where it came from except its inputs.

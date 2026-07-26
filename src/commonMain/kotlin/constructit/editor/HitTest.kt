@@ -131,8 +131,30 @@ object HitTest {
         }
 
     /**
+     * Distance to [el] **as the document's active sketch space shows it** (OP-17) — the one place the
+     * space enters picking. For everything drawn in the space that is its own geometry; for the solid a
+     * *face* space was cut from it is the face rectangle, which is what that solid looks like there.
+     */
+    private fun distanceIn(
+        doc: Document,
+        ev: Evaluator,
+        el: Element,
+        world: Vec2,
+        tip: Element?,
+    ): Double? = doc.faceOutlineOf(el, ev, tip)?.let { ringDistance(world, it) } ?: distanceTo(ev, el, world)
+
+    private fun ringDistance(
+        world: Vec2,
+        ring: List<Vec2>,
+    ): Double = ring.indices.minOf { distToSegment(world, ring[it], ring[(it + 1) % ring.size]) }
+
+    /**
      * Every visible element satisfying [filter] within [tol] of [world], nearest first; ties go to the
      * most recently created, which is the one drawn on top.
+     *
+     * Only elements the **active sketch space** addresses take part (OP-17, [Document.addressableIn]): a
+     * plan element is not pickable while a face is being sketched on, and vice versa — the coordinates
+     * would not even mean the same thing.
      */
     fun nearestAll(
         doc: Document,
@@ -140,16 +162,20 @@ object HitTest {
         world: Vec2,
         tol: Double,
         filter: (Element) -> Boolean,
-    ): List<Pair<Element, Double>> =
-        doc.elements
+    ): List<Pair<Element, Double>> {
+        // the part the active face space belongs to, as it stands (OP-17's tip rule) — resolved once per
+        // search, because resolving it walks the graph and this asks it of every element
+        val tip = doc.facePartTip(ev)
+        return doc.elements
             .asSequence()
             .withIndex()
-            .filter { (_, el) -> el.visible && filter(el) }
-            .mapNotNull { (i, el) -> distanceTo(ev, el, world)?.let { Triple(el, it, i) } }
+            .filter { (_, el) -> el.visible && doc.addressableIn(el, tip) && filter(el) }
+            .mapNotNull { (i, el) -> distanceIn(doc, ev, el, world, tip)?.let { Triple(el, it, i) } }
             .filter { it.second <= tol }
             .sortedWith(compareBy({ it.second }, { -it.third }))
             .map { it.first to it.second }
             .toList()
+    }
 
     /** Nearest element (point or curve) satisfying [filter], within [tol]. */
     fun nearest(
@@ -182,8 +208,18 @@ object HitTest {
     ): List<Element> {
         val lo = Vec2(kotlin.math.min(a.x, b.x), kotlin.math.min(a.y, b.y))
         val hi = Vec2(kotlin.math.max(a.x, b.x), kotlin.math.max(a.y, b.y))
-        return doc.elements.filter { it.visible && meetsRect(ev, it, lo, hi) }
+        val tip = doc.facePartTip(ev)
+        return doc.elements.filter { el ->
+            el.visible && doc.addressableIn(el, tip) &&
+                (doc.faceOutlineOf(el, ev, tip)?.let { r -> ringMeets(r, lo, hi) } ?: meetsRect(ev, el, lo, hi))
+        }
     }
+
+    private fun ringMeets(
+        ring: List<Vec2>,
+        lo: Vec2,
+        hi: Vec2,
+    ): Boolean = ring.indices.any { spanMeets(ring[it], ring[(it + 1) % ring.size] - ring[it], lo, hi, 0.0, 1.0) }
 
     /**
      * Whether [el]'s geometry meets the axis-aligned rectangle [lo]..[hi]. The dispatch mirrors
@@ -303,6 +339,15 @@ object HitTest {
             is ProfileElement.CircleE -> circleMeets(e.circle.center, e.circle.radius, lo, hi)
             is ProfileElement.BezierE -> polyMeets(GeomMath.tessellateBezier(e.bezier), lo, hi)
         }
+
+    /**
+     * Distance to one boundary piece — the same rule an outline is picked by, exposed because naming a
+     * *side face* is naming a footprint edge (OP-17), and that pick must measure exactly as this one does.
+     */
+    fun distanceToPiece(
+        world: Vec2,
+        e: ProfileElement,
+    ): Double = distToPiece(world, e)
 
     /** Distance to one boundary piece, so an outline is pickable as a whole. */
     private fun distToPiece(

@@ -140,6 +140,15 @@ class ToolDef(
      * is a promise about [build], made in the table like every other tool property.
      */
     val groupOperand: Boolean = false,
+    /**
+     * Whether this tool consumes **the part of the active face space** (OP-17's sequential-feature rule).
+     * The editor resolves that part's current tip ([Document.facePartTip]) when the tool completes and puts
+     * it in [Picks.elements] *before* the clicked ones, so [build] reads `elements[0]` as the part — and the
+     * step records it by name, which is what makes replay exact and stops a second feature from forking the
+     * model back onto the original base. Declared per tool rather than inferred, exactly as [groupOperand]
+     * is: it is a promise about how [build] indexes its picks.
+     */
+    val facePartOperand: Boolean = false,
     val build: (Document, Picks, List<ScalarRef>) -> Unit,
 )
 
@@ -205,6 +214,10 @@ object Tools {
     // ...and back down again: a sketch on a solid's face, and a solid's section as 2D geometry
     const val EXTRUDE_ON_FACE = "extrudeface"
     const val SECTION = "section"
+
+    // a named 2D sketch space on a solid's *side* face (OP-17), and the cut that space makes cheap
+    const val SKETCH_ON_FACE = "sketchface"
+    const val CUT = "cut"
 
     // Booleans between same-axis prisms (OP-22), and the architectural application of them
     const val UNION = "union"
@@ -306,6 +319,14 @@ object Tools {
             // *Section* is the other direction: a solid's cross-section, as an ordinary 2D area.
             ToolDef(EXTRUDE_ON_FACE, "Extrude on face", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.AREA), scalars = listOf(len("depth")), help = "Type a depth (or pick a parameter in the panel), click the solid to build on, then the area to raise: it is extruded from that solid's top face (an upper storey, a boss).") { d, p, s -> d.extrudeOnFace(p.elements[0], p.elements[1], s[0]) },
             ToolDef(SECTION, "Section", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("height")), help = "Type a height (or pick a parameter in the panel), then click a solid: its cross-section at that height becomes an ordinary 2D area — dimension it, or extrude it again.") { d, p, s -> d.sectionSolid(p.elements[0], s[0]) },
+            // ----- sketch on a *side* face (OP-17). One click, on a solid's footprint edge: a side face
+            // projects to exactly that edge, so the edge names the face and the solid at once. Like the
+            // path and opening tools this one records a step of its own (`sketchspace`, naming the
+            // boundary-piece index — a discrete choice, OP-18), so the Editor runs its click.
+            ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.SOLIDS, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that side face, where u runs along the edge from its start and v runs down from the top. Extrude there drills into the material.") { _, _, _ -> },
+            // `facePartOperand` makes elements[0] the part being cut — the *tip* of its boolean chain as it
+            // stands, resolved by the editor and recorded in the step, so cuts chain instead of forking
+            ToolDef(CUT, "Cut", ToolCategory.SOLIDS, listOf(SlotKind.AREA), scalars = listOf(len("depth")), facePartOperand = true, help = "In a face view: type a depth (or pick a parameter in the panel), then click an area — it is extruded into the material and subtracted from the part this face belongs to (a drilled hole, a pocket, a slot).") { d, p, s -> d.cutOnFace(p.elements[0], p.elements[1], s[0]) },
             // ----- Booleans (OP-22): exact for solids extruded along the same axis. Two solid picks and
             // nothing else — the slab algebra is the op node's job, so these are data like every other tool.
             ToolDef(UNION, "Union", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), help = "Click two solids to fuse them into one (they must be extruded along the same axis).") { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.UNION) },

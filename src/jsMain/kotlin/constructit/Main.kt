@@ -135,6 +135,20 @@ private fun setupApp() {
     (document.getElementById("v-2d") as HTMLElement).addEventListener("click", { setView3d(false) })
     (document.getElementById("v-3d") as HTMLElement).addEventListener("click", { setView3d(true) })
 
+    // Which 2D sketch space the canvas shows (OP-17): the view indicator *and* the way back to the plan.
+    // A `<select>` because that is what "one of these, and here is which" is; the Editor owns the switch
+    // (its own camera per space, its own selection reset), so this only routes.
+    (document.getElementById("v-space") as HTMLElement).addEventListener("change", {
+        // read what was picked *first*: a repaint restates the select from the editor, so anything that
+        // paints in between (the view switch below) would put the old value back under us
+        val picked = (document.getElementById("v-space") as HTMLSelectElement).value
+        // the 2D view first: a space is a 2D thing, so asking for one means looking at it — and switching
+        // views has a note of its own, which must not talk over the space's
+        if (view3d) setView3d(false)
+        editor.setActiveSpace(picked)
+        repaint()
+    })
+
     // ---- canvas pointer input ----
     fun pos(e: MouseEvent): Vec2 {
         val r = canvas.getBoundingClientRect()
@@ -738,6 +752,17 @@ private fun renderPanel(
             else -> editor.currentHelp()
         }
 
+    // the sketch-space indicator (OP-17): every space, the active one selected. Rebuilt from the document,
+    // so a space created by a click — or removed by an undo — shows up here without a second notification.
+    val spaceSel = document.getElementById("v-space") as HTMLSelectElement
+    val spaceOptions =
+        editor.doc.spaces.joinToString("") { s ->
+            val label = if (s.isPlan) "plan" else "${s.name} (face of ${s.anchor?.id})"
+            "<option value=\"${s.name}\"${if (s.name == editor.activeSpace.name) " selected" else ""}>$label</option>"
+        }
+    if (spaceSel.innerHTML != spaceOptions) spaceSel.innerHTML = spaceOptions
+    spaceSel.value = editor.activeSpace.name
+
     // edit buttons mirror the editor's stacks and selection
     (document.getElementById("e-undo") as org.w3c.dom.HTMLButtonElement).disabled = !editor.canUndo
     (document.getElementById("e-redo") as org.w3c.dom.HTMLButtonElement).disabled = !editor.canRedo
@@ -866,7 +891,10 @@ private fun renderPanel(
     tree.innerHTML =
         editor.doc.elements.joinToString("") {
             val active = if (editor.isSelected(it)) " active" else ""
-            "<div class=\"item$active\" data-eid=\"${it.id}\">${it.kind.name.lowercase()}<span class=\"eid\">${it.id}</span></div>"
+            // the tree lists the whole document, so a row the canvas is not drawing says where it lives
+            // (OP-17): one canvas shows one sketch space
+            val where = if (it.space == editor.activeSpace.name) "" else " · ${it.space}"
+            "<div class=\"item$active\" data-eid=\"${it.id}\">${it.kind.name.lowercase()}$where<span class=\"eid\">${it.id}</span></div>"
         }
 }
 

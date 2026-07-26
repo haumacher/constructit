@@ -518,4 +518,165 @@ class BrowserE2ETest {
             browser.close()
         }
     }
+
+    /**
+     * The distribution over **http**, from the JDK's own server — because one thing in this app only works
+     * over http: the general boolean engine is a WASM ES module, and a browser refuses ES modules on
+     * `file:` outright (OP-9). The other test deliberately exercises that unavailable path; this one
+     * exercises the engine actually running in Chrome.
+     */
+    private fun serve(root: File): com.sun.net.httpserver.HttpServer {
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { ex ->
+            val path = ex.requestURI.path.removePrefix("/").ifEmpty { "index.html" }
+            val f = File(root, path)
+            if (!f.isFile) {
+                ex.sendResponseHeaders(404, -1)
+                ex.close()
+                return@createContext
+            }
+            // the MIME type matters here: emscripten's glue compiles the module by streaming, which the
+            // browser only does for application/wasm
+            val type =
+                when (f.extension) {
+                    "html" -> "text/html; charset=utf-8"
+                    "js" -> "text/javascript; charset=utf-8"
+                    "wasm" -> "application/wasm"
+                    "css" -> "text/css"
+                    else -> "application/octet-stream"
+                }
+            val bytes = f.readBytes()
+            ex.responseHeaders.add("Content-Type", type)
+            ex.sendResponseHeaders(200, bytes.size.toLong())
+            ex.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        return server
+    }
+
+    /**
+     * **The drill on a side face, in the real browser** (OP-17): a plate drawn and extruded in plan, the
+     * *Sketch on face* tool clicked on one of its footprint edges, a circle drawn in the face view that
+     * appears, and *Cut* turning it into a bore — then the 3D view, which is where the hole is visible.
+     *
+     * What only a browser can vouch for: the space indicator in the topbar really lists the new space and
+     * switches back to the plan, the 2D canvas really shows *different* pixels per space (that is the whole
+     * point of a space), and — served over http, so the WASM module can load at all — the **cross-axis
+     * boolean really runs in the shell**, asynchronously, with the drawing appearing when the engine comes
+     * up (OP-3's auto-heal, OP-9's seam). That last part had no browser coverage before, because until a
+     * face could be named there was no way to reach a cross-axis boolean by clicking.
+     */
+    @Test
+    fun drillOnASideFaceInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val dist = File("build/dist/js/productionExecutable")
+        assertTrue(File(dist, "index.html").exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+        val server = serve(dist)
+        val url = "http://127.0.0.1:${server.address.port}/index.html"
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            val meshBoolLines = ArrayList<String>()
+            page.onConsoleMessage { if (it.text().startsWith("[MeshBool]")) meshBoolLines.add(it.text()) }
+            page.setViewportSize(1000, 700)
+            page.navigate(url)
+            page.waitForSelector("#canvas")
+            // the engine comes up after the first paint (OP-9), and a cut before it would be an ordinary
+            // invalid node with that as its reason — so wait for its own line before drilling
+            page.waitForCondition { meshBoolLines.isNotEmpty() }
+            assertTrue(meshBoolLines.first().contains("ready"), "over http the WASM engine should come up: $meshBoolLines")
+
+            fun tree() = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+            fun solids() = tree().count { it.startsWith("solid") }
+
+            fun status() = page.querySelector("#status").textContent()
+
+            val box = page.querySelector("#canvas").boundingBox()
+            // the plate: a rectangle in the middle of the canvas, then 20 mm of thickness
+            val rx1 = box.x + box.width * 0.30
+            val rx2 = box.x + box.width * 0.70
+            val ry1 = box.y + box.height * 0.35
+            val ry2 = box.y + box.height * 0.60
+            page.click("#tool-rect")
+            page.mouse().click(rx1, ry1)
+            page.mouse().click(rx2, ry2)
+            page.fill("#p-name", "thickness")
+            page.fill("#p-value", "20")
+            page.click("#p-add")
+            page.click("#tool-extrude")
+            page.mouse().click((rx1 + rx2) / 2, ry2) // the plate's front edge, in plan
+            assertTrue(solids() == 1, "the plate should be one solid; tree: ${tree()}")
+
+            // ---- sketch on that edge: the 2D view becomes the side face ----
+            val planPixels = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            page.click("#tool-sketchface")
+            page.mouse().click((rx1 + rx2) / 2, ry2)
+            assertTrue(
+                page.querySelector("#v-space").inputValue() == "face1",
+                "the topbar indicator should name the new space; got ${page.querySelector("#v-space").inputValue()}",
+            )
+            assertTrue(status().contains("u along the edge"), "and the convention is said out loud; got: ${status()}")
+            val facePixels = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            assertTrue(facePixels != planPixels, "a face view draws its own space, not the plan's")
+
+            // ---- the bore: a circle drawn *on the face*, then Cut ----
+            //
+            // Centre at the canvas's middle (the face view frames the face, so that is the middle of the
+            // material) and a rim point 30 px to the right — a screen-defined radius, so the very same pixel
+            // picks the circle again for the area slot without this test knowing the face view's scale.
+            val cx = box.x + box.width * 0.5
+            val cy = box.y + box.height * 0.5
+            page.click("#tool-circle")
+            page.mouse().click(cx, cy)
+            page.mouse().click(cx + 30.0, cy)
+            assertTrue(tree().any { it.startsWith("circle") }, "the circle should be drawn in the face space; tree: ${tree()}")
+            page.fill("#p-name", "bore")
+            page.fill("#p-value", "8")
+            page.click("#p-add")
+            page.click("#tool-cut")
+            page.mouse().click(cx + 30.0, cy)
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/11-face-sketch-2d.png")))
+            assertTrue(
+                solids() == 3,
+                "Cut should add the drill and the cut part; tree: ${tree()}, status: ${status()}",
+            )
+
+            // ---- and the hole, in the view that can show it ----
+            page.click("#v-3d")
+            page.waitForSelector("#canvas3:visible")
+            val c3 = box.x + box.width * 0.5
+            val cy3 = box.y + box.height * 0.5
+            page.mouse().move(c3, cy3)
+            page.mouse().down()
+            page.mouse().move(c3 + 70.0, cy3 - 50.0)
+            page.mouse().up()
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/12-face-drill-3d.png")))
+            val drawn = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
+            val blank =
+                page.evaluate(
+                    "() => { const c = document.createElement('canvas'); " +
+                        "c.width = document.querySelector('#canvas3').width; c.height = document.querySelector('#canvas3').height; " +
+                        "return c.toDataURL(); }",
+                ) as String
+            assertTrue(drawn != blank, "the 3D view should have drawn the part")
+
+            // ---- back to the plan through the topbar: the same control, the other way ----
+            page.selectOption("#v-space", "plan")
+            page.waitForSelector("#canvas:visible")
+            assertTrue(page.querySelector("#v-space").inputValue() == "plan")
+            val backPixels = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            assertTrue(backPixels != facePixels, "the plan is the plan again")
+            assertTrue(status().contains("Plan view"), "and it says so; got: ${status()}")
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+        server.stop(0)
+    }
 }

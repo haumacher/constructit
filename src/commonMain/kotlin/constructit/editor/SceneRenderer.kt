@@ -70,6 +70,9 @@ object SceneRenderer {
     /** A placed group's frame marker (OP-16): its own axes, in the group's orientation. */
     private val frameStyle = Style("#8c564b", 1.4)
 
+    /** The outline of the face a sketch space sits on (OP-17): reference context, so grid-weight. */
+    private val faceStyle = Style("#cfd8e3", 1.4)
+
     /** Screen length of a drawn frame axis — a marker, so it does not scale with the drawing. */
     private const val FRAME_AXIS_PX = 22.0
 
@@ -96,8 +99,19 @@ object SceneRenderer {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
         if (grid) drawGrid(cam, target, view)
+        // Reference context of a **face** sketch space (OP-17): the rectangle the face covers, in this
+        // space's own (u, v) — so the user can see where the face *is* before drawing on it. Drawn with the
+        // grid's weight because it is not this space's geometry; it is nevertheless where a pick of the
+        // solid the face belongs to lands ([Document.faceOutlineOf]), since that face is what that solid
+        // looks like here. Ghosting the *other* spaces is deliberately not attempted (see DESIGN.md).
+        val tip = doc.facePartTip(ev)
+        doc.faceOutline(doc.activeSpace, ev)?.let { r ->
+            target.polyline((r + r.first()).map { cam.worldToScreen(it) }, faceStyle)
+        }
         for (el in doc.elements) {
             if (!el.visible) continue
+            // one canvas shows one space (OP-17): everything else belongs to a different coordinate system
+            if (el.space != doc.activeSpace.name) continue
             val style = if (el in dimmed) Styles.DIMMED else el.style
             when (val v = ev.valueOf(el.ref)) {
                 is PointValue -> target.dot(cam.worldToScreen(v.p), POINT_PX, style.stroke)
@@ -135,15 +149,16 @@ object SceneRenderer {
         }
         // a selected dimension's own graphic on top, so the annotation being edited reads as picked
         for (el in selected) {
-            if (el.visible) el.annotation?.let { drawDimension(it, ev, cam, target, selectionStyle, withText = false) }
+            if (!el.visible || el.space != doc.activeSpace.name) continue
+            el.annotation?.let { drawDimension(it, ev, cam, target, selectionStyle, withText = false) }
         }
         // geometry an armed tool has picked, restated in the pick colour — so a boundary being traced shows
         // how much of it is already in, and a click that hit nothing is visibly a click that added nothing
-        for (el in picked) emphasize(el, ev, cam, target, view, pickStyle, pickRing)
+        for (el in picked) emphasize(doc, el, ev, cam, target, view, pickStyle, pickRing, tip)
         // the selection, redrawn on top: what delete removes and — when it is a single element — what
         // the inspector's numeric fields refer to. Every kind is highlighted, since a marquee (OP-16)
         // takes whatever it covers and a selection that shows only its points would be unreadable.
-        for (el in selected) emphasize(el, ev, cam, target, view, selectionStyle, selectionRing)
+        for (el in selected) emphasize(doc, el, ev, cam, target, view, selectionStyle, selectionRing, tip)
         // a selected placed group's frame (OP-16 step 2): its origin and axes, drawn in the group's own
         // orientation — modest, because it is not geometry, but visible, because it is what a drag writes
         for (f in frames) {
@@ -214,6 +229,7 @@ object SceneRenderer {
      * and an emphasis that skipped kinds would be read as "that one is not in".
      */
     private fun emphasize(
+        doc: Document,
         el: Element,
         ev: Evaluator,
         cam: Camera,
@@ -221,8 +237,16 @@ object SceneRenderer {
         view: Rect,
         style: Style,
         ringStyle: Style,
+        tip: Element?,
     ) {
         if (!el.visible) return
+        // the same substitution picking makes (OP-17): in a face space the part that face belongs to *is*
+        // the face rectangle, so that is what a pick of it highlights
+        doc.faceOutlineOf(el, ev, tip)?.let { r ->
+            target.polyline((r + r.first()).map { cam.worldToScreen(it) }, style)
+            return
+        }
+        if (el.space != doc.activeSpace.name) return
         when (val v = ev.valueOf(el.ref)) {
             is PointValue -> target.circle(cam.worldToScreen(v.p), 7.0, ringStyle)
             is SegmentValue -> target.polyline(listOf(cam.worldToScreen(v.seg.a), cam.worldToScreen(v.seg.b)), style)
@@ -247,10 +271,10 @@ object SceneRenderer {
      * the sketch it was swept from, or, for a boolean, the outline of every slab of the prism, so a
      * counterbore and a cut opening are visible in plan without inventing a projection (OP-22).
      *
-     * The sketch's own 2D coordinates are used directly, which is exact **because the sketch plane is
-     * the world XY plane** in this slice (OP-17) — the only plane the extrude/revolve tools offer. When
-     * sketch-on-face lands, this becomes a projection through the plane and the hint stops being the
-     * region itself; the cut is recorded in DESIGN.md.
+     * The sketch's own 2D coordinates are used directly, and with sketch spaces (OP-17) that is exact
+     * rather than a caveat: a solid is drawn in **the space its sketch was drawn in**, whose coordinates
+     * *are* those of its plane. A drill sketched on a face therefore shows its circle in the face view,
+     * where it belongs, instead of being projected into a plan it has no honest projection into.
      */
     private fun drawFootprintHint(
         v: SolidValue,

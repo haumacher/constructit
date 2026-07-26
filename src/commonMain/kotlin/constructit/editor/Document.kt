@@ -17,6 +17,7 @@ import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.ScalarValue
 import constructit.core.SegmentValue
+import constructit.core.SolidValue
 import constructit.core.SourceNode
 import constructit.core.Value
 import constructit.dsl.ArcRef
@@ -26,6 +27,7 @@ import constructit.dsl.Construction
 import constructit.dsl.FrameRef
 import constructit.dsl.LineRef
 import constructit.dsl.LoopRef
+import constructit.dsl.PlaneRef
 import constructit.dsl.PointRef
 import constructit.dsl.PointSetRef
 import constructit.dsl.RayRef
@@ -41,6 +43,7 @@ import constructit.dsl.valueOf
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
 import constructit.geom.Circle
+import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.Line
@@ -92,6 +95,28 @@ enum class ElementKind {
     DIMENSION,
 }
 
+/**
+ * A named **2D sketch space** (OP-17): a plane to embed on, and the coordinates the canvas draws in while
+ * it is active.
+ *
+ * The point of OP-17 is that 2D geometry is *not* plane-resident, so this adds nothing to the engine: a
+ * space is organizational + view state (OP-14's third column), and the only thing it contributes to a
+ * construction is [plane] — the very argument `sketchOn` already takes. The default space is the **plan**
+ * (world XY, [plane] null so every feature keeps building its own `planeXY` node exactly as before); a
+ * *face* space names the solid and the boundary-piece index its plane is derived from (OP-8), and its
+ * plane is the side face's, **flipped** so a positive extrude depth drills into the material.
+ */
+class SketchSpace(
+    val name: String,
+    /** The sketch plane, or null for the plan space — which is the world XY plane by construction. */
+    val plane: PlaneRef?,
+    /** The solid this space is a face of (null for the plan), and which of its boundary pieces (OP-8). */
+    val anchor: Element? = null,
+    val piece: Int = -1,
+) {
+    val isPlan: Boolean get() = anchor == null
+}
+
 /** A retained, displayable/selectable graph output with style + kind. */
 class Element(
     val id: String,
@@ -108,6 +133,18 @@ class Element(
      */
     var annotation: DimensionAnnotation? = null,
 ) {
+    /**
+     * The **sketch space** this element was drawn in, by name (OP-17) — the plan unless it was drawn on a
+     * face. Stamped by [Document.add], which is the single place elements are created, so nothing has to
+     * remember to set it; held as the name because that is what the file records and a space is never
+     * renamed.
+     *
+     * It is a *view* fact, not a geometric one: a space's plane does the embedding at feature time, and the
+     * 2D engine stays abstract-planar (OP-17's whole decision). What it buys is that a canvas shows one
+     * space at a time, so geometry drawn on a face cannot be picked in the plan and vice versa.
+     */
+    var space: String = Document.PLAN_SPACE
+
     /**
      * Whether grabbing this element can actually move anything. An on-curve point qualifies only
      * while its handle still has a writable field: once every coordinate is driven — welded onto a
@@ -470,6 +507,7 @@ class Document {
             val step = Step(kind, args.toList())
             step.creates.addAll(created)
             step.createsScalars.addAll(scalars.subList(scalarsBefore, scalars.size))
+            noteSpace(kind)
             journal.add(step)
             return result
         } finally {
@@ -504,6 +542,241 @@ class Document {
             skipIfEmpty = true,
             body = body,
         )
+
+    // ---- sketch spaces (OP-17): named 2D spaces, one of them active, the plan by default ----
+
+    /**
+     * Every sketch space, the plan first. The plan space always exists and is never removed: it is the
+     * drawing, and a document with no space at all could not draw anything.
+     */
+    val spaces = ArrayList<SketchSpace>().also { it.add(SketchSpace(PLAN_SPACE, null)) }
+
+    /** The plan — world XY, the space everything is drawn in until a face is chosen. */
+    val planSpace: SketchSpace get() = spaces[0]
+
+    /**
+     * The space tools draw into and the canvas shows. **View state**: switching it is not a construction
+     * step and not an undo step, exactly as panning is not — what the *file* records is which space each
+     * step was made in, which is why the switch is written lazily by [noteSpace].
+     */
+    var activeSpace: SketchSpace = planSpace
+
+    /** The space the journal is currently in — what [noteSpace] compares [activeSpace] against. */
+    private var scriptSpace: SketchSpace = planSpace
+
+    private var spaceCounter = 0
+
+    fun spaceNamed(name: String): SketchSpace? = spaces.firstOrNull { it.name == name }
+
+    /** The space [el] was drawn in (OP-17), the plan for anything drawn before spaces existed. */
+    fun spaceOf(el: Element): SketchSpace = spaceNamed(el.space) ?: planSpace
+
+    /**
+     * Whether [el] is the *active* space's business: drawn in it, or — for the **part** this space is a face
+     * of — addressable in it as that face. The second half is what makes a cut reachable by clicking: the
+     * part has no plan in these coordinates, but it does have this face, and the face is where a `Subtract`
+     * pick must land (see [faceOutlineOf]).
+     *
+     * [tip] is the part as it stands, from [facePartTip] — resolved once per search by the caller, because
+     * resolving it is a graph walk and a pick asks this of every element.
+     */
+    fun addressableIn(
+        el: Element,
+        tip: Element? = facePartTip(),
+    ): Boolean = el.space == activeSpace.name || (tip != null && el === tip)
+
+    /**
+     * The **tip** of the part the active face space is a face of: the most recent visible solid made *of*
+     * the space's base solid (a boolean chain), or the base itself while nothing has consumed it yet. Null
+     * in the plan space, which is a face of nothing.
+     *
+     * **The sequential-feature rule** (OP-17), and the reason it exists: a second cut on a second face must
+     * subtract from *the part*, not from the plate the part started as. Anchoring the boolean to the space's
+     * original base forked the model instead of chaining it — two coincident one-hole solids, each claiming
+     * to be the part. So a feature's operand is resolved *here*, at the moment the user asks for it (when
+     * "the part" has one obvious answer, the newest solid the base's material has reached), and the tool
+     * step then records **that solid by name** (OP-18), so replay is exact and re-resolution never happens.
+     * The *plane* is a different question and keeps a different answer: it stays anchored to the original
+     * base, because the face's geometry is that solid's face — only the boolean's operand advances.
+     */
+    fun facePartTip(ev: Evaluator = Evaluator()): Element? {
+        val base = activeSpace.anchor ?: return null
+        return elements.lastOrNull { el ->
+            el.kind == ElementKind.SOLID && el.visible && (el === base || madeOf(el, base, ev))
+        }
+    }
+
+    /** Whether [base] is part of [solid]'s **material** — a chain of solid-valued inputs ([isMaterial]). */
+    private fun madeOf(
+        solid: Element,
+        base: Element,
+        ev: Evaluator,
+    ): Boolean {
+        val target = base.ref.node
+        val seen = HashSet<String>()
+
+        fun walk(n: Node): Boolean {
+            if (!seen.add(n.id)) return false
+            for (i in n.inputs) {
+                if (!isMaterial(ev, i)) continue
+                if (i === target || walk(i)) return true
+            }
+            return false
+        }
+        return walk(solid.ref.node)
+    }
+
+    /**
+     * The rectangle of the face [space] is a sketch on, in that space's **own (u, v) coordinates** — width
+     * the picked edge's length, height the solid's z-extent (see [Geom3.SideFace]). Null for the plan, and
+     * null while the face's solid has no value (OP-3), where there is simply nothing to show.
+     *
+     * A *drawing* rather than a node, like a thick path's plan convention ([planOf]): it is the reference
+     * context that says where the face **is**, and it is the geometry a pick of the base solid measures
+     * against — one rule, so what is visible is what is pickable.
+     */
+    fun faceOutline(
+        space: SketchSpace,
+        ev: Evaluator,
+    ): List<Vec2>? {
+        val anchor = space.anchor ?: return null
+        val solid = (ev.valueOf(anchor.ref) as? SolidValue)?.solid ?: return null
+        val (face, _) = Geom3.sideFace(solid.feature, space.piece)
+        if (face == null) return null
+        return listOf(Vec2(0.0, 0.0), Vec2(face.length, 0.0), Vec2(face.length, face.height), Vec2(0.0, face.height))
+    }
+
+    /**
+     * [faceOutline] of the active space, but only for the one element it stands for — the part at its
+     * current [tip] — else null.
+     *
+     * The rectangle is the *base's* face (its geometry belongs to that solid) and it stands for the part as
+     * it now is, which is what clicking it means: "this part, here". So once a cut exists, the rectangle
+     * picks the cut and not the plate it came from — the same sequential-feature rule [facePartTip] states,
+     * reaching the manual *Extrude → Subtract* path as well as the one-gesture *Cut*.
+     */
+    fun faceOutlineOf(
+        el: Element,
+        ev: Evaluator,
+        tip: Element? = facePartTip(ev),
+    ): List<Vec2>? = if (tip != null && el === tip) faceOutline(activeSpace, ev) else null
+
+    /**
+     * The plane the active space embeds on (OP-17) — what every feature built here sketches on.
+     *
+     * The plan answers with a fresh `planeXY` node, which is exactly what the seam's tools did before
+     * spaces existed; a face space answers with its **one** stored plane node, shared by every feature
+     * drawn on that face, so they all follow the same derived frame.
+     */
+    fun activePlane(): PlaneRef = activeSpace.plane ?: cx.planeXY()
+
+    /**
+     * The nearest solid boundary edge to [at]: the solid, and which of its boundary pieces (OP-8).
+     *
+     * The pick a plan-view editor can make: a **side face projects to exactly one footprint edge**, so
+     * clicking that edge names the face, and the solid it belongs to, in one gesture. Measured against the
+     * same footprint geometry the hint draws and [HitTest] picks by, so what looks like an edge is one.
+     */
+    fun solidEdgeNear(
+        at: Vec2,
+        tol: Double,
+        ev: Evaluator,
+    ): Pair<Element, Int>? {
+        // drawn *in this space*, deliberately not the space's own anchor: that solid shows its face here,
+        // not its plan, so a click on it is not in the coordinates its boundary pieces live in
+        val solid =
+            HitTest.nearest(this, ev, at, tol) { it.kind == ElementKind.SOLID && it.space == activeSpace.name }
+                ?: return null
+        val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return null
+        val pieces = Geom3.boundaryPieces(feature)
+        if (pieces.isEmpty()) return null
+        val best = pieces.indices.minByOrNull { HitTest.distanceToPiece(at, pieces[it]) } ?: return null
+        return solid to best
+    }
+
+    /** Why boundary piece [piece] of [solid] cannot carry a sketch, or null when it can. */
+    fun faceRefusal(
+        solid: Element,
+        piece: Int,
+        ev: Evaluator = Evaluator(),
+    ): String? {
+        val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return "${solid.id} has no solid to take a face from"
+        return Geom3.sideFace(feature, piece).second
+    }
+
+    /**
+     * Create a sketch space on boundary piece [piece] of the solid [solid] (OP-17), and make it active.
+     *
+     * The plane is **derived**: `sideFacePlane` recomputes from the solid's own feature and is then flipped
+     * so its normal points into the material, which is what makes a positive extrude depth a *cut*. So the
+     * frame is parametric — stretch the part and the face, its sketch and everything built from it follow.
+     * That is face-**relative** positioning, and it is the honest intent here: a hole is dimensioned from
+     * the part's own edge, where a rider on a wall wants a world coordinate (OP-20's absolute rule).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun createFaceSpace(
+        solid: Element,
+        piece: Int,
+        named: String? = null,
+    ): SketchSpace? {
+        if (solid.kind != ElementKind.SOLID) return null
+        if (faceRefusal(solid, piece) != null) return null
+        val name = named ?: nextSpaceName()
+        if (spaceNamed(name) != null) return null
+        return recording("sketchspace", Arg.Label(name), Arg.Keyed("el", Arg.El(solid)), Arg.Keyed("piece", Arg.Text(piece.toString()))) {
+            val plane = cx.planeFlipped(cx.sideFacePlane(solid.ref as SolidRef, piece))
+            val space = SketchSpace(name, plane, solid, piece)
+            spaces.add(space)
+            activeSpace = space
+            space
+        }
+    }
+
+    private fun nextSpaceName(): String {
+        var i = spaceCounter + 1
+        while (spaceNamed("face$i") != null) i++
+        spaceCounter = i
+        return "face$i"
+    }
+
+    /**
+     * Switch the active space (view state — see [activeSpace]); false when there is no such space.
+     *
+     * [record] is what a **replay** passes: the file already contains the switch, so the step is put back
+     * where it was instead of being re-derived by [noteSpace] — which is what makes `save → load → save`
+     * byte-equal even for a switch that nothing follows (a delete can leave one).
+     */
+    fun switchSpace(
+        name: String,
+        record: Boolean = false,
+    ): Boolean {
+        val space = spaceNamed(name) ?: return false
+        activeSpace = space
+        if (record) {
+            journal.add(Step("space", listOf(Arg.Label(name))))
+            scriptSpace = space
+        }
+        return true
+    }
+
+    /**
+     * Write a `space` step when the journal's space is not the active one — **lazily**, just before the
+     * step that needs it, so switching views back and forth records nothing at all and only a step that is
+     * actually *built* somewhere says where.
+     *
+     * The ordering rule is the ortho path's "current path" precedent exactly (`DocumentFormat.currentPath`):
+     * steps belong to the last space named, and creating a face space names it too. That is what keeps the
+     * file free of an addressing scheme for spaces.
+     */
+    private fun noteSpace(kind: String) {
+        if (kind == "sketchspace") {
+            scriptSpace = activeSpace
+            return
+        }
+        if (activeSpace === scriptSpace) return
+        journal.add(Step("space", listOf(Arg.Label(activeSpace.name))))
+        scriptSpace = activeSpace
+    }
 
     // ---- delete: the unit of removal is the journal step (OP-18) ----
 
@@ -583,6 +856,10 @@ class Document {
         // likewise a macro instance's `tool` step names its *definition* (OP-6), not the definition's
         // elements: if the `macrodef` step goes, no instance of it can replay, so they go with it
         val droppedMacros = HashSet<String>()
+        // a sketch space whose face is gone (OP-17): its plane cannot be derived any more, so everything
+        // drawn in it goes with it — and unlike a group's membership that is not a matter of degree, since
+        // the space's own coordinates are what those elements' literals mean
+        val droppedSpaces = HashSet<String>()
 
         fun labelOfStep(step: Step): String? = step.args.filterIsInstance<Arg.Label>().firstOrNull()?.s
 
@@ -601,8 +878,13 @@ class Document {
         var current: PathChain? = null
         val chainOfEl = HashMap<Element, PathChain>()
         var seenRoot = false
+        var currentSpace = PLAN_SPACE
         for (step in journal) {
             val els = referencedElements(step)
+            // which space the script is in here — the same ordering rule the loader follows, so a delete
+            // and a replay agree on what belongs where
+            if (step.kind == "sketchspace" || step.kind == "space") currentSpace = labelOfStep(step) ?: currentSpace
+            val stepSpace = currentSpace
             val chain: PathChain? =
                 when (step.kind) {
                     "orthostart" -> PathChain().also { current = it }
@@ -653,8 +935,12 @@ class Document {
             val depends =
                 chain?.dropped == true ||
                     els.any { it in droppedEls } ||
-                    referencedScalars(step).any { it in droppedScalars }
+                    referencedScalars(step).any { it in droppedScalars } ||
+                    // drawn in a space that is going: the space *is* what its coordinates mean (OP-17)
+                    (step.kind != "sketchspace" && stepSpace in droppedSpaces)
             if (depends) drop(step, chain)
+            // ...and a face space goes when the solid it is a face of does, taking its geometry with it
+            if (depends && step.kind == "sketchspace") labelOfStep(step)?.let { droppedSpaces.add(it) }
             // a definition is all-or-nothing: losing one of its elements changes how many elements an
             // instance creates, which replay checks (OP-18), so the whole declaration goes
             if (depends && step.kind == "macrodef") labelOfStep(step)?.let { droppedMacros.add(it) }
@@ -672,6 +958,8 @@ class Document {
         style: Style,
     ): Element {
         val el = Element(nextId("e"), ref, kind, style)
+        // the one place an element is born, hence the one place its sketch space is stamped (OP-17)
+        el.space = activeSpace.name
         elements.add(el)
         return el
     }
@@ -3574,22 +3862,49 @@ class Document {
     /**
      * Extrude the area [el] by [depth] into a solid (OP-17 slice 1).
      *
-     * **The sketch plane is the world XY plane** in this slice: a 2D drawing *is* the plan, so that is
-     * where its regions live, and the alternative — asking the user to pick a plane before there is any
-     * way to make one — would be a datum-management UI before there is a datum to manage. Sketching on a
-     * face (and therefore choosing a plane) arrives with the provenance accessors, which is the point of
-     * `facePlane` already existing in the engine.
+     * **The sketch plane is the active space's** ([activePlane]) — one rule, and for the plan space it is
+     * the world XY plane exactly as before. That is the whole of "sketch on a face" at feature time: the
+     * space did the choosing, the tool did not grow an argument, and a 2D drawing still *is* the plan
+     * wherever the plan is what is being drawn.
      *
      * The depth stays a **panel parameter**: it is the feature's degree of freedom, and OP-13 is
      * satisfied through the parameter rather than through a 3D drag handle, which there is no picking in
-     * this view to grab (see [Viewport3]).
+     * this view to grab (see [Viewport3]). In a face space the depth runs **into** the material, because
+     * the space's plane is the face's own plane flipped (see [createFaceSpace]).
      */
     fun extrudeSolid(
         el: Element,
         depth: ScalarRef,
     ): Element? {
         val region = regionOf(el) ?: return null
-        return add(cx.extrude(cx.sketchOn(cx.planeXY(), region), depth), ElementKind.SOLID, Styles.SOLID)
+        return add(cx.extrude(cx.sketchOn(activePlane(), region), depth), ElementKind.SOLID, Styles.SOLID)
+    }
+
+    /**
+     * Extrude the area [el] by [depth] on the active **face** space's plane and subtract it from [part]
+     * (OP-17): the drill, the pocket, the slot — one gesture.
+     *
+     * Nothing here is new machinery: it is [extrudeSolid] followed by [combineSolids], which is the click
+     * path a user can also take by hand. It exists because the *space* already says which part is being cut,
+     * so asking for that pick again is asking the user to repeat what they said by choosing the face. Two
+     * solids come out of it — the tool and the cut part — and the tool is the cut's operand, so the 3D view
+     * draws only the part (Scene3's material rule) and deleting the part takes its tool with it.
+     *
+     * [part] is **the part as it stands**, not the space's base: the editor resolves [facePartTip] at click
+     * time and the step records it by name, so a second cut chains onto the first instead of forking the
+     * model (the sequential-feature rule). Null in the plan space, where there is no face to cut into.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun cutOnFace(
+        part: Element,
+        el: Element,
+        depth: ScalarRef,
+    ): Element? {
+        val plane = activeSpace.plane ?: return null
+        if (part.kind != ElementKind.SOLID) return null
+        val region = regionOf(el) ?: return null
+        val tool = add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
+        return add(cx.subtract(part.ref as SolidRef, tool.ref as SolidRef), ElementKind.SOLID, Styles.SOLID)
     }
 
     /**
@@ -3654,7 +3969,7 @@ class Document {
         val region = regionOf(el) ?: return null
         if (!axis.isLinear) return null
         val line = carrierLine(axis)
-        val ref = cx.revolve(cx.sketchOn(cx.planeXY(), region), cx.lineOrigin(line), cx.lineDirection(line), angle)
+        val ref = cx.revolve(cx.sketchOn(activePlane(), region), cx.lineOrigin(line), cx.lineDirection(line), angle)
         return add(ref, ElementKind.SOLID, Styles.SOLID)
     }
 
@@ -4600,6 +4915,30 @@ class Document {
             it.annotation = ann
             it.handle = ann
         }
+
+    companion object {
+        /**
+         * The name of the default sketch space (OP-17): the **plan**, world XY. Every element belongs to a
+         * space and this is the one they belonged to before spaces existed, which is why adding them
+         * changed nothing about an existing drawing or an existing file.
+         */
+        const val PLAN_SPACE = "plan"
+
+        /**
+         * Whether [node] is **material** of the solid that takes it as an input, rather than merely an
+         * ancestor of it: material means a *solid-valued* input, which is exactly what a boolean takes. A
+         * frame accessor (`facePlane`, `sideFacePlane`) or a `section` passes through a plane or a region and
+         * consumes no material at all.
+         *
+         * One rule, two readers: [Scene3] tells an operand from an output by it (a plate is still an output
+         * while something is merely sketched on its face), and [facePartTip] follows it to the end of a
+         * part's boolean chain (OP-17's sequential-feature rule).
+         */
+        fun isMaterial(
+            ev: Evaluator,
+            node: Node,
+        ): Boolean = (ev.eval(node) as? EvalResult.Ok)?.value is SolidValue
+    }
 }
 
 /** Head height a new interval carries by default (mm) — a door; the sill defaults to the floor. */

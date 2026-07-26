@@ -59,7 +59,9 @@ class Editor(
 
     /** Swap in a loaded document, dropping every reference into the old one and its history. */
     fun replaceDocument(fresh: Document) {
-        adopt(fresh)
+        // another drawing entirely: its spaces are its own, so the remembered views go with the old one
+        spaceCameras.clear()
+        adopt(fresh, keepSpace = false)
         // a loaded file starts its own history — earlier snapshots describe a different document
         undoStack.clear()
         redoStack.clear()
@@ -69,8 +71,22 @@ class Editor(
     }
 
     /** Swap [fresh] in, resetting every transient reference into the old document (selection, picks). */
-    private fun adopt(fresh: Document) {
+    private fun adopt(
+        fresh: Document,
+        keepSpace: Boolean = true,
+    ) {
+        // Stay in the space the user is looking at (OP-17). A replayed script ends in whatever space its
+        // last step was built in, which for an undo is *not* where the user is: undoing a circle drawn on a
+        // face must not also throw the view back to the plan. So the view wins where it still exists — and
+        // when it does not (the undo removed the space itself) the replayed answer stands, with the camera
+        // following it.
+        val looking = doc.activeSpace.name
         doc = fresh
+        if (keepSpace && looking != fresh.activeSpace.name) fresh.spaceNamed(looking)?.let { fresh.activeSpace = it }
+        if (fresh.activeSpace.name != looking) {
+            spaceCameras[looking] = camera
+            camera = spaceCameras[fresh.activeSpace.name] ?: cameraFor(fresh.activeSpace)
+        }
         clearSelection()
         // it names elements of the document being replaced (and a tool of it), so it cannot survive
         createDialog = null
@@ -518,9 +534,99 @@ class Editor(
         // an active path is a pending operation: switching tools finishes it (its thickness included)
         // rather than silently abandoning half-drawn state that no gesture ever committed
         finishPath()
+        // **Sketch on face picks in the plan, so arming it goes there** (OP-17). A side face is named by a
+        // solid's *footprint edge*, and only a solid extruded **vertically** has a planar side face at all
+        // (`Geom3.sideFace` refuses every other axis) — which means the only space such a solid's plan is
+        // ever drawn in is the plan itself. Refusing the click where the user stands would refuse a pick
+        // that *cannot* succeed there; switching is therefore the honest answer, and it is said out loud.
+        // It also closes a silent trap: in a face view the tool used to find nothing, and the drawing that
+        // followed went quietly into the old space.
+        val backToPlan = id == Tools.SKETCH_ON_FACE && !doc.activeSpace.isPlan
+        if (backToPlan) setActiveSpace(Document.PLAN_SPACE)
         toolId = id
         resetPicks()
-        statusHint = ""
+        statusHint =
+            if (backToPlan) {
+                "Plan view — Sketch on face picks a solid's footprint edge, which is drawn here; click the edge you want"
+            } else {
+                ""
+            }
+        onChange()
+    }
+
+    // ---- sketch spaces: which 2D space this canvas is showing (OP-17) ----
+    //
+    // The active space is the document's (tools draw into it), and the *view* of each space is the
+    // editor's: one camera per space, so switching back to the plan comes back to the plan's own zoom and
+    // pan rather than to wherever the face view happened to be. Switching is view state — no step, no undo
+    // entry (the file records which space each step was *built* in, see Document.noteSpace).
+
+    private val spaceCameras = HashMap<String, Camera>()
+
+    val activeSpace: SketchSpace get() = doc.activeSpace
+
+    /**
+     * Show [name] and draw into it. The selection and any half-collected picks are dropped, because they
+     * name elements of a space whose coordinates this one does not share — the same reason a canvas shows
+     * one space at a time.
+     */
+    fun setActiveSpace(name: String): Boolean {
+        if (name == doc.activeSpace.name) return true
+        val target = doc.spaceNamed(name) ?: return false
+        spaceCameras[doc.activeSpace.name] = camera
+        finishPath()
+        doc.activeSpace = target
+        clearSelection()
+        resetPicks()
+        camera = spaceCameras[name] ?: cameraFor(target)
+        statusHint = spaceNote(target)
+        onChange()
+        return true
+    }
+
+    /** How a space introduces itself — the frame's convention, said where the user is about to use it. */
+    private fun spaceNote(space: SketchSpace): String =
+        if (space.isPlan) {
+            "Plan view — the drawing's own space (world XY)."
+        } else {
+            "Sketching on ${space.name}, the side face of ${space.anchor?.id}: u along the edge from its start, " +
+                "v down from the top face. Extrude (or Cut) here drills into the material."
+        }
+
+    /**
+     * The first view of a space: the plan centred as always, a face framed on the rectangle it *is*, so
+     * switching over never lands on an empty view with the face off screen.
+     */
+    private fun cameraFor(space: SketchSpace): Camera {
+        val r = doc.faceOutline(space, ev()) ?: return Camera.centered(canvasW, canvasH)
+        val w = r[2].x
+        val h = r[2].y
+        if (w <= 0.0 || h <= 0.0) return Camera.centered(canvasW, canvasH)
+        val scale = minOf(canvasW / (w * 1.6), canvasH / (h * 1.6)).coerceIn(0.02, 400.0)
+        return Camera(canvasW / 2 - w / 2 * scale, canvasH / 2 + h / 2 * scale, scale)
+    }
+
+    /** One click of the *Sketch on face* tool: a solid's footprint edge names a side face (OP-17). */
+    private fun faceClick(world: Vec2) {
+        val from = doc.activeSpace.name
+        val hit = doc.solidEdgeNear(world, tolWorld(), ev())
+        if (hit == null) {
+            statusHint = "Click a solid's footprint edge — that edge is the side face, seen from above"
+        } else {
+            val (solid, piece) = hit
+            val why = doc.faceRefusal(solid, piece)
+            val space = if (why == null) doc.createFaceSpace(solid, piece) else null
+            if (space == null) {
+                statusHint = "No sketch space on that edge of ${solid.id}: ${why ?: "it has no planar side face there"}"
+            } else {
+                // the document already made it active; the *view* follows it here
+                spaceCameras[from] = camera
+                camera = cameraFor(space)
+                clearSelection()
+                checkpoint()
+                statusHint = spaceNote(space)
+            }
+        }
         onChange()
     }
 
@@ -857,10 +963,20 @@ class Editor(
      * it was extruded from (OP-17), so a canvas click can only ever reach the topmost of the two. The
      * element tree addresses either one by name, which is the honest answer — biasing the pick would
      * just make the other one unreachable instead.
+     *
+     * Selecting an element of **another sketch space** (OP-17) shows the space it is in rather than a
+     * selection the canvas cannot draw: the tree lists the whole document, so the honest answer to "that
+     * one" is where to go and look at it.
      */
     fun selectElement(el: Element) {
         select(listOf(el), el)
-        statusHint = "${selectionLabel()} selected"
+        val space = doc.spaceOf(el)
+        statusHint =
+            if (space.name == doc.activeSpace.name) {
+                "${selectionLabel()} selected"
+            } else {
+                "${selectionLabel()} selected — it is drawn in ${space.name}, so switch the space to see it"
+            }
         onChange()
     }
 
@@ -1211,6 +1327,11 @@ class Editor(
         }
         if (toolId == Tools.OPENING) {
             openingClick(camera.screenToWorld(screen))
+            return
+        }
+        // one click, and a step of its own (OP-17): see [faceClick]
+        if (toolId == Tools.SKETCH_ON_FACE) {
+            faceClick(camera.screenToWorld(screen))
             return
         }
         if (toolId == Tools.BREAK_LEG) {
@@ -2072,6 +2193,15 @@ class Editor(
     private fun runToolClick(screen: Vec2) {
         val tool = doc.toolDef(toolId) ?: return
         val world = camera.screenToWorld(screen)
+        // a tool that cuts *the part of this face space* (OP-17) has nothing to cut in the plan — refused
+        // here rather than at completion, so the reason is the one the user reads
+        if (tool.facePartOperand && doc.facePartTip() == null) {
+            statusHint =
+                "${tool.label} works on a face: use Sketch on face to pick a solid's edge first, " +
+                "then draw and cut there"
+            onChange()
+            return
+        }
         pickRefusal = null
         // a repeating tool closes when the first pick is clicked again — the boundary is complete
         if (tool.repeating && filledSlots >= 2) {
@@ -2196,7 +2326,17 @@ class Editor(
         if (tool.repeating || filledSlots < tool.slots.size) return false
         val scalars = toolScalars(tool) ?: return false
         val where = at ?: pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0)
-        val picks = Picks(pickedPoints.toList(), pickedElements.toList(), where, pickedClicks.toList(), count = toolCount(tool))
+        // OP-17's sequential-feature rule: the part this face space belongs to, as it stands *now*, fed in
+        // as the first element so the step records which solid was cut (and replay never re-resolves it)
+        val part = if (tool.facePartOperand) doc.facePartTip() ?: return false else null
+        val picks =
+            Picks(
+                pickedPoints.toList(),
+                listOfNotNull(part) + pickedElements.toList(),
+                where,
+                pickedClicks.toList(),
+                count = toolCount(tool),
+            )
         // read before [resetPicks] drops it: a group operand is worth reporting, because the one thing the
         // canvas cannot show is *how much* the tool just took (OP-16)
         val fedGroup = pickedGroup
