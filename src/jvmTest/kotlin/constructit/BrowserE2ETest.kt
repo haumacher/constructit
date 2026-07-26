@@ -68,6 +68,28 @@ class BrowserE2ETest {
             page.mouse().click(p2x, y)
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/02-built.png")))
 
+            // A **defaulted** scalar slot, in the real shell (OP-13): Midpoint still takes exactly two clicks,
+            // and a number typed before them turns the same gesture into a ratio point whose factor is an
+            // ordinary panel parameter. Only a browser can show that the digits reach the tool through the
+            // document's own keydown seam while the palette stays where it was.
+            page.click("#tool-midpoint")
+            page.keyboard().type(".25")
+            assertTrue(
+                page.querySelector("#status").textContent().contains("factor = .25"),
+                "the typed factor echoes; got: ${page.querySelector("#status").textContent()}",
+            )
+            page.keyboard().press("Enter")
+            page.mouse().click(p1x, y)
+            page.mouse().click(p2x, y)
+            @Suppress("UNCHECKED_CAST")
+            val names =
+                (
+                    page.evaluate(
+                        "() => [...document.querySelectorAll('#params-list .pname')].map(e => e.value ?? e.textContent)",
+                    ) as List<Any?>
+                ).map { it?.toString() ?: "" }
+            assertTrue(names.contains("factor"), "typing it created the parameter; got $names")
+
             val itemsBuilt = page.querySelectorAll(".item").size
 
             // Select tool: drag the first base point upward — the line + circle must follow live

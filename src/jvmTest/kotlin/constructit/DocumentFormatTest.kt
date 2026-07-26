@@ -308,6 +308,39 @@ class DocumentFormatTest {
         assertClose(Evaluator().point(slider.ref as PointRef).x, -30.0)
     }
 
+    /**
+     * **Every number in the file goes through one canonical format, and it is never scientific.**
+     *
+     * `Double.toString` is the basis because it is the shortest form that reloads to the *same* double — but
+     * for a tiny or huge magnitude it prints `1.0E-16`, and a canonical serializer does not emit exponents (the
+     * SVG goldens have followed that rule all along). A turned placed group produces exactly such a coordinate,
+     * being zero up to the rounding of `sin 90°`, which is how this surfaced. The expansion is a *string*
+     * transformation, so the value must come back **bit-identical** — asserted here rather than assumed,
+     * because rounding instead would have been stable and would have moved the drawing on every reload.
+     */
+    @Test
+    fun everyNumberIsWrittenAsAPlainDecimalThatReloadsBitForBit() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(10.0, 0.0))
+        // magnitudes at both ends of the range, written straight into the points' own literals
+        val tiny = -6.123233995736766E-16
+        val huge = 1.0E21
+        ed.doc.elements[0].handle!!.fields()[0].write(tiny.mm)
+        ed.doc.elements[1].handle!!.fields()[1].write(huge.mm)
+
+        val once = DocumentFormat.save(ed.doc)
+        // an exponent is a digit followed by E/e — element names are `e1`, so the test has to be that precise
+        assertTrue(!Regex("[0-9][Ee][-+]?[0-9]").containsMatchIn(once), "no exponent anywhere in the script: $once")
+        assertTrue(once.contains("-0.0000000000000006123233995736766"), once)
+        assertTrue(once.contains("1000000000000000000000"), once)
+        val reloaded = DocumentFormat.load(once)
+        assertEquals(once, DocumentFormat.save(reloaded), "…and it is byte-stable")
+        assertEquals(tiny, points(reloaded)[0].x, "bit for bit, not rounded")
+        assertEquals(huge, points(reloaded)[1].y)
+    }
+
     @Test
     fun aScriptFromAnotherVersionIsRejectedRatherThanMisread() {
         val bad = "constructit 1\npoint 0,0 -> e1,e2\n"

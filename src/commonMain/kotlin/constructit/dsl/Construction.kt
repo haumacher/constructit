@@ -304,6 +304,41 @@ class Construction {
             EvalResult.Ok(PointValue(((it[0] as PointValue).p + (it[1] as PointValue).p) * 0.5))
         }
 
+    /**
+     * The point dividing `a → b` in ratio [t]: `P = a + t·(b − a)`.
+     *
+     * [t] is **dimensionless** — a share of the span, not a length — which is what makes one `t` node feeding
+     * several pairs mean *equal proportions by construction* (OP-5: sharing a node is equality). `t = 0.5` is
+     * exactly [midpoint]; outside `[0, 1]` the point extrapolates beyond `a` or `b`, which is honest rather
+     * than clamped: a construction that reaches past its span is a construction, not an error.
+     */
+    fun pointAtRatio(
+        a: PointRef,
+        b: PointRef,
+        t: ScalarRef,
+    ): PointRef =
+        op(a, b, t) {
+            val pa = pt(it[0])
+            val pb = pt(it[1])
+            val f = sc(it[2]).requireDim(Dimension.NONE, "ratio").value
+            EvalResult.Ok(PointValue(pa + (pb - pa) * f))
+        }
+
+    /**
+     * Where [point] sits along [line], as the line's own parameter: `point · dir`.
+     *
+     * The inverse view of [pointOnLineAt]/`alongLine` — the number a rider on that line stores (OP-20's
+     * carrier-anchored form, measured from the point of the line nearest the world origin). Its use is to
+     * express one position along a carrier **relative to another**: `t = lineParam(line, base) + d` is the
+     * point at signed distance `d` from `base`, stated in the rider's own parameter, so nothing that already
+     * refers to the rider is rewired (OP-5).
+     */
+    fun lineParam(
+        line: LineRef,
+        point: PointRef,
+    ): ScalarRef =
+        op(line, point) { EvalResult.Ok(ScalarValue(Quantity.mm(pt(it[1]).dot(ln(it[0]).dir)))) }
+
     // ---- curves ----
 
     fun lineThrough(

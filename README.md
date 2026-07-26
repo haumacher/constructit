@@ -25,7 +25,7 @@ first-class goal and the current implementation focus.
   node, so branch choice is stable across recompute, undo and reload (no continuity tracking).
 - **Unit-aware scalars** — dimensional analysis over Length / Angle / Dimensionless (+ Area /
   Volume); base units mm and rad.
-- **Rich 2D tool set** — points, midpoints, intersections, projections, perpendiculars, parallels,
+- **Rich 2D tool set** — points, midpoints (or any ratio along a span), intersections, projections, perpendiculars, parallels,
   bisectors, tangents (from a point / common), fillets (between lines, circles and arcs alike) and
   chamfers, circles (centre+point / centre+radius / 3-point), arcs, rectangles (rounded or not) and regular
   polygons, transforms (mirror / rotate / scale / translate), linear and circular **arrays**, and
@@ -54,7 +54,14 @@ first-class goal and the current implementation focus.
   another point, so it follows that anchor (move a circle's centre and its radius holds) while staying
   fully draggable — and its distance is the radius, as a number you can type. *Make absolute* undoes it,
   and un-welds or detaches a point too. A conversion, not a constraint: two degrees of freedom before,
-  two after, and nothing moves at the moment you say it.
+  two after, and nothing moves at the moment you say it. Pick **two points of one curve** and the same tool
+  states a distance *along* that curve instead — a dimension from an end, or from another point riding it,
+  chainable — which is also what makes a group of such a figure rigid.
+- **Ratio points** — *Midpoint* takes an optional **factor**: no number means the midpoint, exactly as
+  before, and typing `.3` first puts the point three tenths of the way along (past an end if you ask for
+  it). The factor is a plain number, so **one factor shared by several spans keeps them in the same
+  proportion** — equality by sharing a node, not by a constraint — and it is draggable along the span as
+  well as typeable. *Perp. bisector* takes the same factor.
 - **Dimensions** — linear (aligned), radial and angular dimension graphics whose value *is* a
   measurement node: the number and the drawing follow the geometry live, and nothing is asserted. The
   dimension line's own placement is draggable and typeable like any other degree of freedom.
@@ -66,7 +73,11 @@ first-class goal and the current implementation focus.
   instance's only freedom is its inputs, and the tool travels with the file.
 - **Groups that carry a frame** — name a selection, then *place* it: the group gets its own coordinate
   frame, and moving or turning it is one edit on that one frame (its x / y / angle are ordinary typed
-  fields). The internals are re-read as local coordinates, so an ortho path in a placed group is
+  fields). Grouping offers **every degree of freedom the selection is built on** — free points, a point
+  riding a curve, a point relative to another — ticked by default, so a group you just drew moves as one
+  figure; a point riding a member curve is re-stated as a distance from that curve's own end when the group
+  is placed, which is what keeps the figure rigid, and unticking anything says at once what it will cost.
+  The internals are re-read as local coordinates, so an ortho path in a placed group is
   axis-aligned **in the group** — turn the frame and a building sited at an angle still draws
   orthogonally, walls, openings and the solids cut from them following along. A group is also a tool
   **operand**: with it selected as a whole, clicking any member (or its row in the panel) arrays *every*

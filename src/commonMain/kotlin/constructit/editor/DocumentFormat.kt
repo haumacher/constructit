@@ -155,16 +155,19 @@ object DocumentFormat {
             // host turns (OP-20). What the step restates is therefore the rider's own parameter (`dofs=`,
             // the same seam a dimension's placement uses) and not the click, since *which* curve and which
             // side of it are choices replay must repeat — see [Document.pointOnCurve].
+            // Asked of the document rather than read off the handle, because a rider's parameter and what its
+            // *handle* writes are two different nodes once the position has been re-anchored to a base of the
+            // same carrier (OP-4 case b): the handle then writes the offset, while the step must restate the
+            // position along the carrier that replaying it reproduces — see [Document.restatedRiderParam].
             "pointoncurve" -> {
-                val dof = step.creates.singleOrNull()?.handle?.dragNodes?.singleOrNull()
-                val q = dof?.let { ((ev.eval(it) as? EvalResult.Ok)?.value as? ScalarValue)?.q }
+                val q = step.creates.singleOrNull()?.let { doc.restatedRiderParam(it, ev) }
                 if (q == null) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(listOf(q)))
             }
             // the same rule for a re-parameterization recorded on its own rather than through a tool
-            // (OP-4 case b): the offset is state, so it is restated
+            // (OP-4 case b): the offset is state, so it is restated — one distance and one angle for a polar
+            // offset, one signed distance for a rider measured along its carrier
             "relative" -> {
-                val r = doc.referencedElements(step).firstNotNullOfOrNull { doc.relativeOf(it) }
-                val dofs = if (r == null) emptyList() else listOfNotNull(scalarValue(r.distance, ev), scalarValue(r.angle, ev))
+                val dofs = relativeDofs(doc, step, ev)
                 if (dofs.isEmpty()) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(dofs))
             }
             "point", "orthostart", "orthovertex", "orthoprepend" ->
@@ -191,36 +194,28 @@ object DocumentFormat {
                     if (arg is Arg.Keyed && own != null) Arg.Keyed(arg.key, Arg.Num(value(own, ev))) else arg
                 }
             }
-            // a slider's position lives in a hidden parameter the click created; re-read it from the
-            // point itself so the slider lands where it is now, not where it was first placed
             "tool" -> {
-                val onCurve = step.creates.singleOrNull { it.kind == ElementKind.ON_CURVE }
-                val here = onCurve?.let { posOf(it) }
-                val args =
-                    if (here == null) {
-                        step.args
-                    } else {
-                        step.args.map { arg ->
-                            val v = (arg as? Arg.Keyed)?.value
-                            if (arg is Arg.Keyed && v is Arg.Positions) Arg.Keyed(arg.key, Arg.Positions(v.ps.dropLast(1) + here)) else arg
-                        }
-                    }
-                // A dimension's placement is its own state (OP-13), so it is restated as a value rather than
-                // as the click that first set it: `dofs=` carries it, while the clicks stay verbatim, since
-                // what *they* encode is a discrete choice — which side of the span, which sector of a
-                // crossing — and replay must make the same choice (see this object's header).
-                // in creation order and consumed positionally, so this stays one rule however many
-                // annotations a step makes
+                // **State is restated as a value, never as a rewritten click** — one rule for every tool, and
+                // the clicks always stay verbatim because what a click encodes is a *choice* (which curve,
+                // which side, which sector) that replay must repeat (see this object's header).
                 //
-                // A tool that *creates* nothing can own a DOF too: making a point relative (OP-4 case b)
-                // captures a distance and an angle, and both are state — dragged, or typed in the panel. They
-                // ride the very same `dofs=` seam, so the format needed nothing new for them.
+                // Three kinds of state ride the one `dofs=` argument, and a step owns exactly one of them:
+                // - a **rider's own parameter** (`Document.restatedRiderParam`), for the point-on-line and
+                //   point-on-circle tools. This used to be restated by *rewriting the last click* to the
+                //   rider's current position, which is wrong twice over: replay re-projects that position onto
+                //   the geometry as it stands **before** the placement that turns the group (so a turned figure
+                //   came back with its rider somewhere else, and `save → load → save` was not byte-equal), and
+                //   the position of a rider that sits at a turned origin prints as `-6.12E-16`. The
+                //   `pointoncurve` step has restated its parameter since session 9; this is the same rule,
+                //   without the special case.
+                // - a **dimension's placement** (OP-13), which is dragged and typed.
+                // - a **re-parameterization's offset** (OP-4 case b) — for a tool that creates nothing at all.
+                val riderDof = step.creates.singleOrNull { it.kind == ElementKind.ON_CURVE }?.let { doc.restatedRiderParam(it, ev) }
                 val dofs =
-                    step.creates.mapNotNull { it.annotation }.flatMap { it.dofValues() } +
-                        doc.referencedElements(step).mapNotNull { doc.relativeOf(it) }.flatMap { r ->
-                            listOfNotNull(scalarValue(r.distance, ev), scalarValue(r.angle, ev))
-                        }
-                if (dofs.isEmpty()) args else args + Arg.Keyed("dofs", Arg.Nums(dofs))
+                    listOfNotNull(riderDof) +
+                        step.creates.mapNotNull { it.annotation }.flatMap { it.dofValues() } +
+                        relativeDofs(doc, step, ev)
+                if (dofs.isEmpty()) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(dofs))
             }
             else -> step.args
         }
@@ -230,6 +225,21 @@ object DocumentFormat {
         e: ScalarEntry,
         ev: Evaluator,
     ): Quantity = ((ev.eval(e.ref.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q ?: Quantity.mm(0.0)
+
+    /**
+     * The re-parameterization state a `relative` / `tool makerel` step restates: the offsets of the elements
+     * **that step itself** re-anchored (OP-4 case b).
+     *
+     * Deliberately ownership rather than reference. A step that merely *uses* a relative point — a circle
+     * through it — would otherwise carry that point's distance and angle as its own `dofs=`, and in a chain
+     * (a rider measured from a base that is itself measured from something) the base's offset would join the
+     * list replay consumes positionally.
+     */
+    private fun relativeDofs(
+        doc: Document,
+        step: Step,
+        ev: Evaluator,
+    ): List<Quantity> = doc.reparamDofs(step, ev)
 
     private fun scalarValue(
         node: SourceNode,
@@ -263,10 +273,45 @@ object DocumentFormat {
             else -> trim(q.value)
         }
 
-    /** Round-trippable decimal: enough digits to reload identically, no trailing noise. */
+    /**
+     * **The one canonical number format of the file**: a plain decimal that reloads to the *same double*,
+     * with no trailing noise and — the part that had to be added — **never in scientific notation**.
+     *
+     * `Double.toString` gives the shortest representation that round-trips, which is why it is the basis; but
+     * for a very small or very large magnitude it gives `-6.123233995736766E-16`, and a script full of `E-16`
+     * is not a canonical serialization (the rule the SVG goldens follow for the same reason). A turned placed
+     * group produces exactly such a value — a coordinate that is zero up to the rounding of `sin 90°` — so this
+     * stopped being cosmetic.
+     *
+     * The exponent is therefore expanded by **moving the decimal point in the digits themselves**: a pure
+     * string transformation, so not one bit of the value is lost and the reloaded double is bit-identical.
+     * Deliberately not fixed-precision rounding, which would be stable but would quietly *move* the drawing on
+     * every reload.
+     */
     private fun trim(v: Double): String {
         val r = (if (v == 0.0) 0.0 else v).toString() // normalise -0.0, which reads as noise
-        return if (r.endsWith(".0")) r.dropLast(2) else r
+        val plain = if (r.contains('E') || r.contains('e')) expand(r) else r
+        return if (plain.endsWith(".0")) plain.dropLast(2) else plain
+    }
+
+    /** `-6.12E-16` -> `-0.000000000000000612`: the same digits, the point moved by the exponent. */
+    private fun expand(s: String): String {
+        val sign = if (s.startsWith("-")) "-" else ""
+        val body = s.removePrefix("-").removePrefix("+")
+        val e = body.indexOfFirst { it == 'E' || it == 'e' }
+        val exp = body.substring(e + 1).removePrefix("+").toInt()
+        val mantissa = body.substring(0, e)
+        val dot = mantissa.indexOf('.')
+        val digits = if (dot < 0) mantissa else mantissa.removeRange(dot, dot + 1)
+        // where the point sits in [digits] after applying the exponent
+        val point = (if (dot < 0) mantissa.length else dot) + exp
+        val out =
+            when {
+                point <= 0 -> "0." + "0".repeat(-point) + digits
+                point >= digits.length -> digits + "0".repeat(point - digits.length)
+                else -> digits.substring(0, point) + "." + digits.substring(point)
+            }
+        return sign + out.trimEnd('.')
     }
 
     private fun quote(s: String) = "\"" + s.replace("\"", "'") + "\""

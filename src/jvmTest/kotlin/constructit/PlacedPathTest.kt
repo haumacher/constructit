@@ -158,7 +158,7 @@ class PlacedPathTest {
         val g = assertNotNull(ed.groupSelection("run"))
 
         assertTrue(ed.placeGroup(g), "got: ${ed.statusHint}")
-        assertFalse(ed.statusHint.contains("owns no free point"), "got: ${ed.statusHint}")
+        assertFalse(ed.statusHint.contains("owns no degree of freedom"), "got: ${ed.statusHint}")
         assertTrue(ed.statusHint.contains("1 path"), "the frame says what it carries: ${ed.statusHint}")
         assertFalse(ed.statusHint.contains("will not follow"), "and nothing is left behind: ${ed.statusHint}")
         assertEquals(1, g.capturedPaths.size)
@@ -177,7 +177,7 @@ class PlacedPathTest {
         ed.click(Vec2(50.0, 0.0))
         val g = assertNotNull(ed.groupSelection("derived"))
         assertFalse(ed.placeGroup(g))
-        assertTrue(ed.statusHint.contains("owns no free point"), "got: ${ed.statusHint}")
+        assertTrue(ed.statusHint.contains("owns no degree of freedom"), "got: ${ed.statusHint}")
     }
 
     // ---- the headline: world-invariant, rigid, invertible ----

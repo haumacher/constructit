@@ -313,9 +313,42 @@ class FramedPointHandle(private val frame: SourceNode, private val local: Source
 
 /** The effective value of [node] in base units — its literal, or whatever drives it. */
 private fun baseOf(
-    node: SourceNode,
+    node: Node,
     ev: Evaluator,
 ): Double? = ((ev.eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.base
+
+/**
+ * Write [q] into whichever kind of mutable literal [node] is — the two the engine has, an anonymous
+ * [SourceNode] and a named [ParameterNode] (OP-7). A driven or derived node is left alone; its field
+ * reports itself unwritable ([isFreeSource]), which is the same answer dragging gives.
+ */
+fun writeScalar(
+    node: Node,
+    q: Quantity,
+) {
+    when (node) {
+        is SourceNode -> if (node.boundTo == null) node.value = ScalarValue(q)
+        is ParameterNode -> if (node.boundTo == null) node.literal = ScalarValue(q)
+        else -> {}
+    }
+}
+
+/**
+ * A field over any scalar-valued mutable literal, of either source kind — the general form of
+ * [coordField] and [angleField], needed because a tool's scalar may be a **named parameter** (a typed or
+ * panel-picked value, OP-13) as easily as an anonymous coordinate.
+ */
+fun scalarField(
+    label: String,
+    node: Node,
+    dim: Dimension,
+) = HandleField(
+    label,
+    node,
+    dim,
+    { ev -> baseOf(node, ev)?.let { Quantity(it, dim) } },
+    { q -> writeScalar(node, Quantity(q.base, dim)) },
+)
 
 /** A field reading and writing a length-valued coordinate [node] directly. */
 fun coordField(
@@ -757,6 +790,61 @@ class JambHandle(
             parameterField("sill", interval.sill) { doc.setIntervalHeight(interval.sill, it.mm) },
             parameterField("head", interval.head) { doc.setIntervalHeight(interval.head, it.mm) },
         )
+}
+
+/**
+ * A **ratio point**: the point dividing `a → b` in the ratio [t] (`cx.pointAtRatio`). Its single DOF is
+ * that dimensionless share, so it slides along the span — and typing the *factor* is the same write
+ * (OP-13), which is what makes "a third of the way along" a number rather than a gesture.
+ *
+ * The drag projects the cursor onto the span, exactly as a rider on a line does; past either end the
+ * factor simply leaves `[0, 1]` and the point extrapolates, which is what the construction says.
+ */
+class RatioPointHandle(private val a: PointRef, private val b: PointRef, private val t: Node) : Handle {
+    override val dragNodes: List<Node> get() = listOf(t)
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        val pa = (ev.valueOf(a) as? PointValue)?.p ?: return
+        val pb = (ev.valueOf(b) as? PointValue)?.p ?: return
+        val ab = pb - pa
+        val len2 = ab.dot(ab)
+        if (len2 < Vec2.EPS * Vec2.EPS) return
+        writeScalar(t, Quantity.number((world - pa).dot(ab) / len2))
+    }
+
+    override fun fields(): List<HandleField> = listOf(scalarField("factor", t, Dimension.NONE))
+}
+
+/**
+ * A rider whose position along its carrier is stated **relative to another point of that carrier**: its
+ * own parameter is `base + d`, and [d] — a signed distance along the carrier — is the whole of its
+ * freedom (OP-4 case b, on a shared carrier).
+ *
+ * [base] is the derived parameter the offset is measured from (the base point's own position along the
+ * carrier); [paramOf] turns a cursor into a value of the rider's parameter — `world · dir` for a
+ * distance along a line, a world coordinate for a rider on an axis-aligned host — so the drag lands the
+ * rider under the pointer by writing `d = wanted − base`, which is exact.
+ */
+class CarrierOffsetHandle(
+    private val base: Node,
+    private val d: SourceNode,
+    private val paramOf: (Vec2, Evaluator) -> Double?,
+) : Handle {
+    override val dragNodes: List<Node> get() = listOf(d)
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        val want = paramOf(world, ev) ?: return
+        val from = baseOf(base, ev) ?: return
+        d.value = ScalarValue(Quantity.mm(want - from))
+    }
+
+    override fun fields(): List<HandleField> = listOf(coordField("distance", d))
 }
 
 /** Point on a circle: the handle's one DOF is the angle around the centre. */

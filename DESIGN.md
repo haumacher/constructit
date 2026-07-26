@@ -483,6 +483,43 @@ an ordered list of quoted names, which for a single scalar is byte-identical to 
 says "now". That falls out of the same completion path (an empty slot list is complete immediately)
 rather than being a special case in the controller.
 
+**A scalar slot may carry a DEFAULT (as built).** `ScalarSlot(name, dim, default)`: a tool whose scalar slots
+*all* have defaults (`ToolDef.scalarsOptional`) never **waits** for one — it completes on its last click and
+`build` receives no scalar ref at all unless the user typed or picked one. That is what lets a tool gain an
+optional input without gaining a gesture, a step or a node: *Midpoint* is still two clicks, its `tool` step is
+still `tool midpoint pts=e1,e2 clicks=…` with no `scalar=` in it, and its result is still a plain derived point
+(asserted byte-for-byte). Three decisions inside that:
+
+- **The default is what `build` does with nothing**, and the declaration states it so the status line can name
+  it ("Using factor = 0.5 (default) — type a number for another"). It is deliberately *not* materialized as a
+  node when unused: a hidden constant per unused slot would change the graph, the file and the undo history of
+  every tool that grew a default.
+- **A defaulted slot does not adopt a stray pick.** The panel memory is consumed by *dimension* here: a length
+  picked for the previous tool is not silently read as a dimensionless ratio (which would only make the new
+  node invalid, OP-7). A required slot keeps taking the last pick as before — that is what the user armed the
+  tool for; a defaulted one is not waiting for anything and must not hijack.
+- **Typing still wins over everything**, through the existing typed-scalar flow: the digits become an ordinary
+  parameter (panel row, `param` step, wireable), and the tool's own checkpoint seals it — so "type `.3`, click,
+  click" is one undo step exactly as "type 7, click" already was.
+
+**Ratio points — a midpoint with its 0.5 relaxed (as built).** The demand was "the point a third of the way
+along", and it is the first user of the mechanism above. One new op, `pointAtRatio(A, B, t)` with `t`
+**dimensionless**; *Midpoint* and *Perp. bisector* each gained one defaulted `factor` slot (0.5).
+
+- With no factor both tools are exactly what they were (`cx.midpoint`, `cx.perpBisector`). With one, the point
+  is `pointAtRatio` and the bisector becomes the perpendicular *through that point* — composed from
+  `lineThrough` + `perpendicularThrough`, no new op for the second tool at all.
+- **`t` is dimensionless on purpose**: a share of a span, not a length. So one `t` node feeding several pairs is
+  **equal proportions by construction** (OP-5 — sharing a node *is* equality): dragging one ratio point moves
+  every point that shares the factor, and stretching one span leaves the others' proportions alone. A length
+  could not express that, and a constraint would have been the alternative.
+- **1 DOF, reachable both ways** (OP-13): `RatioPointHandle` projects the cursor onto the span and writes `t`,
+  and the same node is a `factor` field in the inspector and a row in the panel. `t` outside `[0, 1]` is
+  allowed and **said** ("factor 1.5 is outside 0…1, so the point sits beyond the second point") rather than
+  clamped — extrapolating along a span is a construction, not an error.
+- A ratio point is **rigid under a group's frame with nothing to capture** (OP-16), and unlike a polar bearing
+  it is rigid under *rotation* too, precisely because the factor says nothing about the world's axes.
+
 **A structural count.** A polygon's side count and an array's instance count decide **how many nodes
 exist**, exactly as an ortho path's vertex count does. It is therefore a property of the *gesture*, not a
 parameter: `Editor.count` is a tool option like the wall justification (there is no slot to click it
@@ -705,6 +742,25 @@ id generation, and a step that creates a different number of elements than the s
 
 The load-bearing test is `save → load → save` byte-equality: it catches a step that fails to replay, a
 literal that was not restated, and any drift in naming, in one assertion.
+
+**Two rules the format keeps, both of which a *turned* placed group put under real pressure (as built):**
+
+- **One canonical number format, and it is never scientific.** Every coordinate and quantity goes through one
+  writer (`DocumentFormat.trim`), whose basis is `Double.toString` because that is the shortest form which
+  reloads to the *same double* — but for a tiny or huge magnitude it prints `-6.123233995736766E-16`, and a
+  canonical serialization does not emit exponents (the SVG goldens have followed that rule from the start). A
+  group turned 90° produces exactly such a coordinate, being zero up to the rounding of `sin 90°`. The exponent
+  is therefore expanded by moving the decimal point **in the digits themselves** — a string transformation, so
+  the reloaded value is bit-identical. Fixed-precision rounding was rejected for the opposite reason: it would
+  be perfectly byte-stable *and* would silently move the drawing on every reload.
+- **State is restated as a value, never as a rewritten click.** A slider's position used to be written by
+  replacing its tool step's last click with the rider's current position, and that is wrong on both counts a
+  click has: replay re-projects the position onto the geometry as it stands **before** the placement that turns
+  the group (so a turned figure came back with its rider elsewhere, and the round trip broke), while the click
+  itself encodes a *choice* — which curve, which side — that replay must repeat unchanged. The `pointoncurve`
+  step has restated its own parameter since session 9; the point-on-line and point-on-circle **tools** now do
+  the same through `dofs=`, so there is one rule and no special case. Old files keep loading: with no `dofs=`
+  the click places the rider exactly as it always did.
 
 ```
 constructit 1
@@ -957,6 +1013,22 @@ What is deliberately *not* compensated is a **placed group's frame drag** (OP-16
 and everything on it as one rigid body, which is exactly the intent, and re-projecting the riders against a
 grab-time reference would fight the gesture rather than help it. The rule is about a host being **reshaped**,
 not about the whole drawing being carried somewhere else.
+
+**And an EXPLICIT anchor supersedes the compensation entirely (as built).** Compensation is the answer for a
+position the user never stated — a parameter anchored to the world, whose *meaning* turns with the carrier. Once
+the user says what a rider is measured **from** (*Make relative* on a shared carrier, see OP-4 case (b) above),
+its motion under an edit of the host is **fully stated**: it keeps its distance from its base by construction,
+so turning the host moves base and dependent coherently and there is nothing left to correct. Such a rider is
+therefore **not registered for compensation at all** — the same structural test the note above already uses for
+riders that are absolutely anchored, now with a third reason to be off the list. Asserted rather than assumed:
+after the re-anchoring `Document.riderAnchors()` is empty on that drawing, so a 90° turn of the host performs
+**zero** compensation writes and the geometry is still exactly where the stated distances put it.
+
+That is the general rule the two halves make: **compensate only what the model does not say.** A gesture-time
+correction is a patch over an unstated quantity, and the moment the quantity is stated the patch must switch
+itself off, or the two would fight. It is also why *Make relative* on a rider is worth having beyond its own
+convenience: it converts a compensated position into a constructed one, and the group placement below uses
+exactly that conversion to make a figure rigid.
 
 This supersedes an earlier attempt that had each handle search the graph upstream for a free DOF and
 invert numerically. That worked, but its candidate choice was itself order-dependent — papering over
@@ -1309,6 +1381,41 @@ and `θ` read off the geometry the point already has.
   completes — no case per tool. The same absence had a second symptom, fixed here: a tool whose build
   created no element had its journal step dropped as "empty", so the **Join points tool's weld was lost on
   save** although the identical weld by drag was kept. An in-place rewiring now counts as an effect.
+
+### Relative on a shared carrier — the same conversion for a rider (as built)
+
+The polar form above is the right answer for a **free** point: two degrees of freedom before, two after. A
+**rider** has one, and it belongs to its carrier — so when *both* picks of *Make relative* are positions on one
+carrier (the point rides a line-like host; the base is another rider on that host or a point the host is built
+from), the offset the user means is a signed distance **along the carrier**. The tool therefore *specializes*
+rather than guessing: same slots, same clicks, the more specific reading when the picks allow it, and the
+status line says which form was chosen. One DOF before, one after; nothing moves at the moment of the change.
+
+- **The binding sits in the rider's own parameter, not in its point** (OP-5 bind-in-place, one level down):
+  `t.boundTo = add(lineParam(carrier, base), d)`, i.e. the position along the carrier is now *base's position
+  along it plus `d`*. Since `along(carrier, t) = proj(base) + dir·d`, that **is** the
+  `pointAlongLine(carrier, base, d)` form — expressed so that the rider's point, its element, its handle
+  target and everything referring to it stay exactly as they were, and so that the creating step keeps
+  restating **one** node whose value still means "where along the carrier" (`Document.riderParam`). A
+  point-level rebinding would have orphaned the parameter the `pointoncurve` step restates.
+- **Two forms, both covered.** A rider on a diagonal host stores `world · dir`, one on a host axis-aligned by
+  construction stores a world coordinate (OP-20); the offset is added to whichever of the two, through
+  `lineParam` or `measureX/Y` of the base. The handle (`CarrierOffsetHandle`) writes `d = wanted − base`, which
+  is exact, and its one field is a **distance**.
+- **Chains are ordinary** — a rider measured from an end of its carrier, the next measured from that rider — and
+  a dimension chain is what they read as. The reverse is refused by the acyclicity predicate every connection
+  uses (OP-4): a base measured from its own dependent would put the rider inside its own input cone. A rider
+  that already has a base is not silently re-anchored either — *Make absolute* first, exactly as the polar form
+  insists.
+- **Invertible, and that is again what makes it a conversion.** *Make absolute* on such a rider unbinds the
+  parameter and writes its current effective value back, so the rider keeps its place and is world-anchored
+  again (for a rider the *tool* created that is the only freedom it has, there being no literal of its own to
+  hand back; a free point that was attached and then re-anchored is freed outright as before).
+- **Persistence needed nothing new**: the distance is state, so it rides the same `dofs=` seam, and the
+  creating step restates the absolute position along the carrier — so `save → load → save` is byte-equal and
+  the reloaded drawing behaves identically under the same edit. One correction fell out of it: a step's `dofs=`
+  is now written for the re-parameterizations **that step performed**, not for every relative point it
+  *references*, or a circle through a relative point would carry that point's distance and angle as its own.
 
 ### Dimensions (as built)
 
@@ -1834,6 +1941,70 @@ at all: a frame with nothing to carry is three degrees of freedom that move noth
 > **Superseded (ortho paths).** This note used to record a cut — "ortho paths and walls are not
 > captured", because their positions live in shared *scalar* coordinate nodes. **That cut is closed**;
 > the next section is the work it pointed at, and with it the *ortho-path bonus* above is delivered.
+
+**A group carries the freedom it is built on — of every kind (as built).** The reported drawing was a segment,
+a **rider** on it carrying a circle's centre, and the circle's rim point made **relative** to that centre. It
+could be grouped and never placed, and two independent halves of the same blind spot were why: the closure
+analysis and the capture both understood *plain two-coordinate free points only*. So the dialog could not offer
+the rider or the offset, they stayed outside the group, and the free points the group *did* want to capture were
+then "also used by" them — the conflict refusal, arriving as a wall with no way through it.
+
+`Document.freedoms(members)` now answers the closure question for **every** kind of degree of freedom the engine
+has, and each kind has one honest answer about placement:
+
+| freedom | how a placement carries it | why |
+|---|---|---|
+| **free point** (2 DOF) | captured: bound onto `frameApply(frame, local)` | as before — the coordinates become the group's own |
+| **ortho path** (shared coordinate nodes) | captured whole, coordinates translated | as before (the *ortho-path bonus*) — a path is one unit of freedom |
+| **rider on a member carrier** (1 DOF along a curve) | **re-anchored** to a point of that carrier (OP-4 case b) | its parameter is anchored to the **world** (a coordinate, or `world·dir`), so a frame that moves the carrier would strand or slide it; a stated distance from the carrier's own end is rigid under translation *and* rotation |
+| **relative point** (polar offset, anchor inside the group) | nothing — already rigid (see the angle limit below) | the offset is measured from member geometry, so it follows whatever the anchor does |
+| **ratio point** (a share of a span) | nothing — already rigid | dimensionless: it says nothing about the world, so it survives rotation too |
+| **rider on a member circle** (angle about the centre) | nothing — already rigid (same limit) | centre-relative; a circle has no ends to stretch |
+| a rider whose **carrier is not a member**, an offset whose **anchor is outside** | not carried, **named** | it follows something the frame does not move: the boundary-attachment rule, reported |
+
+Four things worth recording about that.
+
+- **The re-anchoring is a conversion, not a special case**: placement calls the very same operation *Make
+  relative* performs on a rider (`anchorRiderTo`), so it is DOF-preserving, world-invariant at the moment of
+  capture, invertible by unplacing (the rider gets its absolute parameter back where it stands), and it makes
+  the rider drop out of the compensation registry exactly as a user-stated anchor does. **This is the
+  stated-anchor principle closing the circle: explicit relative anchoring is what makes a group rigid.**
+  - **Its offset is read before *any* binding**, which is the rule the free-point capture already stated ("every
+    world position is read before the retrofit proceeds") and which a rider needs even more: its parameter is a
+    *world* quantity, so an offset derived after the points are bound would be derived against **turned**
+    geometry. Since only a replay places at a nonzero angle, that would make the gesture and the replay of it
+    capture two different figures — a broken round trip on exactly the drawing that motivated the feature.
+- **The base is *stated*, and that trades one property for another, deliberately.** Inside a placed group the
+  rider is measured from an end of its carrier, so dragging that end along the line now carries the rider —
+  which is precisely what OP-20's absolute anchoring avoided for a *world* rider. Both are right in their
+  place: absolute while the host merely carries the thing, relative once the group is the thing being moved
+  (the same distinction OP-17's face-relative bore records from the other side).
+- **The default tick flipped for groups** (OP-16's "one dialog, two defaults" — the defaults are now the same,
+  read two ways). A group used to start with *nothing* ticked, which made the everyday case fail late: the
+  freedom the figure is built on stayed outside, and Place refused it much later. The closure is ticked by
+  default, so a naive group is **movable**; unticking is still there for the point that genuinely belongs
+  elsewhere, and each row is labelled by kind ("e4 — slides on e3", "e5 — relative to e4"). Tool mode is
+  unchanged.
+- **The honest failure moved to the gesture that causes it.** What a group cannot carry is invisible on canvas,
+  so `Document.placementWarnings` is asked at **creation** time too and reports, in the words Place would use,
+  which members are held by something outside the group and what holds them. Placement itself is unchanged
+  where it was right: a conflict is still refused with the ambiguity named, a partly-driven group is still
+  placed *with* the deformation reported, and the "owns no freedom at all" refusal now counts every kind.
+
+**Two limits, named rather than found later**, both about **angles stated in the world's axes** — and both
+asserted by tests rather than assumed:
+
+- **A polar offset's bearing does not turn with the frame** (nor does an on-circle angle). The re-anchored
+  rider *does*, because a distance along a carrier turns with the carrier; but `polarPoint(anchor, d, θ)` has θ
+  in world axes, so under a turned frame the rim point keeps its direction from the centre while everything else
+  turns. What that costs is one **marker** point, not the figure: the circle through it is unchanged, since its
+  radius is that same `d`. The cheap fix is the identical bind-in-place trick one level down — bind θ onto
+  `frameAngle(frame) + θ_local` — and it is parked rather than half-built, because it needs a frame-angle
+  accessor and an answer to what the *number* in the panel then means (a bearing in the group, or in the world).
+- **A rider on a host axis-aligned by construction** keeps a world **axis** in its parameter, so re-anchoring
+  makes it rigid under translation but a turned frame still slides it along its leg (an axis line does not
+  turn). Walls live there and a turned group of walls turns through the *path* capture instead, so nothing
+  reachable today hits it; the honest fix is to impose the along-line form at capture.
 
 ### Implementation status (as built — ortho paths and walls under a frame)
 
@@ -2728,7 +2899,10 @@ Three broad families (see OP-9 decision above):
 - [x] **OP-4 Measurements** — RESOLVED: first-class derived Scalar/Angle nodes in v1;
       forward-only (driven), never cyclic; driving XOR driven. freeze-to-constant (a) in v1;
       re-parameterize-a-free-source (b) **delivered** on demand as *relative points*
-      (`P = polarPoint(anchor, d, θ)`, DOF-preserving and invertible — see *Relative points*);
+      (`P = polarPoint(anchor, d, θ)`, DOF-preserving and invertible — see *Relative points*), and
+      **generalized** to a rider: when both picks lie on one carrier the offset is a signed distance *along*
+      it (`t = base + d`, one DOF before and after — see *Relative on a shared carrier*), which is also what a
+      group's placement uses to make a figure rigid (OP-16);
       general inversion (c) out of scope.
 - [x] **OP-5 Node graph data model** — RESOLVED: one uniform, strongly-typed dataflow DAG;
       unified numbers+geometry; exactly one output per node; intersections emit an ordered
@@ -2780,7 +2954,9 @@ Three broad families (see OP-9 decision above):
       DOF that made two runs at one junction behave differently; drags and typed values both reach the
       shared freedom through the junction, in closed form. Where a thing sits along its host is an
       absolute quantity, never a share of the host; and where the host has no absolute to offer, a
-      **gesture compensates** its riders to the projection of their grab-time positions. See *Junctions
+      **gesture compensates** its riders to the projection of their grab-time positions — but only while the
+      position is unstated: an **explicit** anchor (OP-4 case b) supersedes the compensation and switches it
+      off, which is the general rule *compensate only what the model does not say*. See *Junctions
       own the freedom* and *A gesture compensates the riders of the host it turns*.
 - [x] **OP-19 Break / join legs** — RESOLVED and built: threshold-triggered topology edits by
       gesture (join on jog collapse, committed on release; break as a tool inserting a zero-length
@@ -2836,6 +3012,12 @@ Three broad families (see OP-9 decision above):
       too** (the *ortho-path bonus*): the same binding one level up — a vertex is published through a
       re-pointable `IndirectNode`, its coordinate nodes become the group's local ones, and so
       axis-alignment becomes alignment to the frame's axes, i.e. the rotated **project frame**.
+      **A group now carries freedom of every kind**, not only free points and paths: a rider on a member
+      carrier is *re-anchored* to a point of that carrier (the OP-4 case (b) conversion, so a stated anchor is
+      what makes a figure rigid), while a polar offset, a ratio point and an on-circle angle are already
+      relative to member geometry and need nothing. The create dialog offers all of them, labelled by kind,
+      and **ticks them by default**, so a naive group is movable; what unticking costs is reported at creation
+      time. See *A group carries the freedom it is built on*.
       Remaining: relocate-origin / re-parent / constructed frames (mates), macro promotion, and drawing
       *onto* a placed path (refused today, with the reason stated).
 - [x] **OP-21 A wall is an output feature** — RESOLVED: a wall belongs to the **result layer**
@@ -3568,6 +3750,52 @@ Three broad families (see OP-9 decision above):
   Delete on a selected opening now says so rather than doing nothing. 643 headless tests green (19 new:
   `OpeningHandleTest`), plus one more drag in the browser E2E.
 
+- **Session 11 — a share of a span, a stated anchor, and a group that carries what it is built on.** Three
+  requests that turned out to be one shape of problem: a quantity the model did not *say*. (1) **Ratio
+  points**, from "the point a third of the way along". The mechanism came first and is what makes the feature
+  free: a `ScalarSlot` may carry a **default**, and a tool whose scalar slots all have one never waits for a
+  value — so *Midpoint* is still two clicks with an unchanged step and an unchanged derived point, and a typed
+  `.3` turns the same gesture into `pointAtRatio(A, B, t)`. `t` is **dimensionless** on purpose: one `t` node
+  over several pairs is equal proportions *by construction* (OP-5), which a length could not express and a
+  constraint would have faked. Outside `[0, 1]` it extrapolates and says so. *Perp. bisector* gained the same
+  slot and composes its answer from ops that already existed. (2) **Make relative on a shared carrier** — the
+  user's own design. When both picks are positions on one carrier the offset is a signed distance *along* it,
+  bound **into the rider's own parameter** (`t = lineParam(carrier, base) + d`), so the rider's point, element
+  and consumers are untouched and the creating step keeps restating one meaningful node. One DOF before, one
+  after; chains are dimension chains; the reverse is refused as the cycle it is. That closed a principle
+  rather than a case: **compensate only what the model does not say** — a rider whose anchor is stated is no
+  longer registered for OP-20's gesture compensation at all, and a 90° turn of its host now performs *zero*
+  compensation writes. (3) **The grouping bug**, which was two bugs. The reported "ticked points do not become
+  members" did **not** reproduce (the step lists them, now pinned by a test); the real wall was that the
+  closure analysis and the placement capture understood plain free points only, so the figure's actual freedom
+  — a rider and a polar offset — could neither be offered nor carried, and the points the group *did* want
+  became a conflict. `Document.freedoms` now answers for every kind, and placement carries each its own way:
+  the rider is **re-anchored to its carrier** (the same conversion (2) built — a stated anchor is what makes a
+  group rigid), while offsets, ratio points and on-circle angles are already relative to member geometry. The
+  group default flipped to *ticked* so a naive group is movable, and what unticking costs is said at creation
+  time instead of at a Place click much later. The **duplicate `attach` steps** in the file were the last
+  thread: the drag magnet offered an attach to the very circle the point defines, the release refused it (a
+  relative point has no coordinates left to bind) and the step was recorded anyway. The magnet now asks the
+  same question the release does, and a refused rewiring records nothing — so old files **heal** on load, which
+  is what the fixture's two junk steps do. Two limits named rather than found later, both about angles stated
+  in world axes (a polar bearing and an on-circle angle do not turn with a frame; the fix is the same
+  bind-in-place trick over a frame-angle accessor). **A review probe then turned the frame**, and found the one
+  place where "as built" was still a claim rather than a property: a placed figure rotated 90° did not survive
+  `save → load → save`. Two causes, both fixed as rules rather than as cases. The rider's position was restated
+  by **rewriting its tool step's last click**, which replays against the *pre-placement* (unturned) geometry —
+  so it now rides `dofs=` exactly as the `pointoncurve` step's parameter has since session 9, and the click
+  stays the choice it encodes. And the placement derived a rider's offset **after** binding the points, i.e.
+  against turned geometry, so a replay at a nonzero angle captured a different figure than the gesture did; it
+  is now read before any binding, the rule the free-point capture already followed. The probe also produced a
+  coordinate of `-6.12E-16` in the script — zero up to the rounding of `sin 90°` — which exposed that the file's
+  number writer fell back to raw `Double.toString`: it now expands the exponent by moving the decimal point in
+  the digits, so the format is canonical *and* still bit-exact. (The probe's second finding, "a ratio-point
+  selection refuses to group", was not a defect: grouping, placing and the round trip all succeed — the probe's
+  first click after placing reaches the *member alone* through the ordinary click cycle, so the frame's angle
+  field was simply not what it was addressing.) 683 headless tests green (38 new: `RatioPointTest`,
+  `CarrierRelativeTest`, `GroupClosureTest`, the format's canonical-number rule and the review probes), plus a
+  typed factor in the browser E2E.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -3958,7 +4186,9 @@ Then 3D walls = extrude + boolean.
 ## Open work queue (crash-safe snapshot; ordered)
 
 Kept here so no in-flight plan lives only in a session. Per-feature deliberate cuts stay recorded in
-their own as-built notes; this is the *ordered queue* as of 2026-07-26:
+their own as-built notes; this is the *ordered queue* as of 2026-07-27. Session 11's three items (ratio
+points / relative parameterizations on a shared carrier / the grouping closure) arrived as **demands** rather
+than off this queue and are delivered, so nothing is retired here; what they left behind is parked below.
 
 1. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
    connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by
@@ -3975,4 +4205,8 @@ their own as-built notes; this is the *ordered queue* as of 2026-07-26:
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
 convention (fillet note), drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), Manifold
-face-ID provenance and 3D picking and the mesh-only footprint (OP-9/OP-17 notes), MeshGL64.
+face-ID provenance and 3D picking and the mesh-only footprint (OP-9/OP-17 notes), MeshGL64, and — new from
+session 11 — **angles under a turned frame**: bind a polar offset's bearing and an on-circle angle onto
+`frameAngle(frame) + local` so they turn with a placed group (needs a frame-angle accessor and a decision
+about which space the panel's number is in), plus imposing the along-line rider form at capture time so a
+rider on an axis-aligned host is rigid under rotation as well (both in the OP-16 note).

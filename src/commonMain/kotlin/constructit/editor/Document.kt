@@ -273,6 +273,13 @@ class Group(val id: String, var name: String) {
      */
     val capturedPaths = ArrayList<OrthoPath>()
 
+    /**
+     * The riders this placement **re-anchored** to a point of their own carrier (OP-16 × OP-4 case b): a
+     * position stated relative to member geometry is rigid under the frame, where a world-anchored one is not.
+     * Inverted by unplacing, like every other part of the capture.
+     */
+    internal val capturedRiders = ArrayList<Document.RiderRecord>()
+
     /** The journal step that recorded the placement — dropped again by unplace. */
     internal var placeStep: Step? = null
 
@@ -303,6 +310,47 @@ class FrameCapture(
 /** A free point of a placed group's closure that something *outside* the group also uses (OP-16). */
 class SharedPoint(val point: String, val consumer: Element)
 
+/**
+ * Which **kind** of degree of freedom an element owns (OP-16's placement question, and the create dialog's
+ * candidate labels). One entry per kind the engine has, because a placement has to carry each of them its
+ * own way — see the table in [Document.analysePlacement].
+ */
+enum class FreedomKind {
+    /** A free point: two coordinates of its own. */
+    FREE_POINT,
+
+    /** A rider on a curve: one parameter along its host ([Document.RiderForm]). */
+    RIDER,
+
+    /** A point re-parameterized as a polar offset from an anchor (OP-4 case b). */
+    RELATIVE,
+
+    /** A rider on a circle: an angle about the centre. */
+    ON_CIRCLE,
+
+    /** A ratio point: a dimensionless share of the span between two points. */
+    SPAN_RATIO,
+}
+
+/**
+ * One degree of freedom in a selection's closure: which element owns it, of which [kind], and how to
+ * *name* it to the user.
+ *
+ * The closure question OP-16 and OP-6 both ask ("which of the free sources belong to the thing being
+ * made?") used to be answered for plain free points only, which is why a figure whose actual freedom was a
+ * rider plus a polar offset could be grouped but never placed: the dialog could not offer them and the
+ * capture could not carry them.
+ */
+class Freedom internal constructor(
+    val element: Element,
+    val kind: FreedomKind,
+    /** How the dialog names this row — the element's id plus what it rides, in the user's words. */
+    val label: String,
+    /** Whether the selection *displays* this element, as opposed to merely depending on it. */
+    val owned: Boolean,
+    internal val rider: Document.RiderRecord? = null,
+)
+
 /** What placing a group would do: where its frame lands, what it captures, and what forbids it. */
 class Placement(
     /** The frame's default origin: the centre of the members' bounding box. */
@@ -317,9 +365,19 @@ class Placement(
      * than papered over.
      */
     val conflicts: List<SharedPoint>,
+    /** Riders the placement would re-anchor to a point of their own carrier — see [Document.placeGroup]. */
+    val ridersToAnchor: List<Freedom> = emptyList(),
+    /**
+     * Freedoms the group owns that are **already** rigid under a frame — a polar offset from an anchor
+     * inside the group, an angle about a circle inside it. They need no rebinding at all, and counting them
+     * is what makes such a group placeable instead of "owning no free point".
+     */
+    val rigid: List<Freedom> = emptyList(),
+    /** Freedoms the placement cannot carry, each with the reason, in the user's words. */
+    val uncapturable: List<String> = emptyList(),
 ) {
     /** Whether the frame would carry any freedom at all — else it would have nothing to move. */
-    val carriesSomething: Boolean get() = candidates.isNotEmpty() || paths.isNotEmpty()
+    val carriesSomething: Boolean get() = candidates.isNotEmpty() || paths.isNotEmpty() || ridersToAnchor.isNotEmpty() || rigid.isNotEmpty()
 }
 
 /** The outcome of a placement: how much the frame carries, and what it does *not*. */
@@ -334,6 +392,8 @@ class PlaceResult(
      * reported.
      */
     val unfollowed: List<Element>,
+    /** How many riders the placement re-anchored to their own carrier — see [Group.capturedRiders]. */
+    val capturedRiders: Int = 0,
 )
 
 /**
@@ -516,6 +576,25 @@ class Document {
         edits++
     }
 
+    /** The step that performed each element's re-parameterization (OP-4 case b) — see [recording]. */
+    private val reparamSteps = HashMap<String, Step>()
+    private val pendingReparams = ArrayList<String>()
+
+    /** Say that the operation being recorded re-parameterized [el] — the step it belongs to restates it. */
+    private fun noteReparam(el: Element) {
+        pendingReparams.add(el.id)
+    }
+
+    /**
+     * The re-parameterization state [step] must restate (OP-18): the elements *it* re-anchored, and their
+     * offsets — a distance and an angle for a polar offset, one signed distance along a carrier.
+     */
+    internal fun reparamDofs(
+        step: Step,
+        ev: Evaluator,
+    ): List<Quantity> =
+        elements.filter { reparamSteps[it.id] === step }.flatMap { relativeDofs(it, ev) }
+
     /**
      * What the operation just run has to say, in the user's terms — a result worth reading, or the reason it
      * refused. Consumed once, by whoever ran it ([takeNote]).
@@ -544,6 +623,7 @@ class Document {
         if (recordDepth > 0) return body()
         recordDepth++
         note = null // a note is about the operation being run now, never about the one before it
+        pendingReparams.clear()
         // an identity snapshot, not a count: a step may *remove* elements too (a break replaces one
         // leg with three), and then a count would mistake shifted survivors for new ones
         val before = elements.toHashSet()
@@ -560,6 +640,11 @@ class Document {
             step.createsScalars.addAll(scalars.subList(scalarsBefore, scalars.size))
             noteSpace(kind)
             journal.add(step)
+            // which step *owns* each re-parameterization this operation performed (OP-4 case b), so the writer
+            // restates an offset on the step that made it and nowhere else — a step that merely *uses* a
+            // relative point (a circle through it) must not carry its distance and angle
+            for (id in pendingReparams) reparamSteps[id] = step
+            pendingReparams.clear()
             return result
         } finally {
             recordDepth--
@@ -1295,6 +1380,51 @@ class Document {
             ancestors(members.map { it.ref.node })
                 .filterIsInstance<SourceNode>()
                 .filter { it.boundTo == null && it.value is PointValue && ownedBy(it, memberSet) }
+        // the other three kinds of freedom the group may own (see [FreedomKind]): a rider to re-anchor, and
+        // the two that are relative to member geometry already and therefore rigid as they stand
+        val owned = freedoms(members).filter { it.owned }
+        val ridersToAnchor = ArrayList<Freedom>()
+        val rigid = ArrayList<Freedom>()
+        val uncapturable = ArrayList<String>()
+        for (f in owned) {
+            when (f.kind) {
+                FreedomKind.FREE_POINT -> {}
+                FreedomKind.RIDER -> {
+                    val rec = f.rider ?: continue
+                    when {
+                        // already stated relative to a point of its carrier: rigid, and nothing to do
+                        rec.carrierRelative && rec.base?.let { it in memberSet || dependsOn(it.ref.node, rec.host.ref.node, HashSet()) } == true ->
+                            rigid.add(f)
+                        rec.host !in memberSet ->
+                            uncapturable.add("${f.element.id} rides ${rec.host.id}, which is not in the group")
+                        carrierBaseFor(rec) == null ->
+                            uncapturable.add("${f.element.id} rides ${rec.host.id}, which has no point of its own to measure from")
+                        else -> ridersToAnchor.add(f)
+                    }
+                }
+                FreedomKind.RELATIVE -> {
+                    val anchor = relativeOf(f.element)?.let { elementFor(it.anchor) }
+                    if (anchor != null && anchor in memberSet) {
+                        rigid.add(f)
+                    } else {
+                        uncapturable.add(
+                            "${f.element.id} follows ${anchor?.id ?: "a point"} outside the group, so it will not move with it",
+                        )
+                    }
+                }
+                // a *share* of a span is rigid under any rigid map — and under rotation too, which a polar
+                // bearing is not: the factor is dimensionless, so it says nothing about the world's axes
+                FreedomKind.SPAN_RATIO -> rigid.add(f)
+                FreedomKind.ON_CIRCLE -> {
+                    val host = f.rider?.host
+                    if (host != null && host in memberSet) {
+                        rigid.add(f)
+                    } else {
+                        uncapturable.add("${f.element.id} rides ${host?.id ?: "a circle"}, which is not in the group")
+                    }
+                }
+            }
+        }
         val paths = orthoPaths.filter { it.frame == null && ownsPath(it, memberSet) && capturablePath(it) }
         val conflicts = ArrayList<SharedPoint>()
         // what the capture would take over: the free point sources, plus each captured path's vertices
@@ -1310,7 +1440,116 @@ class Document {
                 for (n in ancestors(listOf(el.ref.node))) if (n in captured) conflicts.add(SharedPoint(labelOf(n), el))
             }
         }
-        return Placement(boundsCentre(members) ?: Vec2(0.0, 0.0), candidates, paths, conflicts)
+        return Placement(
+            boundsCentre(members) ?: Vec2(0.0, 0.0),
+            candidates,
+            paths,
+            conflicts,
+            ridersToAnchor,
+            rigid,
+            uncapturable,
+        )
+    }
+
+    /**
+     * Why [g] could not move as one rigid figure, in the user's words — empty when it can.
+     *
+     * The same three answers [analysePlacement] gives, phrased as sentences and asked **at creation time** as
+     * well as at placement time (OP-16's honest-failure rule): what a group cannot carry is invisible on the
+     * canvas, so the report belongs to the gesture that decided it.
+     */
+    fun placementWarnings(g: Group): List<String> {
+        if (g.placed) return emptyList()
+        val a = analysePlacement(g)
+        val out = ArrayList<String>()
+        // the positions the frame would *not* hold, named together with what holds them instead: this is what
+        // an unticked candidate costs, and it is invisible on canvas until the group is moved
+        val prospective = HashSet<SourceNode>(a.candidates)
+        for (p in a.paths) prospective.addAll(coordMasters(p, 0) + coordMasters(p, 1))
+        val (stuck, drivers) = deformingMembers(groupMembers(g), prospective)
+        if (stuck.isNotEmpty()) {
+            out.add(
+                "this group cannot move independently — ${stuck.joinToString(", ") { it.id }} " +
+                    "${if (stuck.size == 1) "is" else "are"} held by ${drivers.joinToString(", ")}, " +
+                    "shared with the drawing outside the group (tick those in, or group them too)",
+            )
+        }
+        if (a.conflicts.isNotEmpty()) {
+            val points = a.conflicts.map { it.point }.distinct()
+            val consumers = a.conflicts.map { it.consumer.id }.distinct()
+            out.add(
+                "this group cannot move independently — ${points.joinToString(", ")} " +
+                    "${if (points.size == 1) "is" else "are"} shared with ${consumers.joinToString(", ")} outside it " +
+                    "(tick ${if (points.size == 1) "it" else "them"} into the group, or group those too)",
+            )
+        }
+        out.addAll(a.uncapturable)
+        if (out.isEmpty() && !a.carriesSomething) out.add("it owns no degree of freedom, so a frame would have nothing to move")
+        return out
+    }
+
+    /**
+     * A point of [rec]'s carrier its position can be measured from: a point element the carrier is **built
+     * from**, i.e. one of its own ends.
+     *
+     * Stated rather than derived (`lineOrigin` would do arithmetically) because the anchor is what the user
+     * then sees and edits: a distance from *that* end is what a drawing dimensions, and it is also what makes
+     * the rider rigid under the group's frame — the carrier's end follows the frame, so the offset does.
+     */
+    private fun carrierBaseFor(rec: RiderRecord): Element? {
+        val host = rec.host.ref.node
+        return elements.firstOrNull { el ->
+            el.isPoint && el !== rec.element && riderOf(el) == null && dependsOn(host, el.ref.node, HashSet())
+        }
+    }
+
+    /**
+     * Every degree of freedom the closure of [members] reaches, one entry per element that owns one — the
+     * closure question OP-16 (group membership) and OP-6 (input ports) both ask, now answered for **all four
+     * kinds** of freedom the engine has rather than for plain free points alone (see [FreedomKind]).
+     *
+     * Ordered with the ones the selection *displays* first, for the same reason [analyseMacro] is: what a
+     * selection owns is what "this thing's own freedom" means, and what it merely leans on comes after.
+     */
+    fun freedoms(members: List<Element>): List<Freedom> {
+        val closure = ancestors(members.map { it.ref.node }).mapTo(HashSet()) { it.id }
+        val memberSet = members.toHashSet()
+        val out = ArrayList<Freedom>()
+        for (el in elements) {
+            if (el.ref.node.id !in closure) continue
+            val owned = el in memberSet
+            val rec = riderOf(el)
+            val rel = relativeOf(el)
+            val node = el.ref.node as? SourceNode
+            when {
+                rec != null && rec.form == RiderForm.CIRCLE_ANGLE ->
+                    out.add(Freedom(el, FreedomKind.ON_CIRCLE, "${el.id} — on circle ${rec.host.id}", owned, rider = rec))
+                rec != null ->
+                    out.add(
+                        Freedom(
+                            el,
+                            FreedomKind.RIDER,
+                            "${el.id} — " + (rec.base?.let { "${it.id} + distance along ${rec.host.id}" } ?: "slides on ${rec.host.id}"),
+                            owned,
+                            rider = rec,
+                        ),
+                    )
+                rel != null ->
+                    out.add(
+                        Freedom(
+                            el,
+                            FreedomKind.RELATIVE,
+                            "${el.id} — relative to ${elementFor(rel.anchor)?.id ?: "an anchor"}",
+                            owned,
+                        ),
+                    )
+                el.handle is RatioPointHandle ->
+                    out.add(Freedom(el, FreedomKind.SPAN_RATIO, "${el.id} — a ratio along its span", owned))
+                el.kind == ElementKind.POINT && node?.boundTo == null && node != null ->
+                    out.add(Freedom(el, FreedomKind.FREE_POINT, el.id, owned))
+            }
+        }
+        return out.filter { it.owned } + out.filter { !it.owned }
     }
 
     /**
@@ -1375,7 +1614,7 @@ class Document {
                 Arg.Label(g.name),
                 Arg.Keyed("at", Arg.Pos(at)),
                 Arg.Keyed("angle", Arg.Num(Quantity.rad(angle))),
-            ) { placeGroupNow(g, at, angle, analysis.candidates, analysis.paths) }
+            ) { placeGroupNow(g, at, angle, analysis.candidates, analysis.paths, analysis.ridersToAnchor) }
         g.placeStep = journal.lastOrNull()?.takeIf { it.kind == "place" }
         return result
     }
@@ -1386,6 +1625,7 @@ class Document {
         angle: Double,
         candidates: List<SourceNode>,
         paths: List<OrthoPath>,
+        riders: List<Freedom> = emptyList(),
     ): PlaceResult {
         val f = FrameValue(at, angle)
         val node = SourceNode(nextId("fr"), f)
@@ -1396,6 +1636,19 @@ class Document {
         // describe a half-placed document
         val ev = Evaluator()
         val world = candidates.map { pointOf(it, ev) }
+        // …and for exactly the same reason each rider's offset from its base is read here, in the geometry as
+        // it stands **before** the frame turns anything. A rider's own parameter is a *world* quantity (a
+        // coordinate, or `world·dir`), so deriving the offset after the capture would derive it against turned
+        // geometry — and since only a *replay* places at a nonzero angle, the gesture and the replay of it
+        // would then capture two different figures. That is what broke `save → load → save` on a turned group.
+        val offsets =
+            riders.mapNotNull { r ->
+                val rec = r.rider ?: return@mapNotNull null
+                val base = carrierBaseFor(rec) ?: return@mapNotNull null
+                val here = ((ev.eval(rec.param) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
+                val there = carrierBaseParamValue(rec, base, ev)
+                if (here == null || there == null) null else Triple(r.element, base, Quantity.mm(here - there))
+            }
         for ((i, src) in candidates.withIndex()) {
             val w = world[i] ?: continue
             // a change of origin, not of orientation — the one rule both capture kinds follow (see the
@@ -1411,7 +1664,17 @@ class Document {
             g.captures.add(FrameCapture(src, local, el, prior))
         }
         for (path in paths) capturePath(g, path, frame, f)
-        return PlaceResult(g.captures.size, g.capturedPaths.size, deformingMembers(g))
+        // …and the riders: a rider is *not* rigid under a frame while its parameter is anchored to the world
+        // (a world coordinate, or a distance along the carrier line — OP-20), because a frame that moves the
+        // carrier leaves the parameter's meaning where it was. Re-anchoring it to a point of its own carrier
+        // states the motion instead of compensating for it, which is exactly the conversion OP-4 case (b) is:
+        // DOF-preserving, world-invariant here, and undone again by [unplaceGroup].
+        for ((element, base, d) in offsets) {
+            val rec = riderOf(element) ?: continue
+            if (anchorRiderTo(element, base, d)) g.capturedRiders.add(rec)
+        }
+        note = null // the capture's per-rider notes are not what the placement has to say
+        return PlaceResult(g.captures.size, g.capturedPaths.size, deformingMembers(g), g.capturedRiders.size)
     }
 
     /**
@@ -1492,8 +1755,23 @@ class Document {
      */
     private fun deformingMembers(g: Group): List<Element> {
         // what the frame does drive: the captured points' locals, and the captured paths' own coordinates
-        val carried = g.captures.mapTo(HashSet()) { it.local }
+        val carried = g.captures.mapTo(HashSet<SourceNode>()) { it.local }
         for (p in g.capturedPaths) carried.addAll(coordMasters(p, 0) + coordMasters(p, 1))
+        return deformingMembers(groupMembers(g), carried).first
+    }
+
+    /**
+     * The same question **before** a placement: which of [members] depend on a position [carried] would not
+     * hold, and which positions those are — so the report can name both the member that will not follow and
+     * the point that keeps it where it is.
+     *
+     * Asked ahead of the gesture as well as after it because that is what lets the *creation* of a group say
+     * what its placement will not manage ([placementWarnings]).
+     */
+    private fun deformingMembers(
+        members: List<Element>,
+        carried: Set<SourceNode>,
+    ): Pair<List<Element>, List<String>> {
         val orthoCoords = HashSet<SourceNode>()
         for (p in orthoPaths) {
             for (v in p.vertices) {
@@ -1501,11 +1779,15 @@ class Document {
                 orthoCoords.add(v.corner.yNode)
             }
         }
-        return groupMembers(g).filter { m ->
-            ancestors(listOf(m.ref.node)).filterIsInstance<SourceNode>().any { s ->
+
+        fun pinned(m: Element): List<SourceNode> =
+            ancestors(listOf(m.ref.node)).filterIsInstance<SourceNode>().filter { s ->
                 s.boundTo == null && s !in carried && (s.value is PointValue || s in orthoCoords)
             }
-        }
+        val bad = members.filter { pinned(it).isNotEmpty() }
+        val drivers = LinkedHashSet<String>()
+        for (m in bad) pinned(m).forEach { drivers.add(labelOf(it)) }
+        return bad to drivers.toList()
     }
 
     /**
@@ -1538,6 +1820,10 @@ class Document {
             path.frame = null
         }
         g.capturedPaths.clear()
+        // the riders come back to their world-anchored parameter, where they now stand — the inverse of the
+        // re-anchoring the capture performed, and world-invariant for the same reason
+        for (rec in g.capturedRiders) releaseRiderNow(rec.element)
+        g.capturedRiders.clear()
         g.frame = null
         g.frameHandle = null
         g.placeStep?.let { s -> journal.removeAll { it === s } }
@@ -1722,7 +2008,7 @@ class Document {
             problems.add("Unplace the group first: a tool can't carry a placement frame yet")
         }
         if (points.isEmpty()) problems.add("This selection reaches no free point, so an instance would have nowhere to be placed")
-        return MacroAnalysis(points, parameters, problems, owned.mapTo(HashSet()) { it.id })
+        return MacroAnalysis(points, parameters, problems, owned.mapTo(HashSet()) { it.id }, freedoms(members))
     }
 
     /** One word (a step's arguments split on spaces) and unique, exactly as a group's name is. */
@@ -2034,7 +2320,7 @@ class Document {
     fun weld(
         alias: Element,
         master: Element,
-    ): Boolean = recording("weld", Arg.El(alias), Arg.El(master)) { weldNow(alias, master) }
+    ): Boolean = recording("weld", Arg.El(alias), Arg.El(master), skipIfEmpty = true) { weldNow(alias, master) }
 
     private fun weldNow(
         alias: Element,
@@ -2052,7 +2338,7 @@ class Document {
     }
 
     /** Un-weld / detach: the point resumes as an independent free point at its current position. */
-    fun unweld(alias: Element) = recording("unweld", Arg.El(alias)) { unweldNow(alias) }
+    fun unweld(alias: Element) = recording("unweld", Arg.El(alias), skipIfEmpty = true) { unweldNow(alias) }
 
     private fun unweldNow(alias: Element) {
         val node = alias.ref.node as? SourceNode ?: return
@@ -2114,10 +2400,24 @@ class Document {
         anchor: Element,
         dofs: List<Quantity>,
     ): Boolean {
+        // **The shared-carrier reading comes first**, because it is the more specific answer to the very same
+        // two picks: both of them lie on one carrier, so the offset the user means is a distance *along* it and
+        // the point still has exactly the one degree of freedom it had (see [anchorRiderTo]). A polar offset
+        // there would be two DOF where the construction allows one, i.e. it would have to leave the curve.
+        if (onSharedCarrier(pt, anchor)) return anchorRiderTo(pt, anchor, dofs.firstOrNull { it.dim == Dimension.LENGTH })
         val node = pt.ref.node as? SourceNode
         if (node == null || pt.kind != ElementKind.POINT || node.boundTo != null) {
+            val rec = riderOf(pt)
             note =
-                if (node?.boundTo != null) {
+                if (rec?.base != null) {
+                    // the same rule the polar form follows: one anchor at a time, freed before it is replaced
+                    "${pt.id} is already measured from ${rec.base?.id} — free it first (Make absolute), then measure it from something else"
+                } else if (rec != null && rec.line != null && !rec.carrierRelative) {
+                    // it *could* be re-anchored, but not to this point: the offset of a rider is a distance
+                    // along its own carrier, so the base has to be a position on that carrier
+                    "${pt.id} rides ${rec.host.id}: to measure it from something, pick a point on ${rec.host.id} — " +
+                        "one of its ends, or another point riding it"
+                } else if (node?.boundTo != null) {
                     "${pt.id} already follows something — free it first (Make absolute), then anchor it"
                 } else {
                     "${pt.id} is not a free point: only a point that owns its coordinates can be re-anchored"
@@ -2144,6 +2444,7 @@ class Document {
         val aNode = SourceNode(nextId("ra"), ScalarValue(Quantity.rad(a)))
         node.boundTo = cx.polarPoint(anchorRef, Ref<ScalarValue>(dNode), Ref<ScalarValue>(aNode)).node
         relatives[pt.id] = RelativePoint(anchorRef, dNode, aNode)
+        noteReparam(pt)
         pt.handle = RelativePointHandle(anchorRef, dNode, aNode)
         pt.style = Styles.ON_CURVE // derived-but-draggable, the same reading an attached point gets
         noteEdit()
@@ -2159,6 +2460,11 @@ class Document {
      */
     fun makeAbsolute(pt: Element): Boolean {
         val node = pt.ref.node as? SourceNode
+        // A rider whose parameter was re-anchored to a base of its own carrier has an absolute form to go back
+        // to — its position along the world-anchored carrier (OP-20) — and for a rider the *tool* created that
+        // is the only freedom it has, there being no literal of its own to hand back. So this case is answered
+        // first, and a point that owns coordinates *and* was re-anchored is freed outright as before.
+        if (node?.boundTo == null && riderOf(pt)?.carrierRelative == true) return releaseRider(pt)
         if (node?.boundTo == null) {
             note =
                 if (node != null) {
@@ -2170,10 +2476,206 @@ class Document {
             return false
         }
         val wasRelative = relativeOf(pt) != null
+        riderOf(pt)?.takeIf { it.carrierRelative }?.let { releaseRiderNow(pt) }
         unweld(pt)
         note = if (wasRelative) "${pt.id} keeps its position and is free again" else "${pt.id} is a free point again"
         return true
     }
+
+    // ---- relative on a shared carrier: OP-4 case (b) for a rider, where the offset is along the host ----
+
+    /**
+     * Whether [pt] and [base] are two positions on **one carrier**: [pt] rides a line-like host, and [base] is
+     * either another rider on that same host or a point the host is *built from* (an endpoint).
+     *
+     * The question is asked about the **host element**, not about a carrier-line node: each rider coerces its
+     * own `lineOfSegment`, so two riders of one segment hold different line nodes while riding the same drawn
+     * curve — and what the user picked is the drawn curve.
+     */
+    private fun onSharedCarrier(
+        pt: Element,
+        base: Element,
+    ): Boolean {
+        val rec = riderOf(pt) ?: return false
+        if (rec.line == null || rec.carrierRelative) return false
+        if (!base.isPoint || base === pt) return false
+        if (riderOf(base)?.host === rec.host) return true
+        return dependsOn(rec.host.ref.node, base.ref.node, HashSet())
+    }
+
+    /**
+     * Re-anchor rider [pt] so its position is stated as a **signed distance [d] from [base]** along their
+     * shared carrier: the rider's own parameter is bound onto `base's position along the carrier + d`
+     * (OP-4 case b, OP-5's bind-in-place substrate).
+     *
+     * One degree of freedom before, one after, and nothing moves at the moment of the change — [d] is read off
+     * the geometry the rider already has. What changes is *what it is measured from*: the position was anchored
+     * to the world (a coordinate the host leaves free, or a distance along the carrier line — OP-20), and is
+     * now anchored to a point of the carrier the user named. So editing the host carries the rider: turn the
+     * segment and the offset holds, which is what a **stated** anchor buys over the gesture-time compensation
+     * OP-20 needs for a world-anchored one — and such a rider is therefore no longer registered for
+     * compensation at all.
+     *
+     * The rider's *point* is untouched: the binding sits one level down, in the parameter, so the carrier
+     * construction, the element and everything referring to it stay exactly as they were — and the file keeps
+     * restating the same node ([riderParam]).
+     */
+    private fun anchorRiderTo(
+        pt: Element,
+        base: Element,
+        d: Quantity?,
+    ): Boolean {
+        val rec = riderOf(pt) ?: return false
+        val line = rec.line ?: return false
+
+        @Suppress("UNCHECKED_CAST")
+        val basePoint = base.ref as? PointRef ?: return false
+        val baseParam = carrierBaseParam(rec, basePoint, line)
+        val ev = Evaluator()
+        val here = ((ev.eval(rec.param) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
+        val there = ((ev.eval(baseParam.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
+        if (here == null || there == null) {
+            note = "Can't measure ${pt.id} from ${base.id} yet — the carrier has no position of its own"
+            return false
+        }
+        val offset = SourceNode(nextId("cd"), ScalarValue(Quantity.mm(d?.mm ?: (here - there))))
+        val bound = cx.add(baseParam, Ref<ScalarValue>(offset))
+        // the acyclicity every connection is checked for (OP-4): a base measured from *this* rider would put
+        // the rider inside its own input cone, and a cyclic graph is a dead one rather than a wrong drawing
+        if (dependsOn(bound.node, rec.param, HashSet())) {
+            note = "Can't measure ${pt.id} from ${base.id}: ${base.id} is already measured from ${pt.id}"
+            return false
+        }
+        rec.param.boundTo = bound.node
+        rec.base = base
+        rec.offset = offset
+        noteReparam(pt)
+        pt.handle = CarrierOffsetHandle(baseParam.node, offset, paramOfCarrier(rec))
+        // its motion under an edit of the host is now fully stated, so there is nothing to compensate (OP-20)
+        carrierRiders.removeAll { it.dof === rec.param }
+        noteEdit()
+        note =
+            "${pt.id} is now ${Format.num(abs(here - there))} mm from ${base.id} along ${rec.host.id} — " +
+            "that distance is its degree of freedom (drag it along, or type it)"
+        return true
+    }
+
+    /**
+     * Where [base] sits in [rec]'s **own** parameter — the quantity an offset from it is added to: its position
+     * along the carrier, or its coordinate on the axis the host leaves free (see [riderOn]'s two forms).
+     */
+    private fun carrierBaseParam(
+        rec: RiderRecord,
+        base: PointRef,
+        line: LineRef,
+    ): ScalarRef =
+        when (rec.form) {
+            RiderForm.AXIS_COORD -> if (rec.axis == 0) cx.measureX(base) else cx.measureY(base)
+            else -> cx.lineParam(line, base)
+        }
+
+    /** [carrierBaseParam]'s current value, for reading an offset off the geometry as it stands. */
+    @Suppress("UNCHECKED_CAST")
+    private fun carrierBaseParamValue(
+        rec: RiderRecord,
+        base: Element,
+        ev: Evaluator,
+    ): Double? {
+        val point = base.ref as? PointRef ?: return null
+        val line = rec.line ?: return null
+        return ((ev.eval(carrierBaseParam(rec, point, line).node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
+    }
+
+    /** How a cursor becomes a value of [rec]'s own parameter — the inverse the offset handle writes through. */
+    private fun paramOfCarrier(rec: RiderRecord): (Vec2, Evaluator) -> Double? {
+        val line = rec.line
+        val axis = rec.axis
+        return { world, ev ->
+            if (rec.form == RiderForm.AXIS_COORD) {
+                if (axis == 0) world.x else world.y
+            } else {
+                ((ev.eval(line!!.node) as? EvalResult.Ok)?.value as? LineValue)?.line?.dir?.let { world.dot(it) }
+            }
+        }
+    }
+
+    /** Give a re-anchored rider its absolute parameter back, where it now stands — [anchorRiderTo]'s inverse. */
+    private fun releaseRider(pt: Element): Boolean {
+        val rec = riderOf(pt) ?: return false
+        val base = rec.base?.id ?: return false
+        if (!releaseRiderNow(pt)) return false
+        noteEdit()
+        note = "${pt.id} keeps its place on ${rec.host.id} and is measured from the world again, not from $base"
+        return true
+    }
+
+    private fun releaseRiderNow(pt: Element): Boolean {
+        val rec = riderOf(pt) ?: return false
+        if (rec.offset == null) return false
+        val now = ((Evaluator().eval(rec.param) as? EvalResult.Ok)?.value as? ScalarValue)?.q ?: return false
+        rec.param.boundTo = null
+        rec.param.value = ScalarValue(now)
+        rec.offset = null
+        rec.base = null
+        pt.handle =
+            when (rec.form) {
+                RiderForm.AXIS_COORD -> OnAxisHandle(rec.param, rec.axis ?: 0)
+                else -> OnLineHandle(rec.line!!, rec.param)
+            }
+        if (rec.form == RiderForm.ALONG_LINE) noteCarrierRider(rec.point, rec.line!!, rec.param)
+        return true
+    }
+
+    /**
+     * The degrees of freedom a **re-parameterization** step must restate (OP-18): a polar offset's distance
+     * and angle, or a carrier-relative rider's signed distance. One question, both forms of OP-4 case (b).
+     */
+    fun relativeDofs(
+        el: Element,
+        ev: Evaluator,
+    ): List<Quantity> {
+        relativeOf(el)?.let { r ->
+            return listOfNotNull(scalarOf(r.distance, ev), scalarOf(r.angle, ev))
+        }
+        riderOf(el)?.offset?.let { o -> return listOfNotNull(scalarOf(o, ev)) }
+        return emptyList()
+    }
+
+    /**
+     * The value a rider's creating step restates (OP-18) — its **own** parameter ([riderParam]), which stays
+     * meaningful in either form: re-anchored to a base of its carrier, the parameter is driven but still
+     * evaluates to the rider's absolute position along that carrier, which is exactly what replaying the
+     * creating step needs before the later step that re-anchors it runs.
+     *
+     * The one correction is a **turned** placed group (OP-16): the steps replay before the placement that
+     * turns the group, so what they must restate is the pre-rotation geometry — the same rule
+     * [restatedPosition] follows for a captured point, here applied to a parameter.
+     */
+    fun restatedRiderParam(
+        el: Element,
+        ev: Evaluator,
+    ): Quantity? {
+        val node = riderParam(el) ?: return null
+        val q = ((ev.eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q ?: return null
+        val rec = riderOf(el) ?: return q
+        val g = allGroups.firstOrNull { grp -> grp.capturedRiders.any { it === rec } } ?: return q
+        val f = frameValueOf(g) ?: return q
+        if (f.angle == 0.0) return q
+        val here = pointOf(rec.point.node, ev) ?: return q
+        val pre = f.origin + f.toLocal(here)
+        if (rec.form == RiderForm.AXIS_COORD) return Quantity.mm(if (rec.axis == 0) pre.x else pre.y)
+        val line = rec.line ?: return q
+        val dir = ((ev.eval(line.node) as? EvalResult.Ok)?.value as? LineValue)?.line?.dir ?: return q
+        // the carrier un-turned: a direction has no origin, so only the rotation is undone
+        val c = cos(-f.angle)
+        val s = sin(-f.angle)
+        return Quantity.mm(pre.dot(Vec2(dir.x * c - dir.y * s, dir.x * s + dir.y * c)))
+    }
+
+    private fun scalarOf(
+        node: SourceNode,
+        ev: Evaluator,
+    ): Quantity? = ((ev.eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q
 
     // ---- drag-to-attach: weld a free point onto a curve so it slides along it (1 DOF) ----
 
@@ -2227,6 +2729,73 @@ class Document {
 
     // ---- riding a curve: one DOF along a host, absolute wherever the host offers one (OP-20) ----
 
+    /** Which of [riderOn]'s three parameter forms a rider's single degree of freedom is stated in. */
+    enum class RiderForm {
+        /** A world coordinate the host leaves free — a host axis-aligned *by construction* (OP-20). */
+        AXIS_COORD,
+
+        /** A signed distance along the carrier line, anchored to the line itself (OP-20). */
+        ALONG_LINE,
+
+        /** An angle about a circle's centre — already relative to the circle, so nothing re-anchors it. */
+        CIRCLE_ANGLE,
+    }
+
+    /**
+     * What an element **rides**, and the node its one degree of freedom lives in.
+     *
+     * Kept because "which freedom does this element own, and of what kind" is a question three features now
+     * ask structurally rather than by guessing from a handle's class: re-anchoring a rider onto a base of its
+     * own carrier (OP-4 case b), a group's placement capture (OP-16 — a rider is not rigid under a frame while
+     * its parameter is anchored to the world), and the create dialog's candidate list, which has to *name* the
+     * kinds it offers.
+     */
+    class RiderRecord internal constructor(
+        val element: Element,
+        /** The curve it rides — the element, so "the same carrier" is a question about the drawing. */
+        val host: Element,
+        val form: RiderForm,
+        /** The rider's own parameter: where its position along [host] is stated. */
+        val param: SourceNode,
+        internal val line: LineRef?,
+        internal val axis: Int?,
+        /** The constructed point riding the host — the element may be a free point *bound* onto it. */
+        internal val point: PointRef,
+    ) {
+        /** The point of the carrier this rider's position is measured from, once it has been re-anchored. */
+        var base: Element? = null
+            internal set
+
+        /** The signed offset from [base] — this rider's freedom in the re-anchored form. */
+        internal var offset: SourceNode? = null
+
+        /** True while the position is stated **relative to [base]** rather than to the world (OP-4 case b). */
+        val carrierRelative: Boolean get() = offset != null
+    }
+
+    private val riders = HashMap<String, RiderRecord>()
+
+    /** How [el] rides its host, or null when it is not a rider. */
+    fun riderOf(el: Element): RiderRecord? = riders[el.id]
+
+    /**
+     * The node whose value *is* [el]'s position along its host — what the file restates for a rider (OP-18).
+     *
+     * Deliberately the rider's **own** parameter and not "whatever its handle writes": once the parameter has
+     * been re-anchored to a base of the same carrier, the handle writes the offset while the parameter still
+     * holds (and evaluates to) the absolute position along the carrier, which is exactly what a replay of the
+     * creating step needs. One node, whichever form the rider is in.
+     */
+    fun riderParam(el: Element): SourceNode? = riders[el.id]?.param
+
+    private fun noteRider(
+        el: Element,
+        host: Element,
+        rider: Rider,
+    ) {
+        riders[el.id] = RiderRecord(el, host, rider.form, rider.dof, rider.line, rider.axis, rider.point)
+    }
+
     /**
      * A point that **rides** a curve: the point itself, the [handle] over its single degree of freedom, and
      * how to [place] that freedom so a wanted world coordinate comes out exactly (see [Junction.place]).
@@ -2236,6 +2805,12 @@ class Document {
         val handle: Handle,
         /** The single source node carrying this rider's freedom — its parameter, whatever kind it is. */
         val dof: SourceNode,
+        /** Which of the three forms the parameter is in — see [RiderForm]. */
+        val form: RiderForm,
+        /** The carrier, for the two linear forms; the coordinate axis for [RiderForm.AXIS_COORD]. */
+        val line: LineRef? = null,
+        val circle: CircleRef? = null,
+        val axis: Int? = null,
         val place: (axis: Int, value: Double) -> Boolean,
     )
 
@@ -2317,7 +2892,7 @@ class Document {
                 val cNode = SourceNode(nextId(prefix + "c"), ScalarValue(Quantity.mm(if (axis == 0) at.x else at.y)))
                 val point = cx.select(cx.intersectLL(axisLineAt(Ref<ScalarValue>(cNode), axis), lr), 1)
                 if (ev.eval(point.node) is EvalResult.Ok) {
-                    return Rider(point, OnAxisHandle(cNode, axis), cNode) { a, value ->
+                    return Rider(point, OnAxisHandle(cNode, axis), cNode, RiderForm.AXIS_COORD, line = lr, axis = axis) { a, value ->
                         // the host fixes the other coordinate, so this one is all there is to place — exactly
                         if (a != axis) {
                             false
@@ -2332,7 +2907,7 @@ class Document {
             val tNode = SourceNode(nextId(prefix + "t"), ScalarValue(Quantity.mm(at.dot(l.line.dir))))
             val along = alongLine(lr, Ref<ScalarValue>(tNode))
             noteCarrierRider(along, lr, tNode)
-            return Rider(along, OnLineHandle(lr, tNode), tNode) { a, value ->
+            return Rider(along, OnLineHandle(lr, tNode), tNode, RiderForm.ALONG_LINE, line = lr) { a, value ->
                 // a line is affine in its parameter: t = (value - anchor) / dir, exactly
                 val line = ((Evaluator().eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line
                 val d = if (a == 0) line?.dir?.x else line?.dir?.y
@@ -2352,7 +2927,13 @@ class Document {
             // an angle about the centre is already absolute: it re-anchors on nothing an edit to the
             // circle's extent can move, since a circle has no ends to stretch
             val aNode = SourceNode(nextId(prefix + "a"), ScalarValue(Quantity.rad((at - c.circle.center).angle())))
-            return Rider(cx.pointOnCircle(cr, Ref<ScalarValue>(aNode)), OnCircleHandle(cr, aNode), aNode) { axis, value ->
+            return Rider(
+                cx.pointOnCircle(cr, Ref<ScalarValue>(aNode)),
+                OnCircleHandle(cr, aNode),
+                aNode,
+                RiderForm.CIRCLE_ANGLE,
+                circle = cr,
+            ) { axis, value ->
                 // a circle has two angles per coordinate; keep the one nearer where it already sits
                 val circle = ((Evaluator().eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue)?.circle
                 val centre = if (axis == 0) circle?.center?.x else circle?.center?.y
@@ -2506,7 +3087,7 @@ class Document {
     fun attachToCurve(
         pt: Element,
         curve: Element,
-    ): Boolean = recording("attach", Arg.El(pt), Arg.El(curve)) { attachToCurveNow(pt, curve) }
+    ): Boolean = recording("attach", Arg.El(pt), Arg.El(curve), skipIfEmpty = true) { attachToCurveNow(pt, curve) }
 
     private fun attachToCurveNow(
         pt: Element,
@@ -2520,6 +3101,7 @@ class Document {
         pt.handle = rider.handle
         pt.kind = ElementKind.ON_CURVE
         pt.style = Styles.ON_CURVE
+        noteRider(pt, curve, rider)
         noteEdit()
         return true
     }
@@ -2781,10 +3363,37 @@ class Document {
 
     // ---- points ----
 
+    /**
+     * The point of the span `a → b` at [factor] of the way along it, or its **midpoint** when no factor was
+     * given — one tool, because a midpoint *is* the ratio point at 0.5 (see [ScalarSlot.default]).
+     *
+     * With no factor this is exactly what it always was: a derived `cx.midpoint`, no parameter, no handle,
+     * nothing added to the file. With one it is `cx.pointAtRatio`, whose dimensionless [factor] is an
+     * ordinary parameter — so it is typed, dragged along the span ([RatioPointHandle]), wired, and **shared**:
+     * one `t` node feeding several pairs is equal proportions by construction (OP-5), not a constraint.
+     *
+     * A factor outside `[0, 1]` extrapolates past an end, which is said in the note rather than clamped.
+     */
     fun midpoint(
         a: PointRef,
         b: PointRef,
-    ) = addDerived(cx.midpoint(a, b))
+        factor: ScalarRef? = null,
+    ): PointRef = if (factor == null) addDerived(cx.midpoint(a, b)) else ratioPoint(a, b, factor)
+
+    /** The ratio point of `a → b` as a 1-DOF element over [t] — see [midpoint]. */
+    private fun ratioPoint(
+        a: PointRef,
+        b: PointRef,
+        t: ScalarRef,
+    ): PointRef {
+        val ref = addConstrained(cx.pointAtRatio(a, b, t), RatioPointHandle(a, b, t.node))
+        val f = ((Evaluator().eval(t.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.value
+        if (f != null && (f < 0.0 || f > 1.0)) {
+            val end = if (f < 0.0) "the first point" else "the second"
+            note = "Factor ${Format.num(f)} is outside 0…1, so the point sits beyond $end — drag it back, or type a factor between 0 and 1"
+        }
+        return ref
+    }
 
     /** The centre of a circle or arc as a derived point (works on 3-point circles etc.). */
     fun centerOf(el: Element): PointRef? =
@@ -2831,14 +3440,29 @@ class Document {
         dof: Quantity? = null,
     ): PointRef {
         val rider = riderOn(line, at, "")
-        if (rider != null) return addConstrained(rider.point, rider.handle, rider.dof, dof)
+        if (rider != null) return addRider(line, rider, dof)
         // the line cannot be evaluated (invalid upstream, OP-3): the point still exists and still slides, it
         // simply has nowhere to be until its line does
         val lineRef = carrierLine(line)
         val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(0.0)))
         val along = alongLine(lineRef, Ref<ScalarValue>(tNode))
         noteCarrierRider(along, lineRef, tNode)
-        return addConstrained(along, OnLineHandle(lineRef, tNode), tNode, dof)
+        return addRider(
+            line,
+            Rider(along, OnLineHandle(lineRef, tNode), tNode, RiderForm.ALONG_LINE, line = lineRef) { _, _ -> false },
+            dof,
+        )
+    }
+
+    /** Add a rider element over [rider] and record what it rides — see [RiderRecord]. */
+    private fun addRider(
+        host: Element,
+        rider: Rider,
+        dof: Quantity?,
+    ): PointRef {
+        val ref = addConstrained(rider.point, rider.handle, rider.dof, dof)
+        elements.lastOrNull()?.let { noteRider(it, host, rider) }
+        return ref
     }
 
     /** Fully-determined point on a line at [distance] from [from]; direction from the click side of [at]. */
@@ -2874,10 +3498,15 @@ class Document {
         dof: Quantity? = null,
     ): PointRef {
         val rider = riderOn(circle, at, "")
-        if (rider != null) return addConstrained(rider.point, rider.handle, rider.dof, dof)
+        if (rider != null) return addRider(circle, rider, dof)
         val circleRef = carrierCircle(circle)
         val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad(0.0)))
-        return addConstrained(cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode)), OnCircleHandle(circleRef, aNode), aNode, dof)
+        val point = cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode))
+        return addRider(
+            circle,
+            Rider(point, OnCircleHandle(circleRef, aNode), aNode, RiderForm.CIRCLE_ANGLE, circle = circleRef) { _, _ -> false },
+            dof,
+        )
     }
 
     /**
@@ -4732,10 +5361,23 @@ class Document {
 
     // ---- relational constructions ----
 
+    /**
+     * The perpendicular bisector of `a → b`, or — with a [factor] — the perpendicular through *that* point of
+     * the span, which is the same construction with the 0.5 relaxed (see [midpoint]).
+     *
+     * Composed from ops that already exist rather than a new one: the ratio point, plus the perpendicular to
+     * the line through the two points at it. The ratio point is an element of its own, so the factor is
+     * draggable on the canvas as well as typeable (OP-13).
+     */
     fun perpBisector(
         a: PointRef,
         b: PointRef,
-    ) = add(cx.perpBisector(a, b), ElementKind.LINE, Styles.CONSTRUCT)
+        factor: ScalarRef? = null,
+    ) = if (factor == null) {
+        add(cx.perpBisector(a, b), ElementKind.LINE, Styles.CONSTRUCT)
+    } else {
+        add(cx.perpendicularThrough(cx.lineThrough(a, b), ratioPoint(a, b, factor)), ElementKind.LINE, Styles.CONSTRUCT)
+    }
 
     fun angleBisector(
         a: PointRef,

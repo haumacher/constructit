@@ -62,7 +62,20 @@ enum class SlotKind {
  * mechanism has no per-tool half. It used to be a bare name, and a bare name cannot be turned into a
  * quantity without guessing.
  */
-class ScalarSlot(val name: String, val dim: Dimension = Dimension.LENGTH)
+class ScalarSlot(
+    val name: String,
+    val dim: Dimension = Dimension.LENGTH,
+    /**
+     * The value this slot **means when nothing was typed or picked** — null for a slot the tool cannot do
+     * without.
+     *
+     * A default is what lets a tool gain a scalar input *without gaining a step*: with every slot defaulted
+     * the tool never waits (see [ToolDef.scalarsOptional]), so Midpoint stays one click plus one click and
+     * only *also* accepts a factor. The declared number is what the status line names and what [ToolDef.build]
+     * does when it is handed no value — for the ratio slot, 0.5, which is exactly `cx.midpoint`.
+     */
+    val default: Quantity? = null,
+)
 
 /**
  * CUSTOM is where a document's **user-defined macros** land (OP-6): a macro *is* a [ToolDef], so the
@@ -150,7 +163,15 @@ class ToolDef(
      */
     val facePartOperand: Boolean = false,
     val build: (Document, Picks, List<ScalarRef>) -> Unit,
-)
+) {
+    /**
+     * Whether this tool's scalars are **all defaulted**, i.e. it never waits for one (see
+     * [ScalarSlot.default]). Such a tool completes on its last click and [build] then receives *no* scalar
+     * refs unless the user typed or picked them — so gaining an optional input costs the existing gesture
+     * nothing, and the tool's own step is unchanged when nobody used it.
+     */
+    val scalarsOptional: Boolean get() = scalars.isNotEmpty() && scalars.all { it.default != null }
+}
 
 object Tools {
     const val SELECT = "select"
@@ -168,6 +189,12 @@ object Tools {
     private fun ang(name: String) = ScalarSlot(name, Dimension.ANGLE)
 
     private fun num(name: String) = ScalarSlot(name, Dimension.NONE)
+
+    /** A dimensionless slot the tool can do without — [ScalarSlot.default] names what it then means. */
+    private fun num(
+        name: String,
+        default: Double,
+    ) = ScalarSlot(name, Dimension.NONE, Quantity.number(default))
 
     // Points
     const val POINT = "point"
@@ -281,11 +308,16 @@ object Tools {
         listOf(
             // ----- Points -----
             ToolDef(POINT, "Point", ToolCategory.POINTS, listOf(SlotKind.PLACE_POINT), shortcut = 'P', help = "Click empty space to place a free point.") { _, _, _ -> },
-            ToolDef(MIDPOINT, "Midpoint", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to place their midpoint.") { d, p, _ -> d.midpoint(p.points[0], p.points[1]) },
+            // the factor is a *defaulted* scalar slot (0.5 = the midpoint), so the gesture is unchanged and
+            // typing a number first turns the same two clicks into a ratio point (OP-13)
+            ToolDef(MIDPOINT, "Midpoint / ratio point", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(num("factor", 0.5)), help = "Click two points to place their midpoint — or type a factor first (0.3 = three tenths of the way, 1.5 = beyond the second point) and drag it along afterwards.") { d, p, s -> d.midpoint(p.points[0], p.points[1], s.firstOrNull()) },
             ToolDef(INTERSECT, "Intersect", ToolCategory.POINTS, listOf(SlotKind.CURVE, SlotKind.CURVE), help = "Click two curves to add their intersection point(s). Curves count as their carriers, so a segment reaches beyond its ends and an arc round its whole circle — the point may land off the drawn piece.") { d, p, _ -> d.intersect(p.elements[0], p.elements[1]) },
             ToolDef(PROJECT, "Project to line", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), help = "Click a point, then a line, for the perpendicular foot.") { d, p, _ -> d.projectToLine(p.points[0], p.elements[0]) },
-            ToolDef(POINT_ON_CIRCLE, "Point on circle", ToolCategory.POINTS, listOf(SlotKind.CIRCLE), help = "Click a circle or arc to add a point on it; drag it around the circle in Select mode (on an arc it rides the whole circle).") { d, p, _ -> d.pointOnCircle(p.elements[0], p.at) },
-            ToolDef(POINT_ON_LINE, "Point on line", ToolCategory.POINTS, listOf(SlotKind.LINE), help = "Click a line to add a point on it; drag it along the line in Select mode.") { d, p, _ -> d.pointOnLine(p.elements[0], p.at) },
+            // the rider's position along its host is **state** (dragged, typed, compensated, or re-anchored by a
+            // placement), so it rides `dofs=` exactly as the `pointoncurve` step's does — the click stays the
+            // *choice* it always was (which curve, which side). See [DocumentFormat.restate].
+            ToolDef(POINT_ON_CIRCLE, "Point on circle", ToolCategory.POINTS, listOf(SlotKind.CIRCLE), help = "Click a circle or arc to add a point on it; drag it around the circle in Select mode (on an arc it rides the whole circle).") { d, p, _ -> d.pointOnCircle(p.elements[0], p.at, p.dofs.firstOrNull()) },
+            ToolDef(POINT_ON_LINE, "Point on line", ToolCategory.POINTS, listOf(SlotKind.LINE), help = "Click a line to add a point on it; drag it along the line in Select mode.") { d, p, _ -> d.pointOnLine(p.elements[0], p.at, p.dofs.firstOrNull()) },
             ToolDef(POINT_AT_DIST, "Point at distance", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click the reference point, then click the line on the side you want.") { d, p, s -> d.pointAlongLine(p.elements[0], p.points[0], s[0], p.at) },
             // no slots at all: its inputs are both scalars, so it is complete as soon as the panel has
             // supplied x and y and a click merely says "now"
@@ -344,7 +376,9 @@ object Tools {
             ToolDef(INTERSECT_SOLIDS, "Intersect solids", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), help = "Click two solids to keep only what they have in common.") { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.INTERSECT) },
             ToolDef(CUT_OPENINGS, "Cut openings", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), help = "Click a solid extruded from a wall footprint: every opening on that wall becomes a subtracted box, sill to head. Openings added later need the tool again.") { d, p, _ -> d.cutOpenings(p.elements[0]) },
             // ----- Construct -----
-            ToolDef(PERP_BISECTOR, "Perp. bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points for their perpendicular bisector.") { d, p, _ -> d.perpBisector(p.points[0], p.points[1]) },
+            // the same defaulted factor as Midpoint: with none it is the bisector, with one it is the
+            // perpendicular through that ratio point — composed from the ops that already exist
+            ToolDef(PERP_BISECTOR, "Perp. bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(num("factor", 0.5)), help = "Click two points for their perpendicular bisector — or type a factor first for the perpendicular through that point of the span instead.") { d, p, s -> d.perpBisector(p.points[0], p.points[1], s.firstOrNull()) },
             ToolDef(ANGLE_BISECTOR, "Angle bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click a point, the vertex, then another point.") { d, p, _ -> d.angleBisector(p.points[0], p.points[1], p.points[2]) },
             ToolDef(PERPENDICULAR, "Perpendicular", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the perpendicular through it.") { d, p, _ -> d.perpendicularThrough(p.elements[0], p.points[0]) },
             ToolDef(PARALLEL, "Parallel", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the parallel through it.") { d, p, _ -> d.parallelThrough(p.elements[0], p.points[0]) },

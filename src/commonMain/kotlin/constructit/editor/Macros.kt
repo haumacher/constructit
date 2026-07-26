@@ -90,6 +90,14 @@ class MacroAnalysis(
     val problems: List<String>,
     /** Which of [points] the selection *displays* itself, as opposed to merely depending on. */
     val owned: Set<String> = points.mapTo(HashSet()) { it.id },
+    /**
+     * **Every** degree of freedom in the closure, of every kind (OP-16): a free point, a rider on a curve, a
+     * polar offset from an anchor, an angle about a circle. [points] is the free-point subset, because only a
+     * free point can be a macro's *input port* — a group, by contrast, can take any of them as a member, and
+     * has to: a figure whose freedom is a rider plus an offset is exactly the one that could be grouped and
+     * then never placed.
+     */
+    val freedoms: List<Freedom> = points.map { Freedom(it, FreedomKind.FREE_POINT, it.id, it.id in owned) },
 )
 
 /** Which of the two things the shared create dialog is making (OP-16: one dialog, two defaults). */
@@ -143,8 +151,19 @@ class CreateDialog(
                 "Ticked sources become the tool's inputs (clicked, or taken from the panel). " +
                     "The first point places the instance; unticked ones are captured, shared by every instance."
             candidates.isEmpty() -> "A named set of the ${members.size} selected element(s)."
-            else -> "A named set of the ${members.size} selected element(s). Tick a point to pull it in as a member too."
+            else ->
+                "A named set of the ${members.size} selected element(s), plus the ticked degrees of freedom it " +
+                    "is built on — those are what let the group be placed and moved as one. Untick one to leave " +
+                    "it outside, and the group will not move independently."
         }
+
+    /**
+     * Which of the ticked members' freedoms the group would **not** be able to carry, in the user's words —
+     * read at creation time so an unticked shared point is reported *here*, where it can still be ticked,
+     * rather than only when Place refuses much later (OP-16's honest-failure rule).
+     */
+    var warnings: List<String> = emptyList()
+        internal set
 
     fun toggle(index: Int): Boolean {
         val c = candidates.getOrNull(index) ?: return false
@@ -169,26 +188,39 @@ class CreateDialog(
 
     companion object {
         /**
-         * The dialog for [members] with the mode's default ticks applied: **nothing** for a group (a
-         * plain named set, exactly what the Group button always did) and **everything** for a tool (all
-         * the free sources it reaches are inputs unless the user says otherwise).
+         * The dialog for [members] with the mode's default ticks applied — **everything, in both modes**, for
+         * the same reason read two ways.
+         *
+         * For a **tool**, every free source it reaches is an input unless the user says otherwise: a tool
+         * with no inputs is a copy and not a function.
+         *
+         * For a **group** the default used to be *nothing*, which made the everyday case fail late: a naive
+         * group of the visible geometry left the freedom it is built on outside, and Place then refused it
+         * ("… is also used by …"), or worse the group could not move at all. Ticking the closure by default
+         * makes a group movable by default, and unticking is still there for the case where a point genuinely
+         * belongs to something else — which the dialog now *says*, at creation time (see [warnings]).
          */
         fun of(
             mode: CreateMode,
             members: List<Element>,
             analysis: MacroAnalysis,
         ): CreateDialog {
-            val tick = mode == CreateMode.TOOL
-            // Ticked by default: the free points the selection *owns*. When it owns none — the user
-            // selected only derived geometry — its ancestors are ticked instead, since otherwise there
-            // would be no input at all and nothing to place an instance by.
+            val tool = mode == CreateMode.TOOL
+            // A tool's point rows are the *free points* only — an input port is clicked, and only a free point
+            // can be placed by a click. A group's rows are every degree of freedom in the closure, labelled by
+            // kind, because any of them can be a member (see [MacroAnalysis.freedoms]).
             val anyOwned = analysis.points.any { it.id in analysis.owned }
-            // a group can only take *elements*, so parameter rows appear for a tool only — the one
-            // asymmetry between the two modes beyond the default tick
             val rows =
-                analysis.points.map { InputCandidate(it.id, it, null, tick && (!anyOwned || it.id in analysis.owned)) } +
-                    if (tick) analysis.parameters.map { InputCandidate(it.name, null, it, true) } else emptyList()
-            return CreateDialog(mode, "", members, rows, analysis.problems.firstOrNull()?.takeIf { tick })
+                if (tool) {
+                    // Ticked by default: the free points the selection *owns*. When it owns none — the user
+                    // selected only derived geometry — its ancestors are ticked instead, since otherwise there
+                    // would be no input at all and nothing to place an instance by.
+                    analysis.points.map { InputCandidate(it.id, it, null, !anyOwned || it.id in analysis.owned) } +
+                        analysis.parameters.map { InputCandidate(it.name, null, it, true) }
+                } else {
+                    analysis.freedoms.map { InputCandidate(it.label, it.element, null, true) }
+                }
+            return CreateDialog(mode, "", members, rows, analysis.problems.firstOrNull()?.takeIf { tool })
         }
     }
 }

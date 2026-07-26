@@ -862,7 +862,18 @@ class Editor(
             if (d.mode == CreateMode.GROUP) {
                 val members = d.members + d.checkedPoints.filter { p -> d.members.none { it === p } }
                 select(members, d.members.firstOrNull())
-                groupSelection(d.name) != null
+                val g = groupSelection(d.name)
+                // **Say at creation time what placement would refuse** (OP-16's honest-failure rule): the
+                // freedom an unticked row leaves outside the group is exactly what makes the group immovable,
+                // and it is invisible on canvas — so the reason belongs to the gesture that caused it, not to
+                // a Place click much later.
+                if (g != null) {
+                    d.warnings = doc.placementWarnings(g)
+                    if (d.warnings.isNotEmpty()) {
+                        statusHint = "Grouped ${doc.groupMembers(g).size} elements as ${g.name}, but " + d.warnings.joinToString("; ")
+                    }
+                }
+                g != null
             } else {
                 makeTool(d.name, d.members, d.checkedPoints, d.checkedScalars)
             }
@@ -959,11 +970,13 @@ class Editor(
             onChange()
             return false
         }
-        // the refusal survives only for a group that owns no freedom **at all**: ortho paths and the walls
-        // riding them are carried too now (OP-16's ortho-path bonus), so owning no free *point* is no
-        // longer a reason on its own
+        // the refusal survives only for a group that owns no freedom **at all** — of any kind: ortho paths and
+        // the walls riding them are carried (OP-16's ortho-path bonus), and so are riders, polar offsets and
+        // on-circle angles (see [Document.analysePlacement]), so owning no free *point* is not a reason
         if (!analysis.carriesSomething) {
-            statusHint = "Can't place ${g.name}: it owns no free point, so a frame would have nothing to move"
+            statusHint =
+                "Can't place ${g.name}: it owns no degree of freedom, so a frame would have nothing to move" +
+                if (analysis.uncapturable.isEmpty()) "" else " (${analysis.uncapturable.joinToString("; ")})"
             onChange()
             return false
         }
@@ -987,8 +1000,12 @@ class Editor(
             listOfNotNull(
                 "${result.captured} point${if (result.captured == 1) "" else "s"}".takeIf { result.captured > 0 },
                 "${result.capturedPaths} path${if (result.capturedPaths == 1) "" else "s"}".takeIf { result.capturedPaths > 0 },
+                // a rider is carried by being measured from its own carrier instead of from the world, which is
+                // a change of *anchor* rather than of coordinates — so it is named as such (OP-4 case b)
+                "${result.capturedRiders} rider${if (result.capturedRiders == 1) "" else "s"} re-anchored to their carrier"
+                    .takeIf { result.capturedRiders > 0 },
             ).joinToString(" and ")
-        statusHint = "Placed ${g.name}: $carried now frame-relative$deforms"
+        statusHint = "Placed ${g.name}: ${carried.ifEmpty { "its own freedom" }} now frame-relative$deforms"
         onChange()
         return true
     }
@@ -1265,7 +1282,13 @@ class Editor(
                 ""
             } else {
                 val entries = toolScalars(tool).orEmpty()
-                " Using " + tool.scalars.mapIndexed { i, s -> "${s.name} = ${entries.getOrNull(i)?.name}" }.joinToString(", ") +
+                // a defaulted slot with nothing picked names the **default**, because that is what the tool
+                // will use — the same promise as naming a picked parameter (see [ScalarSlot.default])
+                " Using " +
+                    tool.scalars.mapIndexed { i, s ->
+                        val e = entries.getOrNull(i)
+                        "${s.name} = " + (e?.name ?: s.default?.let { "${Format.quantity(it)} (default)" } ?: "?")
+                    }.joinToString(", ") +
                     " — type a number for another."
             }
         return (if (n == 0) tool.help else "${tool.help} (count $n)") + using
@@ -2160,14 +2183,22 @@ class Editor(
         (ev().valueOf(el.ref) as? constructit.core.SegmentValue)?.seg?.let { Vec2((it.a.x + it.b.x) / 2, (it.a.y + it.b.y) / 2) }
 
     /**
-     * Whether dropping [el] can join it to something: a free point, or an open path end. A point held
-     * frame-relative by a placed group (OP-16) is neither — its position is already derived, so the weld
-     * would be refused on release and the magnet must not offer it. Nor is an end of a **placed** path: a
-     * junction is a world position and that end's coordinates are the group's local ones, so the connection
-     * is refused on release too (see `Document.bindCornerToJunction`).
+     * Whether dropping [el] can join it to something: a point that **still owns its own coordinates**, or an
+     * open path end.
+     *
+     * The test is exactly the one the release performs — a bound point has nothing left to bind. That covers
+     * every way a point can already follow something in one predicate: held frame-relative by a placed group
+     * (OP-16), welded, attached, or *re-parameterized onto an anchor* (OP-4 case b). The last of those was the
+     * hole: a relative point kept `ElementKind.POINT`, so the magnet offered an attach the release then
+     * refused — and since a refused attach was still recorded, dragging such a point round the circle it
+     * defines wrote a junk `attach` step per drag (the duplicated steps in the reported file). No halo may
+     * offer a join that the release would refuse (OP-20's rule for the drag magnet).
+     *
+     * An end of a **placed** path is out for the same reason one level up: a junction is a world position and
+     * that end's coordinates are its group's local ones (see `Document.bindCornerToJunction`).
      */
     private fun canConnect(el: Element): Boolean =
-        (el.kind == ElementKind.POINT && !doc.isFramed(el)) ||
+        (el.kind == ElementKind.POINT && isFreeSource(el.ref.node)) ||
             (el.handle as? OrthoCornerHandle)?.let { it.isEndpoint && doc.pathFrameOf(it) == null } == true
 
     /** True when the active tool's next slot creates a point — the case a snap marker is useful for. */
@@ -2341,8 +2372,14 @@ class Editor(
      */
     private fun toolScalars(tool: ToolDef): List<ScalarEntry>? {
         val need = tool.scalars.size
-        if (scalarPicks.size < need) return null
-        return scalarPicks.takeLast(need)
+        if (scalarPicks.size < need) return if (tool.scalarsOptional) emptyList() else null
+        val picks = scalarPicks.takeLast(need)
+        // A **defaulted** slot is not waiting for anything (ScalarSlot.default), so it must not silently
+        // adopt a pick that was meant for something else — and a length picked into a dimensionless ratio
+        // would only make the point invalid (OP-7). A pick counts here when it is the kind of number the
+        // slot asks for; anything else means "use the default", which is what the status line then names.
+        if (tool.scalarsOptional && picks.zip(tool.scalars).any { (e, s) -> dimensionOf(e.ref) != s.dim }) return emptyList()
+        return picks
     }
 
     /** What is still missing for [tool]'s scalar inputs, in the user's terms. */

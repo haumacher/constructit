@@ -146,7 +146,9 @@ class MacroToolTest {
 
         val group = assertNotNull(ed.beginCreate(CreateMode.GROUP))
         assertEquals(listOf("e1", "e2"), group.candidates.map { it.label }, "a group takes elements, not parameters")
-        assertTrue(group.candidates.none { it.checked }, "group default: a plain named set")
+        // the group default is now *everything ticked* (OP-16): the freedom the figure is built on is what
+        // makes it movable, so a naive group takes it in and unticking is the deliberate act
+        assertTrue(group.candidates.all { it.checked }, "group default: the closure comes along")
         assertTrue(group.ready)
         ed.cancelCreate()
         assertNull(ed.createDialog)
@@ -163,10 +165,13 @@ class MacroToolTest {
         val d = assertNotNull(ed.beginCreate(CreateMode.GROUP))
         assertEquals(listOf("e1", "e2"), d.candidates.map { it.label }, "its ancestors are the candidates")
         d.name = "pair"
-        d.toggle(0)
+        d.toggle(1) // untick the second: a ticked candidate joins, an unticked one stays outside
         assertTrue(ed.confirmCreate())
         val g = ed.doc.groups.single()
         assertEquals(listOf("e4", "e1"), ed.doc.groupMembers(g).map { it.id }, "the ticked ancestor joined it")
+        // …and the group says at creation time what leaving e2 outside costs (OP-16's honest failure)
+        assertTrue(d.warnings.isNotEmpty(), "the unticked shared point is reported: ${ed.statusHint}")
+        assertTrue(ed.statusHint.contains("cannot move independently"), "got: ${ed.statusHint}")
     }
 
     @Test

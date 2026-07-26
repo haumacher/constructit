@@ -376,7 +376,8 @@ class PlacedGroupTest {
         ed.click(Vec2(-30.0, 20.0)) // e7, the midpoint: derived, owns nothing
         val g = ed.groupSelection("derived")!!
         assertFalse(ed.placeGroup(g))
-        assertTrue(ed.statusHint.contains("owns no free point"), "got: ${ed.statusHint}")
+        // "no free point" was the old wording; the refusal now covers every kind of freedom (OP-16)
+        assertTrue(ed.statusHint.contains("owns no degree of freedom"), "got: ${ed.statusHint}")
     }
 
     /**
