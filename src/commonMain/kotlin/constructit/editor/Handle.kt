@@ -389,7 +389,40 @@ fun lengthField(
     writableWhen = { writableMaster(node) != null },
 )
 
-/** Point on a line: the handle's one DOF is the signed distance along the line's direction. */
+/**
+ * Point riding a host that is axis-aligned **by construction**: its one DOF is the world coordinate the
+ * host does *not* determine ([axis] 0 = x on a vertical host, 1 = y on a horizontal one).
+ *
+ * The absolute counterpart of [OnLineHandle], and the reason to prefer it wherever it applies (OP-20): a
+ * distance along the line is measured from the line's *origin*, which is one of the host's own corners, so
+ * stretching the host slid everything attached to it. A world coordinate is anchored to nothing that the
+ * host can move. The field is that coordinate, so the panel names it "x"/"y" instead of "along line" —
+ * which is also the number the user was thinking of.
+ */
+class OnAxisHandle(private val node: SourceNode, private val axis: Int) : Handle {
+    override val dragNodes: List<SourceNode> get() = listOf(node)
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        node.value = ScalarValue(Quantity.mm(if (axis == 0) world.x else world.y))
+    }
+
+    override fun fields(): List<HandleField> = listOf(coordField(if (axis == 0) "x" else "y", node))
+}
+
+/**
+ * Point on a line: the handle's one DOF is the signed distance along the line's direction, measured from
+ * the point of the line **nearest the world origin** — `world · dir`, since that point is perpendicular to
+ * `dir` and so contributes nothing to the projection.
+ *
+ * The anchor is deliberately a property of the *line*, not of the host that carried it (OP-20). Measuring
+ * from the line's own `origin` — which for a segment's carrier is one of its endpoints — made the position
+ * relative to the host's extent: dragging that endpoint *along the line*, which changes nothing one can
+ * see, slid everything riding it. Where the host is axis-aligned by construction there is a better
+ * parameter still, a world coordinate ([OnAxisHandle]).
+ */
 class OnLineHandle(private val line: LineRef, private val t: SourceNode) : Handle {
     override val dragNodes: List<SourceNode> get() = listOf(t)
 
@@ -398,7 +431,7 @@ class OnLineHandle(private val line: LineRef, private val t: SourceNode) : Handl
         ev: Evaluator,
     ) {
         val l = (ev.valueOf(line) as? LineValue)?.line ?: return
-        t.value = ScalarValue(Quantity.mm((world - l.origin).dot(l.dir)))
+        t.value = ScalarValue(Quantity.mm(world.dot(l.dir)))
     }
 
     override fun fields(): List<HandleField> = listOf(coordField("along line", t))

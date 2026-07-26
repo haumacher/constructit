@@ -745,6 +745,51 @@ junction's own handle, one structural hop away.
 - Attaching now **projects** the endpoint onto the curve — the same landing spot the drag magnet
   previews — where the old scheme slid it along one axis to meet the curve.
 
+**Where a thing sits along its host is an absolute quantity, never a share of the host (as built).** A
+junction held its position as a distance along the host's *carrier line*, measured from that line's
+`origin` — which for a segment's carrier is one of the segment's own endpoints. So the stored position was
+relative to the host's extent, and **editing the host dragged everything attached to it**: on the reported
+drawing (a closed rectangle plus a T-branch from the top wall to the right wall) dragging the *bottom* wall
+down by 20 took the branch's horizontal leg from y=17.25 to y=-2.75, because the right wall's carrier line
+takes its origin from the corner the bottom wall owns. The user named the rule better than the code did:
+*it should be transparent to which corner a segment-attached point is anchored.*
+
+One helper (`Document.riderOn`) now decides the parameter for **every** route that puts a position on a
+curve, so the routes cannot disagree:
+
+| route | was | is |
+|---|---|---|
+| `bindCornerToJunction` — a run's end on a wall (the report) | distance from the line's origin | the **world coordinate the host leaves free** (`OnAxisHandle`) on a host axis-aligned *by construction*; distance along the line otherwise |
+| `bindCornerToDeterminedMeeting` — a second end with one coordinate left | already absolute: it stores *no* parameter, being the crossing of the axis line through the given coordinate with the carrier | unchanged, now pinned by a test |
+| `attachToCurve` — drag a free point onto a curve | distance from the line's origin | the same rule as a junction |
+| `pointOnLine` — the point-on-line tool's slider | distance from the line's origin | the same rule |
+| `pointOnCircle`, a junction on a circle | angle about the centre | unchanged — a circle has no ends to stretch, so an angle is already absolute |
+| a thick path's **openings** (OP-21) | distance from the leg's start | unchanged, and deliberately: an opening is measured from a wall's corner because that is what a plan drawing dimensions, and a join re-measures it (OP-19) |
+| `pointAlongLine` — the point-at-a-distance tool | distance from a point the user picked | unchanged: the anchor is *stated*, which is the opposite of hidden |
+
+Two decisions inside that:
+
+- **An axis-aligned host gets a world coordinate, but only when the construction keeps it axis-aligned** —
+  an ortho path's leg, and not while its path is placed in a group (a placed path's legs are axis-aligned in
+  the *group's* space, OP-16). A segment a user happened to draw horizontally is aligned by coincidence, and
+  the next drag turns it; a fixed axis line crossing it would then race off toward infinity. The parameter is
+  the coordinate the host does not determine, and the meeting point is where the axis line at that
+  coordinate crosses the carrier — the same primitive stack as a determined meeting. It is direction-blind
+  (inverting a wall by dragging its far corner past the near one cannot mirror what rides it) and exact (an
+  axis crossing an axis-aligned line needs no division), which is why the drawings above are byte-stable
+  through `save → load → save`.
+- **A diagonal host has no world coordinate to offer, so it keeps a distance along the line — but anchored
+  to the line, not to the host.** The anchor is the point of the line *nearest the world origin*, so the
+  parameter is `world · dir`: a property of the carrier alone. Dragging a slanted wall's endpoint *along its
+  own line* — an edit that changes nothing one can see — no longer slides what rides it. The honest limit is
+  that **turning** the host still moves the rider, and no parameter along a curve can avoid that; a second,
+  smaller one is that reversing the line's direction mirrors the rider about that anchor. Both are recorded
+  rather than papered over, and both are unreachable on an axis-aligned host, which is where walls live.
+
+The file format needed **nothing**: a step restates the *position* its creation produced and the attach
+steps re-derive their parameter on replay, so old files come back with absolute anchoring simply by being
+loaded (OP-18's "replay reconstructs" earning its keep again).
+
 This supersedes an earlier attempt that had each handle search the graph upstream for a free DOF and
 invert numerically. That worked, but its candidate choice was itself order-dependent — papering over
 order-dependence with an order-dependent heuristic — and it assumed affine relationships, so it would
@@ -2656,6 +2701,36 @@ Three broad families (see OP-9 decision above):
   drag-subject and marker visibility in `PlacedGroupTest`/`GroupTest`, rename + granularity in the new
   `ParameterPanelTest`), plus the browser E2E extended for the two real-DOM rules (a name commits on Enter
   without its letters arming tools; ArrowUp in a value field reaches the canvas and undoes as one step).
+- **Session 4 — "why did resizing a wall move a leg on the other side of the room?"** Reported on a T-web:
+  dragging the rectangle's bottom wall down by 20 took the branch's horizontal leg down with it, from
+  y=17.25 to y=-2.75. Four things worth recording.
+  (1) **The position was stored relative to the host, and the host's anchor was invisible.** A junction held
+  a distance along the host's carrier line, whose `origin` a segment inherits from one of its endpoints — and
+  that endpoint belongs to the *neighbouring* wall. So every T attached to a wall slid when the wall was
+  resized, and *which* corner it slid with was an accident of how the wall had been drawn. The user's own
+  formulation is the rule: it must be transparent which corner a segment-attached point is anchored to.
+  (2) **The fix is a parameter chosen from what the host determines, not from how it was built.** A host that
+  is axis-aligned *by construction* fixes one of the rider's coordinates and leaves the other free, so the
+  free one — a plain world coordinate — is the parameter, and the meeting point is where the axis line at that
+  coordinate crosses the carrier. That is the same primitive stack a *determined* meeting already used, so
+  the two ends of a T-web's middle run are now anchored the same way, and neither stores anything a wall can
+  move. The degree of freedom is untouched: the T still slides along both walls, by drag and by typed number
+  (OP-13). Its panel row even improved, from "along line" to "y".
+  (3) **Fixing the class, not the gesture, meant auditing every route that parametrizes a position on a
+  curve** — junction, determined meeting, drag-to-attach of a free point, the point-on-line slider,
+  point-on-circle, a thick path's openings, the point-at-a-distance tool — and answering each on its own
+  terms. Three were relative and became absolute through one shared helper (`Document.riderOn`); the circle's
+  angle already was; the openings stay leg-relative *deliberately* (a plan dimensions an opening from a
+  corner); the determined meeting turned out already absolute and got a test so it stays that way. On the
+  old code, six of the seven new tests fail — which is the measure of how much of this was one defect.
+  (4) **The diagonal host was the honest part.** A slanted line has no world coordinate to offer, so it keeps
+  a distance *along* the line — but re-anchored to the point of the line nearest the world origin, a property
+  of the carrier alone, so stretching a slanted wall from either end no longer slides what rides it. What
+  remains is that *turning* the host moves the rider, which no parameter along a curve can avoid, and that
+  reversing the line's direction mirrors it; both are recorded under OP-20 rather than hidden. The file format
+  needed nothing at all — a step restates the position it produced, and replay re-derives the parameter, so
+  old files acquire absolute anchoring merely by being loaded. 527 headless tests green (7 new;
+  `JunctionAnchorTest`, which replaces the print-only repro the report came in as).
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

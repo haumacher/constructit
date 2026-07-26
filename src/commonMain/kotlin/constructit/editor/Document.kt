@@ -1708,11 +1708,158 @@ class Document {
         }
     }
 
+    // ---- riding a curve: one DOF along a host, absolute wherever the host offers one (OP-20) ----
+
+    /**
+     * A point that **rides** a curve: the point itself, the [handle] over its single degree of freedom, and
+     * how to [place] that freedom so a wanted world coordinate comes out exactly (see [Junction.place]).
+     */
+    private class Rider(
+        val point: PointRef,
+        val handle: Handle,
+        val place: (axis: Int, value: Double) -> Boolean,
+    )
+
+    /**
+     * Which coordinate a point riding [curve] is free to choose, when the host determines the other **by
+     * construction**: 0 = x on a horizontal leg, 1 = y on a vertical one. Null when nothing in the
+     * construction keeps the host axis-aligned.
+     *
+     * Only an ortho path's leg qualifies, and only while its path is not placed in a group: a placed path's
+     * legs are axis-aligned in the *group's* space (OP-16) rather than the world's, and a segment a user
+     * happened to draw horizontally is aligned by coincidence, which the next drag undoes. That distinction
+     * is exactly what decides whether a rider's position can be stored as a world coordinate — see [riderOn].
+     */
+    private fun sliderAxisOf(curve: Element): Int? {
+        val (path, i) = legOf(curve) ?: return null
+        return if (path.frame != null) null else path.legAxis(i)
+    }
+
+    /**
+     * The point of [line] at signed distance [t] from the point of the line **nearest the world origin**.
+     *
+     * That anchor is a property of the line alone, which is the whole point (OP-20): `pointOnLineAt` measures
+     * from the line's `origin`, and a segment's carrier line takes its origin from one of the segment's
+     * endpoints, so a position measured that way moves when that endpoint is dragged *along the line* —
+     * an edit that changes nothing visible about the host.
+     */
+    private fun alongLine(
+        line: LineRef,
+        t: ScalarRef,
+    ): PointRef {
+        val zero = Ref<ScalarValue>(scalarSource(0.0))
+        return cx.pointAlongLine(line, cx.pointXY(zero, zero), t, 1)
+    }
+
+    /** The line of every point whose [axis] coordinate equals [value] — vertical for axis 0. */
+    private fun axisLineAt(
+        value: ScalarRef,
+        axis: Int,
+    ): LineRef {
+        val zero = Ref<ScalarValue>(scalarSource(0.0))
+        val one = Ref<ScalarValue>(scalarSource(1.0))
+        return if (axis == 0) {
+            cx.lineThrough(cx.pointXY(value, zero), cx.pointXY(value, one))
+        } else {
+            cx.lineThrough(cx.pointXY(zero, value), cx.pointXY(one, value))
+        }
+    }
+
+    /**
+     * Put a rider on [curve] at [at], with [prefix] naming its parameter node.
+     *
+     * **Where the host makes an absolute quantity available, that quantity is the parameter.** A host that is
+     * axis-aligned by construction determines one of the rider's coordinates and leaves the other free, so
+     * the free one — a plain world coordinate — is what the rider stores, and where it crosses the host is
+     * an intersection like any other.
+     *
+     * The alternative, a distance *along* the line, is measured from the line's origin, which is one of the
+     * host's own corners. That made every position along a host **relative to the host's extent**: dragging a
+     * wall's far corner, or a neighbouring wall that owns it, slid every attachment along with it — reported
+     * as a T-branch following a wall it was nowhere near. Which corner a segment-attached point happens to be
+     * anchored to is invisible to the user, so nothing they can see may depend on it (OP-20, as built).
+     *
+     * A host that is *not* axis-aligned by construction keeps a distance **along** the line — a slanted line
+     * has no single world coordinate to offer, and one that is only incidentally axis-aligned can be turned,
+     * which would send the crossing of a fixed axis line off toward infinity. That distance is measured from
+     * an anchor belonging to the line itself ([alongLine]), so it does not re-anchor either; what it cannot
+     * survive is the host being *turned*, which no parameter along a curve can. DESIGN.md records that limit.
+     */
+    private fun riderOn(
+        curve: Element,
+        at: Vec2,
+        prefix: String,
+    ): Rider? {
+        val ev = Evaluator()
+        if (curve.isLinear) {
+            val lr = carrierLine(curve)
+            val axis = sliderAxisOf(curve)
+            if (axis != null) {
+                val cNode = SourceNode(nextId(prefix + "c"), ScalarValue(Quantity.mm(if (axis == 0) at.x else at.y)))
+                val point = cx.select(cx.intersectLL(axisLineAt(Ref<ScalarValue>(cNode), axis), lr), 1)
+                if (ev.eval(point.node) is EvalResult.Ok) {
+                    return Rider(point, OnAxisHandle(cNode, axis)) { a, value ->
+                        // the host fixes the other coordinate, so this one is all there is to place — exactly
+                        if (a != axis) {
+                            false
+                        } else {
+                            cNode.value = ScalarValue(Quantity.mm(value))
+                            true
+                        }
+                    }
+                }
+            }
+            val l = (ev.eval(lr.node) as? EvalResult.Ok)?.value as? LineValue ?: return null
+            val tNode = SourceNode(nextId(prefix + "t"), ScalarValue(Quantity.mm(at.dot(l.line.dir))))
+            return Rider(alongLine(lr, Ref<ScalarValue>(tNode)), OnLineHandle(lr, tNode)) { a, value ->
+                // a line is affine in its parameter: t = (value - anchor) / dir, exactly
+                val line = ((Evaluator().eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line
+                val d = if (a == 0) line?.dir?.x else line?.dir?.y
+                val anchor = line?.let { it.origin - it.dir * it.origin.dot(it.dir) }
+                val o = if (a == 0) anchor?.x else anchor?.y
+                if (line == null || d == null || o == null || abs(d) < Vec2.EPS) {
+                    false
+                } else {
+                    tNode.value = ScalarValue(Quantity.mm((value - o) / d))
+                    true
+                }
+            }
+        }
+        if (curve.kind == ElementKind.CIRCLE) {
+            val cr = curve.ref as CircleRef
+            val c = (ev.eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue ?: return null
+            // an angle about the centre is already absolute: it re-anchors on nothing an edit to the
+            // circle's extent can move, since a circle has no ends to stretch
+            val aNode = SourceNode(nextId(prefix + "a"), ScalarValue(Quantity.rad((at - c.circle.center).angle())))
+            return Rider(cx.pointOnCircle(cr, Ref<ScalarValue>(aNode)), OnCircleHandle(cr, aNode)) { axis, value ->
+                // a circle has two angles per coordinate; keep the one nearer where it already sits
+                val circle = ((Evaluator().eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue)?.circle
+                val centre = if (axis == 0) circle?.center?.x else circle?.center?.y
+                val ratio = if (circle == null || centre == null) 2.0 else (value - centre) / circle.radius
+                if (circle == null || abs(ratio) > 1.0) {
+                    false
+                } else {
+                    val base = if (axis == 0) acos(ratio) else asin(ratio)
+                    val current = (aNode.value as ScalarValue).q.base
+                    val options = if (axis == 0) listOf(base, -base) else listOf(base, PI - base)
+                    val pick = options.minByOrNull { abs(atan2(sin(it - current), cos(it - current))) } ?: base
+                    aNode.value = ScalarValue(Quantity.rad(pick))
+                    true
+                }
+            }
+        }
+        return null
+    }
+
     /**
      * Attach free point [pt] onto [curve]: it becomes a 1-DOF on-curve point (draggable along the
      * curve). The point's node is welded ([SourceNode.boundTo]) onto a fresh point-on-curve node
      * driven by a hidden parameter, so everything already referencing the point now slides with it.
      * Reversible via [unweld]. Same validity rules as [attachTargetPos].
+     *
+     * The parameter is a world coordinate on a host that is axis-aligned by construction, and a distance
+     * along the line otherwise — see [riderOn]; a free point attached to a wall must not slide when that
+     * wall is stretched any more than a run's end does.
      */
     fun attachToCurve(
         pt: Element,
@@ -1725,25 +1872,10 @@ class Document {
     ): Boolean {
         val node = pt.ref.node as? SourceNode ?: return false
         if (attachTargetPos(pt, curve) == null) return false
-        val ev = Evaluator()
-        val p = (ev.eval(node) as EvalResult.Ok).let { (it.value as PointValue).p }
-        when {
-            curve.isLinear -> {
-                val lr = carrierLine(curve)
-                val l = (ev.eval(lr.node) as EvalResult.Ok).value as LineValue
-                val t0 = (p - l.line.origin).dot(l.line.dir)
-                val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(t0)))
-                node.boundTo = cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode)).node
-                pt.handle = OnLineHandle(lr, tNode)
-            }
-            else -> { // circle
-                val cr = curve.ref as CircleRef
-                val c = (ev.eval(cr.node) as EvalResult.Ok).value as CircleValue
-                val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
-                node.boundTo = cx.pointOnCircle(cr, Ref<ScalarValue>(aNode)).node
-                pt.handle = OnCircleHandle(cr, aNode)
-            }
-        }
+        val p = (Evaluator().eval(node) as EvalResult.Ok).let { (it.value as PointValue).p }
+        val rider = riderOn(curve, p, "") ?: return false
+        node.boundTo = rider.point.node
+        pt.handle = rider.handle
         pt.kind = ElementKind.ON_CURVE
         pt.style = Styles.ON_CURVE
         return true
@@ -1823,15 +1955,10 @@ class Document {
         if (pathFrameOf(corner) != null) return false
         val given = if (freeAxis == 0) corner.yNode else corner.xNode
         if (dependsOn(given, free, HashSet())) return false
-        val givenRef = Ref<ScalarValue>(given)
-        val zero = Ref<ScalarValue>(scalarSource(0.0))
-        val one = Ref<ScalarValue>(scalarSource(1.0))
-        val axisLine =
-            if (freeAxis == 0) {
-                cx.lineThrough(cx.pointXY(zero, givenRef), cx.pointXY(one, givenRef))
-            } else {
-                cx.lineThrough(cx.pointXY(givenRef, zero), cx.pointXY(givenRef, one))
-            }
+        // the line along which the free coordinate still varies: the axis line at the *given* one, so the
+        // meeting point is where it crosses the curve — a position that depends on the host's carrier line
+        // and on nothing about where the host happens to start or end (see [riderOn])
+        val axisLine = axisLineAt(Ref<ScalarValue>(given), 1 - freeAxis)
         val meet =
             when {
                 // two lines that are not parallel cross exactly once, so there is no branch to choose
@@ -1923,62 +2050,27 @@ class Document {
             else -> null
         }
 
-    /** A junction sliding along [curve], placed where [near] currently is. Null if it would cycle. */
+    /**
+     * A junction riding [curve], placed where [near] currently is. Null if it would cycle.
+     *
+     * Its one degree of freedom is whatever [riderOn] found the honest parameter to be — a world coordinate
+     * on a host that is axis-aligned by construction, a distance along the line otherwise — and its
+     * [Junction.place] solves for that parameter in closed form, which is what keeps a driven coordinate
+     * typeable as well as draggable (OP-13, OP-20).
+     */
     private fun junctionOnCurve(
         curve: Element,
         near: Node,
     ): Junction? {
         val ev = Evaluator()
         val p = (ev.eval(near) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p } ?: return null
-        if (curve.isLinear) {
-            val lr = carrierLine(curve)
-            if (dependsOn(lr.node, near, HashSet())) return null
-            val l = (ev.eval(lr.node) as? EvalResult.Ok)?.value as? LineValue ?: return null
-            val tNode = SourceNode(nextId("jt"), ScalarValue(Quantity.mm((p - l.line.origin).dot(l.line.dir))))
-            val point = cx.pointOnLineAt(lr, Ref<ScalarValue>(tNode))
-            val junction = Junction(point, OnLineHandle(lr, tNode), curve)
-            junction.place = { axis, value ->
-                // a line is affine in its parameter: t = (value - origin) / dir, exactly
-                val line = ((Evaluator().eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line
-                val d = if (axis == 0) line?.dir?.x else line?.dir?.y
-                val o = if (axis == 0) line?.origin?.x else line?.origin?.y
-                if (line == null || d == null || o == null || abs(d) < Vec2.EPS) {
-                    false
-                } else {
-                    tNode.value = ScalarValue(Quantity.mm((value - o) / d))
-                    true
-                }
-            }
-            junctions.add(junction)
-            return junction
-        }
-        if (curve.kind == ElementKind.CIRCLE) {
-            val cr = curve.ref as CircleRef
-            if (dependsOn(cr.node, near, HashSet())) return null
-            val c = (ev.eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue ?: return null
-            val aNode = SourceNode(nextId("ja"), ScalarValue(Quantity.rad((p - c.circle.center).angle())))
-            val point = cx.pointOnCircle(cr, Ref<ScalarValue>(aNode))
-            val junction = Junction(point, OnCircleHandle(cr, aNode), curve)
-            junction.place = { axis, value ->
-                // a circle has two angles per coordinate; keep the one nearer where it already sits
-                val circle = ((Evaluator().eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue)?.circle
-                val centre = if (axis == 0) circle?.center?.x else circle?.center?.y
-                val ratio = if (circle == null || centre == null) 2.0 else (value - centre) / circle.radius
-                if (circle == null || abs(ratio) > 1.0) {
-                    false
-                } else {
-                    val base = if (axis == 0) acos(ratio) else asin(ratio)
-                    val current = (aNode.value as ScalarValue).q.base
-                    val options = if (axis == 0) listOf(base, -base) else listOf(base, PI - base)
-                    val pick = options.minByOrNull { abs(atan2(sin(it - current), cos(it - current))) } ?: base
-                    aNode.value = ScalarValue(Quantity.rad(pick))
-                    true
-                }
-            }
-            junctions.add(junction)
-            return junction
-        }
-        return null
+        val driver = carrierNodeOf(curve) ?: return null
+        if (dependsOn(driver, near, HashSet())) return null
+        val rider = riderOn(curve, p, "j") ?: return null
+        val junction = Junction(rider.point, rider.handle, curve)
+        junction.place = rider.place
+        junctions.add(junction)
+        return junction
     }
 
     /**
@@ -2072,16 +2164,24 @@ class Document {
         return ref
     }
 
-    /** Point that slides along a line; created at the projection of [at], draggable along the line. */
+    /**
+     * Point that slides along a line; created at the projection of [at], draggable along the line.
+     *
+     * Its stored parameter follows the same rule as every other position along a host ([riderOn]): the world
+     * coordinate the host leaves free where the host is axis-aligned by construction, so stretching that host
+     * does not drag the point; a distance along the line where there is no such coordinate.
+     */
     fun pointOnLine(
         line: Element,
         at: Vec2,
     ): PointRef {
+        val rider = riderOn(line, at, "")
+        if (rider != null) return addConstrained(rider.point, rider.handle)
+        // the line cannot be evaluated (invalid upstream, OP-3): the point still exists and still slides, it
+        // simply has nowhere to be until its line does
         val lineRef = carrierLine(line)
-        val l = (Evaluator().eval(lineRef.node) as? EvalResult.Ok)?.value as? LineValue
-        val t0 = if (l != null) (at - l.line.origin).dot(l.line.dir) else 0.0
-        val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(t0)))
-        return addConstrained(cx.pointOnLineAt(lineRef, Ref<ScalarValue>(tNode)), OnLineHandle(lineRef, tNode))
+        val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(0.0)))
+        return addConstrained(alongLine(lineRef, Ref<ScalarValue>(tNode)), OnLineHandle(lineRef, tNode))
     }
 
     /** Fully-determined point on a line at [distance] from [from]; direction from the click side of [at]. */
@@ -2106,15 +2206,19 @@ class Document {
         return addDerived(cx.pointAlongLine(lineRef, from, distance, sign))
     }
 
-    /** Point that slides along a circle; created at the click angle, draggable around the circle. */
+    /**
+     * Point that slides along a circle; created at the click angle, draggable around the circle. The angle is
+     * measured about the centre and so is already absolute — a circle has no ends whose move could re-anchor
+     * it (OP-20).
+     */
     fun pointOnCircle(
         circle: Element,
         at: Vec2,
     ): PointRef {
+        val rider = riderOn(circle, at, "")
+        if (rider != null) return addConstrained(rider.point, rider.handle)
         val circleRef = circle.ref as CircleRef
-        val c = (Evaluator().eval(circleRef.node) as? EvalResult.Ok)?.value as? CircleValue
-        val a0 = if (c != null) (at - c.circle.center).angle() else 0.0
-        val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad(a0)))
+        val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad(0.0)))
         return addConstrained(cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode)), OnCircleHandle(circleRef, aNode))
     }
 
