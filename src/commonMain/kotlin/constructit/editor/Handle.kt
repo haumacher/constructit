@@ -5,6 +5,8 @@ import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
 import constructit.core.LineValue
+import constructit.core.Node
+import constructit.core.ParameterNode
 import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.core.SourceNode
@@ -46,12 +48,30 @@ interface Handle {
      * Note this is *not* the union of [fields]' nodes — a field may re-parameterize a different node
      * than the drag writes. A leg's drag moves it perpendicular (one shared node) while its length
      * fields write the nodes along it, so a leg can be immovable and still have editable lengths.
+     *
+     * Typed as [Node] rather than [SourceNode] because a **named parameter** (OP-7) is as much a
+     * grabbable DOF as an anonymous coordinate is: an opening's position is a panel row *and* what
+     * dragging its jamb writes (OP-21), and the two kinds of mutable literal must answer alike.
      */
-    val dragNodes: List<SourceNode>
+    val dragNodes: List<Node>
 
     /** False when every node [drag] would write is driven, making the drag inert. */
-    val dragMovable: Boolean get() = dragNodes.any { it.boundTo == null }
+    val dragMovable: Boolean get() = dragNodes.any { isFreeSource(it) }
 }
+
+/**
+ * Whether [n] still owns its own value: a **mutable literal** with nothing bound over it.
+ *
+ * The one question a handle's writability asks, over both kinds of source the engine has — an anonymous
+ * [SourceNode] and a named [ParameterNode] (OP-7). Anything else is derived by construction, and a field
+ * over it reads but cannot write.
+ */
+fun isFreeSource(n: Node?): Boolean =
+    when (n) {
+        is SourceNode -> n.boundTo == null
+        is ParameterNode -> n.boundTo == null
+        else -> false
+    }
 
 /**
  * One numeric view of a [Handle]'s write, over a single free [node].
@@ -68,7 +88,7 @@ class HandleField(
      * a dimension's measured value (OP-4). Such a field has no node to write, which is exactly why it
      * reports [writable] as false.
      */
-    val node: SourceNode?,
+    val node: Node?,
     val dim: Dimension,
     private val getter: (Evaluator) -> Quantity?,
     private val setter: (Quantity) -> Unit,
@@ -77,7 +97,7 @@ class HandleField(
      * its neighbour's to hold the leg axis-aligned, and writing it means writing the master they both
      * resolve to. Only a chain ending in derived geometry is truly unwritable.
      */
-    private val writableWhen: () -> Boolean = { node != null && node.boundTo == null },
+    private val writableWhen: () -> Boolean = { isFreeSource(node) },
 ) {
     /**
      * False when the value is derived by construction — welded or attached — so it reads but cannot be
@@ -125,7 +145,7 @@ fun dimensionOf(ref: ScalarRef): Dimension =
 fun explainImmovable(el: Element): String {
     val handle = el.handle
     val fields = handle?.fields().orEmpty()
-    val dragged = handle?.dragNodes.orEmpty().toSet()
+    val dragged: Set<Node> = handle?.dragNodes.orEmpty().toSet()
     // Normally the reason is a field the drag would have written. When the drag can write *nothing* —
     // its whole binding chain ends in derived geometry, so there is no master to name — every
     // unwritable field is the reason instead.
@@ -665,6 +685,78 @@ class RelativePointHandle(private val anchor: PointRef, private val distance: So
     }
 
     override fun fields(): List<HandleField> = listOf(coordField("distance", distance), angleField("angle", angle))
+}
+
+/**
+ * A field over a **named parameter** (OP-7) that is also a handle's DOF — an opening's position, width,
+ * sill or head (OP-21).
+ *
+ * The same row the parameters panel already shows, reached from the selection instead: a value must not be
+ * typeable in one place and not in the other (OP-13). [set] is passed in rather than writing the literal
+ * here, because the write may be *clamped* by the geometry the parameter lives in, and a typed value has
+ * to be clamped exactly as the drag is — they are one operation.
+ */
+fun parameterField(
+    label: String,
+    ref: ScalarRef,
+    set: (Quantity) -> Unit,
+) = HandleField(
+    label,
+    ref.node,
+    Dimension.LENGTH,
+    { ev -> ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q },
+    set,
+)
+
+/**
+ * A **jamb** of an opening (OP-21): the reveal line the plan convention draws at one edge of a
+ * [PathInterval], and the grabbable form of that interval's two degrees of freedom.
+ *
+ * - the **leading** jamb ([atEnd] false) slides the whole opening: it writes `pos`, and because the width
+ *   is measured *from* the position, the opening keeps its size and travels along the leg.
+ * - the **trailing** jamb ([atEnd] true) writes `width` from where the cursor falls, so the leading edge
+ *   stays put. That is OP-13's "which end moves?" answered by construction: two jambs, two drags, two
+ *   different nodes — no anchor picker, and no gesture called *drag the width*.
+ *
+ * Both are 1-DOF **along the leg**: the cursor is projected onto the carrier leg, which is also why this
+ * needs no inverse frame map. A distance along a leg is exactly what a rigid placement (OP-16) leaves
+ * unchanged, so a jamb of a wall inside a placed group drags with no case of its own.
+ *
+ * The clamps live in the document ([Document.setIntervalPosition] / [Document.setIntervalWidth]) so the
+ * drag and the typed fields below are clamped by the same rule, and both say so through the same note.
+ */
+class JambHandle(
+    private val doc: Document,
+    private val path: ThickPath,
+    private val interval: PathInterval,
+    val atEnd: Boolean,
+) : Handle {
+    override val dragNodes: List<Node> get() = listOf((if (atEnd) interval.width else interval.position).node)
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        val along = doc.positionAlongLeg(path, interval.legIndex, world, ev) ?: return
+        if (atEnd) doc.setIntervalEnd(path, interval, along) else doc.setIntervalPosition(path, interval, along)
+    }
+
+    /**
+     * The interval's four values, in one **stable** order whichever jamb was grabbed: the inspector is a
+     * view of the opening, and rows that reshuffled as the user moved from one jamb to the other would be
+     * a worse answer than saying which node the *drag* writes ([dragNodes]) — which is where that
+     * distinction belongs.
+     *
+     * Sill and head are ordinary writable rows here too. They are free parameters (OP-7), and a row that
+     * read a value but refused to write it would be a claim about the model that is not true.
+     */
+    override fun fields(): List<HandleField> =
+        listOf(
+            parameterField("position", interval.position) { doc.setIntervalPosition(path, interval, it.mm) },
+            parameterField("width", interval.width) { doc.setIntervalWidth(path, interval, it.mm) },
+            parameterField("sill", interval.sill) { doc.setIntervalHeight(interval.sill, it.mm) },
+            parameterField("head", interval.head) { doc.setIntervalHeight(interval.head, it.mm) },
+        )
 }
 
 /** Point on a circle: the handle's one DOF is the angle around the centre. */

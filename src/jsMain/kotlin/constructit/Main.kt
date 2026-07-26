@@ -786,8 +786,10 @@ private fun renderPanel(
     val insp = document.getElementById("inspector") as HTMLElement
     val fields = editor.selectionFields()
     insp.innerHTML =
-        if (editor.selection == null) {
-            "<div class=\"hint\">Click a corner or a leg to read and set its values.</div>"
+        // an opening's jamb (OP-21) is a selection that owns no element, so it is asked about separately —
+        // its fields are the interval's own parameters
+        if (editor.selection == null && editor.selectedJamb == null) {
+            "<div class=\"hint\">Click a corner, a leg or an opening's jamb to read and set its values.</div>"
         } else if (editor.selectionCount > 1 && fields.isEmpty()) {
             // a *placed* group is the exception: several elements are selected, but they have one handle
             // between them — the frame (OP-16 step 2) — so its fields are shown rather than nothing

@@ -16,6 +16,7 @@ import constructit.dsl.valueOf
 import constructit.geom.Arc
 import constructit.geom.GeomMath
 import constructit.geom.ProfileElement
+import constructit.geom.Segment
 import constructit.geom.Vec2
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -58,6 +59,42 @@ object HitTest {
         world: Vec2,
         tol: Double,
     ): Element? = nearest(doc, ev, world, tol) { it.annotation != null && it.hasFreeDof }
+
+    /**
+     * The **jamb** of a thick path's opening nearest [world], within [tol] (OP-21) — the pick that makes an
+     * opening editable where it is visible.
+     *
+     * A jamb is a line the plan convention *draws*, not an element, so it cannot take part in [nearestAll]'s
+     * element search; it is measured by the very same rule ([distanceToSegment]) so that what looks near a
+     * jamb is near it, and the caller resolves the winner into a handle ([Jamb.handle]) owned by the thick
+     * path. This mirrors how a leg is addressed through its ortho path: nothing is stored, so nothing can go
+     * stale when the carrier moves or a value re-sorts the drawing.
+     *
+     * Deliberately **not** ranked against the carrier leg here. A jamb crosses its own leg, so which of the
+     * two the pointer means is a question of distance and the caller decides it (see `Editor.pointerDown`).
+     */
+    fun nearestJamb(
+        doc: Document,
+        ev: Evaluator,
+        world: Vec2,
+        tol: Double,
+    ): Jamb? {
+        var best: Jamb? = null
+        var bestD = tol
+        for (tp in doc.thickPaths) {
+            val el = tp.footprint
+            if (!el.visible || el.space != doc.activeSpace.name) continue
+            for (j in doc.jambsOf(tp, ev)) {
+                val d = distToSegment(world, j.seg.a, j.seg.b)
+                // ties go to the later interval, which is the one drawn on top — [nearestAll]'s rule
+                if (d <= bestD) {
+                    bestD = d
+                    best = j
+                }
+            }
+        }
+        return best
+    }
 
     /** Nearest element a pointer can address at all, movable or not — for selecting and explaining. */
     fun nearestSelectable(
@@ -339,6 +376,16 @@ object HitTest {
             is ProfileElement.CircleE -> circleMeets(e.circle.center, e.circle.radius, lo, hi)
             is ProfileElement.BezierE -> polyMeets(GeomMath.tessellateBezier(e.bezier), lo, hi)
         }
+
+    /**
+     * Distance to a bare segment — the same clamped rule everything else here uses, exposed because a
+     * *drawing* can be pickable without being an element: a thick path's jamb (OP-21) is measured with it,
+     * and so is compared against the elements around it on equal terms.
+     */
+    fun distanceToSegment(
+        world: Vec2,
+        seg: Segment,
+    ): Double = distToSegment(world, seg.a, seg.b)
 
     /**
      * Distance to one boundary piece — the same rule an outline is picked by, exposed because naming a

@@ -77,7 +77,9 @@ first-class goal and the current implementation focus.
   with **openings** (doors/windows) as parametric intervals carrying position, width, sill and head.
   In plan the wall stays whole and the gap is drawn as the convention it is — faces broken, jambs
   shown — while *Cut openings* turns the same description into the 3D cut: one subtracted box per
-  opening, sill to head, following the parameters live.
+  opening, sill to head, following the parameters live. Those drawn jambs are **grabbable**: dragging
+  the near one slides the whole opening along its wall, the far one sets its width, and both clamp to
+  the wall's extent — the same two numbers the panel shows, since dragging and typing are one thing.
 - **Browser canvas** — an interactive HTML5-canvas editor; the engine is pure Kotlin shared between
   the JVM and the browser.
 

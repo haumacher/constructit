@@ -95,6 +95,7 @@ object SceneRenderer {
         marquee: Pair<Vec2, Vec2>? = null,
         frames: List<FrameValue> = emptyList(),
         picked: Set<Element> = emptySet(),
+        emphasis: List<Segment> = emptyList(),
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
@@ -159,6 +160,11 @@ object SceneRenderer {
         // the inspector's numeric fields refer to. Every kind is highlighted, since a marquee (OP-16)
         // takes whatever it covers and a selection that shows only its points would be unreadable.
         for (el in selected) emphasize(doc, el, ev, cam, target, view, selectionStyle, selectionRing, tip)
+        // A selection that owns no element at all: an opening's jamb (OP-21) is part of the plan *drawing*,
+        // so what the emphasis restates is that drawing — the two reveal lines and the gap between them.
+        // Same vocabulary as every other selection (the piece drawn again on top of itself), which is what
+        // makes "this opening is what the fields refer to" legible without a marker of its own.
+        for (s in emphasis) target.polyline(listOf(cam.worldToScreen(s.a), cam.worldToScreen(s.b)), selectionStyle)
         // a selected placed group's frame (OP-16 step 2): its origin and axes, drawn in the group's own
         // orientation — modest, because it is not geometry, but visible, because it is what a drag writes
         for (f in frames) {

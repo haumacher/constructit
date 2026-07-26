@@ -466,6 +466,25 @@ class ThickPath(
 }
 
 /**
+ * One **jamb** (reveal) line of an interval, exactly as the plan convention draws it (OP-21): which
+ * [interval] it belongs to, which of that interval's two edges ([atEnd]), and where the line runs *now*.
+ *
+ * Derived per pass along with the rest of the plan ([Document.jambsOf]) and owned by nobody: there is no
+ * element for a jamb and no node under it — the footprint stays one whole region. Picking therefore
+ * *resolves* a jamb into a [JambHandle] over the thick path's existing parameters, the same way an ortho
+ * leg is addressed through its path, and nothing is stored that could go stale.
+ */
+class Jamb(
+    val path: ThickPath,
+    val interval: PathInterval,
+    val atEnd: Boolean,
+    val seg: Segment,
+) {
+    /** This jamb's grabbable DOF (OP-13). Cheap and stateless, so it is made where it is needed. */
+    fun handle(doc: Document): JambHandle = JambHandle(doc, path, interval, atEnd)
+}
+
+/**
  * A retained construction document: owns the [Construction] DAG plus display metadata, and
  * exposes enumeration (rendering/hit-testing/panels) and mutation (tools). Every op is wrapped
  * as an element- or scalar-adder so the whole 2D algebra is reachable from the UI.
@@ -4384,9 +4403,9 @@ class Document {
             val corners = f.faces[side]
             for (i in 0 until f.legCount) {
                 var cursor = corners[i]
-                for ((pos, width) in perLeg[i]) {
-                    emit(cursor, GeomMath.facePoint(f, i, pos, side))
-                    cursor = GeomMath.facePoint(f, i, pos + width, side) // solid piece, then the gap
+                for (a in perLeg[i]) {
+                    emit(cursor, GeomMath.facePoint(f, i, a.position, side))
+                    cursor = GeomMath.facePoint(f, i, a.position + a.width, side) // solid piece, then the gap
                 }
                 emit(cursor, corners[(i + 1) % corners.size])
             }
@@ -4395,26 +4414,208 @@ class Document {
             emit(f.faces[0].first(), f.faces[1].first())
             emit(f.faces[0].last(), f.faces[1].last())
         }
+        for (j in jambsOn(tp, f, perLeg)) emit(j.seg.a, j.seg.b)
+        return out
+    }
+
+    /** One interval of a leg as the drawing sees it: the feature, plus its position and width right now. */
+    private class IntervalAt(val interval: PathInterval, val position: Double, val width: Double)
+
+    /** [tp]'s intervals on leg [i], **ordered by their current position** (see [planOf]). */
+    private fun intervalsOnLeg(
+        tp: ThickPath,
+        i: Int,
+        ev: Evaluator,
+    ): List<IntervalAt> =
+        tp.intervals
+            .filter { it.legIndex == i }
+            .map { IntervalAt(it, scalarMm(it.position, ev), scalarMm(it.width, ev)) }
+            .sortedBy { it.position }
+
+    /**
+     * The jamb lines of [tp] as the plan draws them, each tagged with the interval it belongs to — the
+     * pickable form of the same geometry [planOf] emits, so what looks like a jamb *is* the one that gets
+     * grabbed (OP-21).
+     */
+    fun jambsOf(
+        tp: ThickPath,
+        ev: Evaluator,
+    ): List<Jamb> {
+        val f = facesOf(tp, ev) ?: return emptyList()
+        return jambsOn(tp, f, (0 until f.legCount).map { intervalsOnLeg(tp, it, ev) })
+    }
+
+    private fun jambsOn(
+        tp: ThickPath,
+        f: ThickFaces,
+        perLeg: List<List<IntervalAt>>,
+    ): List<Jamb> {
+        val out = ArrayList<Jamb>()
         for (i in 0 until f.legCount) {
-            for ((pos, width) in perLeg[i]) {
-                for (d in listOf(pos, pos + width)) {
-                    emit(GeomMath.facePoint(f, i, d, 0), GeomMath.facePoint(f, i, d, 1))
+            for (a in perLeg[i]) {
+                for (atEnd in listOf(false, true)) {
+                    val d = if (atEnd) a.position + a.width else a.position
+                    out.add(Jamb(tp, a.interval, atEnd, Segment(GeomMath.facePoint(f, i, d, 0), GeomMath.facePoint(f, i, d, 1))))
                 }
             }
         }
         return out
     }
 
-    /** [tp]'s intervals on leg [i] as (position, width), **ordered by their current position**. */
-    private fun intervalsOnLeg(
+    /**
+     * The drawing of **one** opening: its two jambs, plus the gap span on either face. What selecting a
+     * jamb emphasizes, and derived from the same arithmetic as the plan it is drawn over.
+     */
+    fun intervalOutline(
+        tp: ThickPath,
+        iv: PathInterval,
+        ev: Evaluator,
+    ): List<Segment> {
+        val f = facesOf(tp, ev) ?: return emptyList()
+        val i = iv.legIndex
+        if (i !in 0 until f.legCount) return emptyList()
+        val a = scalarMm(iv.position, ev)
+        val b = a + scalarMm(iv.width, ev)
+        return listOf(
+            Segment(GeomMath.facePoint(f, i, a, 0), GeomMath.facePoint(f, i, a, 1)),
+            Segment(GeomMath.facePoint(f, i, b, 0), GeomMath.facePoint(f, i, b, 1)),
+            Segment(GeomMath.facePoint(f, i, a, 0), GeomMath.facePoint(f, i, b, 0)),
+            Segment(GeomMath.facePoint(f, i, a, 1), GeomMath.facePoint(f, i, b, 1)),
+        )
+    }
+
+    /**
+     * How far along leg [i] of [tp] the world position [at] falls, in mm from that leg's start — the one
+     * projection a jamb drag needs (OP-21).
+     *
+     * Unclamped on purpose: where the cursor *is* and what the model may hold are two questions, and the
+     * clamping belongs to the write ([setIntervalPosition], [setIntervalWidth]) so that a typed value is
+     * bounded by exactly the same rule.
+     */
+    fun positionAlongLeg(
         tp: ThickPath,
         i: Int,
-        ev: Evaluator,
-    ): List<Pair<Double, Double>> =
-        tp.intervals
-            .filter { it.legIndex == i }
-            .map { scalarMm(it.position, ev) to scalarMm(it.width, ev) }
-            .sortedBy { it.first }
+        at: Vec2,
+        ev: Evaluator = Evaluator(),
+    ): Double? {
+        val f = facesOf(tp, ev) ?: return null
+        if (i !in 0 until f.legCount) return null
+        return (at - f.legs[i].origin).dot(f.legs[i].dir)
+    }
+
+    /** The current length of leg [i] of [tp] — the extent every interval on it is bounded by. */
+    fun legLengthOf(
+        tp: ThickPath,
+        i: Int,
+        ev: Evaluator = Evaluator(),
+    ): Double? {
+        val f = facesOf(tp, ev) ?: return null
+        return f.legLengths.getOrNull(i)
+    }
+
+    /**
+     * Slide [iv] to [mm] along its leg — what dragging its **leading** jamb writes, and what typing its
+     * position writes (OP-13: one operation, hence one rule, here).
+     *
+     * The width is measured *from* the position (leg-relative, OP-21), so the whole opening moves and keeps
+     * its size. **Clamped** to the leg's extent: an opening hanging past the corner is not a plan anyone
+     * means, and the two ways it can be asked for — a cursor beyond the wall's end, a number typed too
+     * large — deserve the same answer. The clamp is said out loud through [note], because geometry that
+     * silently stops following the pointer reads as a bug.
+     */
+    fun setIntervalPosition(
+        tp: ThickPath,
+        iv: PathInterval,
+        mm: Double,
+    ): Boolean {
+        val node = iv.position.node as? ParameterNode ?: return false
+        if (node.boundTo != null) {
+            note = "This opening's position is wired to another parameter — set that one instead"
+            return false
+        }
+        val len = legLengthOf(tp, iv.legIndex) ?: return false
+        val w = evalMm(iv.width)
+        val max = maxOf(0.0, len - w)
+        val want = mm.coerceIn(0.0, max)
+        node.literal = ScalarValue(want.mm)
+        note =
+            if (kotlin.math.abs(want - mm) <= Vec2.EPS) {
+                null
+            } else {
+                "Opening kept on its leg: position ${Format.num(want)} mm (0…${Format.num(max)} for a " +
+                    "${Format.num(w)} mm opening on a ${Format.num(len)} mm leg)"
+            }
+        return true
+    }
+
+    /**
+     * Put [iv]'s **trailing** edge at [mm] along its leg — what dragging its end jamb writes. The leading
+     * edge stays where it is, so this *is* a write of the width, and it goes through the same clamp.
+     */
+    fun setIntervalEnd(
+        tp: ThickPath,
+        iv: PathInterval,
+        mm: Double,
+    ): Boolean = setIntervalWidth(tp, iv, mm - evalMm(iv.position))
+
+    /**
+     * Set [iv]'s width to [mm], clamped to `(0, legLength − pos]`.
+     *
+     * A width of zero or less would put the trailing jamb on or past the leading one — a crossed-over
+     * opening, which is not a narrower opening but a broken drawing — so it is **refused**, clamped to
+     * [MIN_INTERVAL_WIDTH] with the reason in [note]. Clamping rather than ignoring the write is what keeps
+     * the gesture reversible: dragging the end jamb back out grows the opening again from where it stopped.
+     *
+     * The width may be a parameter **shared** with other openings (that is how two of them are made the
+     * same size by construction rather than by a constraint), and then this resizes all of them. Invisible
+     * if the others are off screen, so it is named.
+     */
+    fun setIntervalWidth(
+        tp: ThickPath,
+        iv: PathInterval,
+        mm: Double,
+    ): Boolean {
+        val node = iv.width.node as? ParameterNode ?: return false
+        if (node.boundTo != null) {
+            note = "This opening's width is wired to another parameter — set that one instead"
+            return false
+        }
+        val len = legLengthOf(tp, iv.legIndex) ?: return false
+        val pos = evalMm(iv.position)
+        val max = maxOf(MIN_INTERVAL_WIDTH, len - pos)
+        val want = mm.coerceIn(MIN_INTERVAL_WIDTH, max)
+        node.literal = ScalarValue(want.mm)
+        val shared = thickPaths.sumOf { p -> p.intervals.count { it !== iv && it.width.node === node } }
+        note =
+            when {
+                kotlin.math.abs(want - mm) > Vec2.EPS && mm <= 0.0 ->
+                    "An opening cannot be closed by crossing its jambs: width held at ${Format.num(want)} mm — " +
+                        "delete the opening instead"
+                kotlin.math.abs(want - mm) > Vec2.EPS ->
+                    "Opening kept on its leg: width ${Format.num(want)} mm (at most ${Format.num(max)} mm from " +
+                        "${Format.num(pos)} mm along a ${Format.num(len)} mm leg)"
+                shared > 0 ->
+                    "Width ${Format.num(want)} mm — this parameter is shared with $shared other opening" +
+                        "${if (shared == 1) "" else "s"}, which resize with it"
+                else -> null
+            }
+        return true
+    }
+
+    /**
+     * Write one of an interval's carried heights — its sill or head (OP-21's 3D half). No clamp: unlike the
+     * position and the width, a height is bounded by nothing the 2D drawing knows, and a head below its
+     * sill is an invalid solid with a reason (OP-3), not a wrong one.
+     */
+    fun setIntervalHeight(
+        ref: ScalarRef,
+        mm: Double,
+    ): Boolean {
+        val node = ref.node as? ParameterNode ?: return false
+        if (node.boundTo != null) return false
+        node.literal = ScalarValue(mm.mm)
+        return true
+    }
 
     private fun scalarMm(
         ref: ScalarRef,
@@ -5236,6 +5437,14 @@ class Document {
 
 /** Head height a new interval carries by default (mm) — a door; the sill defaults to the floor. */
 private const val DEFAULT_HEAD = 2100.0
+
+/**
+ * The narrowest an opening may be made by dragging or typing (mm) — see [Document.setIntervalWidth].
+ *
+ * A floor is needed rather than zero because zero is where the two jambs meet: the drawing would lose the
+ * opening entirely while the model still carried it, and the next drag would have nothing to grab.
+ */
+private const val MIN_INTERVAL_WIDTH = 1.0
 
 /** Default element styles. */
 object Styles {

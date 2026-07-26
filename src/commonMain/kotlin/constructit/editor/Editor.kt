@@ -4,6 +4,7 @@ import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
 import constructit.core.PointValue
+import constructit.core.ScalarValue
 import constructit.dsl.PointRef
 import constructit.dsl.valueOf
 import constructit.geom.Justification
@@ -176,7 +177,20 @@ class Editor(
      */
     fun deleteSelection(): Boolean {
         val targets = selectedElements
-        if (targets.isEmpty()) return false
+        if (targets.isEmpty()) {
+            // A selected **opening** (OP-21) owns no element, so Delete cannot reach it — and it has to say
+            // so rather than do nothing, because the jamb is highlighted and its fields are live, which makes
+            // the selection plainly there. Removing an interval is an ordinary step-unit delete and the
+            // journal already supports it independently of its siblings (see [Document.dependentSteps]); what
+            // is missing is only the route from a selection with no element to that step. Recorded as a cut.
+            selectedJamb?.let {
+                statusHint =
+                    "Delete can't reach an opening yet: it has no element of its own. Delete the wall " +
+                    "(${it.path.footprint.id}) to remove it with its openings."
+                onChange()
+            }
+            return false
+        }
         val roots = ArrayList<Step>()
         for (el in targets) {
             val root = doc.creatingStep(el)
@@ -341,6 +355,26 @@ class Editor(
     var selectedGroup: Group? = null
         private set
 
+    /**
+     * The **opening jamb** the selection addresses (OP-21), or null.
+     *
+     * A selection that owns no [Element]: an opening is a description carried by a thick path, and its jambs
+     * are a drawing, so there is nothing to put in [selected]. What it buys is exactly what selecting
+     * anything else buys — the inspector's typed fields (OP-13) and an emphasis on the canvas — and it is
+     * deliberately *not* accompanied by selecting the wall, because Delete would then remove the whole wall
+     * after a click that pointed at one opening.
+     */
+    var selectedJamb: Jamb? = null
+        private set
+
+    /** Select the opening [jamb] addresses, replacing any element selection: they are alternatives. */
+    private fun selectJamb(jamb: Jamb) {
+        selected.clear()
+        selection = null
+        selectedGroup = null
+        selectedJamb = jamb
+    }
+
     /** Replace the selection with [els], making [primary] the inspector's subject. */
     private fun select(
         els: Collection<Element>,
@@ -350,12 +384,14 @@ class Editor(
         selected.addAll(els)
         selection = primary?.takeIf { it in selected } ?: selected.firstOrNull()
         selectedGroup = null
+        selectedJamb = null
     }
 
     fun clearSelection() {
         selected.clear()
         selection = null
         selectedGroup = null
+        selectedJamb = null
     }
 
     /** The frame the selection addresses: a **placed** group selected as a whole (OP-16 step 2). */
@@ -462,6 +498,20 @@ class Editor(
     // transient state
     private var dragTarget: Element? = null // a point, or a whole ortho leg
     private var dragFrame: Group? = null // a placed group being moved by its frame (OP-16 step 2)
+
+    /**
+     * The **jamb** of an opening this drag is sliding (OP-21). Held apart from [dragTarget] for the one
+     * reason the whole feature turns on: a jamb is a line the plan *draws*, so there is no element to point
+     * at — the pick resolved it into a handle over the thick path's own parameters instead.
+     */
+    private var dragJamb: Jamb? = null
+
+    /**
+     * The placed group whose **frame** the current jamb grab outranked (OP-16), for as long as that gesture
+     * lasts. Held because the press clears the group selection — so by the time the drag reports itself, the
+     * fact worth naming is no longer readable anywhere else.
+     */
+    private var jambStoleFrame: Group? = null
     private var dragStart: Vec2? = null // where on the geometry the drag began — the axis-lock origin
     private var grabOffset: Vec2 = Vec2(0.0, 0.0) // cursor minus that, so a grab never jumps
 
@@ -658,6 +708,8 @@ class Editor(
         pickRefusal = null
         dragTarget = null
         dragFrame = null
+        dragJamb = null
+        jambStoleFrame = null
         dragStart = null
         grabOffset = Vec2(0.0, 0.0)
         joinHints = emptyList()
@@ -690,6 +742,9 @@ class Editor(
      * single answer to show (nor to write back), so the inspector stays empty.
      */
     fun selectionFields(): List<HandleField> {
+        // an opening's jamb addresses the interval's own parameters (OP-21) — position, width and the two
+        // heights — which are what its drag writes, so the panel and the canvas stay one operation
+        selectedJamb?.let { return it.handle(doc).fields() }
         // a placed group selected as a whole addresses its *frame* — the group's three degrees of freedom
         // (OP-16 step 2), which is exactly what dragging it writes, so drag and panel stay one operation
         selectedFrame()?.frameHandle?.let { return it.fields() }
@@ -698,6 +753,7 @@ class Editor(
 
     /** Short name for the selection, for the inspector header. */
     fun selectionLabel(): String {
+        selectedJamb?.let { return "opening on leg ${it.interval.legIndex + 1} of ${it.path.footprint.id}" }
         selectedFrame()?.let { return "frame of ${it.name}" }
         if (selected.size > 1) return "${selected.size} elements"
         val el = selection ?: return ""
@@ -1106,6 +1162,9 @@ class Editor(
         if (!f.writable) return false
         compensating { f.write(quantityOf(f.dim, value)) }
         checkpoint()
+        // a write the geometry **bounded** has something to say — an opening clamped to its leg (OP-21) — and
+        // it is the same note the drag reports, since typing and dragging are one operation (OP-13)
+        doc.takeNote()?.let { statusHint = it }
         onChange()
         return true
     }
@@ -1213,13 +1272,16 @@ class Editor(
     }
 
     fun render(target: DrawTarget) {
+        val ev = ev()
         SceneRenderer.render(
-            doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selected,
+            doc, ev, camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selected,
             snapHint?.pos, joinHints, closePreview, terminalHint,
             dimmed = if (dimScaffolding) doc.scaffoldingElements().toHashSet() else emptySet(),
             marquee = marqueeFrom?.let { f -> marqueeTo?.let { t -> f to t } },
             frames = selectedFrames(),
             picked = pickedElements.toHashSet(),
+            // the selected opening's own drawing (OP-21), since it has no element to emphasize
+            emphasis = selectedJamb?.let { doc.intervalOutline(it.path, it.interval, ev) } ?: emptyList(),
         )
     }
 
@@ -1267,12 +1329,39 @@ class Editor(
         }
         if (toolId == Tools.SELECT) {
             val world = camera.screenToWorld(screen)
-            // a vertex wins over the legs meeting at it; a leg drags perpendicular (OrthoEdgeHandle)
+            // a vertex wins over everything meeting at it, jambs included: it is the most specific thing
+            // there, exactly as it already outranked the legs. A leg drags perpendicular (OrthoEdgeHandle)
+            val point = HitTest.nearestFreePoint(doc, ev(), world, tolWorld())
+            // An opening's jamb (OP-21) is not an element, so it is picked on its own and then *competes by
+            // distance* with the curves. It has to: a jamb crosses its own carrier leg, so a rule of
+            // precedence would make one of the two unreachable near the crossing. Distance answers it the
+            // way the drawing reads — along the wall the leg is nearer, across it the jamb is — which is why
+            // the element searches below are capped at the jamb's distance rather than at the tolerance.
+            val jamb = if (point != null) null else HitTest.nearestJamb(doc, ev(), world, tolWorld())
+            val reach = jamb?.let { minOf(tolWorld(), HitTest.distanceToSegment(world, it.seg)) } ?: tolWorld()
             val movable =
-                HitTest.nearestFreePoint(doc, ev(), world, tolWorld())
-                    ?: HitTest.nearestDraggableCurve(doc, ev(), world, tolWorld())
+                point
+                    ?: HitTest.nearestDraggableCurve(doc, ev(), world, reach)
                     // last, so a dimension lying over the geometry it names never steals its grab
-                    ?: HitTest.nearestDraggableAnnotation(doc, ev(), world, tolWorld())
+                    ?: HitTest.nearestDraggableAnnotation(doc, ev(), world, reach)
+            // The jamb took the grab. It is 1-DOF along its leg, so the offset the grab holds is the *along*
+            // component of the cursor — the perpendicular one is projected onto the jamb's own line, which is
+            // what stops the opening from jumping when the grab lands beside the line rather than on it.
+            if (movable == null && jamb != null) {
+                // A jamb outranks even a *placed* group's frame (OP-16), which every other member drag moves
+                // when the group is selected as a whole. It has to, or an opening in a placed wall would be
+                // editable only after deselecting the group — the feature would work differently for the same
+                // wall depending on how it was reached. What that costs is one invisible half, so it is said.
+                jambStoleFrame = doc.placedGroupOf(jamb.path.footprint)?.takeIf { selectedGroup === it }
+                selectJamb(jamb)
+                dragJamb = jamb
+                val anchor = onJambLine(jamb, world)
+                grabOffset = world - anchor
+                dragStart = anchor
+                statusHint = describeJamb(jamb)
+                onChange()
+                return
+            }
             // an immovable element is still selectable, so its values can be read and the reason shown
             val hit = movable ?: HitTest.nearestSelectable(doc, ev(), world, tolWorld())
             // a press on nothing starts a rubber band; what it covers is selected on release (OP-16)
@@ -1805,6 +1894,16 @@ class Editor(
                 g.frameHandle?.drag(axisLockedFrom(camera.screenToWorld(screen) - grabOffset), ev())
                 onChange()
             }
+            // one opening slides along its leg (OP-21). No axis lock: the handle already has a single
+            // direction of its own, exactly as an ortho leg does, so a lock could only make it inert
+            dragJamb != null -> {
+                val j = dragJamb!!
+                j.handle(doc).drag(camera.screenToWorld(screen) - grabOffset, ev())
+                // the clamp is the document's to explain, and it appears and disappears as the drag crosses
+                // the leg's end rather than lingering afterwards
+                statusHint = doc.takeNote() ?: describeJamb(j)
+                onChange()
+            }
             dragTarget != null -> {
                 val el = dragTarget!!
                 val world = axisLocked(camera.screenToWorld(screen) - grabOffset, el)
@@ -1855,10 +1954,12 @@ class Editor(
         pendingCycle = null
         val dragged = dragTarget
         val movedFrame = dragFrame
+        val movedJamb = dragJamb
         val weld = weldTarget
         val attach = attachTarget
         dragTarget = null
         dragFrame = null
+        dragJamb = null
         dragStart = null
         dragRiders = emptyList()
         joinHints = emptyList()
@@ -1914,6 +2015,13 @@ class Editor(
             statusHint = "Moved ${movedFrame.name}"
             onChange()
         }
+        // an opening's slide commits like every other drag: one operation, one undo step. What the status
+        // says is left as the last move left it — either the opening's values or the clamp that stopped them
+        if (movedJamb != null && moved) {
+            checkpoint()
+            onChange()
+        }
+        jambStoleFrame = null
         if (dragged != null) {
             joinFlattenedEnds(dragged)?.let {
                 select(listOf(it), it)
@@ -2015,6 +2123,37 @@ class Editor(
             ?: el.annotation?.anchor(ev())
             ?: Snap.legPoint(ev(), el, world)
             ?: world
+
+    /**
+     * [world] projected onto [jamb]'s own (infinite) line — where the grab holds on.
+     *
+     * The jamb runs *across* the carrier, so this keeps the perpendicular component of the cursor and pins
+     * the along-leg one to the jamb itself: the offset the grab then holds is purely along the leg, which is
+     * the only component the drag can write anyway.
+     */
+    private fun onJambLine(
+        jamb: Jamb,
+        world: Vec2,
+    ): Vec2 {
+        val across = jamb.seg.b - jamb.seg.a
+        if (across.length() < Vec2.EPS) return jamb.seg.a
+        val dir = across.normalized()
+        return jamb.seg.a + dir * (world - jamb.seg.a).dot(dir)
+    }
+
+    /** What an opening reads as in the status bar: its two leg-relative values, in the panel's units. */
+    private fun describeJamb(jamb: Jamb): String {
+        val ev = ev()
+        val pos = ev.valueOf(jamb.interval.position) as? ScalarValue
+        val width = ev.valueOf(jamb.interval.width) as? ScalarValue
+        val where = "${Format.num(pos?.q?.mm ?: 0.0)} mm along leg ${jamb.interval.legIndex + 1}"
+        val edge = if (jamb.atEnd) "far jamb sets the width" else "near jamb slides the opening"
+        // what the grab took the gesture *from*, for the whole gesture — see [jambStoleFrame]
+        val instead =
+            jambStoleFrame?.let { " (this opening, not group ${it.name} — grab the wall away from a jamb to move the frame)" }
+                ?: ""
+        return "Opening at $where, ${Format.num(width?.q?.mm ?: 0.0)} mm wide — $edge$instead"
+    }
 
     /** Where a (possibly zero-length) leg sits, for marking it on the canvas. */
     private fun legPoint(el: Element): Vec2? =

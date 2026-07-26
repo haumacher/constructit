@@ -76,6 +76,13 @@ sealed class DimensionAnnotation(
     abstract fun anchor(ev: Evaluator): Vec2?
 
     /**
+     * A dimension's own degrees of freedom are always **anonymous** sources: its placement is state of the
+     * annotation, never a named parameter (OP-7) the panel offers. Narrowing the handle's declaration to
+     * that here is what lets [dofValues] read their literals directly.
+     */
+    abstract override val dragNodes: List<SourceNode>
+
+    /**
      * The literals this annotation owns, in [dragNodes] order — its own state, restated on save so a
      * dragged dimension reloads where it now is (OP-18). The *clicks* that placed it stay verbatim,
      * since what they encode is a discrete choice (which side, which sector), not a value.

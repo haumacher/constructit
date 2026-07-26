@@ -217,6 +217,28 @@ class BrowserE2ETest {
                 "Cut openings should add one more solid: the wall with its opening subtracted",
             )
 
+            // ---- and the opening is editable where it is drawn (OP-21 + OP-13) ----
+            //
+            // One drag of a jamb in real Chrome: the wall runs down the screen at 4 px/mm, so the opening's
+            // two jambs cross it 10 mm (40 px) either side of the click that placed it, and the wall's 10 mm
+            // thickness puts its faces 20 px out. Grabbing at +14 px is therefore on a jamb and clear of the
+            // carrier leg, which is the pick rule this exercises through the real DOM.
+            page.click("#tool-select")
+            val jambY = (wy1 + wy2) / 2 - 40.0
+            page.mouse().move(wx + 14.0, jambY)
+            page.mouse().down()
+            page.mouse().move(wx + 14.0, jambY - 20.0)
+            page.mouse().move(wx + 14.0, jambY - 40.0)
+            page.mouse().up()
+            val jambNote = page.querySelector("#status").textContent()
+            assertTrue(jambNote.startsWith("Opening at"), "dragging a jamb should report the opening; got: $jambNote")
+            val openingFields = page.querySelectorAll(".flabel").map { it.textContent() }
+            assertTrue(
+                openingFields.containsAll(listOf("position", "width", "sill", "head")),
+                "the opening's own values are the inspector's rows; got: $openingFields",
+            )
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/07-opening-dragged.png")))
+
             page.click("#v-3d")
             page.waitForSelector("#canvas3:visible")
             val blank = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String

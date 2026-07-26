@@ -875,7 +875,7 @@ curve, so the routes cannot disagree:
 | `attachToCurve` — drag a free point onto a curve | distance from the line's origin | the same rule as a junction |
 | `pointOnLine` — the point-on-line tool's slider | distance from the line's origin | the same rule |
 | `pointOnCircle`, a junction on a circle | angle about the centre | unchanged — a circle has no ends to stretch, so an angle is already absolute |
-| a thick path's **openings** (OP-21) | distance from the leg's start | unchanged, and deliberately: an opening is measured from a wall's corner because that is what a plan drawing dimensions, and a join re-measures it (OP-19) |
+| a thick path's **openings** (OP-21) | distance from the leg's start | unchanged, and deliberately: an opening is measured from a wall's corner because that is what a plan drawing dimensions, and a join re-measures it (OP-19). It also pays: a distance along a leg is what a rigid placement preserves, so dragging an opening's jamb needs no frame case — see *openings are grabbable at their jambs* |
 | `pointAlongLine` — the point-at-a-distance tool | distance from a point the user picked | unchanged: the anchor is *stated*, which is the opposite of hidden |
 
 Two decisions inside that:
@@ -2677,7 +2677,10 @@ direction it must err: an inscribed bore removes slightly too little, so a bored
   thickness** across it (so the box's side faces are *coplanar* with the wall's, the degenerate case the
   kernel is built for), sill to head in z — chained into **one** new solid. Every box is wired to the
   interval's own parameters, so dragging or typing a position, width, sill or head moves the cut, and the
-  wall's carrier does too.
+  wall's carrier does too. Since the openings became grabbable at their jambs (OP-21's note), that is now a
+  *canvas* gesture: `OpeningHandleTest` drags a jamb and asserts the cut follows — a slide moves the reveals
+  and cannot change the volume, widening removes exactly `Δwidth × thickness × height` more, and the mesh
+  stays manifold throughout.
   - The **number of openings is structural** (the array rule): it decides how many nodes exist, so an
     opening added afterwards does not retro-cut and the tool is simply run again. Deleting one *does* take
     its box with it, because a delete drops the step and replays the surviving script (OP-18) — the chain
@@ -3531,6 +3534,40 @@ Three broad families (see OP-9 decision above):
   show, so the document now carries a one-shot `note` the controller reads after any tool completes. 623
   headless tests green (19 new: `RiderCompensationTest`, `RelativePointTest`).
 
+- **Session 10 — an opening becomes grabbable at its jambs (OP-21 × OP-13).** The user's own design, and the
+  point of it is that this was **not** a new feature: an interval's `pos` and `width` were reachable only by
+  number, which OP-13 calls a bug in the model. Five things worth recording.
+  (1) **A drawing can carry a handle.** The reveal lines `planOf` derives per pass are now the pick: the same
+  derivation returns them tagged with the interval and the edge (`Document.jambsOf`), `HitTest` measures to
+  them with its one distance rule, and the winner *resolves* into a `JambHandle` over parameters that already
+  existed. This is the ortho-leg addressing pattern taken one step further — a leg at least has an element,
+  a jamb has none — and the payoff is that nothing needs keeping in sync: the plan re-sorting itself, a
+  carrier drag or a reload all yield fresh jambs from fresh values, and the graph is untouched
+  (`nodesCreated` and the element list are asserted unchanged across a drag).
+  (2) **Two jambs is the whole answer to "which end moves?"** The leading one writes `pos` (and the width,
+  being start-relative, survives untouched); the trailing one writes `width`. No gesture called *drag the
+  width* exists, exactly as none called *drag the length* does — the field belongs to the handle that moves.
+  (3) **Leg-relative positions earned their recorded exception.** Because an interval's DOF is a distance
+  *along a leg*, and a rigid placement preserves distances, a jamb of a wall inside a placed, **turned**
+  group drags in world space through the very same projection — no inverse frame map, no case of its own.
+  The same property is why stretching the carrier leaves the opening where the plan dimensions it.
+  (4) **The clamps had to live below both routes, or the two would stop being one operation.** `pos` is held
+  in `[0, legLength − width]`, `width` in `(0, legLength − pos]` with a 1 mm floor — a width of zero is where
+  the jambs meet and beyond it they cross, which is a broken drawing rather than a smaller opening, so it is
+  refused. Putting the clamp in `Document.setInterval…` means a typed number is bounded identically to the
+  drag and reports the same reason, and clamping (rather than ignoring the write) keeps the gesture
+  reversible. The picking rule needed the same honesty: a jamb crosses its own carrier leg, so precedence
+  would make one of the two unreachable and **distance** decides instead — along the wall the leg, across it
+  the jamb. A jamb also outranks a placed group's frame, the one exception to OP-16's whole-group rule, and
+  the gesture names what it took the drag from.
+  (5) **One generalization fell out and one gap got named.** `HandleField`/`Handle.dragNodes` now speak of
+  `Node` rather than `SourceNode`, because a **named parameter** (OP-7) is as much a grabbable DOF as an
+  anonymous coordinate — an opening's position is a panel row *and* what its jamb drag writes. And Delete
+  still cannot reach an opening (an interval owns no element, and the selection→step route runs through
+  elements); the journal half has worked since the thick-path rework, so it is a missing route, and pressing
+  Delete on a selected opening now says so rather than doing nothing. 643 headless tests green (19 new:
+  `OpeningHandleTest`), plus one more drag in the browser E2E.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -3717,6 +3754,62 @@ accessors, not the old bundle. **3D is now built** (OP-22): the *Cut openings* t
 into a subtracted box, sill→head, over the wall's full thickness, wired to the interval's own parameters —
 `extrude(footprint, height)` minus one box per interval, exactly as designed here.
 
+### Implementation status (as built — openings are grabbable at their jambs)
+
+The interval's two degrees of freedom were typed-only; now they are **dragged where they are drawn**, which
+is OP-13 enforced rather than extended (a DOF reachable only by number is a bug in the model, and `pos` /
+`width` were exactly that). Nothing new is stored: no element, no node, no step kind.
+
+- **Two jambs, two handles, and that is what answers "which end moves?"** The *leading* jamb writes `pos`
+  and slides the whole opening — the width is measured **from** the position, so it is preserved for free.
+  The *trailing* jamb writes `width = cursor − pos`, so the leading edge stays. There is deliberately no
+  gesture called *drag the width*: as with a leg's length (OP-13), the quantity spans two edges and the
+  field belongs to the handle that moves. Both are 1-DOF along the leg, the cursor projected onto the
+  carrier leg's direction.
+- **A drawing carries a handle.** The jambs `planOf` derives each pass are now *pickable*:
+  `Document.jambsOf` returns the same reveal lines the plan emits, tagged with the interval and the edge
+  they belong to, and `HitTest.nearestJamb` measures to them with the one distance rule everything else
+  uses. A hit resolves into a `JambHandle` over the interval's existing parameters — the ortho-leg pattern
+  one level further, since a leg at least *has* an element and a jamb has none. Consequently there is
+  nothing to keep in sync: re-sorting the drawing, moving the carrier or reloading the file all produce
+  fresh jambs from fresh values.
+- **The pick competes by distance rather than by precedence.** A jamb crosses its own carrier leg, so any
+  fixed ranking would make one of the two unreachable near the crossing. Vertices still win outright
+  (most specific), and then the curve/annotation searches are capped at the jamb's distance: *along* the
+  wall the leg is nearer, *across* it the jamb is — which is how the drawing reads. A jamb also outranks a
+  placed group's frame (the one exception to OP-16's "a selected group moves as a whole"), because
+  otherwise the same wall would behave differently depending on how it had been reached; the gesture says
+  out loud which of the two it took.
+- **Selection with no element.** `Editor.selectedJamb` is a selection that owns no `Element` — the
+  inspector shows the interval's `position`, `width`, `sill` and `head` (one stable order for both jambs;
+  which node the *drag* writes is `dragNodes`' business, not the panel's), and the canvas emphasizes the
+  opening's own drawing: two jamb lines plus the gap span on either face. Deliberately *not* accompanied
+  by selecting the wall, or Delete would remove a whole wall after a click that pointed at one opening.
+- **Clamps, said out loud.** `pos` is held in `[0, legLength − width]` and `width` in
+  `(0, legLength − pos]`, with a floor of 1 mm: a width of zero is where the two jambs *meet*, and beyond
+  it they cross — which is not a narrower opening but a broken drawing, so it is refused. Clamping rather
+  than ignoring keeps the gesture reversible (dragging back out grows the opening again from where it
+  stopped). The clamps live in `Document.setIntervalPosition` / `setIntervalWidth` precisely so a typed
+  number is bounded by the same rule as the drag and reports the same reason — otherwise "drag and type are
+  one operation" would hold only until a value went out of range.
+- **Positions stay LEG-RELATIVE, and this is where that pays.** The recorded exception to absolute
+  anchoring (see the anchoring table) is what makes a jamb drag need no case of its own: a distance along a
+  leg is exactly what a rigid placement preserves, so an opening in a **placed, turned** group drags in
+  world space through the very same projection, and stretching the carrier leaves the opening where the
+  plan says it is. A jamb drag is an ordinary literal write inside a gesture, so the release checkpoints it
+  as one undo step and the `opening` step restates `pos` (and `width`'s own `param` step its value), giving
+  save→load→save byte-equality after a drag with no format change at all.
+- **3D follows live.** The *Cut openings* boxes are wired to the same parameters, so dragging a jamb
+  recomputes the cut: sliding moves the reveals and cannot change the volume, widening removes exactly
+  `Δwidth × thickness × height` more, and the mesh stays manifold throughout (asserted).
+
+**Deliberately not done here.** **Delete cannot reach an opening**: an interval owns no element and the
+selection-to-step route runs through elements. The journal half already works (an `opening` step is
+independently droppable, and the cut chain rebuilds with one box fewer), so this is a missing route, not a
+missing capability — and pressing Delete on a selected opening now *says* that instead of doing nothing.
+Also not done: a hover cue on a jamb before pressing (picking is only consulted on press), and any
+snapping of an opening to the carrier's corners or to another opening.
+
 ### Build order (MVP-first)
 1. Directions + project frame + ortho input (fast axis-aligned drawing).
 2. Wall-path tool (turtle/relative legs with length params) — the dimension-chain backbone.
@@ -3867,18 +3960,14 @@ Then 3D walls = extrude + boolean.
 Kept here so no in-flight plan lives only in a session. Per-feature deliberate cuts stay recorded in
 their own as-built notes; this is the *ordered queue* as of 2026-07-26:
 
-1. **Opening handles**: an opening's two DOF become grabbable at its jambs — the leading jamb slides
-   `pos` (whole opening moves, width start-relative hence preserved), the trailing jamb writes
-   `width = cursor − pos`. No new elements: the plan-convention jambs become hit-testable, resolving to
-   interval handles owned by the thick path (the ortho-leg addressing pattern).
-2. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
+1. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
    connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by
    curve direction); junctions are shared carrier vertices, branch vertices resolved by cyclic order —
    which is the honest form of the long-deferred T/L wall-junction cleanup; offsets exact for
    lines/arcs, bézier offsets in OP-15's approximated class; footprint key points exposed as OP-6
    provenance accessors (`corner(i)`, `face(side)` — the accessors cut in the first OP-21 slice, now
    demanded); openings measure along any curve kind by arc length.
-3. **Incremental recompute** (the OP-5 dirty-marking the implementation still owes): persistent
+2. **Incremental recompute** (the OP-5 dirty-marking the implementation still owes): persistent
    cross-pass value cache keyed by source-node versions, so a repaint recomputes only the changed input
    cone — the fix for revolve-sized meshes making even the 2D view lag. Acceptance: recompute counters
    flat across repaints that change nothing upstream. Optional afterwards: a low-poly view mode.
