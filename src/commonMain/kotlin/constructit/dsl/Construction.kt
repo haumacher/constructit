@@ -645,6 +645,40 @@ class Construction {
             EvalResult.Ok(ScalarValue(Quantity.rad(kotlin.math.atan2(sc(it[0]).base, sc(it[1]).base))))
         }
 
+    /**
+     * A dimensionless number read as an **angle in radians** (OP-7) — the one conversion the dimension
+     * system deliberately does not derive.
+     *
+     * `sin`/`cos`/`tan`/`atan2` already cross the angle boundary in the other direction, so without this
+     * any closed-form angular formula that *mixes* the two is unstateable. The canonical example is the
+     * involute function `inv(β) = tan β − β`, which subtracts an angle from a plain number and is what a
+     * gear tooth's flank is made of: the addition is a units op, not a gear feature.
+     */
+    fun radians(x: ScalarRef): ScalarRef =
+        op(x) { EvalResult.Ok(ScalarValue(Quantity.rad(sc(it[0]).requireDim(Dimension.NONE, "radians").base))) }
+
+    /** An angle's measure in radians as a plain number — the exact inverse of [radians]. */
+    fun radianMeasure(a: ScalarRef): ScalarRef =
+        op(a) { EvalResult.Ok(ScalarValue(Quantity.number(sc(it[0]).requireDim(Dimension.ANGLE, "radianMeasure").base))) }
+
+    /**
+     * [value] itself, but **invalid with [what] as the reason** when it is not positive (OP-3) — a stated
+     * precondition as a node.
+     *
+     * The point is *where* it sits: threaded through the chain that needs it (an angle a construction is
+     * only valid for a positive sweep of, a length that must not run backwards), it makes the dependent
+     * geometry disappear with an explanation instead of coming out folded through itself — and heal when
+     * the parameters move back. A macro's own domain becomes an ordinary node rather than a comment.
+     */
+    fun requirePositive(
+        value: ScalarRef,
+        what: String,
+    ): ScalarRef =
+        op(value) {
+            val q = sc(it[0])
+            if (q.base > 0.0) EvalResult.Ok(ScalarValue(q)) else EvalResult.Invalid(what)
+        }
+
     // ================= Tier 1: measurements =================
 
     /** Angle at [vertex] between rays to [a] and [b], in [0, PI]. */
@@ -1086,10 +1120,17 @@ class Construction {
      * (outer counter-clockwise, holes clockwise) so the signed areas add up, which is the form the
      * 2D→3D seam consumes (OP-17).
      *
-     * Note the deliberate limit: containment is *not* verified. A hole placed outside the outer
-     * boundary, or two overlapping holes, are accepted — only the degenerate case where the holes
-     * remove more than the boundary encloses is rejected (in [regionArea]). Real containment
-     * testing belongs with the point-in-region predicate, which this slice does not need.
+     * **The one thing checked here is degeneracy:** holes that remove at least as much area as the outer
+     * boundary encloses leave no area at all, so the region is invalid *with a reason* rather than a value
+     * nothing downstream can use (OP-3, and it heals). The check lives here and not only in [regionArea]
+     * because it is a statement about the *region*, and a caller that never asks for the area — an extrude,
+     * say — would otherwise meet it as a triangulation failure, which reports a symptom instead of the fault.
+     *
+     * **Containment is still deliberately not verified**, and the difference matters: a hole poking out
+     * through the boundary while remaining *smaller* than it passes this check and is accepted (a gear with
+     * a bore just outside its root circle is exactly that shape). Nothing here can catch it, which is why a
+     * construction that can produce such a shape has to state its own domain — see `dsl.spurGear`. Real
+     * containment testing belongs with the point-in-region predicate, which this slice does not need.
      */
     fun region(
         outer: LoopRef,
@@ -1098,7 +1139,12 @@ class Construction {
         op(outer, *holes) { args ->
             val o = GeomMath.orient((args[0] as LoopValue).loop, ccw = true)
             val h = args.drop(1).map { GeomMath.orient((it as LoopValue).loop, ccw = false) }
-            EvalResult.Ok(RegionValue(Region(o, h)))
+            val net = GeomMath.signedArea(o) + h.sumOf { GeomMath.signedArea(it) }
+            if (net <= 0.0) {
+                EvalResult.Invalid("the holes remove more area than the outer boundary encloses")
+            } else {
+                EvalResult.Ok(RegionValue(Region(o, h)))
+            }
         }
 
     /**

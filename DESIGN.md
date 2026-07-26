@@ -177,6 +177,54 @@ The test cases double as the model's **worked spec examples** (perpendicular bis
 rounded-rect macro, bolt circle, hole pattern). Same pattern extends to phase-2:
 construct in code → export STL/3MF → assert manifold / volume / bbox.
 
+### Showcases (worked spec examples — as built)
+
+The four persona showcases agreed at the *Session 3 kickoff* are **tests**, one class each, with the spec
+narrative in the class KDoc — they are documentation that cannot rot. The rule they were accepted under is
+the one they are written to: **every feature must be generic**, so a showcase may add no code of its own.
+What each proves, and the one macro plus two units/validity ops they needed, are recorded here.
+
+| Showcase | Test class | What it is the acceptance test for |
+|---|---|---|
+| Mechanical — parametric spur gear → solid | `GearTest` | a **sampled curve** as a first-class curve (OP-15); a structural count vs. continuous parameters; a macro (OP-6) reaching a real part |
+| Architect — the multi-step chain + gable roof | `HouseChainTest` | `Geom3.extrude` being **plane-general**: a roof is a triangle on a *vertical* plane; one drag driving three solids through measurements |
+| Maker — reverse-engineered spare part | `BracketTest` | every dimension a **named parameter**; face-derived datums (OP-8) surviving a re-measurement; five booleans composing (OP-22) |
+| Papercraft — a net constructed *from* the model | `PapercraftNetTest` | the **downward scalar seam** (OP-4 forward / OP-9): a 2D drawing every length of which is measured off a mesh |
+
+- **The gear** (`dsl/Shapes.kt: spurGear`) is the only new *geometry* code, and it is a macro over the
+  existing algebra: standard proportions (`rb = rp·cos α`, tip `m(z/2+1)`, root `m(z/2−1.25)`), one flank
+  sampled into **12 chords at fixed values of the pressure angle at the point**, the second flank its mirror,
+  a tip arc, a root land, and a radial line below the base circle where a generating cutter would leave a
+  trochoid. The sample count is a **constant, not a function of the module**: a count decides how many nodes
+  exist, so deriving it from a value would rebuild the graph on every edit (OP-21) — the same rule as an
+  array's count. It is stated to be within ~0.005 mm of the exact involute for a m2 z20 gear (a quarter of
+  `TESS_TOL_MM`) and *asserted* to be, from both sides: every sample point lies on the exact involute to
+  1e-9, and the chords are measured against it.
+- **The roof was the real question, and the answer was "nothing".** A gable roof is a triangular region
+  sketched on `planeOffset(planeYZ(), x)` and extruded along that plane's normal, i.e. horizontally. It
+  worked unchanged, which is what the seam being *a separate embedding node* (OP-17) was for. The scene
+  keeps it as its own solid: a horizontal prism and a vertical one have **no common axis**, so OP-22's
+  boolean refuses with the reason that names Manifold — asserted, rather than worked around.
+- **Two generic gaps were filled, both tiny, both recorded as generic** (`dsl/Construction.kt`):
+  - `radians(x)` / `radianMeasure(a)` — the **dimension system's one missing conversion** (OP-7). `sin`,
+    `cos`, `tan` and `atan2` already cross from angle to number; nothing crossed back, so any closed-form
+    angular formula *mixing* the two was unstateable. The involute function `inv β = tan β − β` is the
+    canonical example, and it is a units op, not a gear feature.
+  - `requirePositive(value, reason)` — **a stated precondition as a node** (OP-3). Threaded through the
+    chain that needs it, it makes dependent geometry disappear *with an explanation* and heal, instead of
+    coming out folded through itself. The gear states its own domain with it in **two** places: a tooth wider
+    at its foot than half the pitch (reachable only at exotic pressure angles, never by a standard gear), and
+    a **bore that leaves no material** between itself and the root circle. The second was found by a review
+    probe after the fact and is the more instructive: the region *type* cannot catch a bore just **outside**
+    the root circle, because that shape removes less area than the boundary encloses while detaching every
+    tooth — only the construction that made it knows. See the correction under OP-14's *Deliberately not done
+    here*, which also moved the degeneracy check into `region(...)` itself.
+- **Gaps found and left open, deliberately:** the `DrawTarget`/SVG seam has **no line-style/dash**
+  attribute, so the papercraft net distinguishes fold lines from cut lines by colour (dashes are a change to
+  the whole seam, not to a showcase); the tool surface offers a solid's **extent** but not a bounding-box
+  **bound**, and no way to *name* a plane, which is why the roof is DSL-built (the missing piece is
+  datum-plane UI, not geometry); and there is still no mesh export, so "print it" ends at the mesh.
+
 ## Canvas / editor architecture (implemented)
 
 Elastic layering — everything except pixel-drawing and native events is pure Kotlin
@@ -1035,6 +1083,18 @@ The result layer is reachable end to end in the browser:
 **Deliberately not done here:** containment is not verified (a hole outside the outer boundary, or
 two overlapping holes, are accepted; only holes removing more than the boundary encloses are
 rejected) — real containment needs the point-in-region predicate, which this slice does not need.
+
+*Corrected later, on a probe (session 3).* That rejection originally lived **only in `regionArea`**, so a
+`Region` value that encloses nothing was perfectly valid until somebody asked for its area — and a caller
+that never does (an extrude) met it as a triangulation failure instead, which reports a symptom rather than
+the fault. The check now also sits in `region(...)` itself, where the claim above is made, and heals (OP-3);
+`regionArea` keeps its own copy because regions also arrive from `thickFootprint`, `intervalFootprint` and
+`sectionAt` without passing through `region(...)`. The **limit is unchanged and is now asserted** rather than
+merely stated (`RegionTest.aHoleReachingOutsideTheBoundaryIsAcceptedBecauseContainmentIsNotVerified`): this is
+a *degeneracy* check, not a *containment* check, so a hole poking out through the boundary while remaining
+smaller than it is still accepted, with an area that is arithmetically right and geometrically meaningless.
+Consequence worth stating plainly, because it is the general lesson: a construction able to produce such a
+shape must **state its own domain** — the type below it cannot.
 **Remaining:** the boundary-tracing *Outline* tool and the scaffolding/result display roles — both UI,
 and both deliberately deferred so this slice touches none of the files the ortho-path work is in.
 
@@ -2165,6 +2225,45 @@ Three broad families (see OP-9 decision above):
   **junctions still should not use it** — a boolean is the honest answer for a solid, while a unioned
   footprint is an opaque area whose corners the user can no longer grab (OP-20). 362 headless tests
   green (35 new), and the browser E2E now cuts an opening in a real Chrome.
+- **Session 3 — the four showcases, as worked spec examples.** Built all four persona showcases (see
+  *Showcases* above) as test classes with the spec in their KDoc, under the rule they were accepted under:
+  a showcase may add no code of its own, only generic mechanism. Five things worth recording.
+  (1) The score: **one macro** (`spurGear`) and **two ops of ten lines each** were all the new code, and
+  neither op is about gears — `radians` closes the dimension system's one missing conversion (OP-7: angle→
+  number existed, number→angle did not, so `tan β − β` could not be written at all) and `requirePositive`
+  makes a **precondition a node** (OP-3), which is how a macro states its own domain without a comment.
+  (2) The **gable roof needed nothing**, which was the point of building it: a triangle on a vertical plane,
+  extruded along that plane's normal. Had the seam been quietly XY-only this is where it would have shown,
+  and the reason it is not is that `SketchOn` embeds rather than 2D being plane-resident (OP-17).
+  (3) The **sample count is structural** — the gear's flank is 12 chords at fixed parameter values, and the
+  count may not be derived from the module however tempting: a value-derived count changes how many nodes
+  exist, which is the regeneration OP-21 forbids. Adaptive tessellation *inside* one `compute` is free; a
+  count that shapes the graph is not. Same rule as an array's count, third instance of it.
+  (4) The papercraft net is the first thing to make the **downward scalar seam carry real weight**: nine
+  panels whose every length is a `measureBBoxExtent`/`Max` of a mesh, asserted panel-by-panel against the
+  *area of the actual mesh faces* — and retyping the wall height resizes the net with no node created. A
+  net drawn by hand from measurements turned out to need no unfolding algorithm at all, exactly as the
+  kickoff directive said.
+  (5) A **refusal is a feature, twice over**: the roof cannot be unioned with the walls (no common axis,
+  OP-22) and a section through both openings cannot be one area (a `Region` has one outer boundary) — both
+  are asserted *as* refusals with reasons rather than designed around. Two goldens were inspected as
+  pictures, which is what a golden is for: the gear has to look like a gear and the net like a house.
+  437 headless tests green (25 new), three new goldens.
+- **Session 3 — a probe on the gear's domain, and an honest correction to OP-14.** A review probe found that
+  a 30 mm bore in a gear with a 17.5 mm root circle evaluated as a perfectly valid region. Three things came
+  out of it. (1) The macro was **stating half its domain**: the pressure-angle guard was there, the bore was
+  not, and the fix is the same `requirePositive` mechanism — expressing the bore as "the root radius less the
+  web that must remain" is what puts the guard in the chain the geometry reads. (2) The claim that OP-14
+  rejects holes removing more than the boundary encloses was **true only of `regionArea`**; nothing on the
+  probe's path asked for an area, so nothing checked. Moved into `region(...)` as well, where the claim is
+  made. (3) The genuinely interesting part: **that check could never have caught this class of fault anyway.**
+  A bore at 18 mm — outside the root circle, inside the tip circle — removes *less* area than the toothed
+  boundary encloses, passes the check, and yields 208 mm² of geometrically meaningless area for a ring of
+  twenty detached teeth. Degeneracy is checkable by area; containment is not. So the lesson is not "add a
+  stronger check to the type" but the one the paradigm already implies: **a construction that can produce a
+  shape its type cannot describe must state its own domain**, and that is now asserted from both sides
+  (the accepted non-contained hole included, so the limit cannot be mistaken for more than it is).
+  441 headless tests green (4 new, two of them the reviewer's probe).
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

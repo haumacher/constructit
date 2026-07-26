@@ -33,6 +33,11 @@ first-class goal and the current implementation focus.
   coordinates and a polygon's vertices are rotations of one, so they cannot stop being rectangular or
   regular however you drag them; an array copy is a transform node over the original, so the copies
   follow it live.
+- **A shape library that is just constructions** — rounded rectangle, bolt circle, hole pattern and a
+  **parametric spur gear** (module, tooth count, pressure angle, bore) live in the same DSL a user's own
+  macro does. The gear's tooth flank is a *sampled* involute — deterministic by fixed sampling, and within
+  a quarter of the tessellation tolerance of the exact curve — with the standard tip, root and pitch
+  proportions, so a pair of them meshes at centre distance m·z.
 - **Constrained, draggable points** — point-on-line / point-on-circle (1-DOF), and *drag-to-weld*:
   drag a free point onto another to join them, or onto a curve to attach it as a sliding point.
 - **Dimensions** — linear (aligned), radial and angular dimension graphics whose value *is* a
@@ -115,15 +120,25 @@ browsers installed).
 
 ## Status
 
-**End of session 1.** The 2D engine and interactive browser editor are working, with an
-architectural drawing layer (ortho paths, walls, openings) on top and a coherent editing model:
-local vertex dragging, closeable rectilinear loops, and path endpoints that weld to points or
-attach to lines — all solver-free. 72 headless tests pass and every feature was verified live
-in-browser.
+**Session 3.** The 2D engine, the interactive browser editor, the architectural layer and the 3D seam are
+working in both directions, with exact prismatic booleans underneath them. The **four showcases now exist as
+worked spec examples** — one test class each, the spec in its KDoc:
 
-Planned next: wall-to-wall junction cleanup, footprint accessors for dimensioning and snapping, mesh
-export (STL/3MF), and the showcases that drive the rest (gear, floor plan → house, spare part,
-papercraft net).
+- a **parametric spur gear** (module, tooth count, pressure angle, bore) whose tooth flank is a sampled
+  involute, extruded into a watertight blank that meshes its own copy at centre distance m·z;
+- the **house chain**: a wall ring with a door and a window → the cut ground floor → its section → storey 2
+  on storey 1's own top face → a **gable roof** as a triangle sketched on a *vertical* plane and extruded
+  along the ridge, its profile driven by measurements of the storeys, so **one drag reshapes all three**;
+- a **reverse-engineered bracket** in which every dimension is a named caliper reading, so re-measuring the
+  plate is a typed number rather than a redraw;
+- **parametric papercraft**: a house net whose nine panels are laid out by hand in 2D but whose every length
+  is *measured off the 3D mesh* — change the wall height and the net resizes. No unfolding algorithm.
+
+The showcases needed one macro (the gear) and two ten-line generic ops, which is the result they were
+meant to produce. 441 headless tests pass; the browser E2E drives a real Chrome.
+
+Planned next: mesh export (STL/3MF), datum planes in the UI (the roof is DSL-built for want of a way to
+*name* a plane), line styles in the render seam, and wall-to-wall junction cleanup.
 
 ## Documentation
 

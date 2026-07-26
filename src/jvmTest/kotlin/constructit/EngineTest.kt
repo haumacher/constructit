@@ -2,8 +2,10 @@ package constructit
 
 import constructit.core.Evaluator
 import constructit.dsl.Construction
+import constructit.dsl.circle
 import constructit.dsl.isValid
 import constructit.dsl.point
+import constructit.dsl.resultOf
 import constructit.dsl.scalar
 import constructit.units.cm
 import constructit.units.deg
@@ -57,6 +59,54 @@ class EngineTest {
         val pt = c.select(pair, +1)
         assertFalse(Evaluator().isValid(circle))
         assertFalse(Evaluator().isValid(pt), "invalidity must propagate transitively (OP-3)")
+    }
+
+    /**
+     * The dimension system's one **explicit** conversion (OP-7): a plain number read as radians, and back.
+     *
+     * `sin`/`cos`/`tan`/`atan2` cross from angle to number implicitly, and nothing crossed back — which
+     * leaves any closed-form formula that *mixes* the two unstateable (the involute function `tan β − β`,
+     * which `dsl.spurGear` is built from, is the canonical case). It is a conversion, so it is explicit and
+     * it round-trips; anything else in either direction is a dimension error, hence an invalid node.
+     */
+    @Test
+    fun radiansAndItsInverseConvertBetweenAnAngleAndANumber() {
+        val c = Construction()
+        val quarter = c.parameter("q", 90.deg)
+        val asNumber = c.radianMeasure(quarter)
+        assertClose(Evaluator().scalar(asNumber).value, kotlin.math.PI / 2)
+        assertClose(Evaluator().scalar(c.radians(asNumber)).deg, 90.0, msg = "the round trip is the identity")
+
+        // the involute function of 20 degrees: tan(a) - a, only writable because the two meet
+        val a = c.parameter("a", 20.deg)
+        val inv = c.sub(c.radians(c.tanS(a)), a)
+        assertClose(Evaluator().scalar(inv).base, kotlin.math.tan(20.0 * kotlin.math.PI / 180) - 20.0 * kotlin.math.PI / 180)
+
+        // each direction refuses the other's argument (OP-3 catches the DimensionError)
+        assertFalse(Evaluator().isValid(c.radians(c.parameter("ang", 45.deg))), "an angle is not a number")
+        assertFalse(Evaluator().isValid(c.radianMeasure(c.parameter("len", 5.mm))), "a length is not an angle")
+    }
+
+    /**
+     * A **precondition as a node** (OP-3): [Construction.requirePositive] passes its value through, or makes
+     * the chain that uses it invalid *with a reason* — and heals. This is how a macro states its own domain
+     * (see `dsl.spurGear`) instead of drawing something folded through itself.
+     */
+    @Test
+    fun requirePositiveStatesADomainAndHeals() {
+        val c = Construction()
+        val gap = c.parameter("gap", 5.mm)
+        val checked = c.requirePositive(gap, "the gap must be positive")
+        val circle = c.circleCR(c.freePoint("O", 0.mm, 0.mm), checked)
+        assertClose(Evaluator().circle(circle).radius, 5.0)
+
+        c.set(gap, (-1).mm)
+        val bad = Evaluator().resultOf(checked)
+        assertTrue(bad is constructit.core.EvalResult.Invalid && bad.reason == "the gap must be positive", "reason was: $bad")
+        assertFalse(Evaluator().isValid(circle), "the dependent geometry goes with it")
+
+        c.set(gap, 2.mm)
+        assertClose(Evaluator().circle(circle).radius, 2.0, msg = "and it heals")
     }
 
     /**

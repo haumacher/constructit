@@ -235,15 +235,47 @@ class RegionTest {
         assertTrue(r is EvalResult.Invalid && r.reason.contains("already closes"), "reason was: $r")
     }
 
-    /** Holes that would eat the whole body are rejected rather than reported as negative area. */
+    /**
+     * Holes that would eat the whole body are rejected rather than reported as negative area — and the
+     * rejection is on the **region**, not merely on its area measurement, so a caller that never asks for
+     * the area (an extrude) meets the fault rather than a triangulation symptom. It heals (OP-3).
+     */
     @Test
     fun oversizedHoleIsInvalid() {
         val c = Construction()
         val o = c.freePoint("O", 0.mm, 0.mm)
+        val hole = c.parameter("hole", 9.mm)
         val small = c.loop(c.circleCR(o, c.parameter("outer", 5.mm)))
-        val big = c.loop(c.circleCR(o, c.parameter("hole", 9.mm)))
-        val r = Evaluator().resultOf(c.regionArea(c.region(small, big)))
-        assertTrue(r is EvalResult.Invalid, "a hole larger than the body must not yield an area")
+        val big = c.loop(c.circleCR(o, hole))
+        val region = c.region(small, big)
+        val r = Evaluator().resultOf(region)
+        assertTrue(r is EvalResult.Invalid, "a hole larger than the body is not an area")
+        assertTrue(r.reason.contains("remove more area"), "reason was: ${r.reason}")
+        assertTrue(Evaluator().resultOf(c.regionArea(region)) is EvalResult.Invalid, "and its area goes with it")
+        assertTrue(Evaluator().resultOf(c.extrude(c.sketchOn(c.planeXY(), region), c.parameter("d", 2.mm))) is EvalResult.Invalid)
+
+        c.set(hole, 3.mm)
+        assertTrue(Evaluator().resultOf(region) is EvalResult.Ok, "shrinking the hole heals it")
+    }
+
+    /**
+     * The honest limit of that check, asserted so it cannot be mistaken for more: it is a **degeneracy**
+     * check, not a **containment** check. A hole that pokes out through the outer boundary while staying
+     * *smaller* than it removes less area than the boundary encloses, so it is accepted — and the area that
+     * comes out is arithmetically right and geometrically meaningless.
+     *
+     * That is deliberate (OP-14: containment testing belongs with a point-in-region predicate) and it is why
+     * a construction able to produce such a shape must state its own domain — `dsl.spurGear` does, for
+     * exactly this case (a bore just outside the root circle).
+     */
+    @Test
+    fun aHoleReachingOutsideTheBoundaryIsAcceptedBecauseContainmentIsNotVerified() {
+        val c = Construction()
+        val body = c.loop(c.circleCR(c.freePoint("O", 0.mm, 0.mm), c.parameter("outer", 10.mm)))
+        val offCentre = c.loop(c.circleCR(c.freePoint("H", 8.mm, 0.mm), c.parameter("hole", 6.mm)))
+        val region = c.region(body, offCentre)
+        assertTrue(Evaluator().resultOf(region) is EvalResult.Ok, "less area is removed than enclosed, so it passes")
+        assertClose(Evaluator().scalar(c.regionArea(region)).base, PI * (100.0 - 36.0), tol = 1e-9)
     }
 }
 
