@@ -73,9 +73,25 @@ class Scene3(val solids: List<SolidItem>, val lines: List<Line3>) {
             doc: Document,
             ev: Evaluator = Evaluator(),
         ): Scene3 {
+            val candidates = doc.elements.filter { it.visible && ev.valueOf(it.ref) is SolidValue }
+            // A solid another visible solid is built FROM is that solid's construction material —
+            // OP-14's scaffolding rule one level up: a boolean's raw operand, the counterbore's
+            // cylinder. Drawing both paints two coincident shells fighting per pixel, and the operand
+            // is not an output; delete or hide the consumer and the operand shows again on its own.
+            val consumedIds = HashSet<String>()
+            val visited = HashSet<String>()
+
+            fun walk(node: constructit.core.Node) {
+                if (!visited.add(node.id)) return
+                node.inputs.forEach {
+                    consumedIds.add(it.id)
+                    walk(it)
+                }
+            }
+            candidates.forEach { walk(it.ref.node) }
             val solids = ArrayList<SolidItem>()
-            for (el in doc.elements) {
-                if (!el.visible) continue
+            for (el in candidates) {
+                if (el.ref.node.id in consumedIds) continue
                 val v = ev.valueOf(el.ref) as? SolidValue ?: continue
                 if (v.solid.mesh.triangles.isEmpty()) continue
                 solids.add(SolidItem(el.id, v.solid.mesh, colorFor(el.id)))
