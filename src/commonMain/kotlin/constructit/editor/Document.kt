@@ -645,21 +645,6 @@ class Document {
         }
     }
 
-    /**
-     * Remove [e] again, if nothing ever consumed it — the inverse of [newParameter], for a value typed
-     * to feed a tool that then never completed (see `Editor.commitTypedScalar`). Refused when any step
-     * references it or another parameter is wired to it, so it can never orphan a reference.
-     */
-    fun retractParameter(e: ScalarEntry): Boolean {
-        if (scalars.none { it === e }) return false
-        val own = journal.firstOrNull { it.kind == "param" && (it.args.firstOrNull() as? Arg.Sc)?.entry === e } ?: return false
-        if (journal.any { s -> s !== own && referencedScalars(s).any { it === e } }) return false
-        if (scalars.any { it !== e && (it.ref.node as? ParameterNode)?.boundTo === e.ref.node }) return false
-        journal.remove(own)
-        scalars.removeAll { it === e }
-        return true
-    }
-
     private fun measurement(
         name: String,
         ref: ScalarRef,
@@ -678,8 +663,9 @@ class Document {
     }
 
     /**
-     * Take [e] back: drop the `param` step that introduced it and the panel row with it. True when that
-     * was possible, false when something already reads it (then it stays, untouched).
+     * Take [e] back — the inverse of [newParameter]: drop the `param` step that introduced it and the panel
+     * row with it. True when that was possible, false when something already reads it (then it stays,
+     * untouched, and can never end up an orphaned reference).
      *
      * The retraction half of a **pending typed value** (see `Editor.commitTypedScalar`): a number typed for
      * a tool whose gesture was then abandoned never became part of the construction, so it must leave no

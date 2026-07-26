@@ -79,6 +79,15 @@ class Editor(
     // finish (its start/vertex/close steps are one gesture), a break click, an opening insertion, a
     // delete, and the panel edits the browser shell routes here. A snapshot is pushed only when the
     // text changed, so a cancelled or no-op gesture never becomes an undo step.
+    //
+    // **A value typed into an armed tool is half of that tool's operation, never a step of its own.**
+    // Typing it creates an ordinary parameter (OP-13, see [commitTypedScalar]) — but "circle of radius 7"
+    // is *one* thing the user did, so the parameter is held pending and whichever checkpoint commits next
+    // seals it: the tool's own build takes parameter and geometry as one snapshot, and one undo removes
+    // both. Abandon the gesture instead — Esc, or arming another tool — and [resetPicks] **retracts** it,
+    // so it leaves no step and no panel row, exactly as a cancelled tool's stray points leave none. The
+    // invariant both halves protect is that no snapshot ever contains half an operation, and no
+    // parameter that only existed to feed one can outlive it unaccounted for.
     private val undoStack = ArrayList<String>()
     private val redoStack = ArrayList<String>()
     private var lastCommitted: String = DocumentFormat.save(doc)
@@ -1106,7 +1115,9 @@ class Editor(
             key == "Enter" && numericEntry.isNotEmpty() -> if (pathActive) commitTypedLeg() else commitTypedScalar()
             // a repeating tool (Outline) commits on Enter and abandons on Escape
             key == "Enter" && !pathActive -> finishRepeatingTool()
-            key == "Escape" && !pathActive && filledSlots > 0 -> {
+            // Escape abandons the pending tool application — its picks *and* the parameters typed for it,
+            // which [resetPicks] retracts, so cancelling leaves nothing behind (see [checkpoint])
+            key == "Escape" && !pathActive && (filledSlots > 0 || pendingTypedParams.isNotEmpty()) -> {
                 resetPicks()
                 statusHint = ""
                 onChange()
