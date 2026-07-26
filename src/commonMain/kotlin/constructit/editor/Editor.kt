@@ -59,6 +59,8 @@ class Editor(
     private fun adopt(fresh: Document) {
         doc = fresh
         clearSelection()
+        // it names elements of the document being replaced (and a tool of it), so it cannot survive
+        createDialog = null
         activeScalar = null
         scalarPicks.clear() // they name entries of the document being replaced
         resetPicks()
@@ -146,6 +148,21 @@ class Editor(
         }
         // one closure over all the roots at once — see [Document.dependentSteps]
         val droppedSteps = doc.dependentSteps(roots.toHashSet())
+        // A macro definition with live instances is **refused**, not cascaded (OP-6): an instance's step
+        // names the *tool*, not the definition's elements, so taking the instances too would delete work
+        // the user did not select — and leaving them is not an option either, since their element count
+        // is structural (replay would reject the file, which is not the same as OP-3 invalidity). So the
+        // honest answer is to say which instances are in the way.
+        val losses = doc.macroLosses(roots.toHashSet(), droppedSteps)
+        if (losses.isNotEmpty()) {
+            val (def, instances) = losses.first()
+            statusHint =
+                "Can't delete that: it defines tool ${def.name}, used by ${instances.size} instance " +
+                "element${if (instances.size == 1) "" else "s"} (${instances.take(4).joinToString(", ") { it.id }}) — " +
+                "delete the instances first"
+            onChange()
+            return false
+        }
         val removed = droppedSteps.flatMapTo(HashSet()) { it.creates }
         val dependents = removed.count { r -> targets.none { it === r } && r in doc.elements }
         val journalBefore = doc.journal.toList()
@@ -538,6 +555,114 @@ class Editor(
         return g
     }
 
+    // ---- the shared create dialog: group, or tool (OP-16 / OP-6's UI half) ----
+    //
+    // One dialog with two defaults, because the two ask the same question about the same closure —
+    // which of the free sources the selection reaches belong to the thing being made. Group → macro is
+    // the promotion path, so duplicating the record UI would be duplicating the analysis behind it.
+
+    /** The open create dialog, or null. The shell renders it; every decision in it is [CreateDialog]'s. */
+    var createDialog: CreateDialog? = null
+        private set
+
+    /**
+     * Open the create dialog over the current selection. Refused only when nothing is selected — a
+     * *tool* may still be impossible (a dimension in the selection, a placed group), which the dialog
+     * reports rather than the button refusing, so the user can see why.
+     */
+    fun beginCreate(mode: CreateMode): CreateDialog? {
+        if (selected.isEmpty()) {
+            statusHint = "Select the elements first (Shift+click to add, or drag a box)"
+            onChange()
+            return null
+        }
+        val members = selectedElements
+        val d = CreateDialog.of(mode, members, doc.analyseMacro(members))
+        createDialog = d
+        statusHint = d.help
+        onChange()
+        return d
+    }
+
+    fun cancelCreate() {
+        createDialog = null
+        statusHint = ""
+        onChange()
+    }
+
+    /**
+     * Confirm the open dialog: a group of the selection (plus any ticked point, which is OP-16's
+     * "membership = closure or inputs" answered the group way), or a macro whose ticked candidates are
+     * its input ports. One checkpoint either way — declaring a tool is one user-level operation.
+     */
+    fun confirmCreate(): Boolean {
+        val d = createDialog ?: return false
+        if (!d.ready) {
+            statusHint = d.blocker ?: "Nothing to create"
+            onChange()
+            return false
+        }
+        val ok =
+            if (d.mode == CreateMode.GROUP) {
+                val members = d.members + d.checkedPoints.filter { p -> d.members.none { it === p } }
+                select(members, d.members.firstOrNull())
+                groupSelection(d.name) != null
+            } else {
+                makeTool(d.name, d.members, d.checkedPoints, d.checkedScalars)
+            }
+        if (ok) createDialog = null
+        onChange()
+        return ok
+    }
+
+    /**
+     * Declare [members] a macro named [name] and switch to the tool it becomes (OP-6). Separated from
+     * the dialog so a test — and a future scripted path — can make a tool without one.
+     */
+    fun makeTool(
+        name: String,
+        members: List<Element>,
+        pointInputs: List<Element>,
+        scalarInputs: List<ScalarEntry>,
+    ): Boolean {
+        val def = doc.defineMacro(name, members, pointInputs, scalarInputs)
+        if (def == null) {
+            statusHint = "Could not make a tool from that selection"
+            onChange()
+            return false
+        }
+        checkpoint()
+        setTool(def.toolId)
+        val scalarNote = if (scalarInputs.isEmpty()) "" else " and ${scalarInputs.joinToString(", ") { it.name }} from the panel"
+        statusHint =
+            "Tool ${def.name}: click ${pointInputs.size} point${if (pointInputs.size == 1) "" else "s"}$scalarNote " +
+            "to place an instance — editing the original updates every instance"
+        onChange()
+        return true
+    }
+
+    /**
+     * Retire a custom tool. Refused while instances exist, naming them: an instance is a function of its
+     * definition (OP-6), so there is no consistent document with the definition gone and the instances
+     * left — the same rule delete follows.
+     */
+    fun deleteMacro(def: MacroDef): Boolean {
+        val instances = doc.instancesOf(def).flatMap { it.elements }
+        if (instances.isNotEmpty()) {
+            statusHint =
+                "Can't remove tool ${def.name}: ${instances.size} instance element${if (instances.size == 1) "" else "s"} " +
+                "still use it (${instances.take(4).joinToString(", ") { it.id }}) — delete the instances first"
+            onChange()
+            return false
+        }
+        if (!doc.removeMacro(def)) return false
+        if (toolId == def.toolId) setTool(Tools.SELECT)
+        checkpoint()
+        statusHint = "Removed tool ${def.name} — the construction it was made from stays"
+        onChange()
+        return true
+    }
+
     /** Dissolve [g] — its elements stay, and stay selected. A placed group is unplaced first. */
     fun ungroup(g: Group): Boolean {
         val n = doc.groupMembers(g).size
@@ -683,7 +808,7 @@ class Editor(
     fun currentHelp(): String {
         snapHint?.let { if (it.linked) return "Snap: ${it.label} — Alt to place freely" }
         if (toolId == Tools.SELECT) return Tools.SELECT_HELP
-        val tool = Tools.byId(toolId) ?: return ""
+        val tool = doc.toolDef(toolId) ?: return ""
         // the panel is as much an input as the canvas (OP-13), so a tool still waiting for a scalar says
         // which one it wants next rather than describing clicks that will be thrown away
         if (toolScalars(tool) == null) return scalarPrompt(tool)
@@ -815,7 +940,14 @@ class Editor(
                 if (doc.breakOrthoLegNear(world, tolWorld())) {
                     "Segment broken — drag either half to open the corner"
                 } else {
-                    "Click a segment of an ortho path"
+                    // a break *replaces* the leg, so it is refused on a leg a tool is defined from
+                    // (OP-6) — say which, since "click a segment" would be a lie there
+                    val hit = HitTest.nearest(doc, ev(), world, tolWorld()) { it.kind == ElementKind.SEGMENT }
+                    if (hit != null && doc.definesAMacro(listOf(hit))) {
+                        "${hit.id} is part of a tool's definition — breaking it would replace it; retire the tool first"
+                    } else {
+                        "Click a segment of an ortho path"
+                    }
                 }
             checkpoint()
             onChange()
@@ -1313,7 +1445,7 @@ class Editor(
 
     /** True when the active tool's next slot creates a point — the case a snap marker is useful for. */
     private fun placesAPoint(): Boolean {
-        val tool = Tools.byId(toolId) ?: return false
+        val tool = doc.toolDef(toolId) ?: return false
         val slot = tool.slots.getOrNull(filledSlots) ?: return false
         return slot == SlotKind.PLACE_POINT || slot == SlotKind.POINT
     }
@@ -1367,7 +1499,7 @@ class Editor(
      * collected; too few picks just cancels, since a boundary of one curve is not a boundary.
      */
     fun finishRepeatingTool(): Boolean {
-        val tool = Tools.byId(toolId) ?: return false
+        val tool = doc.toolDef(toolId) ?: return false
         if (!tool.repeating || filledSlots == 0) return false
         val picks = Picks(pickedPoints.toList(), pickedElements.toList(), pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0), pickedClicks.toList())
         val scalars = toolScalars(tool)
@@ -1408,7 +1540,7 @@ class Editor(
     private fun toolCount(tool: ToolDef): Int = if (tool.minCount == 0) 0 else maxOf(count, tool.minCount)
 
     private fun runToolClick(screen: Vec2) {
-        val tool = Tools.byId(toolId) ?: return
+        val tool = doc.toolDef(toolId) ?: return
         val world = camera.screenToWorld(screen)
         // a repeating tool closes when the first pick is clicked again — the boundary is complete
         if (tool.repeating && filledSlots >= 2) {

@@ -40,6 +40,10 @@ first-class goal and the current implementation focus.
   dimension line's own placement is draggable and typeable like any other degree of freedom.
 - **Parameter wiring** — reduce degrees of freedom by binding one parameter (or point) to another;
   equality by shared reference, with cycle checks.
+- **Your own tools** — select a construction, tick which of its free points and parameters are the
+  inputs, and it becomes a button in the palette. Clicking its slots stamps an *instance* that is a
+  view over the original rather than a copy of it: **editing the original updates every instance**, an
+  instance's only freedom is its inputs, and the tool travels with the file.
 - **Architectural layer** — a rectilinear **ortho-path** (shared-coordinate model: local vertex
   editing, axis-aligned by construction, closeable loops) and parametric **walls**: a *thick path*,
   i.e. one offset region around the path (mitred corners, end caps, a ring where the path closes),
@@ -117,9 +121,9 @@ local vertex dragging, closeable rectilinear loops, and path endpoints that weld
 attach to lines — all solver-free. 72 headless tests pass and every feature was verified live
 in-browser.
 
-Planned next: wall-to-wall junction cleanup, footprint accessors for dimensioning and snapping, a
-user-defined macro (custom-tool) UI, mesh export (STL/3MF), and the showcases that drive the rest
-(gear, floor plan → house, spare part, papercraft net).
+Planned next: wall-to-wall junction cleanup, footprint accessors for dimensioning and snapping, mesh
+export (STL/3MF), and the showcases that drive the rest (gear, floor plan → house, spare part,
+papercraft net).
 
 ## Documentation
 

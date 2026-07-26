@@ -19,7 +19,12 @@ import constructit.units.Quantity
  */
 enum class SlotKind { PLACE_POINT, POINT, EXISTING_POINT, CURVE, LINE, CIRCLE, SEGMENT, GEOMETRY, ON_CIRCLE_POINT, SIDE, CENTRIC, AREA, SOLID }
 
-enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, ANNOTATE, RESULT, SOLIDS }
+/**
+ * CUSTOM is where a document's **user-defined macros** land (OP-6): a macro *is* a [ToolDef], so the
+ * palette needs no second kind of button — only a category whose contents come from the document rather
+ * than from [Tools.all]. See [Document.toolDef]: the registry is static plus the open document's macros.
+ */
+enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, ANNOTATE, RESULT, SOLIDS, CUSTOM }
 
 /**
  * Geometry picked so far for the active tool (split by kind), [at] = the last click's world
@@ -274,5 +279,9 @@ object Tools {
             ToolDef(DIM_ANGULAR, "Angular dimension", ToolCategory.ANNOTATE, listOf(SlotKind.LINE, SlotKind.LINE, SlotKind.SIDE), help = "Click two lines, then click inside the angle you mean — that sector is what the dimension names.") { d, p, _ -> d.angularDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
         )
 
+    /**
+     * The *built-in* tool of that id. Call [Document.toolDef] instead wherever a document is at hand: a
+     * user-defined macro is a tool too (OP-6), and only the document knows its own macros.
+     */
     fun byId(id: String): ToolDef? = all.firstOrNull { it.id == id }
 }

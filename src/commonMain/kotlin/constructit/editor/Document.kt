@@ -503,6 +503,9 @@ class Document {
         // a `place` step names its group, not elements, so it follows the group step rather than any
         // dependency of its own: a placement whose group is gone has nothing left to place (OP-16)
         val droppedGroups = HashSet<String>()
+        // likewise a macro instance's `tool` step names its *definition* (OP-6), not the definition's
+        // elements: if the `macrodef` step goes, no instance of it can replay, so they go with it
+        val droppedMacros = HashSet<String>()
 
         fun labelOfStep(step: Step): String? = step.args.filterIsInstance<Arg.Label>().firstOrNull()?.s
 
@@ -553,11 +556,24 @@ class Document {
                 if (labelOfStep(step) in droppedGroups) drop(step, chain)
                 continue
             }
+            // an instance of a macro whose definition is going cannot replay (the tool would be unknown).
+            // The editor refuses such a delete outright, naming the instances — this rule is what keeps
+            // the *script* consistent whatever route a delete takes.
+            val toolId = (step.args.firstOrNull() as? Arg.Text)?.s
+            if (step.kind == "tool" && toolId != null && toolId.startsWith(MACRO_TOOL_PREFIX) &&
+                toolId.removePrefix(MACRO_TOOL_PREFIX) in droppedMacros
+            ) {
+                drop(step, chain)
+                continue
+            }
             val depends =
                 chain?.dropped == true ||
                     els.any { it in droppedEls } ||
                     referencedScalars(step).any { it in droppedScalars }
             if (depends) drop(step, chain)
+            // a definition is all-or-nothing: losing one of its elements changes how many elements an
+            // instance creates, which replay checks (OP-18), so the whole declaration goes
+            if (depends && step.kind == "macrodef") labelOfStep(step)?.let { droppedMacros.add(it) }
         }
         return dropped
     }
@@ -924,6 +940,259 @@ class Document {
                 (v.region.outer.elements + v.region.holes.flatMap { it.elements }).flatMap { GeomMath.bounds(it).toList() }
             else -> emptyList()
         }
+
+    // ---- user-defined macros (OP-6): definition by example, instances by virtual addressing ----
+
+    private val macroDefs = ArrayList<MacroDef>()
+    private val macroInstanceList = ArrayList<MacroInstance>()
+    private var macroCounter = 0
+    private var instanceCounter = 0
+
+    /** The macro definitions this document declares — each of them a tool in the palette (OP-6). */
+    val macros: List<MacroDef> get() = macroDefs.toList()
+
+    /** The live instances: one whose elements have all been deleted **is** gone, as an empty group is. */
+    val macroInstances: List<MacroInstance>
+        get() = macroInstanceList.filter { inst -> inst.elements.any { e -> elements.any { it === e } } }
+
+    /**
+     * Every tool this document can run: the static registry plus this document's own macros.
+     *
+     * The registry being *static* was the one thing user-defined tools needed changed (OP-6's UI half):
+     * a macro is an ordinary [ToolDef], so the palette, the click collector and the `tool` step all work
+     * on it unmodified — they only have to ask the document instead of [Tools] directly.
+     */
+    val toolDefs: List<ToolDef> get() = Tools.all + macroDefs.map { it.tool }
+
+    fun toolDef(id: String): ToolDef? = Tools.byId(id) ?: macroDefs.firstOrNull { it.toolId == id }?.tool
+
+    /**
+     * What [members] could become (OP-6 by example): the free sources their closure reaches, which are
+     * exactly the candidate input ports — the same closure analysis a placement performs
+     * ([analysePlacement]), asking OP-16's question the other way round.
+     *
+     * A group asks *"do the ancestor points join the group?"*; a macro asks *"do they become inputs?"*.
+     * So a point the selection merely *uses* is deliberately **not** filtered out here: that is exactly
+     * what an input port is, while for a group it would be an outsider. Ownership still matters, but only
+     * for *order* and hence for the dialog's default — see below.
+     */
+    fun analyseMacro(members: List<Element>): MacroAnalysis {
+        val reachable = ancestors(members.map { it.ref.node })
+        val closure = reachable.mapTo(HashSet()) { it.id }
+        val memberSet = members.toHashSet()
+        val free =
+            elements.filter { el ->
+                el.kind == ElementKind.POINT && (el.ref.node as? SourceNode)?.boundTo == null && el.ref.node.id in closure
+            }
+        // The points the selection **owns** come first, so the anchor (the first point input) is by
+        // default one of its own rather than something it merely leans on. That matters as soon as a
+        // definition contains an *instance*: a macro is a transparent group (OP-6), so the inner
+        // definition's free points are legitimately in the closure too — they are just not what "place
+        // this here" means.
+        val owned = free.filter { it in memberSet }
+        val points = owned + free.filter { it !in memberSet }
+        val parameters =
+            scalars.filter { it.editable && (it.ref.node as? ParameterNode)?.boundTo == null && it.ref.node.id in closure }
+        val problems = ArrayList<String>()
+        if (members.any { it.isAnnotation }) {
+            problems.add("A dimension can't be part of a tool yet — it annotates the drawing rather than being part of it")
+        }
+        // a placed group's positions live in its frame (OP-16), which an instance would have to carry a
+        // copy of; until then the honest answer is to say so rather than stamp instances on top of it
+        if (reachable.any { it is SourceNode && it.value is FrameValue }) {
+            problems.add("Unplace the group first: a tool can't carry a placement frame yet")
+        }
+        if (points.isEmpty()) problems.add("This selection reaches no free point, so an instance would have nowhere to be placed")
+        return MacroAnalysis(points, parameters, problems, owned.mapTo(HashSet()) { it.id })
+    }
+
+    /** One word (a step's arguments split on spaces) and unique, exactly as a group's name is. */
+    private fun uniqueMacroName(base: String): String {
+        val b = base.trim().replace(Regex("\\s+"), "-").replace("\"", "")
+        if (b.isNotEmpty() && macroDefs.none { it.name == b }) return b
+        val stem = b.ifEmpty { "tool" }
+        var i = if (b.isEmpty()) 1 else 2
+        while (macroDefs.any { it.name == "$stem$i" }) i++
+        return "$stem$i"
+    }
+
+    /**
+     * Declare the sub-construction behind [members] a macro named [name], with [pointInputs] as its
+     * click slots (**the first is the anchor**) and [scalarInputs] as its panel inputs (OP-6).
+     *
+     * Recorded as a `macrodef` step (OP-18) that *creates nothing*: like a `group` step it is a
+     * designation over what earlier steps built, so replaying it re-declares the tool without rebuilding
+     * any geometry — and the custom tool is therefore part of the file rather than of the session.
+     */
+    fun defineMacro(
+        name: String,
+        members: List<Element>,
+        pointInputs: List<Element>,
+        scalarInputs: List<ScalarEntry>,
+    ): MacroDef? {
+        if (members.isEmpty() || pointInputs.isEmpty()) return null
+        if (pointInputs.any { (it.ref.node as? SourceNode)?.boundTo != null || it.ref.node !is SourceNode }) return null
+        val def =
+            MacroDef(
+                "mac${++macroCounter}",
+                uniqueMacroName(name),
+                members.toList(),
+                pointInputs.toList(),
+                scalarInputs.toList(),
+            )
+        recording(
+            "macrodef",
+            *listOfNotNull(
+                Arg.Label(def.name),
+                Arg.Keyed("els", Arg.Els(def.elements)),
+                Arg.Keyed("pts", Arg.Els(def.pointInputs)),
+                Arg.Keyed("scalar", Arg.Scs(def.scalarInputs)).takeIf { def.scalarInputs.isNotEmpty() },
+            ).toTypedArray(),
+        ) { macroDefs.add(def) }
+        def.step = journal.lastOrNull()?.takeIf { it.kind == "macrodef" }
+        return def
+    }
+
+    /**
+     * Whether any of [els] is named by a macro definition (OP-6).
+     *
+     * A definition is a list of elements and an instance's element count is structural (OP-18), so an
+     * operation that would **retire** one of them — an ortho break or join, the two edits that replace
+     * path elements rather than moving them — has to be refused rather than leaving a definition
+     * describing geometry that no longer exists.
+     */
+    fun definesAMacro(els: List<Element>): Boolean =
+        macroDefs.any { d -> d.elements.any { e -> els.any { it === e } } }
+
+    /** The live instances of [def] — what forbids removing it, and what an edit of it propagates to. */
+    fun instancesOf(def: MacroDef): List<MacroInstance> = macroInstances.filter { it.def === def }
+
+    /**
+     * Retire the tool [def]. Refused while instances exist: they are *functions of it*, and dropping the
+     * definition would leave their `tool` steps naming a tool the file no longer declares.
+     *
+     * Like [ungroup] this drops the recorded step outright rather than replaying — a `macrodef` step
+     * creates no geometry, so nothing else has to change for the script to stay valid.
+     */
+    fun removeMacro(def: MacroDef): Boolean {
+        if (instancesOf(def).isNotEmpty()) return false
+        if (!macroDefs.remove(def)) return false
+        def.step?.let { s -> journal.removeAll { it === s } }
+        return true
+    }
+
+    /**
+     * Instantiate [def] with the clicked [args] and the panel [scalarArgs] (OP-6).
+     *
+     * **The instance is a view, not a copy.** Every definition node is mapped once:
+     * - a designated input maps to the *argument* node — nothing is bound and nothing is rewritten;
+     * - an internal free point maps to a node holding the definition's position **offset by
+     *   (this instance's anchor − the definition's anchor)**, which is what stamps the instance under
+     *   the click while keeping it tied to the original's layout;
+     * - any other free source (a parameter, a constant, a slider's own DOF) maps to the definition's own
+     *   node — a captured default *shared* by every instance (OP-6);
+     * - everything derived maps to an [constructit.core.InstanceNode] over the same computation with its
+     *   inputs mapped, addressed `M/nk`.
+     *
+     * So editing the definition — dragging one of its internal points, retyping a captured parameter —
+     * re-propagates to every instance on the next pass, with nothing to synchronize. And an instance has
+     * no freedom of its own beyond its arguments, which is OP-6's purity rule made structural rather than
+     * enforced: its elements carry no handle, because there is no node of theirs to write.
+     */
+    fun instantiateMacro(
+        def: MacroDef,
+        args: List<PointRef>,
+        scalarArgs: List<ScalarRef>,
+    ): List<Element> {
+        if (args.size < def.pointInputs.size || scalarArgs.size < def.scalarInputs.size) return emptyList()
+        val instanceId = "M${++instanceCounter}"
+        val bound = HashMap<String, Node>()
+        def.pointInputs.forEachIndexed { i, el -> bound[el.ref.node.id] = args[i].node }
+        def.scalarInputs.forEachIndexed { i, e -> bound[e.ref.node.id] = scalarArgs[i].node }
+        val defAnchor = def.pointInputs[0].ref.node
+        val anchor = args[0].node
+        val orthoAxes = orthoCoordinateAxes()
+        val mapped = HashMap<String, Node>()
+
+        fun map(n: Node): Node {
+            bound[n.id]?.let { return it }
+            mapped[n.id]?.let { return it }
+            val free = n.takeIf { boundMaster(it) == null && (it is SourceNode || it is ParameterNode) }
+            val out =
+                when {
+                    free is SourceNode && free.value is PointValue ->
+                        cx.instanceCapturedPoint(instanceId, free, defAnchor, anchor)
+                    free != null && orthoAxes[free.id] != null ->
+                        cx.instanceCapturedCoord(instanceId, free, defAnchor, anchor, orthoAxes[free.id]!!)
+                    // a shared captured default: the definition's own node, so an edit re-propagates
+                    free != null -> free
+                    else -> cx.instanceNode(instanceId, n, n.inputs.map { map(it) })
+                }
+            mapped[n.id] = out
+            return out
+        }
+
+        val created =
+            def.outputs.map { el ->
+                val point = el.isPoint
+                // purity (OP-6): an instance point is *derived* — its DOF is the definition's or an
+                // argument's, so it must not present a handle of its own
+                add(
+                    Ref<Value>(map(el.ref.node)),
+                    if (point) ElementKind.DERIVED_POINT else el.kind,
+                    if (point) Styles.DERIVED_POINT else el.style,
+                )
+            }
+        macroInstanceList.add(MacroInstance(instanceId, def, created))
+        return created
+    }
+
+    /** The node a source is bound to (welded / wired / framed), or null while it is a free DOF. */
+    private fun boundMaster(n: Node): Node? =
+        when (n) {
+            is SourceNode -> n.boundTo
+            is ParameterNode -> n.boundTo
+            else -> null
+        }
+
+    /**
+     * An ortho vertex's coordinate sources, by axis (0 = x, 1 = y). A rectilinear path holds a position
+     * as two *shared scalars* rather than as a point value (OP-19/OP-20), so those are the one other kind
+     * of source an instance has to translate — otherwise a tool made from a wall would stamp every
+     * instance back onto the original.
+     */
+    private fun orthoCoordinateAxes(): Map<String, Int> {
+        val out = HashMap<String, Int>()
+        for (p in orthoPaths) {
+            for (v in p.vertices) {
+                out[v.corner.xNode.id] = 0
+                out[v.corner.yNode.id] = 1
+            }
+        }
+        return out
+    }
+
+    /**
+     * The macro definitions the delete of [roots] (closure [dropped]) would take away, each with the
+     * instance elements that would go down with them — what a delete has to refuse
+     * (see `Editor.deleteSelection`).
+     *
+     * An instance the user selected **himself** is not a casualty: he asked for it to go, so deleting a
+     * definition together with its instances is allowed in one operation. Only instances that would be
+     * taken *silently* make the delete a refusal.
+     */
+    fun macroLosses(
+        roots: Set<Step>,
+        dropped: Set<Step>,
+    ): List<Pair<MacroDef, List<Element>>> {
+        val droppedEls = dropped.flatMapTo(HashSet()) { it.creates }
+        return macroDefs.mapNotNull { def ->
+            val hit = def.step in dropped || def.elements.any { it in droppedEls }
+            val casualties =
+                instancesOf(def).flatMap { it.elements }.filter { el -> creatingStep(el)?.let { it in roots } != true }
+            if (hit && casualties.isNotEmpty()) def to casualties else null
+        }
+    }
 
     // ---- wiring: reduce a parameter's DOF by binding it to another scalar (equality by reference) ----
 
@@ -1775,6 +2044,10 @@ class Document {
         nPos: Vec2,
     ): Boolean {
         val leg = path.legs.getOrNull(legIndex) ?: return false
+        // a break *replaces* the leg, and a macro definition names its elements (OP-6): retiring one
+        // would leave a definition — and every instance's element count — describing geometry that is
+        // gone, so the topology edit is refused instead
+        if (definesAMacro(listOf(leg))) return false
         return recording("orthobreak", Arg.El(leg), Arg.Pos(mPos), Arg.Pos(nPos)) {
             breakOrthoLegNow(path, legIndex, mPos, nPos)
         }
@@ -1879,6 +2152,15 @@ class Document {
         keepPerp: Double? = null,
     ): Element? {
         val leg = path.legs.getOrNull(legIndex) ?: return null
+        // as for a break: a join retires the jog's legs and corner points, which a macro definition may
+        // name (OP-6). Refusing leaves the jog exactly as a drag with Alt would.
+        val retired =
+            (legIndex - 1..legIndex + 1).mapNotNull { path.legs.getOrNull(it) } +
+                listOfNotNull(
+                    path.vertices.getOrNull(legIndex)?.let { elementFor(it.ref) },
+                    path.vertices.getOrNull(legIndex + 1)?.let { elementFor(it.ref) },
+                )
+        if (definesAMacro(retired)) return null
         return recording("orthojoin", Arg.El(leg)) { joinCollapsedLegNow(path, legIndex, keepPerp) }
     }
 

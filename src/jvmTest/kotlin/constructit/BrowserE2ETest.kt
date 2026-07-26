@@ -97,8 +97,9 @@ class BrowserE2ETest {
             page.mouse().down()
             page.mouse().move(box.x + box.width * 0.95, box.y + box.height * 0.05)
             page.mouse().up()
-            page.fill("#g-name", "shell")
-            page.click("#g-add")
+            page.click("#g-add") // opens the shared create dialog (OP-16), defaulting to a plain group
+            page.fill("#cd-name", "shell")
+            page.click("#cd-ok")
             assertTrue(page.querySelectorAll("#groups-list .grow").size == 1, "the group should appear in the panel")
             val note = page.querySelector("#status").textContent()
             assertTrue(note == "Grouped $itemsBuilt elements as shell", "got: $note")
@@ -202,6 +203,50 @@ class BrowserE2ETest {
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/06-solid-3d.png")))
             page.click("#v-2d")
             page.waitForSelector("#canvas:visible")
+
+            // ---- a user-defined tool (OP-6), recorded and stamped in the real browser ----
+            //
+            // The whole record → designate → reuse loop through the actual DOM: a small construction in an
+            // empty corner, the *same* create dialog in its other mode (everything free ticked, so the two
+            // points become the tool's slots), then the custom palette button stamping an instance where it
+            // is clicked. Only a browser can say the palette really grew a button and the dialog really closed.
+            page.click("#tool-select")
+            val mx1 = box.x + box.width * 0.08
+            val mx2 = box.x + box.width * 0.26
+            val my = box.y + box.height * 0.62
+            page.click("#tool-point")
+            page.keyboard().down("Alt")
+            page.mouse().click(mx1, my)
+            page.mouse().click(mx2, my)
+            page.keyboard().up("Alt")
+            page.click("#tool-segment")
+            page.mouse().click(mx1, my)
+            page.mouse().click(mx2, my)
+
+            page.click("#tool-select")
+            page.mouse().move(mx1 - 25.0, my - 25.0)
+            page.mouse().down()
+            page.mouse().move(mx2 + 25.0, my + 25.0)
+            page.mouse().up()
+            page.click("#g-tool")
+            page.fill("#cd-name", "widget")
+            assertTrue(page.querySelectorAll("#create-dialog input[type=checkbox]").size >= 2, "both free points are candidates")
+            page.click("#cd-ok")
+            assertTrue(page.querySelector("#create-dialog").innerHTML().isEmpty(), "the dialog closes on Create")
+            assertTrue(page.querySelectorAll("#macros-list .trow").size == 1, "the tool appears in the panel")
+            assertTrue(page.querySelector("#tool-macro\\:widget") != null, "and gets a palette button of its own")
+
+            val beforeInstance = page.querySelectorAll("#tree .item").size
+            page.click("#tool-macro\\:widget")
+            page.mouse().click(mx1, my + box.height * 0.12)
+            page.mouse().click(mx2, my + box.height * 0.12)
+            assertTrue(
+                page.querySelectorAll("#tree .item").size > beforeInstance,
+                "clicking the custom tool's slots should build an instance",
+            )
+            val row = page.querySelectorAll("#macros-list .trow").first().textContent()
+            assertTrue(row.contains("1×"), "and the panel should count it; got: $row")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/07-custom-tool.png")))
 
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()

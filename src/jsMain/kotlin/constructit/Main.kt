@@ -4,13 +4,14 @@ import constructit.core.Evaluator
 import constructit.dsl.scalar
 import constructit.editor.BrowserCanvasDrawTarget
 import constructit.editor.Camera
+import constructit.editor.CreateDialog
+import constructit.editor.CreateMode
 import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.Format
 import constructit.editor.PointerButton
 import constructit.editor.ScalarEntry
 import constructit.editor.Scene3
-import constructit.editor.Tools
 import constructit.editor.Viewport3
 import constructit.editor.WebGlRenderer3
 import constructit.editor.quantityOf
@@ -55,7 +56,7 @@ private fun setupApp() {
     editor.camera = Camera.centered(canvas.width.toDouble(), canvas.height.toDouble(), scale = 4.0)
     val target = BrowserCanvasDrawTarget(ctx)
 
-    buildPalette()
+    buildPalette(editor)
 
     // ---- the 3D view (OP-12: Canvas2D for 2D, WebGL for 3D) ----
     //
@@ -250,9 +251,31 @@ private fun setupApp() {
     // ---- selection: bulk visibility and flat groups (OP-16). The DOM only routes; the Editor decides ----
     (document.getElementById("s-hide") as HTMLElement).addEventListener("click", { editor.setSelectionVisible(false) })
     (document.getElementById("s-show") as HTMLElement).addEventListener("click", { editor.setSelectionVisible(true) })
-    val groupName = document.getElementById("g-name") as HTMLInputElement
-    (document.getElementById("g-add") as HTMLElement).addEventListener("click", {
-        if (editor.groupSelection(groupName.value) != null) groupName.value = ""
+    // Group and Make-tool open the *same* dialog with different defaults (OP-16): the shell only routes
+    // clicks into it — the candidates, the defaults and the validation are all [CreateDialog]'s, in
+    // commonMain, so they are headlessly tested rather than living in the DOM.
+    (document.getElementById("g-add") as HTMLElement).addEventListener("click", { editor.beginCreate(CreateMode.GROUP) })
+    (document.getElementById("g-tool") as HTMLElement).addEventListener("click", { editor.beginCreate(CreateMode.TOOL) })
+    val createDialog = document.getElementById("create-dialog") as HTMLElement
+    createDialog.addEventListener("click", {
+        val t = it.target as? HTMLElement ?: return@addEventListener
+        val d = editor.createDialog ?: return@addEventListener
+        // the typed name lives in the input until something is done with it — read it back first, since
+        // confirming is the only moment it matters and the field is not re-rendered while the dialog is up
+        (document.getElementById("cd-name") as? HTMLInputElement)?.let { f -> d.name = f.value }
+        when {
+            t.id == "cd-ok" -> editor.confirmCreate()
+            t.id == "cd-cancel" -> editor.cancelCreate()
+            // the checkbox has already flipped itself in the DOM; keep the model in step with it
+            t is HTMLInputElement -> t.getAttribute("data-cidx")?.toIntOrNull()?.let { i -> d.toggle(i) }
+        }
+    })
+    // a custom tool's row: click to select it, × to retire it (refused while instances exist — OP-6)
+    (document.getElementById("macros-list") as HTMLElement).addEventListener("click", {
+        val t = it.target as? HTMLElement ?: return@addEventListener
+        val row = t.closest(".trow") ?: return@addEventListener
+        val def = editor.doc.macros.firstOrNull { m -> m.id == row.getAttribute("data-mid") } ?: return@addEventListener
+        if (t.className.contains("tdrop")) editor.deleteMacro(def) else editor.setTool(def.toolId)
     })
     (document.getElementById("groups-list") as HTMLElement).addEventListener("click", {
         val t = it.target as? HTMLElement ?: return@addEventListener
@@ -429,17 +452,62 @@ private fun setupApp() {
     repaint()
 }
 
-private fun buildPalette() {
+/**
+ * Which tools the palette currently shows. The registry is no longer static — a document's macros are
+ * tools too (OP-6) — so the palette is rebuilt when *that set* changes and only then: rebuilding it on
+ * every repaint would throw away the DOM under a click for no reason.
+ */
+private var paletteShows: String? = null
+
+private fun buildPalette(editor: Editor) {
+    val tools = editor.doc.toolDefs
+    val signature = tools.joinToString(",") { it.id }
+    if (paletteShows == signature) return
+    paletteShows = signature
     val palette = document.getElementById("palette") as HTMLElement
     val sb = StringBuilder()
     sb.append("<button class=\"tool active\" id=\"tool-select\" data-tool=\"select\">Select / Drag</button>")
     for (cat in constructit.editor.ToolCategory.values()) {
+        val inCat = tools.filter { it.category == cat }
+        // the custom category exists only once the document defines a macro
+        if (inCat.isEmpty()) continue
         sb.append("<div class=\"cat\">${cat.name.lowercase()}</div>")
-        for (t in Tools.all.filter { it.category == cat }) {
-            sb.append("<button class=\"tool\" id=\"tool-${t.id}\" data-tool=\"${t.id}\">${t.label}</button>")
+        for (t in inCat) {
+            sb.append("<button class=\"tool\" id=\"tool-${t.id}\" data-tool=\"${t.id}\" title=\"${t.help}\">${t.label}</button>")
         }
     }
     palette.innerHTML = sb.toString()
+}
+
+/** The dialog currently rendered, so typing in its name field is never interrupted by a repaint. */
+private var dialogShown: CreateDialog? = null
+
+/**
+ * Render the shared create dialog (OP-16). Only when it *changes*: while it is open the DOM is the live
+ * copy of the checkbox state and of the half-typed name, and re-rendering would discard both.
+ */
+private fun renderCreateDialog(editor: Editor) {
+    val host = document.getElementById("create-dialog") as HTMLElement
+    val d = editor.createDialog
+    if (d === dialogShown) return
+    dialogShown = d
+    if (d == null) {
+        host.innerHTML = ""
+        return
+    }
+    val rows =
+        d.candidates.withIndex().joinToString("") { (i, c) ->
+            val checked = if (c.checked) " checked" else ""
+            val what = if (c.isPoint) "point" else "parameter"
+            "<label class=\"cdrow\"><input type=\"checkbox\" data-cidx=\"$i\"$checked>" +
+                "<span>${c.label}</span><span class=\"tports\">$what</span></label>"
+        }
+    host.innerHTML =
+        "<div class=\"cdtitle\">${d.title} — ${d.members.size} element(s)</div>" +
+        "<div class=\"cdhelp\">${d.help}</div>" +
+        "<input id=\"cd-name\" type=\"text\" placeholder=\"name\" value=\"${d.name}\">" +
+        rows +
+        "<div class=\"cdbuttons\"><button id=\"cd-ok\">Create</button><button id=\"cd-cancel\">Cancel</button></div>"
 }
 
 private fun renderPanel(
@@ -460,6 +528,11 @@ private fun renderPanel(
     (document.getElementById("e-undo") as org.w3c.dom.HTMLButtonElement).disabled = !editor.canUndo
     (document.getElementById("e-redo") as org.w3c.dom.HTMLButtonElement).disabled = !editor.canRedo
     (document.getElementById("e-delete") as org.w3c.dom.HTMLButtonElement).disabled = editor.selection == null
+
+    // the palette carries the document's own macros beside the built-in tools (OP-6), so it follows the
+    // document rather than being built once at startup
+    buildPalette(editor)
+    renderCreateDialog(editor)
 
     // active tool highlight
     val toolNodes = document.querySelectorAll(".tool")
@@ -509,6 +582,21 @@ private fun renderPanel(
                 "<button class=\"gplace\" title=\"${if (g.placed) "Unplace — its points become free again where they are" else "Place — give it a frame; dragging then moves the whole group"}\">${if (g.placed) "⊗" else "⌖"}</button>" +
                 "<button class=\"gvis\" title=\"Hide or show every member\">${if (editor.isGroupVisible(g)) "◉" else "○"}</button>" +
                 "<button class=\"gdrop\" title=\"Dissolve the group — its elements stay\">×</button>" +
+                "</div>"
+        }
+
+    // custom tools (OP-6): what the document itself defines — click a row to arm the tool, × to retire it
+    val mlistTools = document.getElementById("macros-list") as HTMLElement
+    mlistTools.innerHTML =
+        editor.doc.macros.joinToString("") { m ->
+            val ports =
+                "${m.pointInputs.size} pt" +
+                    if (m.scalarInputs.isEmpty()) "" else " + ${m.scalarInputs.joinToString(", ") { it.name }}"
+            val instances = editor.doc.instancesOf(m).size
+            "<div class=\"trow\" data-mid=\"${m.id}\" title=\"Editing the original updates all $instances instance(s)\">" +
+                "<span class=\"tname\">${m.name}</span>" +
+                "<span class=\"tports\">$ports · $instances×</span>" +
+                "<button class=\"tdrop\" title=\"Retire this tool — the construction it was made from stays\">×</button>" +
                 "</div>"
         }
 

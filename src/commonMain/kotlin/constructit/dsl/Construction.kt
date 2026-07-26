@@ -7,6 +7,7 @@ import constructit.core.DirectionValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
+import constructit.core.InstanceNode
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Node
@@ -128,6 +129,66 @@ class Construction {
             scopes.removeLast()
         }
     }
+
+    // ---- macro instances: path-addressed views over a definition subgraph (OP-6) ----
+
+    /**
+     * One node of macro instance [instanceId] standing for definition node [defNode], with [inputs]
+     * already mapped into the instance (OP-6).
+     *
+     * Its id is the **derived path-id** `instanceId/defNodeId`, so an instance is a namespace: every
+     * internal node of the definition is addressable inside every instance, which is what makes macros
+     * transparent groups rather than black boxes. Nothing is copied — see [InstanceNode].
+     */
+    fun instanceNode(
+        instanceId: String,
+        defNode: Node,
+        inputs: List<Node>,
+    ): Node = InstanceNode(freshId("$instanceId/${defNode.id}"), defNode, inputs)
+
+    /**
+     * A free point *inside* a definition — not designated an input, hence a **captured default**
+     * (OP-6) — as seen by one instance: the definition's own position, offset by
+     * (instance anchor − definition anchor).
+     *
+     * This is the anchor rule that makes a stamped instance land under the cursor: the captured points
+     * are held *relative* to the first point input, so clicking elsewhere translates the whole instance.
+     * It reads the definition's node live, so dragging that internal point still re-propagates to every
+     * instance — the capture is of the *relative layout*, not of a frozen coordinate.
+     */
+    fun instanceCapturedPoint(
+        instanceId: String,
+        defSource: Node,
+        defAnchor: Node,
+        anchor: Node,
+    ): Node =
+        OpNode(freshId("$instanceId/${defSource.id}"), listOf(defSource, defAnchor, anchor)) {
+            val p = (it[0] as PointValue).p
+            val a = (it[1] as PointValue).p
+            val w = (it[2] as PointValue).p
+            EvalResult.Ok(PointValue(p - a + w))
+        }
+
+    /**
+     * The same capture for a single **coordinate** source — an ortho vertex's x or y (OP-19/OP-20),
+     * where a position is held as two shared scalars rather than as one point value. [axis] says which
+     * of the anchor's coordinates it is measured against, which is the only extra thing needed to
+     * translate it with the instance.
+     */
+    fun instanceCapturedCoord(
+        instanceId: String,
+        defSource: Node,
+        defAnchor: Node,
+        anchor: Node,
+        axis: Int,
+    ): Node =
+        OpNode(freshId("$instanceId/${defSource.id}"), listOf(defSource, defAnchor, anchor)) {
+            val v = (it[0] as ScalarValue).q
+            val a = (it[1] as PointValue).p
+            val w = (it[2] as PointValue).p
+            val d = if (axis == 0) w.x - a.x else w.y - a.y
+            EvalResult.Ok(ScalarValue(v + Quantity.mm(d)))
+        }
 
     private fun <V : Value> op(
         vararg inputs: Ref<*>,

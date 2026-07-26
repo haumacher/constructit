@@ -76,6 +76,21 @@
         .grow .gname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
         .grow .gcount { color: #999; }
         .grow button { border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; font-size: 11px; line-height: 1; padding: 2px 4px; }
+        /* the shared create dialog: group, or tool (OP-16 — one dialog, two defaults) */
+        #create-dialog:empty { display: none; }
+        #create-dialog { border: 1px solid #cbd8e6; background: #f4f8fd; border-radius: 6px; padding: 6px; margin-bottom: 6px; }
+        #create-dialog .cdtitle { font-size: 12px; color: #1f77b4; font-weight: 600; }
+        #create-dialog .cdhelp { font-size: 11px; color: #888; margin: 2px 0 4px; }
+        #create-dialog .cdrow { display: flex; align-items: center; gap: 4px; font-size: 12px; padding: 1px 0; }
+        #create-dialog input[type=text] { width: 100%; font-size: 12px; padding: 2px 4px; margin-bottom: 4px; }
+        #create-dialog .cdbuttons { display: flex; gap: 4px; margin-top: 4px; }
+        #create-dialog button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
+        #create-dialog button:hover { background: #eaf1fa; }
+        .trow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .trow:hover { background: #eef4fb; }
+        .trow .tname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        .trow .tports { color: #999; }
+        .trow button { border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; font-size: 11px; line-height: 1; padding: 2px 4px; }
         #tree .item { font-size: 12px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
         #tree .item:hover { background: #eef4fb; }
         #tree .item.active { background: #e2eefb; outline: 1px solid #1f77b4; }
@@ -136,12 +151,14 @@
                 <button id="s-hide" title="Hide the selected elements (a view state, not part of the drawing)">Hide</button>
                 <button id="s-show" title="Show the selected elements again">Show</button>
             </div>
-            <h3>Groups</h3>
+            <h3>Groups &amp; tools</h3>
             <div id="groups-form">
-                <input id="g-name" placeholder="name">
-                <button id="g-add" title="Group the selected elements (OP-16)">Group</button>
+                <button id="g-add" title="Group the selected elements (OP-16)">Group…</button>
+                <button id="g-tool" title="Make a reusable tool out of the selected construction (OP-6)">Make tool…</button>
             </div>
+            <div id="create-dialog"></div>
             <div id="groups-list"></div>
+            <div id="macros-list"></div>
             <h3>Parameters</h3>
             <div id="params-form">
                 <input id="p-name" placeholder="name" value="r">

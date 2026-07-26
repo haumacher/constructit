@@ -447,16 +447,22 @@ which is the test of whether the algebra is closed:
    hide/delete, `group` steps that survive save/load and stay consistent when a member is deleted, and
    a **frame**: placing a group retrofits the free points it owns to frame-relative form, after which
    moving the group is one literal write on the frame (drag, or typed x/y/angle) and its derived
-   geometry follows for free. Remaining: **relocate-origin / re-parent / constructed frames (mates)**,
-   group → macro promotion, and capturing an **ortho path's** shared coordinate nodes under a frame
-   (the rotated project frame — walls do not yet follow a frame, and say so).
+   geometry follows for free. **Group → macro promotion is done** with item 6: both are the same dialog
+   over the same closure analysis, so the promotion path is "open it in the other mode". Remaining:
+   **relocate-origin / re-parent / constructed frames (mates)**, and capturing an **ortho path's** shared
+   coordinate nodes under a frame (the rotated project frame — walls do not yet follow a frame, and say so).
 5. **Result layer (OP-14) — done end to end.** Trim ops, `Loop`/`Region`, areas, the *Outline* tool,
    derived scaffolding + a dim toggle, and cubic Béziers (OP-15) taking part in a boundary. Remaining
    here: **rework the wall as an output feature** (OP-21), regions with holes from traced outlines
    (only single loops are traceable so far), and parametric spline trimming.
-6. **User-defined macros UI.** Record a sub-construction, designate inputs, get a reusable
-   tool (OP-6 `Macro` machinery exists in the engine; needs the record/parameterize UI). The
-   headline capability of the paradigm. Shares its dialog with group creation (OP-16).
+6. **User-defined macros — done.** Record a sub-construction, tick which of its free sources are the
+   inputs, get a palette tool; clicking its slots stamps an **instance** that is a path-addressed *view*
+   over the definition, so editing the original updates every instance live. The dialog is shared with
+   group creation (OP-16), the tool is part of the file (a `macrodef` step), and an instance is an
+   ordinary `tool` step. See *Implementation status (as built — user-defined macros, the UI half)* under
+   OP-6. Remaining there: **specialization** (partial application) has no UI, a definition's *structure*
+   (not its values) does not propagate to existing instances, and a dimension or a placed group cannot be
+   part of a definition yet — each refused with a message rather than half-supported.
 7. **Dimensions & annotations — done.** Linear (aligned), radial and angular dimensions, each a
    `ToolDef` in an *Annotate* category and each an element whose value **is** an ordinary measurement
    node (OP-4). See *Dimensions* under Measurements below. Remaining here: leaders with free text,
@@ -511,6 +517,13 @@ A step need not create geometry: `group "kitchen" els=e1,e3` records flat-group 
 element name and declares nothing. Membership is *state*, so the step is written with the members the
 script still declares — which is how deleting a member leaves a consistent group, and how a group whose
 members are all gone leaves no step at all.
+
+`macrodef "widget" els=e1,e2,e3 pts=e1,e2 scalar="r"` is the third step of that kind (OP-6): it declares a
+**user-defined tool** over elements earlier steps built — which of them are the definition, which of their
+free points are its click slots (the first is the anchor) and which panel scalars it consumes. It creates
+nothing, so the custom tool is part of the *file* rather than of the session, and an **instance of it is an
+ordinary `tool macro:widget …` step**: the only thing the format needed was for the tool registry to be the
+document's (`Tools.all` plus its macros) instead of a static list.
 
 `place "kitchen" at=30,50 angle=15deg` is the same kind of step one level up (OP-16 step 2): it names a
 group and restates its frame, and replay re-runs the same retrofit. The members' `point` steps keep
@@ -697,6 +710,98 @@ against the strong type system (OP-5), which also drives context-sensitive tools
 - **Parameter presentation flag** (orthogonal to graph semantics): a parameter/source node is
   either **adjustable** (interactive handle / slider, optional range+step) or
   **constant/locked** (editable value, no slider, not draggable).
+
+### Implementation status (as built — user-defined macros, the UI half)
+
+**An instance is a view over the definition, not a copy of it** — OP-6's *virtual addressing* taken
+literally. One new node kind (`InstanceNode`, ~10 lines) holds no computation of its own: it delegates to
+a *definition* node's `compute` and only substitutes the inputs, and its id is the derived path-id
+`M/nk`. Instantiating therefore maps each definition node exactly once:
+
+| definition node | in the instance |
+|---|---|
+| a designated **input** | the *argument* node itself — nothing is bound, nothing is rewired |
+| an internal **free point** | the definition's position **offset by (this anchor − the definition's anchor)** |
+| an internal **ortho vertex coordinate** | the same, per axis (a run holds its position as shared scalars, OP-19/20) |
+| any other **free source** (a parameter, a slider's own DOF, a constant) | the definition's own node — a captured default *shared* by every instance |
+| anything **derived** | an `InstanceNode` over the same computation, inputs mapped |
+
+Consequences worth stating, because they are what the design promised: **edit-propagation is automatic
+and has nothing to synchronize** — dragging an internal point of the original moves every instance on the
+next evaluation pass, retyping a captured parameter re-radiuses all of them, and nesting composes
+(`M2/M1/n3`) because an instance's nodes are ordinary nodes. **Purity is structural rather than enforced:**
+an instance's elements carry no `Handle` and a point of one is `DERIVED_POINT`, so there is no node of
+theirs to write; its whole freedom is its arguments. And because every internal node is addressable and
+displayable, macros stay **transparent groups** — an outside construction can be built on an instance's
+geometry, and a definition can contain an instance.
+
+**Note what this deliberately does *not* use.** The engine's pre-existing `Macro<A, R>` (the Kotlin
+build-lambda behind `roundedRect` / `boltCircle`) is a *code-level* macro: it re-runs its body per
+instantiation, so it duplicates nodes and gives no edit-propagation. It stays what it is — the way library
+shapes are written in Kotlin — while user-defined macros are the OP-6 mechanism, which is the one that had
+been sketched and not built. Adopting it for tools would have meant copy semantics; the whole point of the
+OP is that it does not have to.
+
+**The anchor rule (one sentence, and the reason instances land under the cursor):** *the first point input
+is the anchor, and every internal free position is captured relative to it.* So the captured constants are
+a captured **relative layout**, not frozen coordinates: clicking elsewhere translates the whole instance,
+and moving the definition's own points still re-propagates. Rotation is not part of it — an instance is
+placed, not oriented (a frame would be, and that is OP-16 step 3's territory).
+
+**One dialog, two defaults — OP-16's claim, cashed in.** `CreateDialog` (commonMain, unit-tested) is what
+both *Group…* and *Make tool…* open. Its rows are the free sources the selection's closure reaches, and
+what ticking one means is the only difference: a **member** for a group, an **input port** for a tool.
+Defaults: nothing ticked for a group (a plain named set, exactly what the button always did), and for a
+tool the free points the selection **owns** — its ancestors are offered but left captured, which is what
+keeps a definition containing an instance from sprouting the inner definition's points as extra slots. When
+the selection owns no free point at all (only derived geometry was picked), its ancestors are ticked
+instead, since otherwise there would be no input to place by. Parameter rows appear for tools only: a group
+takes elements. Scalar inputs need no new machinery — they are the ordered scalar slots the tool-completion
+work already added.
+
+**A macro is a `ToolDef`, so the palette needed no new kind of button** — only a registry that is no longer
+static: `Document.toolDef` serves `Tools.all` plus the open document's macros, and the four call sites in
+the controller (help, click collection, replay) ask the document instead of `Tools`. That is the whole of
+"custom tools" in the UI layer; the palette rebuilds its *custom* category from the document, so opening a
+file brings its tools with it.
+
+**Persistence: `macrodef "widget" els=e1,e2,e3,e4,e5 pts=e1,e2 scalar="r"`** (OP-18) — a step that creates
+nothing, like `group`: a *designation* over what earlier steps built, naming the definition's elements, the
+point inputs in slot order (first = anchor) and the scalar inputs in consumption order. An instance is an
+**ordinary `tool macro:widget pts=e6,e7 clicks=… -> e8,e9,e10` step**, so the instance format is the one
+every tool already has, and definitions precede instances by construction, which is exactly what replay
+needs. `save → load → save` byte-equality with a definition and several instances is the test.
+
+**Delete: refused, naming the instances.** Deleting anything that would take a definition away while
+instances live on is refused ("it defines tool widget, used by 3 instance elements (e8, e9, e10) — delete
+the instances first"). The two alternatives were both worse: *cascading* would silently delete work the
+user never selected (an instance's step names the **tool**, not the definition's elements, so it is not a
+dependent in the ordinary sense), and *orphaning* is not OP-3 invalidity here — an instance's element count
+is structural (OP-18), so an orphan is a file that no longer loads. Selecting the instances **together
+with** the definition is allowed and is one operation, since then nothing is lost silently. Retiring a tool
+from the panel follows the same rule, and drops its step outright (as `ungroup` does). Belt-and-braces: the
+step-closure also drops instance steps of a dropped `macrodef`, so no route can leave an unreplayable
+script. The same rule covers the two edits that *retire* elements without deleting anything — an ortho
+**break** (which replaces a leg with three) and the **join** that flattens a jog: both are refused on a
+definition's elements. The break says why; the join simply leaves the jog, which is what a drag with Alt
+does anyway.
+
+**Undo:** declaring a tool is one checkpoint and each instantiation is another — both fall out of the
+existing seams (`Editor.checkpoint` after the dialog confirms; the tool build for an instance).
+
+**Deliberate omissions at this step.** **Specialization / partial application has no UI** — the engine can
+express it (`standardRect` = `roundedRect` with the radius fixed) but deriving a macro from a macro in the
+dialog was cut whole rather than half-built; the same effect is available by making a tool from a
+construction that captures the value instead of exposing it. A definition's **structure** does not
+propagate: adding an element to the original does not add it to existing instances (their element list is
+fixed at instantiation, which is also what the loader's count check vouches for) — values and DAG edits do,
+structural edits mean instantiating again. A **dimension** cannot be part of a definition (it is an
+annotation with its own DOF, OP-14's third column) and neither can a **placed group's** members (their
+positions live in a frame an instance would have to carry a copy of) — both refused with a message. A macro
+cannot be renamed and its slots cannot be reordered after the fact: both are recorded in the step's
+argument list, and recorded arguments are never rewritten. An **ortho run** can be part of a definition, but
+only with a free point in the selection to act as anchor — its own vertices are derived, so there is
+nothing else to place it by.
 
 ## Expression language & units (OP-7 — RESOLVED)
 

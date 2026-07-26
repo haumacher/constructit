@@ -321,6 +321,7 @@ object DocumentFormat {
             "intersectnear" -> doc.intersectNear(el(1), el(2), parsePos(words[3]))
             "pointoncurve" -> doc.pointOnCurve(el(1), parsePos(words[2]))
             "tool" -> applyTool(doc, words, byName)
+            "macrodef" -> applyMacroDef(doc, words, byName)
             "group" -> applyGroup(doc, words, byName)
             "place" -> applyPlace(doc, words)
             else -> throw LoadError("unknown step '$kind'")
@@ -351,6 +352,43 @@ object DocumentFormat {
         val leg = need("leg").toIntOrNull() ?: throw LoadError("malformed leg index '${need("leg")}'")
         doc.addInterval(tp, leg, quantity(need("pos")), width.ref, quantity(need("sill")), quantity(need("head")))
             ?: throw LoadError("leg $leg is not a leg of '${words[1]}'")
+    }
+
+    /**
+     * Replay a **macro definition** (OP-6): `macrodef "name" els=… pts=… scalar=…`.
+     *
+     * The step declares nothing but a designation over what earlier steps built — which elements are the
+     * definition, which of their free points are the input slots (the first is the anchor) and which
+     * panel scalars are the scalar inputs. So the custom **tool** is part of the file: replaying this
+     * re-registers it, and the instance steps that follow (ordinary `tool macro:name …` steps) find it
+     * because a definition is always recorded before any instance of it.
+     */
+    private fun applyMacroDef(
+        doc: Document,
+        words: List<String>,
+        byName: Map<String, Element>,
+    ) {
+        val name = unquote(words.getOrElse(1) { throw LoadError("macrodef is missing a name") })
+        var members = emptyList<Element>()
+        var points = emptyList<Element>()
+        var scalars = emptyList<ScalarEntry>()
+
+        fun els(v: String) = v.split(',').filter { it.isNotEmpty() }.map { byName[it] ?: throw LoadError("unknown element '$it'") }
+        for (w in words.drop(2)) {
+            val v = w.substringAfter('=', "")
+            when (w.substringBefore('=')) {
+                "els" -> members = els(v)
+                "pts" -> points = els(v)
+                "scalar" ->
+                    scalars =
+                        scalarNames(v).map { n ->
+                            doc.scalars.firstOrNull { it.name == n } ?: throw LoadError("unknown scalar '$n'")
+                        }
+                else -> throw LoadError("unknown macrodef argument '${w.substringBefore('=')}'")
+            }
+        }
+        doc.defineMacro(name, members, points, scalars)
+            ?: throw LoadError("macro '$name' has no elements, or an input point that is not free")
     }
 
     /**
@@ -415,7 +453,9 @@ object DocumentFormat {
         words: List<String>,
         byName: Map<String, Element>,
     ) {
-        val tool = Tools.byId(words[1]) ?: throw LoadError("unknown tool '${words[1]}'")
+        // the document's registry, not the static one: a user-defined macro is a tool too (OP-6), and its
+        // `macrodef` step has already been replayed by the time any instance of it is
+        val tool = doc.toolDef(words[1]) ?: throw LoadError("unknown tool '${words[1]}'")
         var points = emptyList<PointRef>()
         var elements = emptyList<Element>()
         var clicks = emptyList<Vec2>()

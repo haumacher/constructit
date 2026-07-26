@@ -144,6 +144,20 @@ class OpNode(
 }
 
 /**
+ * One node of a macro **instance** (OP-6): definition node [defNode] evaluated under this instance's
+ * argument bindings, addressed by the derived path-id `M/nk`.
+ *
+ * **Virtual addressing, not copying.** The wrapper holds no computation of its own — it delegates to
+ * the definition node's [compute] and only substitutes the inputs — so a definition edit is seen by
+ * every instance on the next evaluation pass. That is what makes edit-propagation automatic instead of
+ * a synchronization problem, and it is why an instance is a *function* of its arguments rather than a
+ * stamped copy of the geometry.
+ */
+class InstanceNode(id: String, val defNode: Node, override val inputs: List<Node>) : Node(id) {
+    override fun compute(args: List<Value>): EvalResult = defNode.compute(args)
+}
+
+/**
  * Evaluates the DAG with per-pass memoization (OP-5). Invalidity propagates transitively:
  * a node depending on any invalid input is itself invalid (OP-3). Shared sub-expressions
  * (e.g. a PointSet feeding two Selects) are computed once.
