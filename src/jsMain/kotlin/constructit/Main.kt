@@ -15,6 +15,7 @@ import constructit.editor.Tools
 import constructit.editor.Viewport3
 import constructit.editor.WebGlRenderer3
 import constructit.geom.Justification
+import constructit.geom.MeshBool
 import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.Quantity
@@ -468,6 +469,15 @@ private fun setupApp() {
     window.addEventListener("resize", { repaint() })
 
     repaint()
+
+    // The general boolean engine (OP-9) is WASM, so it becomes usable *after* the first paint while node
+    // evaluation stays synchronous. Nothing waits for it: until it is up, a boolean between solids with no
+    // common axis is an ordinary invalid node carrying that as its reason, and this repaint is the whole
+    // auto-heal (OP-3) — the graph is re-evaluated, and those solids appear.
+    MeshBool.initialize { ready ->
+        console.log("[MeshBool] ${if (ready) "ready" else "unavailable"} — ${MeshBool.status}")
+        repaint()
+    }
 }
 
 /**

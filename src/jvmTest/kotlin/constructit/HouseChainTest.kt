@@ -18,6 +18,7 @@ import constructit.editor.Tools
 import constructit.geom.Axis3
 import constructit.geom.Feature3
 import constructit.geom.Geom3
+import constructit.geom.MeshBool
 import constructit.geom.Vec2
 import constructit.geom.Vec3
 import constructit.units.mm
@@ -49,11 +50,11 @@ import kotlin.test.assertTrue
  * final assertion is that **one** drag of a single carrier vertex reshapes the ground floor, storey 2 and
  * the roof together.
  *
- * Two things are deliberately *not* done, and both are recorded rather than worked around: the roof is not
- * unioned with the walls (a horizontal prism and a vertical one have no common axis, and OP-22 refuses that
- * boolean with a reason — asserted in [theRoofAndTheWallsHaveNoCommonAxisSoTheBooleanRefuses]), and the roof
- * is built from the DSL because the tool surface has no way to *name* a vertical plane yet — the gap is in
- * the datum-plane UI, not in the engine.
+ * The house keeps its solids **separate**, and that stays the scene's shape — but it is no longer a limit:
+ * a horizontal prism and a vertical one have no common axis, so OP-22's exact algebra cannot fuse them, and
+ * the general engine (Manifold, OP-9) now can — asserted in
+ * [theRoofAndTheWallsFuseThroughTheGeneralEngine]. The roof is still built from the DSL because the tool
+ * surface has no way to *name* a vertical plane yet — the gap is in the datum-plane UI, not in the engine.
  */
 class HouseChainTest {
     private fun Editor.click(world: Vec2) {
@@ -257,22 +258,41 @@ class HouseChainTest {
     }
 
     /**
-     * The roof is a **separate solid**, and that is a stated cut rather than an omission: a prism swept along
-     * X and a prism swept along Z have no common axis, so OP-22's exact algebra has no answer and the boolean
-     * refuses *with the reason that names what would answer it* (Manifold, OP-9). The scene is the sum of its
-     * solids, which is all a printer or a viewer needs.
+     * A prism swept along X and a prism swept along Z have **no common axis**, so OP-22's exact algebra has
+     * no answer — and this is the case the general engine (Manifold, OP-9) was named for from the start.
+     * With it present the roof and the walls **fuse**, into a solid that is mesh-only: no slab stack, no
+     * named faces, just a watertight shell. Where the engine cannot run the boolean still refuses with the
+     * reason that names it, so both arms are asserted.
+     *
+     * Either way the scene remains the sum of its solids, which is all a printer or a viewer needs — that
+     * part of the design did not depend on the fusion being possible.
      */
     @Test
-    fun theRoofAndTheWallsHaveNoCommonAxisSoTheBooleanRefuses() {
+    fun theRoofAndTheWallsFuseThroughTheGeneralEngine() {
         val house = house()
         val roof = roofOver(house)
         val cx = house.ed.doc.cx
 
         @Suppress("UNCHECKED_CAST")
-        val r = Evaluator().resultOf(cx.union(house.upper.ref as SolidRef, roof.solid))
-        assertTrue(r is EvalResult.Invalid, "a horizontal prism and a vertical one cannot be fused exactly")
-        assertTrue(r.reason.contains("common axis"), "reason was: ${r.reason}")
-        assertTrue(r.reason.contains("Manifold (OP-9)"), "the refusal should name what would answer it")
+        val fused = cx.union(house.upper.ref as SolidRef, roof.solid)
+        val evF = Evaluator()
+        val r = evF.resultOf(fused)
+        if (MeshBool.available) {
+            assertTrue(r is EvalResult.Ok, "the general engine fuses what has no common axis: $r")
+            assertTrue(evF.solid(fused).feature is Feature3.MeshBoolean, "a fused roof is mesh-only (OP-9)")
+            assertManifold(evF.solid(fused).mesh, "roof fused onto the walls")
+            // the roof rests *on* the walls, so nothing is double-counted and nothing is lost
+            assertClose(
+                Geom3.volume(evF.solid(fused).mesh),
+                Geom3.volume(house.ed.meshOf(house.upper)) + Geom3.volume(evF.solid(roof.solid).mesh),
+                tol = 1.0,
+                msg = "a union of two solids that only touch is the sum of their volumes",
+            )
+        } else {
+            assertTrue(r is EvalResult.Invalid, "a horizontal prism and a vertical one cannot be fused exactly")
+            assertTrue(r.reason.contains("common axis"), "reason was: ${r.reason}")
+            assertTrue(r.reason.contains("Manifold (OP-9)"), "the refusal should name what would answer it")
+        }
 
         // ...and the scene's total volume is simply the sum, which is what an export writes out
         val ev = Evaluator()

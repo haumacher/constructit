@@ -88,8 +88,17 @@ lifted back to analytic geometry, while measurements taken *from* it may drive n
 **Booleans** (union / subtract / intersect) are **exact** for solids extruded along the same axis —
 counterbores, pockets, wall openings, stacked storeys — because that case decomposes into a stack of
 2D region booleans rather than into mesh surgery: no coplanar-face epsilon, no repair pass, and a
-result that is itself a legal operand of the next boolean. Anything else (a revolve, a future imported
-mesh) is **refused with a reason** rather than approximated; general booleans arrive with Manifold.
+result that is itself a legal operand of the next boolean.
+
+Anything else — a plate drilled *sideways*, a revolve operand, a roof fused onto walls — goes to
+**Manifold**, the guaranteed-manifold mesh engine, behind one `expect object MeshBool`: its JVM binding on
+the desktop, the same library as WASM in the browser. The exact path is always tried first and keeps its own
+refusals, and a general result is **mesh-only** by type (no named faces, no cross-section), so which engine
+answered is visible in the value rather than a matter of trust. Results are canonicalised — welded, sorted —
+so a mesh stays a pure function of its parameters, and the seam verifies its own output: a degenerate
+tangency, which has no watertight mesh at all, is **refused with a reason** and heals when the geometry
+moves. In the browser the engine's WASM arrives after the first paint; until it does, a general boolean is
+simply an invalid node that says so, and one repaint makes it appear.
 
 The seam runs **both ways**. *Extrude on face* raises an area from a solid's top face — the plan is drawn
 in the same 2D space, so an upper storey or a boss needs no datum-plane UI — and *Section* cuts a solid at a

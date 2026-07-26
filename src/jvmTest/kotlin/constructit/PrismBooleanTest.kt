@@ -14,6 +14,7 @@ import constructit.geom.Axis3
 import constructit.geom.Feature3
 import constructit.geom.Geom3
 import constructit.geom.Justification
+import constructit.geom.MeshBool
 import constructit.geom.SolidFace
 import constructit.units.deg
 import constructit.units.mm
@@ -282,11 +283,18 @@ class PrismBooleanTest {
         assertClose(ev.scalar(c.measureBBoxMax(meet, Axis3.Z)).base, 10.0, tol = 1e-9)
     }
 
-    // ---- refusals: whole capabilities, stated rather than approximated (OP-3) ----
+    // ---- what the exact algebra hands on, and what it still refuses (OP-3) ----
 
-    /** A revolve has no same-axis prismatic reading, and the reason names the engine that will (OP-9). */
+    /**
+     * A revolve has **no** prismatic reading, so the exact algebra has nothing to say — and since OP-9's
+     * engine landed, that is a *hand-off* rather than a refusal: the boolean is computed as a mesh boolean
+     * and the result is a [Feature3.MeshBoolean], which is how the value states which engine ran.
+     *
+     * The refusal is still the behaviour where the engine cannot run (an unsupported platform, a WASM
+     * module still loading), and it still names what would answer it — so both arms are asserted here.
+     */
     @Test
-    fun aBooleanWithARevolveIsRefusedAndNamesManifold() {
+    fun aBooleanWithARevolveTakesTheGeneralPath() {
         val c = Construction()
         val plate = c.extrude(c.sketchOn(c.planeXY(), c.rect(0.0, 0.0, 20.0, 20.0, "p")), c.parameter("d", 5.mm))
         val o = c.freePoint("axisO", 0.mm, 0.mm)
@@ -298,19 +306,39 @@ class PrismBooleanTest {
                 axis,
                 c.parameter("sweep", 360.0.deg),
             )
-        val r = Evaluator().resultOf(c.subtract(plate, shaft))
-        assertTrue(r is EvalResult.Invalid, "a revolve is not a prism, so this boolean has no exact answer")
-        assertTrue(r.reason.contains("Manifold (OP-9)"), "reason was: ${r.reason}")
+        val cut = c.subtract(plate, shaft)
+        val ev = Evaluator()
+        val r = ev.resultOf(cut)
+        if (MeshBool.available) {
+            assertTrue(r is EvalResult.Ok, "the general engine answers what the exact algebra cannot: $r")
+            assertTrue(ev.solid(cut).feature is Feature3.MeshBoolean, "and the result says which engine ran")
+            assertManifold(ev.solid(cut).mesh, "plate minus a turned shaft")
+        } else {
+            assertTrue(r is EvalResult.Invalid, "a revolve is not a prism, so this boolean has no exact answer")
+            assertTrue(r.reason.contains("Manifold (OP-9)"), "reason was: ${r.reason}")
+        }
     }
 
-    /** Two prisms on perpendicular planes have no common axis — refused, not silently reinterpreted. */
+    /**
+     * Two prisms on perpendicular planes have no common axis: the exact algebra is **not** stretched to
+     * cover them (that is the OP-22 line), the general engine is asked instead, and the result carries the
+     * fact that it is mesh-only.
+     */
     @Test
-    fun twoPrismsOnDifferentAxesAreRefused() {
+    fun twoPrismsOnDifferentAxesTakeTheGeneralPath() {
         val c = Construction()
         val a = c.extrude(c.sketchOn(c.planeXY(), c.rect(0.0, 0.0, 20.0, 20.0, "a")), c.parameter("da", 5.mm))
         val b = c.extrude(c.sketchOn(c.planeXZ(), c.rect(0.0, 0.0, 20.0, 20.0, "b")), c.parameter("db", 5.mm))
-        val r = Evaluator().resultOf(c.union(a, b))
-        assertTrue(r is EvalResult.Invalid && r.reason.contains("common axis"), "reason was: $r")
+        val fused = c.union(a, b)
+        val ev = Evaluator()
+        val r = ev.resultOf(fused)
+        if (MeshBool.available) {
+            assertTrue(r is EvalResult.Ok, "a cross-axis union is the general engine's case: $r")
+            assertTrue(ev.solid(fused).feature is Feature3.MeshBoolean, "a mesh boolean has no prismatic form")
+            assertManifold(ev.solid(fused).mesh, "two prisms across each other")
+        } else {
+            assertTrue(r is EvalResult.Invalid && r.reason.contains("common axis"), "reason was: $r")
+        }
     }
 
     /**

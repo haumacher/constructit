@@ -33,11 +33,13 @@ import constructit.geom.Bezier
 import constructit.geom.BoolOp
 import constructit.geom.Circle
 import constructit.geom.Direction
+import constructit.geom.Feature3
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.Line
 import constructit.geom.Loop
+import constructit.geom.MeshBool
 import constructit.geom.Plane3
 import constructit.geom.Profile
 import constructit.geom.ProfileElement
@@ -45,6 +47,7 @@ import constructit.geom.Ray
 import constructit.geom.Region
 import constructit.geom.Segment
 import constructit.geom.Sketch3
+import constructit.geom.Solid3
 import constructit.geom.SolidFace
 import constructit.geom.Vec2
 import constructit.geom.Vec3
@@ -1389,15 +1392,44 @@ class Construction {
         b: SolidRef,
     ): SolidRef = booleanOf(a, b, BoolOp.INTERSECT)
 
+    /**
+     * The two paths of one operation, and the order matters (OP-22 first, then OP-9).
+     *
+     * **Same axis → the exact algebra**, always, and its refusals stay refusals: an empty result or an
+     * inconsistent arrangement is reported as itself and is *not* retried on the mesh engine. A general
+     * boolean that quietly answered where the exact one declined would make the exact path impossible to
+     * trust, since nothing downstream could tell which one had run.
+     *
+     * **Otherwise → the general engine** (Manifold, OP-9, behind the [MeshBool] seam): a cross-axis pair, a
+     * revolve operand, a mesh-only result feeding the next boolean. The result is a mesh with no analytic
+     * form ([Feature3.MeshBoolean]) — which is the OP-9 partition, not a shortcut: what leaves the exact
+     * path leaves the analytic layer with it. When the engine is not available (no native library, or a
+     * WASM module still loading in the browser) the node is invalid *with that as the reason* and heals the
+     * moment it becomes available (OP-3).
+     */
     private fun booleanOf(
         a: SolidRef,
         b: SolidRef,
         kind: BoolOp,
     ): SolidRef =
         op(a, b) {
-            val (solid, why) =
-                Geom3.boolean(kind, (it[0] as SolidValue).solid, (it[1] as SolidValue).solid)
-            if (solid == null) EvalResult.Invalid(why ?: "cannot combine these solids") else EvalResult.Ok(SolidValue(solid))
+            val sa = (it[0] as SolidValue).solid
+            val sb = (it[1] as SolidValue).solid
+            if (Geom3.sameAxis(sa.feature, sb.feature)) {
+                val (solid, why) = Geom3.boolean(kind, sa, sb)
+                if (solid == null) {
+                    EvalResult.Invalid(why ?: "cannot combine these solids")
+                } else {
+                    EvalResult.Ok(SolidValue(solid))
+                }
+            } else {
+                val (mesh, why) = MeshBool.boolean(kind, sa.mesh, sb.mesh)
+                if (mesh == null) {
+                    EvalResult.Invalid(why ?: "cannot combine these solids")
+                } else {
+                    EvalResult.Ok(SolidValue(Solid3(Feature3.MeshBoolean(kind), mesh)))
+                }
+            }
         }
 
     /**

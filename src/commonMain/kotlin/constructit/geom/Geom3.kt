@@ -171,6 +171,21 @@ sealed interface Feature3 {
         val minZ: Double get() = slabs.minOf { it.z0 }
         val maxZ: Double get() = slabs.maxOf { it.z1 }
     }
+
+    /**
+     * The result of a **general** boolean — one computed by the mesh engine (Manifold, OP-9) because the
+     * operands had no common axis and the exact prismatic algebra (OP-22) therefore had no answer.
+     *
+     * It carries [kind] and *nothing else*, and that is the OP-9 mesh-is-a-sink rule showing up in the type
+     * system rather than in a comment: a mesh boolean has no analytic form, so there is no plane to sketch
+     * on ([Geom3.facePlane] refuses), no slab to cut ([Geom3.sectionAt] refuses), and no plan to draw
+     * ([footprint] is empty). What it does have is a mesh — renderable, measurable, printable — and it is a
+     * legal operand of the next boolean, which then also takes the general path. Which solids were combined
+     * is the op node's input list, not a field here (identity is the node, OP-8).
+     */
+    data class MeshBoolean(val kind: BoolOp) : Feature3 {
+        override val footprint: List<Region> get() = emptyList()
+    }
 }
 
 /**
@@ -760,7 +775,35 @@ object Geom3 {
         when (feature) {
             is Feature3.Prism -> feature to null
             is Feature3.Revolution -> null to NOT_PRISMATIC
+            is Feature3.MeshBoolean -> null to NOT_PRISMATIC
             is Feature3.Extrusion -> oneSlab(feature, tolMm)
+        }
+
+    /**
+     * Whether the **exact** path (OP-22) applies to these two features at all: both prismatic, along a
+     * common axis. The dispatch predicate the boolean ops ask *before* running anything, so that the exact
+     * algebra's own refusals (an empty result, an inconsistent arrangement) stay refusals and are not
+     * quietly answered by the mesh engine instead — the one thing that must never happen, because a
+     * silently-degraded exact path is indistinguishable from a correct one until it leaks.
+     *
+     * Cheap on purpose: only the *axis* is examined, not the areas, so the check costs no tessellation.
+     */
+    fun sameAxis(
+        a: Feature3,
+        b: Feature3,
+    ): Boolean {
+        val pa = axisPlaneOf(a) ?: return false
+        val pb = axisPlaneOf(b) ?: return false
+        return abs(abs(pa.normal.normalized().dot(pb.normal.normalized())) - 1.0) <= 1e-9
+    }
+
+    /** The plane a prismatic feature is swept along, or null when the feature has no prismatic reading. */
+    private fun axisPlaneOf(feature: Feature3): Plane3? =
+        when (feature) {
+            is Feature3.Extrusion -> feature.sketch.plane
+            is Feature3.Prism -> feature.plane
+            is Feature3.Revolution -> null
+            is Feature3.MeshBoolean -> null
         }
 
     private fun oneSlab(
@@ -1141,6 +1184,9 @@ object Geom3 {
             // are *rotated* frames, and naming them TOP/BOTTOM would invent a convention this slice has
             // no use for. The cut is recorded in DESIGN.md under OP-17.
             is Feature3.Revolution -> null to "a revolved solid has no top or bottom face"
+            // A general boolean's result is a mesh (OP-9's sink rule): its faces are emergent, not
+            // constructed, so there is nothing here that a provenance accessor could name.
+            is Feature3.MeshBoolean -> null to "a general boolean's result is mesh-only, so it has no named faces (OP-9)"
         }
 
     // ---- sections: the downward half of the seam (OP-17), exact for prisms (OP-22) ----
@@ -1180,6 +1226,8 @@ object Geom3 {
         when (feature) {
             is Feature3.Revolution ->
                 return null to "a revolved solid has no prismatic cross-section; sectioning one needs an analytic revolve section (OP-17)"
+            is Feature3.MeshBoolean ->
+                return null to "a general boolean's result is mesh-only, so it has no analytic cross-section (OP-9); slicing its mesh is a separate operation"
             is Feature3.Extrusion -> {
                 plane = feature.sketch.plane
                 // [Slab] is borrowed here as a plain (interval, areas) carrier and never escapes this

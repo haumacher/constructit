@@ -1959,10 +1959,99 @@ never lifts back to analytic *as geometry*). The **strong type system (OP-5)** e
 boundary: `Solid`/`Face`/`Edge` (analytic) are distinct from `Mesh`; no mesh→analytic
 *geometry* lift. (Scalars measured from a mesh may still feed forward — see below.)
 
+### Implementation status (as built — the general boolean path, OP-9)
+
+**Manifold is in, behind one declaration.** `expect object MeshBool { available; status; boolean(kind, a, b) }`
+in `geom/MeshBool.kt` is the whole seam OP-9 promised as *"a deployment toggle, not a rewrite"*: the JVM actual
+is the `manifold3d` JavaCPP binding (`org.clojars.cartesiantheatrics:manifold3d:2.0.3`, one jar per platform
+with the C++ library inside), the JS actual is the `manifold-3d` WASM package, and nothing above the seam
+knows which is running.
+
+- **The exact path is untouched and still comes first.** `dsl` asks `Geom3.sameAxis(a, b)` — a cheap axis-only
+  predicate — and same-axis prisms go to OP-22's slab algebra exactly as before, *including its refusals*: an
+  empty result or an inconsistent arrangement is reported as itself and is **not** retried on the mesh engine.
+  A general boolean that quietly answered where the exact one declined would make the exact path impossible to
+  trust, since nothing downstream could tell which had run. `MeshBooleanTest.aSameAxisBooleanStillTakesThe`
+  `ExactPath` asserts the split through the *value*: exact ⇒ `Feature3.Prism` with the bore as a hole in a
+  slab and a volume equal to cap-area × height to 1e-6 mm³.
+- **What comes out of the general path is mesh-only, by type.** `Feature3.MeshBoolean(kind)` carries the
+  operation and nothing else — no plane to sketch on, no slab to cut, no plan to draw — so OP-9's
+  mesh-is-a-sink rule is enforced rather than remembered: `facePlane` and `sectionAt` refuse it with a reason,
+  and its `footprint` is empty. It is still a legal operand of the next boolean (which then also takes the
+  general path), still measurable, still renderable, still printable.
+- **Determinism is manufactured, not assumed.** Manifold guarantees a *manifold* result, not a vertex
+  numbering; it sorts internally, may run under TBB, and emits duplicated vertices where property runs meet.
+  So every result passes through `MeshCanon.canonical`: weld vertices with identical coordinates (`-0.0`
+  normalised to `0.0` first, since the two are equal as numbers but not as keys), sort the survivors
+  lexicographically and renumber, rotate each triangle onto its smallest index — a *rotation*, so the winding
+  survives — drop the degenerate ones, sort the triangles. The canonical form is a function of the geometry
+  alone: asserted directly, by relabelling and duplicating a mesh's vertices and getting the identical value
+  back. Because vertices come out shared, `assertManifold` applies **unchanged** — the same
+  every-edge-used-once-each-way check as the exact path, no adapted weaker check.
+- **The precision cost, stated.** This Manifold generation carries `MeshGL` positions as **float32** (the
+  double-precision `MeshGL64` is newer; moving to it is a one-line change in each actual). A general boolean
+  is therefore accurate to ~1e-5 mm on drawing-sized coordinates: five orders coarser than the exact path's
+  1e-7 mm welding lattice, two orders *finer* than the 0.02 mm chord tolerance the tessellated operands
+  already carry. One more reason the exact path stays exact.
+- **One deployment wrinkle, recorded because it is invisible otherwise.** `libmanifold.so` in that jar is
+  built with Manifold's optional **assimp**-based mesh IO — a path this engine never calls — and links
+  against `libassimp.so.5` *without bundling it*, so `dlopen` fails outright on a machine with no system
+  assimp (which is what "the engine is unavailable" looked like at first). Demanding a system package for
+  unused code would be a poor trade, so the build declares LWJGL's native bundle (which publishes exactly
+  that library, with the right soname, for every platform) and `MeshBool` loads a copy by absolute path
+  before Manifold's own — the dynamic linker then resolves the dependency against the already-loaded
+  object. Best effort: a missing resource is skipped and the smoke test reports the real reason.
+- **The browser: async instantiation against a synchronous evaluator — solved with OP-3, not with async.**
+  WASM comes up after the first paint; `Evaluator` is and stays a synchronous pure function of the graph. So
+  the module is loaded once at startup, `available` is false until it is up, and until then a cross-axis
+  boolean is an *ordinary invalid node with a reason that says the engine is still starting*. When it
+  arrives, one repaint re-evaluates the graph and the solids appear — the auto-heal that OP-3 already
+  specified, with no loading flag threaded through the engine and no async colour spreading into the DAG.
+  `Main.kt` contributes exactly that: `MeshBool.initialize { console.log(...); repaint() }`.
+- **The WASM ships with the app.** The npm entry point is emscripten glue — an ES module with a top-level
+  `await` that finds its `.wasm` through `import.meta.url` — so it is *not* re-bundled: a Gradle `Copy` task
+  puts `manifold.js` and `manifold.wasm` from the resolved npm package into the js resources, and they land
+  next to `index.html`. The app loads them from its **own origin** with the browser's native ESM loader
+  (`locateFile` pointing at the `.wasm`), so nothing is fetched from a CDN and the published glue runs
+  untransformed. Verified in Chrome over http: `[MeshBool] ready — Manifold 3.5.1 (WASM, float32 meshes)`.
+  Opened over `file:` the browser refuses ES modules altogether, and that is the honest demonstration of the
+  unavailable path — the E2E asserts the engine reports itself either way and the shell carries on.
+- **The seam checks its own output, and one degenerate class is refused.** Manifold's guarantee is about
+  *its* representation, not about a `Mesh3`, and the gap is real: a **tangent** contact — a bore whose wall
+  exactly touches a face — is a solid that touches itself along a line, which Manifold represents with
+  coincident-but-topologically-distinct vertices and canonicalisation necessarily welds into one, leaving a
+  directed edge used twice. So `MeshCanon.finish` runs the same every-edge-once check the tests do and
+  **refuses** rather than emit a shell with that in it (OP-3: invalid with a reason, healing as soon as the
+  radius or the thickness moves off the tangency — asserted). Positional identity is deliberate and matches
+  the rest of the engine: `Geom3`'s own mesh builder welds too, so "one vertex per position" is what a
+  `Mesh3` *means* here, and a zero-thickness contact has no representation in it either way.
+- **Where it is checked:** `MeshBooleanTest` — a 80×50×20 plate minus a **horizontal** ⌀12 bore (watertight;
+  86 vertices, 172 triangles; volume 74369.56 mm³ against the analytic 74345.13 mm³, i.e. +3.3e-4 relative
+  and *heavy*, the direction an inscribed bore must err in; byte-identical mesh across two independent
+  evaluations, ~6 ms each), a hexagonal prism with a side pocket on a flat that is coplanar with nothing,
+  cross-axis union and intersection (the overlap box, to its bounds), the tangency refusal and its healing,
+  the exact-path guard, and canonicalisation itself.
+  Two former refusals became hand-offs and are asserted from both sides (engine present / absent):
+  `PrismBooleanTest`'s revolve operand and cross-axis pair, and — the one that reads like a feature —
+  `HouseChainTest`, where **the roof now fuses onto the walls**.
+- **What remains.** The editor tooling: there is no way to *name a vertical plane* in the UI yet, so a
+  cross-axis boolean is reachable from the DSL but not from the toolbar (the same gap the house's roof has
+  had all along — a datum-plane UI, not an engine limit). A mesh-only solid has no footprint, so it cannot be
+  picked in plan or marquee-selected; picking it wants 3D picking, which is cut. Manifold's face-ID/property
+  propagation (OP-8's route to naming a *boolean's* faces) is not read yet. Windows and arm64 have no
+  published jar, where `available` is false and the path refuses with that as the reason. And the mesh export
+  (STL/3MF) that OP-9 names as the sink's whole point is still not written.
+
 ### Exact prismatic booleans (OP-22 — RESOLVED)
 
 **Decision: booleans between solids extruded along the *same axis* are computed here and now, and
 **exactly**; every other boolean is refused with a reason and waits for Manifold (OP-9).**
+
+> **As-built note:** the waiting is over — Manifold is wired in behind the `MeshBool` seam (see
+> *Implementation status (as built — the general boolean path, OP-9)* above), so "every other boolean" is now
+> *handed to the general engine* rather than refused. **Nothing else in this section changed**: the same-axis
+> path below is still taken first, still exact, and still reports its own failures as its own — a general
+> boolean never answers where the exact algebra declined. What follows describes the path that stayed.
 
 The reasoning is the mirror image of OP-9's. General mesh CSG — BSP splitting, then a stitch — *cannot
 honestly keep the watertightness guarantee* in floating point: coplanar faces have to be classified by an
@@ -2067,9 +2156,10 @@ that already has a hole; an area minus itself (empty); coplanar interfaces (a bo
 a horizontal boundary crossing a vertical one; and a counterbore whose deeper radius swallows the bore's.
 
 **Refused with a reason** (OP-3: the node is invalid, hidden, and heals) — never approximated:
-- an operand that is **not prismatic** (a revolve today, an imported mesh later): *"…general booleans
-  arrive with Manifold (OP-9)"*;
-- two prisms with **no common axis**;
+- an operand that is **not prismatic** (a revolve today, an imported mesh later), and two prisms with **no
+  common axis**: these two were the refusals that named Manifold, and they are now **hand-offs** to it — the
+  refusal survives only where the engine is unavailable (an unsupported platform, a WASM module still
+  loading), and then the reason says exactly that;
 - a result that is **empty** — subtracting everything leaves no solid, and saying so is more useful than a
   solid with no material in it;
 - an arrangement that comes out **inconsistent** (an unbalanced vertex, a chain that will not close, a hole
@@ -2177,6 +2267,14 @@ Three broad families (see OP-9 decision above):
       boolean/mesh/output engine; mesh is a terminal sink (see mesh-is-a-sink rule); fillets as
       explicit constructions; optional implicit sub-layer later. Ops partition analytic-
       preserving vs mesh-only, enforced by the type system.
+      **Manifold is now actually wired in**, behind one `expect object MeshBool` — the JVM binding and the
+      WASM package, one declaration, so the engine is a deployment toggle. Any boolean the exact same-axis
+      algebra (OP-22) cannot answer goes there and comes back as a mesh-only solid
+      (`Feature3.MeshBoolean`, no named faces, no cross-section — the type boundary doing its job); results
+      are canonicalised so a mesh stays a pure function of its parameters; in the browser the WASM's async
+      arrival is carried entirely by OP-3 invalidity + one repaint. See *Implementation status (as built —
+      the general boolean path)*. Still cut: mesh export (STL/3MF), face-ID propagation through booleans,
+      and the editor tooling for cross-axis operands (a datum-plane UI).
 - [x] **OP-11 CNC / STEP (B-rep) interop scope** — RESOLVED: precision CNC + STEP is a target
       but **not day-one → posture 1**. Ship printing-first on Manifold; **preserve exact
       analytic provenance** so a B-rep/STEP export (e.g. OCCT export-only backend) can be added
@@ -2296,8 +2394,9 @@ Three broad families (see OP-9 decision above):
       a solid's top face — though a flipped or rotated sketch plane still has no plan projection for its
       footprint hint. Booleans — the counterbore — are no longer cut: see OP-22.
 - [x] **OP-22 Booleans between solids** — RESOLVED: booleans between prisms **along one axis** are
-      computed **exactly**, now; every other boolean is refused with a reason and waits for Manifold
-      (OP-9). General mesh CSG cannot honestly keep the watertightness guarantee in floating point
+      computed **exactly**, now; every other boolean goes to Manifold (OP-9), which is wired in — and the
+      exact path is still tried first, still keeps its own refusals, and is asserted through the result's
+      own type so it cannot silently degrade. General mesh CSG cannot honestly keep the watertightness guarantee in floating point
       (coplanar faces classified by epsilon, T-junctions after every split), which is why Manifold
       exists — but the counterbore (OP-17 slice 1), the wall opening (OP-21) and storey/boss stacking
       are all same-axis, and for those the answer decomposes into z-breakpoints × **2D region
@@ -2731,6 +2830,49 @@ Three broad families (see OP-9 decision above):
   needed nothing at all — a step restates the position it produced, and replay re-derives the parameter, so
   old files acquire absolute anchoring merely by being loaded. 527 headless tests green (7 new;
   `JunctionAnchorTest`, which replaces the print-only repro the report came in as).
+- **Session 5 — "a plate minus a *horizontal* cylinder": Manifold, wired in.** The engine OP-9 named on turn 2
+  and OP-22 deferred to has been a promise in this document for a long time; the ask was to make it a shippable
+  seam rather than a spike, with the acceptance case being the one thing the exact algebra cannot express — a
+  vertical prism drilled sideways. Six things worth recording.
+  (1) **The seam is one `expect object`, and the dispatch is a *predicate*, not a fallback on failure.** The
+  first design was "try exact, and if it returns a reason, try Manifold". That is wrong, and finding out why
+  was the useful part: the exact path's refusals include *real* ones — the result is empty, the arrangement is
+  inconsistent — and retrying those on a mesh engine would answer a question the exact algebra had declined,
+  silently, with no way for anything downstream to tell which engine had run. So `Geom3.sameAxis` decides up
+  front, cheaply (axes only, no tessellation), and each engine owns its own failures. The guard against
+  degradation is then not a comment but a type: an exact result is a `Prism`, a general one a `MeshBoolean`.
+  (2) **Determinism had to be manufactured.** Manifold guarantees a manifold mesh, not a vertex numbering —
+  it sorts internally, can run under TBB, and duplicates vertices at property-run seams. A model that is a
+  pure function of its parameters (OP-4) cannot accept that, so every result is canonicalised: weld identical
+  positions, sort lexicographically, rotate each triangle onto its smallest index (a rotation, so the winding
+  survives), sort the triangles. The reward is bigger than determinism — because vertices come back *shared*,
+  the existing `assertManifold` applies unchanged, so the general path is held to exactly the same
+  every-edge-once-each-way standard as the exact one, with no weakened check anywhere.
+  (3) **The first honest bug the new path produced was a *tangency*, and it became a refusal.** The
+  acceptance case was written with a ⌀12 bore through a 12 mm plate, which makes the bore tangent to both
+  faces — a solid touching itself along two lines. Manifold accepted it and reported `NoError`, because its
+  own representation can hold coincident-but-distinct vertices; the canonical form welds by position (as the
+  whole engine does) and so turned each contact line into an edge used twice. The fix was not to loosen the
+  check but to *make* it: the seam now verifies its own output and refuses a result that is not a closed
+  shell, with the tangency named in the reason, healing as soon as the radius moves. The general path is
+  therefore held to exactly the standard OP-22 set for the exact one — refuse rather than leak.
+  (4) **The browser's async WASM needed no async anything.** Instantiation finishes after the first paint,
+  while `Evaluator` is synchronous and must stay so. The state for "this cannot be built right now" already
+  existed: OP-3. So `available` is false until the module is up, a cross-axis boolean is an ordinary invalid
+  node whose reason says the engine is starting, and one repaint on ready is the entire auto-heal. Three lines
+  in `Main.kt`, nothing in the engine.
+  (5) **Not bundling the WASM was the right call.** The npm entry point is emscripten glue — an ES module
+  with a top-level `await` that locates its `.wasm` through `import.meta.url` — and re-bundling that through
+  Kotlin/JS's webpack yields a mangled loader rather than an error. Copying the two published files into the
+  distribution and loading them from the app's own origin with the browser's native loader is less machinery,
+  works offline, and runs exactly what upstream shipped. `npm()` still pins the version.
+  (6) **Two refusals became features, and one of them reads like the point of the whole session.** The
+  house's roof — a prism swept along X, over walls swept along Z — had been a *separate solid* on the record
+  since it was built, with the refusal asserted in a test. It now fuses, watertight, at the sum of the two
+  volumes. What is still missing is not engine but UI: nothing in the toolbar can name a vertical plane, so
+  the cross-axis case remains a DSL construction, and a mesh-only solid has no plan footprint to pick in 2D.
+  532 headless tests green (6 new in `MeshBooleanTest`), plus the browser E2E extended with the engine's own
+  availability line.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

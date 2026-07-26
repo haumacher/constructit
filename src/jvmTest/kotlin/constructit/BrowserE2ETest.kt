@@ -33,6 +33,12 @@ class BrowserE2ETest {
             // uncaught exceptions only, so an unrelated console warning cannot fail the run
             val errors = ArrayList<String>()
             page.onPageError { errors.add(it) }
+            // ...and the general boolean engine's own line (OP-9), which says whether the WASM module
+            // came up. This page is opened over `file:`, where the browser refuses to load an ES module
+            // at all, so what is asserted is the *contract*: the engine reports itself either way and the
+            // app carries on — an unavailable engine is a reason on a node, never a broken shell (OP-3).
+            val meshBoolLines = ArrayList<String>()
+            page.onConsoleMessage { if (it.text().startsWith("[MeshBool]")) meshBoolLines.add(it.text()) }
             page.setViewportSize(1000, 700)
             page.navigate(index.toURI().toString())
             page.waitForSelector("#canvas")
@@ -249,6 +255,10 @@ class BrowserE2ETest {
             assertTrue(row.contains("1×"), "and the panel should count it; got: $row")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/07-custom-tool.png")))
 
+            assertTrue(
+                meshBoolLines.size == 1 && meshBoolLines[0].contains("Manifold"),
+                "the general boolean engine should report itself exactly once (OP-9); got: $meshBoolLines",
+            )
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()
         }
