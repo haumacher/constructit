@@ -10,6 +10,7 @@ import constructit.core.ScalarValue
 import constructit.core.SourceNode
 import constructit.dsl.CircleRef
 import constructit.dsl.LineRef
+import constructit.dsl.ScalarRef
 import constructit.dsl.valueOf
 import constructit.geom.Vec2
 import constructit.units.Dimension
@@ -103,6 +104,13 @@ fun quantityOf(
         Dimension.LENGTH -> Quantity.mm(value)
         else -> Quantity.number(value)
     }
+
+/**
+ * The dimension a scalar node currently yields, defaulting to a length when it cannot be evaluated —
+ * the other half of [quantityOf], and the reason a panel value and a typed value are read alike.
+ */
+fun dimensionOf(ref: ScalarRef): Dimension =
+    ((Evaluator().eval(ref.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.dim ?: Dimension.LENGTH
 
 /**
  * Why grabbing [el] cannot move it, in the user's terms.

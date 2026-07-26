@@ -192,7 +192,7 @@ class MacroToolTest {
         val def = ed.doc.macros.single()
         assertEquals(ToolCategory.CUSTOM, def.tool.category, "it lands in the palette's Custom category")
         assertEquals(2, def.tool.slots.size, "two point slots, in the order they were ticked")
-        assertEquals(listOf("r"), def.tool.scalars)
+        assertEquals(listOf("r"), def.tool.scalars.map { it.name })
         assertEquals(def.toolId, ed.toolId, "and it is the active tool right away")
 
         ed.doc.newParameter("r2", 8.0.mm)

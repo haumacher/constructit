@@ -645,6 +645,21 @@ class Document {
         }
     }
 
+    /**
+     * Remove [e] again, if nothing ever consumed it — the inverse of [newParameter], for a value typed
+     * to feed a tool that then never completed (see `Editor.commitTypedScalar`). Refused when any step
+     * references it or another parameter is wired to it, so it can never orphan a reference.
+     */
+    fun retractParameter(e: ScalarEntry): Boolean {
+        if (scalars.none { it === e }) return false
+        val own = journal.firstOrNull { it.kind == "param" && (it.args.firstOrNull() as? Arg.Sc)?.entry === e } ?: return false
+        if (journal.any { s -> s !== own && referencedScalars(s).any { it === e } }) return false
+        if (scalars.any { it !== e && (it.ref.node as? ParameterNode)?.boundTo === e.ref.node }) return false
+        journal.remove(own)
+        scalars.removeAll { it === e }
+        return true
+    }
+
     private fun measurement(
         name: String,
         ref: ScalarRef,
@@ -660,6 +675,34 @@ class Document {
     ) {
         require(e.editable) { "not an editable parameter" }
         (e.ref.node as ParameterNode).literal = ScalarValue(value)
+    }
+
+    /**
+     * Take [e] back: drop the `param` step that introduced it and the panel row with it. True when that
+     * was possible, false when something already reads it (then it stays, untouched).
+     *
+     * The retraction half of a **pending typed value** (see `Editor.commitTypedScalar`): a number typed for
+     * a tool whose gesture was then abandoned never became part of the construction, so it must leave no
+     * step and no row — exactly as a cancelled tool's stray points leave none.
+     *
+     * Deliberately **not** a delete. Delete's unit is the step *plus its dependents* (OP-18), and it exists
+     * to remove things that are used; a retraction is only ever valid when nothing uses this yet, which is
+     * why the answer here is a refusal rather than a cascade. Refusing is also the safe direction: the value
+     * simply stays in the panel as an ordinary parameter.
+     */
+    fun retractParameter(e: ScalarEntry): Boolean {
+        if (scalars.none { it === e }) return false // not ours (a document swap took it)
+        val own = journal.firstOrNull { s -> s.createsScalars.any { it === e } } ?: return false
+        // any *other* step naming it — a tool that consumed it, a wire, a wall's thickness — means it is
+        // in use, and use is a checkpointed operation, so it has already been sealed as part of one
+        if (journal.any { it !== own && referencedScalars(it).any { r -> r === e } }) return false
+        // ...and likewise any node that reads it, which is what a parameter wired to it looks like
+        val node = e.ref.node
+        if (elements.any { dependsOn(it.ref.node, node, HashSet()) }) return false
+        if (scalars.any { it !== e && dependsOn(it.ref.node, node, HashSet()) }) return false
+        journal.remove(own)
+        scalars.remove(e)
+        return true
     }
 
     // ---- flat named groups (OP-16 step 1): organizational membership, nothing geometric ----
@@ -2381,7 +2424,59 @@ class Document {
         when {
             a.kind == ElementKind.BEZIER -> bezierEndNear(a, nearB, ev)
             b.kind == ElementKind.BEZIER -> bezierEndNear(b, nearA, ev)
-            else -> intersectNearNow(a, b, (nearA + nearB) * 0.5)
+            // pieces that *already* meet hand over there, instead of being re-intersected
+            else -> sharedEndBetween(a, b, ev) ?: intersectNearNow(a, b, (nearA + nearB) * 0.5)
+        }
+
+    /**
+     * The endpoint two bounded pieces already share, as an accessor node on one of them — or null when
+     * they do not touch end to end.
+     *
+     * **This is what makes a rounded shape traceable at all.** A rounded rectangle's side meets its corner
+     * arc *tangentially*, and a tangent line and circle have no intersection to find (in floating point,
+     * usually none at all), so deriving the joint by intersection refused to trace the commonest outline in
+     * mechanical CAD — and refused silently, since a loop that cannot be built simply is not built. The
+     * same holds for a fillet, a chamfer's bevel and any two pieces built onto a shared point.
+     *
+     * Recognition is by **position** (within [Geom.JOIN_TOL], the tolerance a loop chains with), because a
+     * shared *node* is not available in general: the rounded rectangle's arcs are built from a centre and
+     * two angles, so they own no endpoint node to compare. What is constructed from it is an accessor
+     * ([Construction.arcStart] and friends), so the joint stays a pure function of the parameters and moves
+     * with them — nothing is frozen into a literal.
+     */
+    private fun sharedEndBetween(
+        a: Element,
+        b: Element,
+        ev: Evaluator,
+    ): PointRef? {
+        val endsA = endpointAccessors(a, ev)
+        val endsB = endpointAccessors(b, ev)
+        if (endsA.isEmpty() || endsB.isEmpty()) return null
+        val best =
+            endsA
+                .flatMap { pa -> endsB.map { pb -> Triple(pa, pb, (pa.first - pb.first).length()) } }
+                .minByOrNull { it.third } ?: return null
+        if (best.third > GeomMath.JOIN_TOL) return null
+        return addDerived(best.first.second())
+    }
+
+    /** A bounded curve's endpoints: where each is now, and how to construct it as a node. */
+    private fun endpointAccessors(
+        el: Element,
+        ev: Evaluator,
+    ): List<Pair<Vec2, () -> PointRef>> =
+        when (val v = ev.valueOf(el.ref)) {
+            is SegmentValue -> {
+                @Suppress("UNCHECKED_CAST")
+                val ref = el.ref as SegmentRef
+                listOf(v.seg.a to { cx.segmentStart(ref) }, v.seg.b to { cx.segmentEnd(ref) })
+            }
+            is ArcValue -> {
+                @Suppress("UNCHECKED_CAST")
+                val ref = el.ref as ArcRef
+                listOf(GeomMath.arcStart(v.arc) to { cx.arcStart(ref) }, GeomMath.arcEnd(v.arc) to { cx.arcEnd(ref) })
+            }
+            else -> emptyList()
         }
 
     /**
@@ -2527,20 +2622,89 @@ class Document {
     // ---- the 2D->3D seam as tools (OP-17) ----
 
     /**
-     * The region [el] hands to a sketch, or null when it is not an area at all.
+     * The region [el] hands to a sketch, or null when it bounds no area at all.
      *
      * An `AREA` element (a thick path's footprint) already *is* a region; an `OUTLINE` is a single loop,
      * so it is wrapped by the ordinary [Construction.region] op — a coercion exactly like the
      * line-carrier one above, and one that creates a node but no element, so the tool step still
-     * accounts for precisely one creation.
+     * accounts for precisely one creation. Anything else goes through [boundaryPiecesOf]: **a curve that
+     * already bounds an area can be picked where an area is wanted.**
      */
     @Suppress("UNCHECKED_CAST")
     private fun regionOf(el: Element): RegionRef? =
         when (el.kind) {
             ElementKind.AREA -> el.ref as RegionRef
             ElementKind.OUTLINE -> cx.region(el.ref as LoopRef)
+            else -> boundaryPiecesOf(el)?.let { pieces -> cx.region(cx.loop(*pieces.map { it.ref }.toTypedArray())) }
+        }
+
+    /**
+     * The ordered pieces of the closed boundary [el] is part of, or null when it is not part of one.
+     *
+     * **A curve that already bounds an area needs no boundary tracing.** Two cases, one rule:
+     *
+     * - a **closed curve** is a boundary by itself (a circle) — and before this, a circle could not become
+     *   an area *at all*: the Outline tool needs at least two pieces, so a plain cylindrical hole was
+     *   unreachable through the tools;
+     * - a **closed chain one step built** (a rectangle, a rounded rectangle, a polygon) is a boundary in
+     *   the order that step created it. The order is the *construction's*, not something detected from the
+     *   picture: OP-14 rejects seed-point region finding precisely because the loop's identity would be
+     *   discovered, and here it is read off the step that built the pieces, so the same step always yields
+     *   the same loop. What is checked (below) is only whether that chain currently closes.
+     *
+     * Deliberately **not** extended to "curves that happen to touch": that is region detection, and a
+     * drawing where two constructions cross would then acquire areas the user never built.
+     */
+    fun boundaryPiecesOf(el: Element): List<Element>? {
+        if (el.kind == ElementKind.CIRCLE) return listOf(el)
+        if (!el.isCurve) return null
+        val step = creatingStep(el) ?: return null
+        val pieces = step.creates.filter { c -> c.isCurve && elements.any { it === c } }
+        if (pieces.size < 2 || pieces.none { it === el }) return null
+        return pieces
+    }
+
+    /**
+     * Whether [pieces] chain into a closed loop **as they stand** — asked before a pick is accepted, so an
+     * area slot never takes geometry the extrude would then quietly refuse.
+     *
+     * Answered on *values*, with no node built: the filter runs over every candidate element of every
+     * click, and a graph that grew a throwaway loop node per candidate would be the wrong kind of cheap.
+     */
+    fun closesALoop(
+        pieces: List<Element>,
+        ev: Evaluator,
+    ): Boolean {
+        val parts = pieces.map { profilePieceOf(ev.valueOf(it.ref) ?: return false) ?: return false }
+        return GeomMath.chainLoop(parts).first != null
+    }
+
+    private fun profilePieceOf(v: Value): ProfileElement? =
+        when (v) {
+            is SegmentValue -> ProfileElement.Seg(v.seg)
+            is ArcValue -> ProfileElement.ArcE(v.arc)
+            is CircleValue -> ProfileElement.CircleE(v.circle)
+            is BezierValue -> ProfileElement.BezierE(v.bezier)
             else -> null
         }
+
+    /**
+     * The predicate an `AREA` slot picks with (OP-17): a result-layer area, or a curve that bounds one.
+     *
+     * Returned as a **closure with a memo**, because the chain test is per *step* and a click asks it of
+     * every element in the document — so a rounded rectangle's eight pieces answer it once.
+     */
+    fun areaPickFilter(ev: Evaluator = Evaluator()): (Element) -> Boolean {
+        val closes = HashMap<String, Boolean>()
+        return { el ->
+            el.isArea ||
+                (
+                    boundaryPiecesOf(el)?.let { pieces ->
+                        closes.getOrPut(pieces.first().id) { closesALoop(pieces, ev) }
+                    } ?: false
+                )
+        }
+    }
 
     /**
      * Extrude the area [el] by [depth] into a solid (OP-17 slice 1).
@@ -3052,8 +3216,12 @@ class Document {
         val width = cx.absS(cx.sub(cx.measureX(c), cx.measureX(a)))
         val height = cx.absS(cx.sub(cx.measureY(c), cx.measureY(a)))
         val rr = cx.instance(roundedRect, nextId("rr"), RoundedRectArgs(center, width, height, radius))
-        return rr.segments.map { add(it, ElementKind.SEGMENT, Styles.CURVE) } +
-            rr.arcs.map { add(it, ElementKind.ARC, Styles.CURVE) }
+        // added in **boundary order**, so the step that built the shape also records the order its pieces
+        // run in — which is what lets the whole rounded rectangle be picked as an area (see
+        // [boundaryPiecesOf]) without anything having to guess how the pieces join
+        return rr.boundary.map { ref ->
+            if (rr.arcs.any { it === ref }) add(ref, ElementKind.ARC, Styles.CURVE) else add(ref, ElementKind.SEGMENT, Styles.CURVE)
+        }
     }
 
     /**

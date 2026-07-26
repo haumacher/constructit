@@ -252,4 +252,120 @@ class BrowserE2ETest {
             browser.close()
         }
     }
+
+    /**
+     * **The architect workflow (W2 of `ClickBudgetTest`) driven the improved way, in real Chrome:** tool
+     * keys instead of palette trips, and every scalar *typed into the flow* instead of built in the panel
+     * first.
+     *
+     * Only a browser can answer the two questions this is here for. (1) Do the shell's real focus rules let
+     * the canvas have the keyboard — and do the panel's own inputs still get their characters, including the
+     * letters that arm tools? (2) Does the whole chain still end in pixels: a plan drawn in Canvas2D and a
+     * cut storey drawn by WebGL. Screenshots of both land in `build/e2e/`.
+     */
+    @Test
+    fun architectFlowByKeyboardInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            val box = page.querySelector("#canvas").boundingBox()
+            val x0 = box.x + box.width * 0.2
+            val x1 = box.x + box.width * 0.8
+            val y0 = box.y + box.height * 0.2
+            val y1 = box.y + box.height * 0.75
+            val midX = (x0 + x1) / 2
+            val midY = (y0 + y1) / 2
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            fun params(): List<String> = page.querySelectorAll("#params-list .pname").map { it.textContent() }
+
+            fun tree(): List<String> = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+            fun activeTool(): String? = page.querySelector(".tool.active")?.getAttribute("data-tool")
+
+            // the palette shows the keys, or nobody would know they exist
+            assertTrue(page.querySelectorAll("#palette .tkey").size >= 10, "every shortcut is labelled on its button")
+
+            // ---- the wall ring: one key for the tool, one typed number for the thickness ----
+            page.keyboard().press("w")
+            assertTrue(activeTool() == "wall", "W arms the wall tool; got ${activeTool()}")
+            page.keyboard().type("10")
+            assertTrue(status().contains("thickness = 10"), "the typed entry echoes in the status line; got: ${status()}")
+            page.keyboard().press("Enter")
+            assertTrue(params().contains("thickness"), "typing it created the parameter; got ${params()}")
+
+            page.mouse().click(x0, y0)
+            page.mouse().click(x1, y0 + 3.0)
+            page.mouse().click(x1 - 3.0, y1)
+            page.mouse().click(x0 + 3.0, y1)
+            page.mouse().click(x0, y0) // back on the start: the ring closes and the footprint appears
+            assertTrue(tree().any { it.startsWith("area") }, "the closed wall ring has a footprint; got ${tree()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/08-typed-plan.png")))
+
+            // ---- the storey, and a door in the south wall ----
+            page.keyboard().press("e")
+            assertTrue(activeTool() == "extrude", "E arms extrude; got ${activeTool()}")
+            page.keyboard().type("30")
+            page.keyboard().press("Enter")
+            page.mouse().click(x0 - 20.0, midY) // the footprint's outer west face
+            assertTrue(tree().count { it.startsWith("solid") } == 1, "the storey is a solid; got ${tree()}")
+
+            page.keyboard().press("d")
+            assertTrue(activeTool() == "opening", "D arms the opening tool; got ${activeTool()}")
+            page.keyboard().type("20")
+            page.keyboard().press("Enter")
+            page.mouse().click(midX, y1) // on the south wall's centreline
+            assertTrue(status().contains("Opening added"), "got: ${status()}")
+
+            page.click("#tool-cutopenings") // no key of its own: the palette is still the way in
+            page.mouse().click(x0 - 20.0, midY)
+            assertTrue(tree().count { it.startsWith("solid") } == 2, "cutting the opening makes one more solid; got ${tree()}")
+
+            // ---- the panel must still receive typing, letters included ----
+            //
+            // The keydown seam is on the document, so this is the one thing that could not be checked
+            // headlessly: a name field must take "wall" without W arming the wall tool underneath it.
+            page.fill("#p-name", "") // focus it and clear the default, then type as a user would
+            page.keyboard().type("wall")
+            assertTrue(
+                (page.querySelector("#p-name").inputValue()) == "wall",
+                "the panel input keeps its characters; got ${page.querySelector("#p-name").inputValue()}",
+            )
+            assertTrue(activeTool() == "cutopenings", "and no letter reached the tool palette; got ${activeTool()}")
+            page.fill("#p-value", "50")
+            page.click("#p-add")
+            assertTrue(params().contains("wall"), "a panel parameter still works exactly as before; got ${params()}")
+
+            // ---- and it ends in pixels, in both views ----
+            page.click("#v-3d")
+            page.waitForSelector("#canvas3:visible")
+            val drawn = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/09-typed-storey-3d.png")))
+            page.click("#v-2d")
+            page.waitForSelector("#canvas:visible")
+            val blank =
+                page.evaluate(
+                    "() => { const c = document.createElement('canvas'); " +
+                        "c.width = document.querySelector('#canvas3').width; c.height = document.querySelector('#canvas3').height; " +
+                        "return c.toDataURL(); }",
+                ) as String
+            assertTrue(drawn != blank, "the 3D view should have drawn the cut storey")
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

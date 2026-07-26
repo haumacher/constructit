@@ -25,7 +25,18 @@ fun <A, R> Construction.instance(
 
 data class RoundedRectArgs(val center: PointRef, val width: ScalarRef, val height: ScalarRef, val radius: ScalarRef)
 
-data class RoundedRect(val segments: List<SegmentRef>, val arcs: List<ArcRef>, val cornerCenters: List<PointRef>)
+/**
+ * [boundary] is the same eight pieces as [segments] + [arcs], in the order they run **round the
+ * boundary** — side, corner, side, corner. The macro is the only thing that knows that order, so it says
+ * it, rather than leaving a caller to re-derive by geometry what the construction already decided (that
+ * is how a closed shape becomes an area with no boundary tracing — see `Document.boundaryPiecesOf`).
+ */
+data class RoundedRect(
+    val segments: List<SegmentRef>,
+    val arcs: List<ArcRef>,
+    val cornerCenters: List<PointRef>,
+    val boundary: List<Ref<*>> = segments + arcs,
+)
 
 /** width x height rectangle centred on `center`, with rounded corners of `radius`. */
 val roundedRect =
@@ -67,7 +78,13 @@ val roundedRect =
                 arc(cBL, a.radius, const(180.0.deg), const(270.0.deg)),
                 arc(cBR, a.radius, const(270.0.deg), const(360.0.deg)),
             )
-        RoundedRect(segments, arcs, listOf(cTR, cTL, cBL, cBR))
+        RoundedRect(
+            segments,
+            arcs,
+            listOf(cTR, cTL, cBL, cBR),
+            // top, top-right corner, right, bottom-right corner, ... : each piece meets the next
+            boundary = listOf(segments[0], arcs[0], segments[1], arcs[3], segments[2], arcs[2], segments[3], arcs[1]),
+        )
     }
 
 /** Specialization of [roundedRect] with the corner radius fixed to 2 mm (OP-6 partial application). */

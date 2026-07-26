@@ -8,6 +8,7 @@ import constructit.dsl.PointRef
 import constructit.dsl.valueOf
 import constructit.geom.Justification
 import constructit.geom.Vec2
+import constructit.units.Dimension
 import constructit.units.mm
 
 /** Undo depth bound: snapshots are whole scripts, so the stack must not grow with the session. */
@@ -87,6 +88,9 @@ class Editor(
 
     /** Record the document as one committed operation — the seam every user-level edit funnels through. */
     fun checkpoint() {
+        // whatever operation is committing now owns any parameters typed on the way to it: sealing them
+        // here is what makes "type 7, click" one undo step (see commitTypedScalar / resetPicks)
+        pendingTypedParams.clear()
         val now = DocumentFormat.save(doc)
         if (now == lastCommitted) return
         undoStack.add(lastCommitted)
@@ -206,6 +210,11 @@ class Editor(
                 // bounded: only the last few can ever be consumed, and an unbounded list would grow with
                 // the session for no benefit
                 while (scalarPicks.size > SCALAR_PICK_MEMORY) scalarPicks.removeAt(0)
+                // A tool whose slots are all clicked was waiting for exactly this, so picking the row
+                // finishes it — the same completion a typed number reaches (see [commitTypedScalar]).
+                // Guarded on there being picks to finish, so arming a tool *after* picking a parameter (the
+                // usual order) is untouched.
+                if (filledSlots > 0) maybeCompleteTool(null)
             }
         }
 
@@ -428,12 +437,24 @@ class Editor(
     private var hoverWorld: Vec2? = null // last cursor position, so a typed length keeps its direction
 
     /**
-     * Direct distance entry: digits typed while a leg is being previewed. The mouse supplies the
-     * leg's *direction*, the keyboard its *length* — the same construction either way, so a leg
-     * placed by typing is indistinguishable from one placed by clicking (OP-13).
+     * Digits typed into the drawing flow, for the two things a number can mean here (OP-13):
+     *
+     * - **direct distance entry**, while a leg is being previewed: the mouse supplies the leg's
+     *   *direction*, the keyboard its *length*, so a leg placed by typing is indistinguishable from one
+     *   placed by clicking;
+     * - **a scalar a tool wants**, when a path is not being drawn: Enter turns the number into an
+     *   ordinary parameter and hands it to the slot (see [commitTypedScalar]).
+     *
+     * One buffer, because the two can never be pending at once — a path is either active or it is not.
      */
     var numericEntry: String = ""
         private set
+
+    /**
+     * How many scalars the armed tool has been *typed* since it was armed, so the next number is read as
+     * the next slot ("depth", then "angle"). Reset with the picks, like every other per-application state.
+     */
+    private var typedScalars = 0
 
     val pendingCount: Int get() = filledSlots
 
@@ -447,7 +468,19 @@ class Editor(
         onChange()
     }
 
+    /** Parameters typed for the pending tool, not yet sealed by its checkpoint — see [commitTypedScalar]. */
+    private val pendingTypedParams = ArrayList<ScalarEntry>()
+
     private fun resetPicks() {
+        // a typed parameter whose tool never completed is retracted with the picks it belonged to —
+        // left in place, the next unrelated checkpoint would silently absorb it into a foreign undo step
+        for (e in pendingTypedParams) {
+            if (doc.retractParameter(e)) {
+                scalarPicks.removeAll { it === e }
+                if (activeScalar === e) activeScalar = scalarPicks.lastOrNull()
+            }
+        }
+        pendingTypedParams.clear()
         pickedPoints.clear()
         pickedElements.clear()
         pickedClicks.clear()
@@ -475,6 +508,7 @@ class Editor(
         pathThickness = null
         hoverWorld = null
         numericEntry = ""
+        typedScalars = 0
         snapHint = null
     }
 
@@ -809,11 +843,22 @@ class Editor(
         snapHint?.let { if (it.linked) return "Snap: ${it.label} — Alt to place freely" }
         if (toolId == Tools.SELECT) return Tools.SELECT_HELP
         val tool = doc.toolDef(toolId) ?: return ""
-        // the panel is as much an input as the canvas (OP-13), so a tool still waiting for a scalar says
-        // which one it wants next rather than describing clicks that will be thrown away
+        // the panel and the keyboard are as much an input as the canvas (OP-13), so a tool still waiting
+        // for a scalar says which one it wants next rather than describing clicks it cannot use yet
         if (toolScalars(tool) == null) return scalarPrompt(tool)
         val n = toolCount(tool)
-        return if (n == 0) tool.help else "${tool.help} (count $n)"
+        // Name the values it *will* consume. A tool takes the last picks in order, so with a parameter
+        // already picked it is silently ready — which is convenient and invisible, and the invisible half
+        // is what made people mis-size a feature and blame the tool.
+        val using =
+            if (tool.scalars.isEmpty()) {
+                ""
+            } else {
+                val entries = toolScalars(tool).orEmpty()
+                " Using " + tool.scalars.mapIndexed { i, s -> "${s.name} = ${entries.getOrNull(i)?.name}" }.joinToString(", ") +
+                    " — type a number for another."
+            }
+        return (if (n == 0) tool.help else "${tool.help} (count $n)") + using
     }
 
     fun render(target: DrawTarget) {
@@ -923,7 +968,7 @@ class Editor(
         }
         if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {
             if (toolId == Tools.WALL && activePath == null && activeScalar == null) {
-                statusHint = "Wall: select a thickness parameter in the panel first"
+                statusHint = "Wall: type a thickness (or click a parameter in the panel) first"
                 onChange()
                 return
             }
@@ -1024,31 +1069,41 @@ class Editor(
 
     /**
      * A key pressed while the canvas has focus, as a pure controller entry point. Digits feed the
-     * direct distance entry; Enter places the previewed leg at the typed length (or finishes the
-     * path); Escape cancels a pending entry first, then finishes. Returns true when consumed.
+     * numeric entry — a leg's length while a path is being drawn, otherwise the scalar the armed tool
+     * wants; Enter commits it; Escape cancels a pending entry first, then finishes; a single letter arms
+     * the tool that letter belongs to. Returns true when consumed.
      */
     fun key(key: String): Boolean {
         val pathActive = activePath != null
+        val digit = key.length == 1 && (key[0].isDigit() || key == ".")
         return when {
-            pathActive && key.length == 1 && (key[0].isDigit() || key == ".") -> {
+            pathActive && digit -> {
                 numericEntry += key
                 refreshPreview()
                 onChange()
                 true
             }
+            // the same digits, for the scalar a tool is missing: one mechanism for every scalar slot
+            // (OP-13), so no tool has to know that its value can be typed
+            digit && typedScalarSlot() != null -> {
+                numericEntry += key
+                statusHint = typedScalarPrompt()
+                onChange()
+                true
+            }
             key == "Backspace" && numericEntry.isNotEmpty() -> {
                 numericEntry = numericEntry.dropLast(1)
-                refreshPreview()
+                if (pathActive) refreshPreview() else statusHint = typedScalarPrompt()
                 onChange()
                 true
             }
             key == "Escape" && numericEntry.isNotEmpty() -> {
                 numericEntry = ""
-                refreshPreview()
+                if (pathActive) refreshPreview() else statusHint = ""
                 onChange()
                 true
             }
-            key == "Enter" && numericEntry.isNotEmpty() -> commitTypedLeg()
+            key == "Enter" && numericEntry.isNotEmpty() -> if (pathActive) commitTypedLeg() else commitTypedScalar()
             // a repeating tool (Outline) commits on Enter and abandons on Escape
             key == "Enter" && !pathActive -> finishRepeatingTool()
             key == "Escape" && !pathActive && filledSlots > 0 -> {
@@ -1068,8 +1123,85 @@ class Editor(
                 finishPath()
                 true
             }
+            // a tool's own key: the palette without the round trip to it. Last, so nothing that was
+            // already being typed loses a character to it.
+            key.length == 1 && key[0].isLetter() -> {
+                val id = Tools.byShortcut(key[0]) ?: return false
+                if (id != toolId) setTool(id)
+                statusHint = currentHelp()
+                onChange()
+                true
+            }
             else -> false
         }
+    }
+
+    /**
+     * The scalar slot a typed number would fill, or null when the armed tool takes none (and while a path
+     * is being drawn, where digits are the leg's length).
+     *
+     * Deliberately offered **even when the panel picks would already satisfy the tool**: a tool consumes
+     * the last picks in order, so without this a value could never be *overridden* by typing once anything
+     * had been picked — and silently reusing yesterday's radius is the friction, not the fix. Typing simply
+     * creates the parameter and makes it the newest pick.
+     */
+    private fun typedScalarSlot(): ScalarSlot? {
+        if (activePath != null) return null
+        val tool = doc.toolDef(toolId) ?: return null
+        if (tool.scalars.isEmpty()) return null
+        return tool.scalars[minOf(typedScalars, tool.scalars.size - 1)]
+    }
+
+    private fun typedScalarPrompt(): String {
+        val slot = typedScalarSlot() ?: return ""
+        if (numericEntry.isEmpty()) return currentHelp()
+        return "${slot.name} = $numericEntry ${unitWord(slot.dim)} — Enter to use it, Esc to cancel"
+    }
+
+    private fun unitWord(dim: Dimension): String =
+        when (dim) {
+            Dimension.LENGTH -> "mm"
+            Dimension.ANGLE -> "°"
+            else -> ""
+        }
+
+    /**
+     * Turn the typed number into an ordinary **parameter** and hand it to the tool's scalar slot — the
+     * generalization of direct distance entry to every scalar input (OP-13: typing and picking are the
+     * same operation, so a value that was typed is afterwards editable, wireable and shareable like any
+     * other).
+     *
+     * It is named after the slot and uniquified exactly as a panel parameter is (`depth`, `depth2`), so
+     * nothing downstream can tell it was typed: it appears in the panel, rides the `param` step (OP-18)
+     * and can be dragged into by anything that consumes a scalar.
+     */
+    private fun commitTypedScalar(): Boolean {
+        val slot = typedScalarSlot() ?: return false
+        val value = numericEntry.toDoubleOrNull()
+        numericEntry = ""
+        if (value == null) {
+            statusHint = "That is not a number"
+            onChange()
+            return true
+        }
+        typedScalars++
+        val entry = doc.newParameter(slot.name, quantityOf(slot.dim, value))
+        // Deliberately NOT a checkpoint of its own: the value was typed to feed the armed tool, so it is
+        // *half* of that operation — the tool's own commit seals both as one snapshot, and an abandoned
+        // gesture retracts it (see [checkpoint] for the whole rule). Registered here, before the pick is
+        // published, because publishing may complete the tool outright when the clicks are already in —
+        // and that completion's checkpoint is exactly what has to seal it.
+        pendingTypedParams.add(entry)
+        // through the ordinary setter, so a typed scalar *is* a panel pick as far as every tool is
+        // concerned — including its completing a tool that was only waiting for this value
+        activeScalar = entry
+        // still pending means the tool has not consumed it yet, so say the value is in; a tool that
+        // completed on the spot has already said its own thing
+        if (pendingTypedParams.any { it === entry }) {
+            statusHint = "${slot.name} = $value ${unitWord(slot.dim)} (parameter ${entry.name}) — edit it in the panel any time"
+        }
+        onChange()
+        return true
     }
 
     /**
@@ -1129,7 +1261,7 @@ class Editor(
     private fun openingClick(world: Vec2) {
         val w = activeScalar
         if (w == null) {
-            statusHint = "Opening: select a width parameter in the panel first"
+            statusHint = "Opening: type a width (or click a parameter in the panel) first"
             onChange()
             return
         }
@@ -1532,8 +1664,8 @@ class Editor(
         val have = scalarPicks.size
         val wanted = tool.scalars
         val missing = wanted.drop(have)
-        val had = if (have == 0 || wanted.size == 1) "" else " (${wanted.take(have).joinToString(", ")} picked)"
-        return "${tool.label}: click a parameter or measurement in the panel for ${missing.joinToString(", then ")}$had"
+        val had = if (have == 0 || wanted.size == 1) "" else " (${wanted.take(have).joinToString(", ") { it.name }} picked)"
+        return "${tool.label}: type ${missing.joinToString(", then ") { it.name }} — or click a parameter or measurement in the panel$had"
     }
 
     /** The structural count [tool] will build with — see [count]. Zero for a tool that needs none. */
@@ -1571,7 +1703,7 @@ class Editor(
                 SlotKind.CENTRIC -> pickElement(world) { it.kind == ElementKind.CIRCLE || it.kind == ElementKind.ARC }
                 // the seam's slot (OP-17): a traced outline or a thick path's footprint, both of which
                 // bound an area — the coercion between them is the document's, not the pick's
-                SlotKind.AREA -> pickElement(world) { it.isArea }
+                SlotKind.AREA -> pickElement(world, doc.areaPickFilter(ev()))
                 // the boolean slot (OP-22): a solid, picked in 2D by the footprint hint it draws
                 SlotKind.SOLID -> pickElement(world) { it.kind == ElementKind.SOLID }
                 SlotKind.SIDE -> true // captures the click position only; creates nothing
@@ -1593,22 +1725,34 @@ class Editor(
             return
         }
         if (filledSlots >= tool.slots.size) {
-            val scalars = toolScalars(tool)
-            if (scalars == null) {
-                statusHint = scalarPrompt(tool)
-                resetPicks()
-                onChange()
-                return
-            }
-            val picks = Picks(pickedPoints.toList(), pickedElements.toList(), world, pickedClicks.toList(), count = toolCount(tool))
-            doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
-            checkpoint() // the tool application — earlier slot clicks were only halves of it
-            resetPicks()
-            statusHint = ""
+            // A tool still missing a scalar **keeps its picks** and says what it wants: the number can then
+            // be typed (or a parameter picked) and the tool finishes with the clicks already in. Throwing
+            // the picks away was the older answer, and it made the geometry pay for a value's absence.
+            if (!maybeCompleteTool(world)) statusHint = scalarPrompt(tool)
         } else {
             statusHint = "${tool.help} (${tool.slots.size - filledSlots} more)"
         }
         onChange()
+    }
+
+    /**
+     * Build the armed tool if everything it needs is in: every slot picked and every scalar available.
+     * The one place a non-repeating tool applies, so a click and a typed value reach it the same way.
+     *
+     * [at] is the click that completed it, for [Picks.at]; null when the *value* completed it, where the
+     * last click is the honest answer instead.
+     */
+    private fun maybeCompleteTool(at: Vec2?): Boolean {
+        val tool = doc.toolDef(toolId) ?: return false
+        if (tool.repeating || filledSlots < tool.slots.size) return false
+        val scalars = toolScalars(tool) ?: return false
+        val where = at ?: pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0)
+        val picks = Picks(pickedPoints.toList(), pickedElements.toList(), where, pickedClicks.toList(), count = toolCount(tool))
+        doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+        checkpoint() // the tool application — earlier slot clicks were only halves of it
+        resetPicks()
+        statusHint = ""
+        return true
     }
 
     private fun pickElement(

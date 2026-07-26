@@ -257,4 +257,53 @@ class OutlineTest {
         Golden.check("editor_outline_spline_dimmed", dimmed.svg())
         assertTrue(dimmed.svg().contains(Styles.DIMMED.stroke), "dimming should reach the output")
     }
+
+    /**
+     * **A boundary whose joints are tangencies.** Every side of a rounded rectangle meets its corner arc
+     * tangentially, and a tangent line and circle have no intersection to find — so deriving each joint by
+     * intersection refused to trace the commonest outline in mechanical CAD, and refused *silently*
+     * (nothing is built when a joint cannot be found). Pieces that already meet now hand over at their
+     * shared endpoint instead.
+     *
+     * The area asserted is the closed form `w·h − (4−π)r²`, and it is asserted **again after retyping the
+     * radius**: the joints are endpoint accessors, so the boundary is still a function of the parameter and
+     * not eight frozen coordinates.
+     */
+    @Test
+    fun aRoundedRectangleTracesAlthoughEveryJointIsATangency() {
+        val ed = Editor()
+        ed.setTool(Tools.ROUNDED_RECT)
+        ed.key("8")
+        ed.key("Enter")
+        ed.click(Vec2(-60.0, -40.0))
+        ed.click(Vec2(60.0, 40.0))
+        assertEquals(8, ed.doc.elements.count { it.isCurve }, "four sides and four corner arcs")
+
+        ed.use(Tools.OUTLINE)
+        // round the boundary: side, corner, side, corner, ... (a corner is clicked at its 45° point)
+        val d = 8.0 * kotlin.math.cos(PI / 4)
+        ed.click(Vec2(0.0, 40.0))
+        ed.click(Vec2(52.0 + d, 32.0 + d))
+        ed.click(Vec2(60.0, 0.0))
+        ed.click(Vec2(52.0 + d, -32.0 - d))
+        ed.click(Vec2(0.0, -40.0))
+        ed.click(Vec2(-52.0 - d, -32.0 - d))
+        ed.click(Vec2(-60.0, 0.0))
+        ed.click(Vec2(-52.0 - d, 32.0 + d))
+        assertTrue(ed.key("Enter"), "Enter should close the outline")
+
+        val outline = assertNotNull(ed.doc.elements.singleOrNull { it.kind == ElementKind.OUTLINE }, "the trace must produce a loop")
+
+        @Suppress("UNCHECKED_CAST")
+        val ref = outline.ref as LoopRef
+        val loop = assertNotNull((Evaluator().eval(ref.node) as? EvalResult.Ok)?.value, "the loop must close").let { Evaluator().loop(ref) }
+        assertEquals(8, loop.elements.size, "eight pieces, in the order they were clicked")
+
+        fun area() = abs(GeomMath.signedArea(Evaluator().loop(ref)))
+        assertClose(area(), 120.0 * 80.0 - (4 - PI) * 8.0 * 8.0, tol = 1e-6, msg = "w·h − (4−π)r²")
+
+        // the radius is still what drives it — the joints follow, so the traced boundary is not frozen
+        ed.doc.setParameter(ed.doc.scalars.single { it.editable }, 20.0.mm)
+        assertClose(area(), 120.0 * 80.0 - (4 - PI) * 20.0 * 20.0, tol = 1e-6, msg = "the trace follows the parameter")
+    }
 }

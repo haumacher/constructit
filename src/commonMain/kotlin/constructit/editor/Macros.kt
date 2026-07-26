@@ -55,7 +55,9 @@ class MacroDef(
             name,
             ToolCategory.CUSTOM,
             slots = pointInputs.map { SlotKind.POINT },
-            scalars = scalarInputs.map { it.name },
+            // the dimension comes from the wired parameter's own value, so a custom tool's scalar can be
+            // typed exactly like a built-in one's (OP-13) without the definition declaring anything extra
+            scalars = scalarInputs.map { ScalarSlot(it.name, dimensionOf(it.ref)) },
             help =
                 "Custom tool $name: click ${pointInputs.size} point${if (pointInputs.size == 1) "" else "s"}" +
                     " (the first places the instance)" +

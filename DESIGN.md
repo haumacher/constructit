@@ -321,15 +321,19 @@ Consequences, which is why this is worth stating as a principle rather than a UI
   needing an anchor picker.
 - A field whose node is **driven** (welded, attached, shared by a loop closure) reports itself
   unwritable, which is the same answer dragging gives: that DOF is gone by construction.
+- **Typing reaches a tool's *inputs* too, not only an existing element's fields.** Digits typed while a
+  tool is armed become the scalar it wants, as an ordinary parameter — one mechanism for every scalar slot,
+  and the same principle one step earlier in time (see *Usability — click budgets*).
 - Deliberately *not* called a constraint. A handle only writes free source nodes; what stays
   invariant (a leg's axis, a point's curve) is invariant because of the nodes it does *not* write,
   which are shared with the geometry that must follow.
 
 ### Editor tool roadmap
 
-**Implemented** (data-driven `ToolDef` registry, categorized palette; a tool declares an ordered list
-of scalar inputs taken from the panel; existing-only slots never create stray points; scalar names are
-auto-uniquified so wiring is unambiguous):
+**Implemented** (data-driven `ToolDef` registry, categorized palette; a tool declares an ordered list of
+dimensioned scalar inputs, which are **typed into the flow or picked in the panel**; a handful of tools
+declare a single-key shortcut; existing-only slots never create stray points; scalar names are
+auto-uniquified so wiring is unambiguous — see *Usability — click budgets*):
 - Points: Point, Midpoint, Intersect, Project-to-line, Point-on-circle & Point-on-line
   (1-DOF draggable), Point-at-distance (0-DOF, side by click), Point (x, y) (no clicks — two scalar
   inputs), Key points (sub-entity extract), Join points (weld two points into one — see *Welding* below)
@@ -412,8 +416,10 @@ afterwards. Three consequences fall out of the shared-coordinate model:
 A tool is a *declaration* (`ToolDef`), so finishing the everyday tool set was mostly a matter of the
 declaration being able to say what these tools need. Two extensions, both deliberately generic:
 
-**Several scalar inputs.** `ToolDef.scalars` is an ordered list of **named** inputs (`listOf("x", "y")`)
-where there used to be a single `scalar = true` flag consuming the active parameter. Collecting them
+**Several scalar inputs.** `ToolDef.scalars` is an ordered list of **named** inputs (`listOf(len("x"), len("y"))`)
+where there used to be a single `scalar = true` flag consuming the active parameter. (Each entry later gained
+its **dimension** as well — see *Usability — click budgets* below: that is what lets a typed number become a
+parameter for any slot.) Collecting them
 needed no second mechanism: picking a parameter row appends to a short ordered memory of panel picks
 (`Editor.activeScalar`'s setter), and a tool needing *k* scalars consumes the **last k in pick order**.
 So a one-scalar tool means exactly "the active parameter" as it always did, a two-scalar tool means "x,
@@ -456,6 +462,99 @@ which is the test of whether the algebra is closed:
 - *Arrays* are a **fan, not a chain**: copy *k* is `k·v` (or `k·360°/n`) from the original, so no copy
   depends on a sibling, every copy recomputes straight from the original, and the copies are the
   original's dependents — deleting it takes them (OP-18).
+
+#### Usability — click budgets (as built)
+
+The session-3 charge was to *test the application and its usability, and reach the results in a reasonable
+number of clicks*. So usability was made **measurable**: `ClickBudgetTest` scripts four whole workflows
+through the ordinary gesture surface and **counts user actions**, asserting a ceiling per workflow. A click
+is 1, a drag is 1, a keyboard entry (digits + Enter, a shortcut, Esc) is 1, a tool switch is 1, picking a
+parameter row is 1 — and **creating a parameter in the panel is 3**, because it is three interactions (name
+field, value field, Add). That last weight is the only judgement call in the table, and it is the honest
+one: weighting it 1 would have hidden the very friction the work removed.
+
+| workflow | before | after | what the workflow is |
+|---|---|---|---|
+| W1 mechanical | 43 †  | **23** | rounded-rect plate → area → extrude; bolt circle by circular array; counterbore subtracted |
+| W2 architect | 27 | **18** | closed 4-corner wall ring, door + window, extrude, cut openings → storey solid |
+| W3 macro | 25 | **23** | record a 5-element construction as a tool, stamp it 3 times |
+| W4 drawing | 35 † | **31** | rounded-rect bracket outline, bore, brace + linear/radial/angular dimensions |
+| total | 130 | **95** | |
+
+† **W1 and W4 did not actually complete before.** Measuring them is what found two defects, both of which
+the "before" numbers therefore *understate*: a rounded rectangle could not be traced at all, and a circle
+could not become an area at all. Both are fixed below; the *before* column counts the actions the same
+scripts spend, so the two columns are comparable.
+
+**Four mechanisms were added, each generic, none of them shaped to a workflow.**
+
+1. **A typed number is a scalar input — for every scalar slot** (OP-13 generalized). Direct distance entry
+   already existed for a path's leg length; it now covers *any* tool's scalar. Digits typed with a tool
+   armed accumulate in the same buffer, and Enter turns them into an **ordinary parameter**, named after the
+   slot and uniquified exactly as a panel one is (`depth`, `depth2`). Nothing marks it as typed: it appears
+   in the panel, rides the `param` step and is wireable. Its **undo unit is the operation it was typed
+   for**: the parameter is sealed by the tool's own checkpoint, so "7, Enter, click" undoes as one step —
+   and a typed value whose tool is cancelled is *retracted* (`Document.retractParameter`, refused if
+   anything already references it), so an orphan can never leak into a later, unrelated undo step. A
+   panel parameter, created deliberately, keeps a step of its own. What made this
+   possible in *one* place is that `ToolDef.scalars` became a list of `ScalarSlot(name, dim)` — a bare name
+   cannot be turned into a quantity without guessing, while a dimension makes the same digits mean mm for a
+   depth, degrees for an angle and a bare number for a factor.
+   - Two consequences worth recording. **The picks are no longer thrown away**: a tool whose slots are all
+     clicked but whose scalar is missing now *waits*, and finishes when the number arrives (typed, or picked
+     in the panel) — so the geometry no longer pays for a value's absence, and the two orders (value first,
+     clicks first) cost the same. And typing is offered **even when the panel memory would already satisfy
+     the tool**: a tool consumes the last picks in order, so without that a value could never be overridden
+     once anything had been picked. The status line now also *names* the values a tool will consume
+     ("Using depth = h1 — type a number for another"), because silently reusing the last-picked parameter
+     was convenient and invisible, and the invisible half is what makes a feature come out the wrong size.
+2. **Single-key tool shortcuts**, as a `ToolDef` field (`shortcut`) — data, like everything else about a
+   tool. `S P L C R O W D E X M` (select, point, segment, circle-by-radius, rectangle, outline, wall,
+   door/opening, extrude, subtract, linear dimension); the palette renders the key on each button and in its
+   tooltip, and `Editor.key` routes it. Deliberately **not** one letter per tool — a full cipher is not
+   discoverable — and deliberately not given to macros, whose names are the user's. This changes no *count*
+   (a palette click and a keystroke are both one action) and that is stated plainly: what it removes is the
+   mouse round trip to a 40-button palette, not an action.
+3. **Pieces that already meet hand over there, instead of being re-intersected** (`Document.jointBetween`).
+   Every side of a rounded rectangle meets its corner arc *tangentially*, and a tangent line and circle have
+   no intersection to find — so the Outline tool refused to trace the commonest outline in mechanical CAD,
+   and refused **silently** (no joint, no loop, nothing built, no message). The joint is now the shared
+   endpoint, recognized by position within `JOIN_TOL` and constructed as an **accessor node**
+   (`arcStart`/`segmentEnd`/…), so the traced boundary is still a pure function of the parameters — asserted
+   by re-typing the radius and re-measuring the area. Fillets and chamfers benefit for the same reason.
+4. **A curve that already bounds an area can be picked where an area is wanted** (`regionOf` /
+   `boundaryPiecesOf`). Two cases, one rule: a **closed curve** is a boundary by itself (a circle — which
+   before this could not become an area *at all*, so a plain cylindrical hole was unreachable through the
+   tools), and a **closed chain one step built** is a boundary in the order that step created it (a
+   rectangle, a rounded rectangle, a polygon). The order is the *construction's*: OP-14 rejects seed-point
+   region finding because a discovered loop's identity is unstable, and here it is read off the step that
+   built the pieces — so the same step always yields the same loop, and what is checked at pick time is only
+   whether that chain currently closes (on values, with no throwaway node). The `roundedRect` macro now
+   states its `boundary` order, which is the only reason nothing has to guess how its eight pieces join.
+
+**Friction found and deliberately *not* removed** (measured, then judged):
+
+- **Tracing a boundary is still one click per piece** (9 of W4's 31 actions). The obvious extension — let
+  the *Outline* tool take a whole closed chain from one pick — was rejected: the Outline tool's job is to
+  say *which curves in which order*, and a whole-shape pick would make it impossible to start a mixed
+  boundary on a shape's side (a plate with one corner cut away). The area coercion above is safe precisely
+  because an `AREA` slot has no other reading of a curve pick. Where the whole shape *is* meant, the
+  coercion already avoids the trace entirely.
+- **Repeat-last-tool was evaluated and not built.** It buys nothing here: a tool stays armed after it
+  builds, so repeating it is already just its own clicks, and re-arming costs one keystroke since (2).
+- **Regions with holes are still not traceable** (only single loops are), so a hole in a plate is a second
+  solid subtracted rather than a hole in one sketch. That is a real gap, and it is the next one worth
+  taking: it wants a way to say "these loops are holes of that one", i.e. a grouping gesture over outlines.
+- **A shape tool does not emit a result outline**, and should not: OP-14's rule is that the output set is
+  explicit, so a rectangle that might be scaffolding must not silently become a drawing.
+- **Only lengths, angles and plain numbers can be typed** — no expressions, no unit suffix (`2.5cm`), no
+  negative sign. The expression language is OP-7's own item; the parse point is now in one place
+  (`commitTypedScalar`) for when it arrives.
+
+Verified in real Chrome under `-De2e=1` (`BrowserE2ETest.architectFlowByKeyboardInBrowser`): W2 driven
+entirely by tool keys and typed values, with the plan and the cut storey screenshotted to `build/e2e/`, and
+with the one thing only a browser can answer — the panel's own inputs still receive their characters,
+letters included, because the shell's keydown seam skips fields and modifiers.
 
 **Remaining — build order (all planned; ordered, not deferred):**
 
@@ -2264,6 +2363,31 @@ Three broad families (see OP-9 decision above):
   shape its type cannot describe must state its own domain**, and that is now asserted from both sides
   (the accepted non-contained hole included, so the limit cannot be mistaken for more than it is).
   441 headless tests green (4 new, two of them the reviewer's probe).
+- **Session 3 — usability, measured as click budgets.** Turned "reach the result in a reasonable number of
+  clicks" into a number: four whole workflows scripted as gestures and *counted*, with a ceiling asserted per
+  workflow (`ClickBudgetTest`; see *Usability — click budgets* for the table and the mechanisms). Five things
+  worth recording. (1) **Measuring found defects, not just costs.** Two of the four workflows did not
+  complete at all: a rounded rectangle could not be traced (every joint is a tangency, and a tangent line and
+  circle have no intersection — so the Outline tool silently built nothing) and a circle could not become an
+  area (the tracer needs two pieces), which made a plain cylindrical hole unreachable through the tools. A
+  budget is a good bug detector precisely because it walks the whole path instead of one op.
+  (2) The fix for both was the same shape of answer: **stop re-deriving what the construction already
+  knows** — pieces that already meet hand over at their shared endpoint (as an accessor node, so the trace
+  stays parametric), and a curve that already bounds an area is accepted where an area is wanted, with the
+  boundary order read off the step that built the pieces rather than detected from the picture (OP-14's rule
+  survives intact).
+  (3) **The generic form of "type it instead" was a *dimension* on the slot.** Direct distance entry existed
+  for a leg's length; making it work for every scalar input needed nothing about tools and one thing about
+  the declaration — `ScalarSlot(name, dim)` — after which digits typed with any tool armed become an
+  ordinary parameter with no per-tool half anywhere.
+  (4) **Two honesty notes.** Keyboard shortcuts changed no budget at all (a palette click and a keystroke are
+  both one action) and are recorded as removing *mouse travel*, not actions; and a panel parameter creation is
+  weighted 3 in the table, because it is three interactions and weighting it 1 would have hidden the friction
+  being removed.
+  (5) **What was refused:** letting the Outline tool swallow a whole closed chain from one pick (it would take
+  away the ability to begin a mixed boundary on a shape's side), repeat-last-tool (a tool stays armed, so it
+  buys nothing), and a shape tool auto-emitting a result outline (OP-14 wants the output set explicit).
+  457 tests green (16 new), and the architect workflow now runs by keyboard in real Chrome.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

@@ -5,6 +5,7 @@ import constructit.core.Evaluator
 import constructit.dsl.SolidRef
 import constructit.dsl.scalar
 import constructit.dsl.solid
+import constructit.dsl.valueOf
 import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.ElementKind
@@ -47,6 +48,14 @@ class SolidToolTest {
         ed.click(Vec2(21.0, 60.0))
         ed.finishPath()
         return ed
+    }
+
+    /** save -> load -> save byte-equality, the load-bearing format assertion (OP-18). */
+    private fun assertSaveLoadStable(ed: Editor) {
+        val text = DocumentFormat.save(ed.doc)
+        val reloaded = DocumentFormat.load(text)
+        assertEquals(text, DocumentFormat.save(reloaded), "save -> load -> save must be byte-equal")
+        assertEquals(ed.doc.elements.size, reloaded.elements.size)
     }
 
     private fun Editor.area() = doc.elements.single { it.kind == ElementKind.AREA }
@@ -315,6 +324,90 @@ class SolidToolTest {
         assertNotNull(d, "a solid must have a 2D distance, or it can never be selected or deleted")
         assertClose(d, 0.0, tol = 1e-9)
         assertTrue(constructit.editor.HitTest.within(ed.doc, Evaluator(), Vec2(0.0, -5.0), Vec2(40.0, 70.0)).contains(solid))
+    }
+
+    // ---- what an AREA slot accepts: anything that already bounds an area ----
+
+    /**
+     * **A closed curve is a boundary by itself.** Before this, a circle could not become an area *at all*
+     * through the tools — the Outline tool needs two pieces to intersect, so the plainest feature in
+     * mechanical CAD, a cylindrical hole, was unreachable. The coercion is the document's
+     * (`region(loop(circle))`), so the tool table needed no new slot kind and the extrude no new case.
+     */
+    @Test
+    fun aCircleIsAnAreaByItself() {
+        val ed = Editor()
+        ed.setTool(Tools.CIRCLE_R)
+        ed.key("6")
+        ed.key("Enter")
+        ed.click(Vec2(0.0, 0.0))
+        ed.setTool(Tools.EXTRUDE)
+        ed.key("5")
+        ed.key("Enter")
+        ed.click(Vec2(6.0, 0.0)) // the circle, by its boundary
+
+        val mesh = ed.mesh()
+        assertManifold(mesh, "cylinder")
+        // tessellated, so the volume approaches πr²h from below — within the tessellation tolerance
+        assertTrue(Geom3.volume(mesh) > 0.99 * PI * 36.0 * 5.0, "a cylinder of r 6 by 5: ${Geom3.volume(mesh)}")
+        assertTrue(Geom3.volume(mesh) <= PI * 36.0 * 5.0 + 1e-6)
+        // and it is an ordinary construction: the radius still drives it
+        ed.doc.setParameter(ed.doc.scalars.first { it.name == "radius" }, 12.0.mm)
+        assertTrue(Geom3.volume(ed.mesh()) > 0.99 * PI * 144.0 * 5.0, "the solid follows its circle")
+        assertSaveLoadStable(ed)
+    }
+
+    /**
+     * **A closed chain one step built is a boundary too** — a rectangle, a rounded rectangle, a polygon.
+     * The order comes from the step that created the pieces, not from looking at the picture (OP-14 rejects
+     * discovered boundaries), so the same step always yields the same loop.
+     */
+    @Test
+    fun aClosedChainOneStepBuiltIsAnArea() {
+        val ed = Editor()
+        ed.setTool(Tools.ROUNDED_RECT)
+        ed.key("8")
+        ed.key("Enter")
+        ed.click(Vec2(-60.0, -40.0))
+        ed.click(Vec2(60.0, 40.0))
+        ed.setTool(Tools.EXTRUDE)
+        ed.key("1")
+        ed.key("0")
+        ed.key("Enter")
+        ed.click(Vec2(0.0, 40.0)) // one side of the plate — any piece of the boundary will do
+
+        val mesh = ed.mesh()
+        assertManifold(mesh, "plate")
+        val face = 120.0 * 80.0 - (4 - PI) * 8.0 * 8.0
+        assertTrue(abs(Geom3.volume(mesh) - face * 10.0) < 0.01 * face * 10.0, "w·h − (4−π)r², 10 deep: ${Geom3.volume(mesh)}")
+        assertSaveLoadStable(ed)
+    }
+
+    /** Curves from one step that bound nothing are **not** offered as an area: two common tangents. */
+    @Test
+    fun curvesThatCloseNothingAreNotAnArea() {
+        val ed = Editor()
+        ed.setTool(Tools.CIRCLE_R)
+        ed.key("6")
+        ed.key("Enter")
+        ed.click(Vec2(-30.0, 0.0))
+        ed.key("1")
+        ed.key("0")
+        ed.key("Enter")
+        ed.click(Vec2(30.0, 0.0))
+        ed.setTool(Tools.OUTER_TANGENTS)
+        ed.click(Vec2(-36.0, 0.0))
+        ed.click(Vec2(40.0, 0.0))
+        assertEquals(2, ed.doc.elements.count { it.kind == ElementKind.LINE }, "one step, two tangent lines")
+
+        ed.setTool(Tools.EXTRUDE)
+        ed.key("5")
+        ed.key("Enter")
+        val tangent = ed.doc.elements.first { it.kind == ElementKind.LINE }
+        val onTangent = (Evaluator().valueOf(tangent.ref) as constructit.core.LineValue).line.origin
+        ed.click(onTangent)
+        assertEquals(0, ed.doc.elements.count { it.kind == ElementKind.SOLID }, "two tangents bound no area")
+        assertTrue(ed.statusHint.isNotEmpty(), "and the tool says what it wants instead of doing nothing quietly")
     }
 
     /** Sanity on the bounding-box measurements reaching a tool-built solid (OP-4, the 3D→2D scalars). */

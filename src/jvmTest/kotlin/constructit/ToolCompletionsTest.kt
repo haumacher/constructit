@@ -5,6 +5,7 @@ import constructit.core.Evaluator
 import constructit.core.PointValue
 import constructit.core.SegmentValue
 import constructit.dsl.circle
+import constructit.dsl.scalar
 import constructit.dsl.valueOf
 import constructit.editor.Document
 import constructit.editor.DocumentFormat
@@ -370,7 +371,7 @@ class ToolCompletionsTest {
         ed.setTool(Tools.POINT_XY)
         assertTrue(ed.currentHelp().contains("x, then y"), "got: ${ed.currentHelp()}")
         ed.activeScalar = ed.doc.newParameter("a", 1.0.mm)
-        assertTrue(ed.currentHelp().contains("for y"), "the first is picked, so only y is wanted; got: ${ed.currentHelp()}")
+        assertTrue(ed.currentHelp().contains("type y"), "the first is picked, so only y is wanted; got: ${ed.currentHelp()}")
 
         // clicking before both are in place must build nothing, and say so rather than failing silently
         ed.click(Vec2(0.0, 0.0))
@@ -378,6 +379,144 @@ class ToolCompletionsTest {
         ed.activeScalar = ed.doc.newParameter("b", 2.0.mm)
         ed.click(Vec2(0.0, 0.0))
         assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.DERIVED_POINT })
+    }
+
+    // ---- typing a scalar: direct distance entry generalized to every scalar slot (OP-13) ----
+
+    /** Type the digits, press Enter: the number *is* a parameter, indistinguishable from a panel one. */
+    @Test
+    fun aTypedNumberBecomesTheParameterTheToolWanted() {
+        val ed = Editor()
+        ed.setTool(Tools.CIRCLE_R)
+        assertTrue(ed.currentHelp().contains("type radius"), "the tool says a number can be typed; got: ${ed.currentHelp()}")
+        "7".forEach { assertTrue(ed.key(it.toString())) }
+        assertTrue(ed.statusHint.contains("radius = 7"), "the entry echoes as it is typed; got: ${ed.statusHint}")
+        assertTrue(ed.key("Enter"))
+        ed.click(Vec2(0.0, 0.0))
+
+        val circle = ed.doc.elements.single { it.kind == ElementKind.CIRCLE }
+        assertClose(Evaluator().circle(circle.ref as constructit.dsl.CircleRef).radius, 7.0)
+        // named after the slot, editable, and part of the file — nothing marks it as typed
+        val entry = ed.doc.scalars.single { it.editable }
+        assertEquals("radius", entry.name)
+        assertTrue(DocumentFormat.save(ed.doc).contains("param \"radius\" = 7mm"), DocumentFormat.save(ed.doc))
+        ed.doc.setParameter(entry, 11.0.mm)
+        assertClose(Evaluator().circle(circle.ref as constructit.dsl.CircleRef).radius, 11.0, msg = "a typed value stays live")
+        // the next one uniquifies exactly as a panel parameter does
+        ed.key("3")
+        ed.key("Enter")
+        assertEquals(listOf("radius", "radius2"), ed.doc.scalars.filter { it.editable }.map { it.name })
+    }
+
+    /**
+     * Order-independence: the clicks may come **first**. A tool missing a scalar used to throw its picks
+     * away, which made the geometry pay for a value that had not been supplied yet.
+     */
+    @Test
+    fun aToolThatWaitedForItsNumberFinishesWhenItArrives() {
+        val ed = Editor()
+        ed.setTool(Tools.CIRCLE_R)
+        ed.click(Vec2(20.0, 0.0)) // the centre, before any radius exists
+        assertEquals(0, ed.doc.elements.count { it.kind == ElementKind.CIRCLE })
+        assertTrue(ed.statusHint.contains("type radius"), "it says what it is waiting for; got: ${ed.statusHint}")
+        ed.key("5")
+        ed.key("Enter")
+
+        val circle = ed.doc.elements.single { it.kind == ElementKind.CIRCLE }
+        assertClose(Evaluator().circle(circle.ref as constructit.dsl.CircleRef).radius, 5.0)
+        val c = Evaluator().circle(circle.ref as constructit.dsl.CircleRef).center
+        assertClose(c.x, 20.0, msg = "and it is built where the click was, not where the keyboard is")
+    }
+
+    /** The same for a *picked* parameter arriving late — one completion path, two ways in. */
+    @Test
+    fun aToolThatWaitedFinishesWhenAParameterIsPicked() {
+        val ed = Editor()
+        val r = ed.doc.newParameter("r", 4.0.mm)
+        ed.setTool(Tools.CIRCLE_R)
+        ed.activeScalar = null // nothing picked yet, as after a fresh load
+        ed.click(Vec2(0.0, 0.0))
+        assertEquals(0, ed.doc.elements.count { it.kind == ElementKind.CIRCLE })
+        ed.activeScalar = r
+        assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.CIRCLE }, "picking the row finished it")
+    }
+
+    /**
+     * A slot's **dimension** is what a typed number is read in (OP-7): the same digits mean millimetres
+     * for a depth, degrees for an angle and a bare number for a factor — declared by the tool, so nothing
+     * has to guess.
+     */
+    @Test
+    fun aTypedNumberIsReadInTheSlotsOwnDimension() {
+        val ed = Editor()
+        ed.setTool(Tools.ROTATE)
+        ed.key("9")
+        ed.key("0")
+        ed.key("Enter")
+        val angle = ed.doc.scalars.single { it.editable }
+        assertEquals("angle", angle.name)
+        assertClose(Evaluator().scalar(angle.ref).deg, 90.0, msg = "an angle slot reads degrees")
+
+        ed.setTool(Tools.SCALE)
+        ed.key("2")
+        ed.key("Enter")
+        val factor = ed.doc.scalars.last { it.editable }
+        assertEquals("factor", factor.name)
+        assertEquals(constructit.units.Dimension.NONE, Evaluator().scalar(factor.ref).dim)
+        assertClose(Evaluator().scalar(factor.ref).value, 2.0, msg = "a factor is a bare number")
+    }
+
+    /**
+     * A typed value is half of the operation it was typed for: "7, Enter, click" is ONE undo step that
+     * removes the circle *and* the parameter made for it (a panel parameter, created deliberately, keeps
+     * its own step). See the pendingTypedParams seal in `Editor.checkpoint`.
+     */
+    @Test
+    fun aTypedScalarUndoesWithTheToolItFed() {
+        val ed = Editor()
+        ed.setTool(Tools.CIRCLE_R)
+        ed.key("7")
+        ed.key("Enter")
+        ed.click(Vec2(0.0, 0.0))
+        assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.CIRCLE })
+        assertEquals(listOf("radius"), ed.doc.scalars.map { it.name })
+
+        assertTrue(ed.undo(), "the typed parameter and its tool are one step")
+        assertEquals(0, ed.doc.elements.count { it.kind == ElementKind.CIRCLE })
+        assertTrue(ed.doc.scalars.isEmpty(), "the parameter existed only to feed that tool, so it goes with it")
+        assertTrue(ed.redo(), "and both come back together")
+        assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.CIRCLE })
+        assertEquals(listOf("radius"), ed.doc.scalars.map { it.name })
+    }
+
+    /** A tool with no scalar slot leaves digits alone, so nothing swallows a keystroke it cannot use. */
+    @Test
+    fun digitsAreIgnoredByAToolThatTakesNoScalar() {
+        val ed = Editor()
+        ed.setTool(Tools.SEGMENT)
+        assertTrue(!ed.key("5"), "the segment tool has no scalar to type into")
+        assertEquals(0, ed.doc.scalars.size)
+    }
+
+    // ---- tool shortcuts: the palette without the round trip ----
+
+    @Test
+    fun everyShortcutIsUniqueAndArmsItsOwnTool() {
+        val keys = Tools.all.mapNotNull { it.shortcut } + Tools.SELECT_KEY
+        assertEquals(keys.size, keys.distinct().size, "two tools would answer the same key: $keys")
+        assertTrue(keys.all { it.isUpperCase() }, "keys are stored uppercase so matching is one rule: $keys")
+
+        val ed = Editor()
+        for (tool in Tools.all) {
+            val k = tool.shortcut ?: continue
+            assertTrue(ed.key(k.lowercaseChar().toString()), "$k should be consumed")
+            assertEquals(tool.id, ed.toolId, "$k should arm ${tool.id}")
+            assertTrue(ed.key(k.toString()), "and its uppercase should too")
+            assertEquals(tool.id, ed.toolId)
+        }
+        assertTrue(ed.key(Tools.SELECT_KEY.toString()))
+        assertEquals(Tools.SELECT, ed.toolId, "S is select — the one key that is not a ToolDef's")
+        assertTrue(!ed.key("q"), "an unassigned letter is left for the shell")
     }
 
     /** A single-scalar tool still means exactly "the active parameter", so nothing about them changed. */

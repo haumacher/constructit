@@ -135,10 +135,27 @@ worked spec examples** — one test class each, the spec in its KDoc:
   is *measured off the 3D mesh* — change the wall height and the net resizes. No unfolding algorithm.
 
 The showcases needed one macro (the gear) and two ten-line generic ops, which is the result they were
-meant to produce. 441 headless tests pass; the browser E2E drives a real Chrome.
+meant to produce.
 
-Planned next: mesh export (STL/3MF), datum planes in the UI (the roof is DSL-built for want of a way to
-*name* a plane), line styles in the render seam, and wall-to-wall junction cleanup.
+**Usability is now measured, not asserted.** Four whole workflows are scripted as gestures and *counted*
+(`ClickBudgetTest`), each with a ceiling that fails the build if an interaction regresses: the mechanical
+plate went from 43 user actions to 23, the architect's storey from 27 to 18, and two of the four workflows
+did not previously complete at all. What the measuring produced:
+
+- **type a number for any tool input** — digits typed with a tool armed become an ordinary named parameter
+  (editable, wireable, saved), so no scalar-consuming tool needs a trip to the panel first, and a tool that
+  is still missing its value now *waits* with your clicks instead of discarding them;
+- **single-key tool shortcuts** (`S P L C R O W D E X M`), shown on the palette buttons;
+- **boundaries that already meet are not re-intersected**, which is what makes a rounded rectangle (or a
+  fillet) traceable at all — its sides meet its corner arcs tangentially;
+- **a closed curve, or a closed chain a single step built, can be used wherever an area is wanted** — so a
+  circle extrudes into a cylinder and a drawn plate extrudes with one click, no boundary tracing.
+
+457 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included.
+
+Planned next: mesh export (STL/3MF), regions with holes from traced outlines, datum planes in the UI (the
+roof is DSL-built for want of a way to *name* a plane), line styles in the render seam, and wall-to-wall
+junction cleanup.
 
 ## Documentation
 

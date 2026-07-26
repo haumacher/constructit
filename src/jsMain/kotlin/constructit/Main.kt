@@ -12,6 +12,7 @@ import constructit.editor.Format
 import constructit.editor.PointerButton
 import constructit.editor.ScalarEntry
 import constructit.editor.Scene3
+import constructit.editor.Tools
 import constructit.editor.Viewport3
 import constructit.editor.WebGlRenderer3
 import constructit.editor.quantityOf
@@ -197,8 +198,10 @@ private fun setupApp() {
                     editor.redo()
                     e.preventDefault()
                 }
-                // the controller first: direct distance entry owns digits/Enter/Esc/Backspace while active
-                editor.key(key) -> e.preventDefault()
+                // The controller first: it owns digits/Enter/Esc/Backspace (a leg's length, or the scalar a
+                // tool wants) and the single letters that arm a tool. Only without a modifier — Ctrl+S and
+                // friends belong to the browser, and one of them would otherwise switch tools.
+                !ctrl && editor.key(key) -> e.preventDefault()
                 key == "Delete" || key == "Backspace" -> {
                     if (editor.deleteSelection()) e.preventDefault()
                 }
@@ -466,14 +469,21 @@ private fun buildPalette(editor: Editor) {
     paletteShows = signature
     val palette = document.getElementById("palette") as HTMLElement
     val sb = StringBuilder()
-    sb.append("<button class=\"tool active\" id=\"tool-select\" data-tool=\"select\">Select / Drag</button>")
+
+    // the tool's key, on the button and in its tooltip — a shortcut nobody can see is a shortcut nobody uses
+    fun keyTag(key: Char?): String = if (key == null) "" else "<span class=\"tkey\">$key</span>"
+    sb.append(
+        "<button class=\"tool active\" id=\"tool-select\" data-tool=\"select\" title=\"Select / drag (${Tools.SELECT_KEY})\">" +
+            "Select / Drag${keyTag(Tools.SELECT_KEY)}</button>",
+    )
     for (cat in constructit.editor.ToolCategory.values()) {
         val inCat = tools.filter { it.category == cat }
         // the custom category exists only once the document defines a macro
         if (inCat.isEmpty()) continue
         sb.append("<div class=\"cat\">${cat.name.lowercase()}</div>")
         for (t in inCat) {
-            sb.append("<button class=\"tool\" id=\"tool-${t.id}\" data-tool=\"${t.id}\" title=\"${t.help}\">${t.label}</button>")
+            val hint = if (t.shortcut == null) t.help else "${t.help} (shortcut ${t.shortcut})"
+            sb.append("<button class=\"tool\" id=\"tool-${t.id}\" data-tool=\"${t.id}\" title=\"$hint\">${t.label}${keyTag(t.shortcut)}</button>")
         }
     }
     palette.innerHTML = sb.toString()
