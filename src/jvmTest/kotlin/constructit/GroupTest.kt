@@ -119,6 +119,31 @@ class GroupTest {
         assertClose(pos(ed, "e3").x, 80.0)
     }
 
+    /**
+     * A flat group has no frame, so a drag on a member was always element-wise — including the magnet, which
+     * grouping must not disable (OP-16 step 1 changes no handle and no node). Unchanged by the placed-group
+     * drag rule: the press still selects the group, because with no frame there is nothing to disambiguate.
+     */
+    @Test
+    fun aMemberOfAnUnselectedFlatGroupStillDragsAndStillWelds() {
+        val ed = grouped("kitchen")
+        ed.click(Vec2(0.0, 90.0)) // nothing selected
+        assertEquals(0, ed.selectionCount)
+
+        // e3 (a member) dragged onto e2 (not a member): the magnet welds on release, exactly as it would
+        // if e3 had never been grouped
+        ed.drag(Vec2(60.0, 0.0), Vec2(1.0, 1.0))
+        assertTrue(ed.statusHint.contains("Joined"), "got: ${ed.statusHint}")
+        assertClose(pos(ed, "e3").x, 0.0, msg = "it landed on its master")
+        assertClose(pos(ed, "e3").y, 0.0)
+
+        // and axis lock still applies to such a drag
+        ed.axisLock = true
+        ed.drag(Vec2(-60.0, 0.0), Vec2(-20.0, 15.0))
+        assertClose(pos(ed, "e1").x, -20.0)
+        assertClose(pos(ed, "e1").y, 0.0, msg = "the lock held y")
+    }
+
     @Test
     fun ungroupDissolvesTheGroupAndKeepsItsElements() {
         val ed = grouped("kitchen")

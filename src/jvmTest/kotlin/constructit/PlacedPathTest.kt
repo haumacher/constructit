@@ -246,6 +246,28 @@ class PlacedPathTest {
         assertClose(leg(ed, 0).a.y, leg(ed, 0).b.y, msg = "still axis-aligned: one write moved the frame, not the legs")
     }
 
+    /**
+     * The same rule on a *path* member (OP-16's as-built drag-subject note): a leg of a group **nobody
+     * selected** drags perpendicular in the group, exactly as it would ungrouped, and the frame stays.
+     * This is the shape the report actually had — a wall under a project frame.
+     */
+    @Test
+    fun draggingALegOfAnUnselectedGroupMovesTheLegAndLeavesTheFrame() {
+        val (ed, g) = placedL()
+        ed.click(Vec2(-300.0, -300.0)) // nothing selected: the group is invisible from here
+        assertEquals(0, ed.selectionCount)
+        val mid = (leg(ed, 0).a + leg(ed, 0).b) * 0.5
+
+        ed.drag(mid, mid + Vec2(0.0, 20.0))
+
+        assertClose(leg(ed, 0).a.y, 20.0, msg = "the leg moved perpendicular, as an ungrouped one would")
+        assertClose(leg(ed, 0).b.y, 20.0, msg = "…and stayed axis-aligned")
+        assertClose(vertex(ed, 2).y, 60.0, msg = "the far corner did not follow")
+        assertClose(origin(ed, g).x, 50.0, msg = "the frame did not move")
+        assertClose(origin(ed, g).y, 30.0)
+        assertEquals(1, ed.selectionCount, "the drag leaves the leg it moved selected")
+    }
+
     // ---- the rotated project frame ----
 
     @Test

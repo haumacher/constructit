@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.io.File
 import java.nio.file.Paths
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -290,7 +291,15 @@ class BrowserE2ETest {
 
             fun status(): String = page.querySelector("#status").textContent()
 
-            fun params(): List<String> = page.querySelectorAll("#params-list .pname").map { it.textContent() }
+            // a parameter's name is an editable field now (OP-7), so its *value* is the name — read through
+            // one expression that also covers the rows whose name the file cannot carry (still spans)
+            @Suppress("UNCHECKED_CAST")
+            fun params(): List<String> =
+                (
+                    page.evaluate(
+                        "() => [...document.querySelectorAll('#params-list .pname')].map(e => e.value ?? e.textContent)",
+                    ) as List<Any?>
+                ).map { it?.toString() ?: "" }
 
             fun tree(): List<String> = page.querySelectorAll("#tree .item").map { it.textContent() }
 
@@ -351,6 +360,39 @@ class BrowserE2ETest {
             page.fill("#p-value", "50")
             page.click("#p-add")
             assertTrue(params().contains("wall"), "a panel parameter still works exactly as before; got ${params()}")
+
+            // ---- the panel's own two edits: rename in place, and the native spinner (OP-7 / OP-13) ----
+            //
+            // Real-DOM rules only a browser can state: a name field commits on Enter *without* the letters
+            // in it arming tools underneath, and the browser's own number spinner reaches the geometry —
+            // live per tick, with the committed change as one undo step.
+            val nameField = page.querySelector("#params-list input.pname[value='thickness']")
+            assertTrue(nameField != null, "the wall thickness is renameable in place; got ${params()}")
+            val sid = nameField.getAttribute("data-sid")
+            nameField.fill("wall-t")
+            page.keyboard().press("Enter")
+            assertTrue(params().contains("wall-t"), "the rename commits in place; got ${params()}")
+            assertFalse(params().contains("thickness"), "and the old name is gone; got ${params()}")
+            assertTrue(activeTool() == "cutopenings", "typing a name must arm no tool; got ${activeTool()}")
+
+            val valField = page.querySelector("#params-list .pval[data-sid='$sid']")
+            assertTrue(valField.getAttribute("type") == "number", "a value field is a native number field")
+            assertTrue(valField.getAttribute("step") == "1", "nudged by 1 mm")
+            val thin = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            valField.click()
+            page.keyboard().press("ArrowUp")
+            assertTrue(valField.inputValue() == "11", "ArrowUp nudges the field; got ${valField.inputValue()}")
+            assertTrue(
+                (page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String) != thin,
+                "a spinner tick must reach the drawing live",
+            )
+            // the button, not Ctrl+Z: the shortcut deliberately does not fire from inside a panel field
+            page.click("#e-undo")
+            val back = page.querySelector("#params-list input.pname[value='wall-t']").getAttribute("data-sid")
+            assertTrue(
+                page.querySelector("#params-list .pval[data-sid='$back']").inputValue() == "10",
+                "one undo puts the nudged value back, and the rename before it stands",
+            )
 
             // ---- the whole storey under one turned frame (OP-16's ortho-path bonus) ----
             //

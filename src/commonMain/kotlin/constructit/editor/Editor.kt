@@ -889,6 +889,66 @@ class Editor(
         return true
     }
 
+    // ---- panel parameter edits (OP-7): the shell routes, the controller decides ----
+
+    /**
+     * Write [value] (in the display unit of the parameter's dimension) into [e] — the parameters panel's
+     * value field, spinner included.
+     *
+     * [commit] is the **undo-granularity seam**. A native number field fires an event per spinner tick, and
+     * the geometry has to follow every one of them (that is what makes a spinner useful: the drawing moves
+     * while the value is nudged) — but an undo step is worth taking only where the edit *commits*, on
+     * change/blur/Enter. So a tick writes with [commit] false, changing the model and repainting without a
+     * snapshot, and the committing event takes the checkpoint: one undo step per committed change, however
+     * many ticks it took. The intermediate values were never operations, exactly as the intermediate
+     * positions of a drag are not (a drag checkpoints on release too).
+     *
+     * False when the entry is not writable — a measurement, or a parameter wired to another one — which is
+     * the same answer the field's disabled state shows.
+     */
+    fun setParameter(
+        e: ScalarEntry,
+        value: Double,
+        commit: Boolean = true,
+    ): Boolean {
+        if (!e.editable || doc.isBound(e)) return false
+        doc.setParameter(e, quantityOf(dimensionOf(e.ref), value))
+        if (commit) checkpoint()
+        onChange()
+        return true
+    }
+
+    /**
+     * Rename parameter [e] to what was typed into the panel's name field (OP-7). One user-level operation,
+     * hence one checkpoint; returns the name it actually **took** — uniquified, or the old one when the
+     * field was blank — so the shell can show the result rather than the request.
+     */
+    fun renameParameter(
+        e: ScalarEntry,
+        name: String,
+    ): String? {
+        val was = e.name
+        val now = doc.renameParameter(e, name)
+        if (now == null) {
+            statusHint =
+                if (!e.editable) {
+                    "${e.name} is a measurement — its name comes from the step that measures it, so it cannot be renamed"
+                } else {
+                    "${e.name} belongs to the step that created it, which has no place for a name in the file — " +
+                        "so renaming it could not be saved"
+                }
+            onChange()
+            return null
+        }
+        if (now != was) {
+            checkpoint()
+            val asked = name.trim()
+            statusHint = "Renamed $was to $now" + if (asked.isNotEmpty() && now != asked) " (\"$asked\" was taken or not one word)" else ""
+        }
+        onChange()
+        return now
+    }
+
     /** Set a transient status-bar note (e.g. panel feedback). */
     fun note(message: String) {
         statusHint = message
@@ -928,13 +988,15 @@ class Editor(
     }
 
     /**
-     * The frames to draw: those of placed groups with a selected member (OP-16 step 2). Shown on
-     * selection only — the frame is a handle, not geometry, so it appears when it is addressable.
+     * The frames to draw: those of placed groups with a member that is selected **and drawn** (OP-16
+     * step 2). Shown on selection only — the frame is a handle, not geometry, so it appears when it is
+     * addressable; and gated on visibility because a marker for a group nothing of which is on screen is
+     * an orphan: hiding a group (or the selected member alone) must take its origin marker with it.
      */
     private fun selectedFrames(): List<FrameValue> {
         val ev = ev()
         return doc.groups
-            .filter { g -> g.placed && doc.groupMembers(g).any { it in selected } }
+            .filter { g -> g.placed && doc.groupMembers(g).any { it in selected && it.visible } }
             .mapNotNull { g -> g.frameNode?.let { (ev.eval(it) as? EvalResult.Ok)?.value as? FrameValue } }
     }
 
@@ -986,12 +1048,18 @@ class Editor(
                 return
             }
             // A member of a **placed** group is addressed by the *gesture*, not by what the press does to
-            // the selection: a drag moves the frame — or the member, when that member was the one already
-            // reached alone — while the group/member cycle is a click semantic and is therefore applied on
-            // release, exactly as Shift's toggle is. Deciding it after re-picking would make a click
-            // followed by a drag of the same member move the member rather than the group.
+            // the selection, and the two halves of that split are decided at the two ends of the gesture:
+            //
+            // - **the drag's subject, here at press time**, from the selection this press *found* — the
+            //   frame only when the group is already selected as a whole, otherwise the member's own
+            //   handle. Grouping is invisible until something of it is selected (OP-16), so a drag on a
+            //   member of a group nobody selected must move that member, exactly as if it were ungrouped;
+            //   and a member deliberately reached alone keeps moving alone, as before. Decided *here* and
+            //   never re-decided, because a release cannot undo what the drag has already moved.
+            // - **the selection, at release** ([pointerUp]): a click runs the group/member cycle, a drag
+            //   leaves the member it moved selected. Both are click-vs-drag semantics, and only the
+            //   release knows which of the two the gesture was (CLICK_SLOP_PX).
             val placedGroup = if (additive) null else doc.placedGroupOf(hit)
-            val reachedAlone = selected.size == 1 && selection === hit && selectedGroup == null
             var note = ""
             when {
                 additive -> pendingToggle = hit
@@ -1000,7 +1068,7 @@ class Editor(
             }
             // dragging the frame is one literal write, whatever the group contains, and the whole of it
             // follows rigidly — derived geometry included, since it is downstream (OP-16 step 2)
-            val frameGroup = placedGroup?.takeIf { !reachedAlone }
+            val frameGroup = placedGroup?.takeIf { selectedGroup === it }
             if (frameGroup != null) {
                 val anchor = frameGroup.frameHandle?.origin(ev()) ?: world
                 dragFrame = frameGroup
@@ -1011,6 +1079,14 @@ class Editor(
                 return
             }
             if (movable != null) {
+                // a member of a placed group whose group is *not* what is selected drags on its own, which
+                // is invisible on canvas until something moves — so it is said out loud, together with the
+                // way to get the frame instead (OP-16)
+                if (placedGroup != null && (selected.size != 1 || selection !== hit)) {
+                    note =
+                        "Dragging ${hit.id} alone — group ${placedGroup.name} is not selected as a whole; " +
+                        "click without moving to select it, then drag to move the frame"
+                }
                 dragTarget = movable
                 // drag by the *offset* from where the grab landed, not to the cursor outright:
                 // picking has a tolerance, so writing the cursor position made the geometry jump to
@@ -1559,6 +1635,11 @@ class Editor(
             statusHint = pickOnCanvas(cycle)
             onChange()
         }
+        // …and the drag half of that same decision (OP-16): a press that *moved* never reaches the group —
+        // its subject was the member's own handle (see [pointerDown]) — so what stays selected is the
+        // element it moved, exactly as dragging ungrouped geometry leaves the dragged element selected. A
+        // later weld or join may still replace this with what it produced; both run below.
+        if (cycle != null && moved && dragged != null) select(listOf(dragged), dragged)
         downScreen = null
         if (dragged != null) {
             val ortho = dragged.handle is OrthoCornerHandle

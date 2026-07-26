@@ -156,14 +156,20 @@ object DocumentFormat {
                 if (m == null || n == null) step.args else listOf(step.args[0], Arg.Pos(m), Arg.Pos(n))
             }
             // an interval feature's position and carried heights live in the parameters the step created,
-            // matched to the argument of the same name (`pos=` <- the "pos"/"pos2"/… entry). They are
-            // state, so a value typed in the panel comes back on reload — which is the whole point of
-            // recording the interval as a description rather than as the click that placed it (OP-21).
-            "opening" ->
+            // in that order (see [Document.addInterval]). They are state, so a value typed in the panel
+            // comes back on reload — which is the whole point of recording the interval as a description
+            // rather than as the click that placed it (OP-21).
+            //
+            // Matched to the keys **positionally**, not by the parameters' names: a panel name is the
+            // user's (OP-7) and a renamed `pos` must not quietly stop restating its position. The `width=`
+            // key names a scalar the step did not create, so it is written by name as usual.
+            "opening" -> {
+                val created = listOf("pos", "sill", "head").zip(step.createsScalars).toMap()
                 step.args.map { arg ->
-                    val created = step.createsScalars.firstOrNull { it.name.trimEnd { c -> c.isDigit() } == (arg as? Arg.Keyed)?.key }
-                    if (arg is Arg.Keyed && created != null) Arg.Keyed(arg.key, Arg.Num(value(created, ev))) else arg
+                    val own = if (arg is Arg.Keyed) created[arg.key] else null
+                    if (arg is Arg.Keyed && own != null) Arg.Keyed(arg.key, Arg.Num(value(own, ev))) else arg
                 }
+            }
             // a slider's position lives in a hidden parameter the click created; re-read it from the
             // point itself so the slider lands where it is now, not where it was first placed
             "tool" -> {

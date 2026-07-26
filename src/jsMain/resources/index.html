@@ -48,7 +48,11 @@
         .prow:hover { background: #eef4fb; }
         .prow.active { background: #e2eefb; outline: 1px solid #1f77b4; }
         .prow .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-        .prow .pval { width: 46px; }
+        /* the name is an editable field (OP-7); it reads as text until it is hovered or focused */
+        .prow input.pname { font: inherit; border: 1px solid transparent; background: transparent; padding: 1px 2px; border-radius: 3px; }
+        .prow input.pname:hover, .prow input.pname:focus { border-color: #bcd; background: #fff; }
+        /* wide enough for the browser's own up/down arrows on top of the digits */
+        .prow .pval { width: 58px; }
         .prow .pval:disabled { background: #eee; color: #888; }
         .prow .punit { width: 18px; color: #999; }
         .prow .pbind { width: 44px; font-size: 11px; }

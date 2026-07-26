@@ -229,6 +229,81 @@ class PlacedGroupTest {
         assertClose((pos(ed, "e8") - frameOrigin(g)).length(), (Vec2(40.0 / 3.0, -10.0)).length())
     }
 
+    // ---- which subject a gesture on a member addresses (OP-16: press decides, release selects) ----
+
+    /**
+     * The user's report: pressing a member of a group **nobody selected** and dragging moved the whole
+     * frame, although grouping is invisible until something of it is selected. A drag there must move that
+     * element, exactly as if it were ungrouped — and leave *it* selected, as an ungrouped drag does.
+     */
+    @Test
+    fun draggingAMemberOfAnUnselectedGroupMovesTheMemberAndLeavesTheFrameWhereItWas() {
+        val (ed, g) = placed()
+        ed.click(Vec2(0.0, 90.0)) // nothing selected: the group is invisible from here
+        assertEquals(0, ed.selectionCount)
+
+        ed.drag(Vec2(60.0, 0.0), Vec2(75.0, 20.0)) // straight onto e2, no click first
+
+        assertClose(pos(ed, "e2").x, 75.0, msg = "the member moved under the cursor")
+        assertClose(pos(ed, "e2").y, 20.0)
+        assertClose(pos(ed, "e1").x, -60.0, msg = "and nothing else did")
+        assertClose(pos(ed, "e3").y, 40.0)
+        assertClose(frameOrigin(g).x, 0.0, msg = "the frame did not move")
+        assertClose(frameOrigin(g).y, 10.0)
+
+        // a pure drag leaves the element it moved selected — the least surprising answer, and the same one
+        // dragging ungrouped geometry gives
+        assertEquals(1, ed.selectionCount)
+        assertEquals("e2", ed.selection?.id)
+        assertNull(ed.selectedFrame(), "…so the panel addresses the member, not the frame")
+    }
+
+    /** The other half: once a click has selected the group as a whole, a drag moves the frame. */
+    @Test
+    fun aClickThenADragOfTheSameMemberMovesTheFrame() {
+        val (ed, g) = placed()
+        ed.click(Vec2(0.0, 90.0))
+        ed.click(Vec2(60.0, 0.0)) // the click selects the whole group
+        assertEquals(g, ed.selectedFrame())
+
+        ed.drag(Vec2(60.0, 0.0), Vec2(75.0, 20.0))
+
+        assertClose(frameOrigin(g).x, 15.0, msg = "the frame took the whole gesture")
+        assertClose(frameOrigin(g).y, 30.0)
+        assertClose(pos(ed, "e1").x, -45.0, msg = "and the group came with it")
+        assertClose(pos(ed, "e1").y, 20.0)
+        assertEquals(g, ed.selectedFrame(), "a moved group stays selected as a whole")
+    }
+
+    /** Axis lock applies to the member drag exactly as it does to the frame's. */
+    @Test
+    fun anUnselectedGroupsMemberDragTakesAxisLock() {
+        val (ed, g) = placed()
+        ed.click(Vec2(0.0, 90.0))
+        ed.axisLock = true
+        ed.drag(Vec2(60.0, 0.0), Vec2(85.0, 5.0)) // dominated by x
+
+        assertClose(pos(ed, "e2").x, 85.0)
+        assertClose(pos(ed, "e2").y, 0.0, msg = "the lock held the other axis")
+        assertClose(frameOrigin(g).y, 10.0, msg = "and the frame is still untouched")
+    }
+
+    /** The member-reach cycle is untouched: click, click again, click once more. */
+    @Test
+    fun theGroupMemberClickCycleStillGoesGroupMemberGroup() {
+        val (ed, g) = placed()
+        ed.click(Vec2(0.0, 90.0))
+        ed.click(Vec2(60.0, 0.0))
+        assertEquals(8, ed.selectionCount)
+        assertEquals(g, ed.selectedFrame())
+        ed.click(Vec2(60.0, 0.0))
+        assertEquals(1, ed.selectionCount)
+        assertEquals("e2", ed.selection?.id)
+        ed.click(Vec2(60.0, 0.0))
+        assertEquals(8, ed.selectionCount)
+        assertEquals(g, ed.selectedFrame())
+    }
+
     // ---- reaching a member: its drag inverts the frame ----
 
     @Test
@@ -491,6 +566,37 @@ class PlacedGroupTest {
     }
 
     // ---- rendering ----
+
+    /** How many strokes of the frame marker's own colour the scene draws — two axes and the origin dot. */
+    private fun frameMarks(ed: Editor): Int {
+        val target = SvgDrawTarget()
+        ed.render(target)
+        return Regex("#8c564b").findAll(target.svg()).count()
+    }
+
+    /**
+     * The marker follows the group's **visibility**, not only its selection (OP-16): hiding a placed group
+     * left its origin marker floating on an otherwise empty canvas, which reads as geometry that cannot be
+     * picked. A frame is drawn only while something of its group is both selected and drawn.
+     */
+    @Test
+    fun aHiddenGroupDrawsNoFrameMarkerAndShowingItBringsTheMarkerBack() {
+        val (ed, g) = placed()
+        ed.click(Vec2(0.0, 90.0))
+        ed.click(Vec2(-60.0, 0.0)) // the whole group: the frame is addressable, hence drawn
+        assertEquals(3, frameMarks(ed), "two axes and the origin dot")
+
+        ed.setGroupVisible(g, false)
+        assertEquals(0, frameMarks(ed), "a hidden group draws no frame either")
+        ed.setGroupVisible(g, true)
+        assertEquals(3, frameMarks(ed), "and it comes back with the group")
+
+        // the same through the selection's own Hide, which is the other way to hide every member
+        assertTrue(ed.setSelectionVisible(false) > 0)
+        assertEquals(0, frameMarks(ed))
+        ed.setSelectionVisible(true)
+        assertEquals(3, frameMarks(ed))
+    }
 
     /** A placed, rotated group through the renderer, frame marker included. */
     @Test

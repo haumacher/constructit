@@ -994,6 +994,44 @@ nothing else to place it by.
 - **Dimensional rules:** `*`/`/` combine dimensions; `+`/`-`/comparisons require matching
   dimensions; `sin()` etc. take `Angle` → `Dimensionless`. Mismatches → invalid, caught early.
 
+### Named values in the panel (as built)
+
+A parameter's **name is editable in place** — the panel's name cell is a text field that commits on
+Enter or blur — and it uniquifies exactly as creating one does: a clash gets a suffix (`width` →
+`width2`), a blank field keeps the old name, and the field then shows the name it actually **took**
+rather than what was typed. Names are also normalised to one quote-free word (`wall width` →
+`wall-width`), because a step's arguments are split on spaces and a name is written quoted, so either
+would otherwise come back as a different name — or not at all.
+
+**The save format needed nothing.** Every mention of a scalar in the script is written as its *current*
+name (the `param` step's own label, `scalar=`, `wire`, an opening's `width=`) and load resolves by that
+name, so one rename restates the whole file consistently and `save → load → save` stays byte-equal with
+everything the parameter drove still wired to it.
+
+That is also the rule for **what may be renamed: exactly what the file names.** A scalar without a
+`param` step of its own carries no name into the script, so a rename would either be silently lost on
+reload or — worse — write a reference nothing declares. Two kinds fall out of that and are refused with
+the reason instead of renamed in memory: a **measurement** (OP-4; its name comes from the step that
+measures it) and a parameter another step created as part of itself (an opening's `pos`/`sill`/`head`,
+OP-21). Their panel rows show the name as text, so nothing offers an edit that would be refused. One
+consequence worth stating: an opening's values are now restated **positionally** against the step's keys
+rather than by matching those parameters' names, so the file cannot quietly stop tracking a renamed one.
+
+One cosmetic residue, recorded rather than papered over: a **custom tool's scalar-slot label** (OP-6)
+snapshots the entry's name when the tool is first built, so a renamed input port keeps its old name in
+that tool's prompt until the file is reloaded. Nothing about the wiring is stale — the port is the entry
+itself — only the sentence.
+
+**Values are native number fields.** A value cell is `type=number`, so the browser's own up/down arrows
+and the arrow keys nudge it (1 mm / 1°, 0.1 for a dimensionless factor — uniform, not per parameter).
+The granularity is stated rather than implied: **every tick writes the model live** (the drawing has to
+follow the nudge, which is the whole point of a spinner) and **only a committed change is an undo step**
+— `Editor.setParameter(e, v, commit)` is that seam, so the shell routes `input` → live write and
+`change` → checkpoint. Intermediate tick values were never operations, exactly as the intermediate
+positions of a drag are not (a drag checkpoints on release too). The shell adds one rule to make it
+work: while a parameter row has the keyboard its DOM is left alone, since replacing it under a live
+spinner destroys the focus and with it the next tick.
+
 ## Measurements & value feedback (OP-4 — RESOLVED)
 
 - Measurements are **first-class derived nodes** with `Scalar`/`Angle` outputs
@@ -1458,6 +1496,28 @@ reaches it alone, and then dragging edits that member inside the frame. The cycl
 **on release, and only when the gesture did not move** — exactly the discipline Shift's toggle already
 uses — because deciding the drag's subject *after* re-picking made "click a member, then drag it" move
 the member instead of the group.
+
+**As built — the drag subject is the selection the press found (a user report).** Pressing a member of a
+group *nobody had selected* and dragging moved the whole frame, which is unexpected because **grouping is
+invisible until something of it is selected**: the drawing gives no cue that the thing under the cursor
+belongs to anything. So the rule is now split across the two ends of the gesture, and each end decides
+exactly what only it can know:
+
+- **press time decides the drag's subject**, from the selection the press *finds*: the frame only when
+  the group is already selected **as a whole** (`selectedGroup === group`), otherwise the member's own
+  handle. Decided there and never re-decided, because a release cannot undo what the drag already moved.
+- **release time decides the selection**: a click runs the cycle above; a drag leaves *the element it
+  moved* selected — the least surprising answer, and the same one dragging ungrouped geometry gives.
+
+So the three cases read as one sentence: a click selects the group, a drag on an unselected group's member
+edits that member as if it were ungrouped (magnet and axis lock included, unchanged), and a drag *after*
+that click moves the frame. Flat groups are untouched: with no frame there is nothing to disambiguate, so
+the press selects the group as it always did and the drag is element-wise as it always was.
+
+**The frame marker follows visibility, not only selection.** Hiding a placed group left its origin marker
+drawn — geometry-looking scaffolding for a group that has nothing on screen. A frame is drawn only while
+some member is **selected and visible**, which covers both routes into it (the group panel's toggle and
+Hide on the selection) with one condition and no new state.
 
 **Persistence: a `place "name" at=x,y angle=Ndeg` step** (OP-18), with origin and angle restated from
 the live frame (literals-as-current-values). The members' own `point` steps keep restating **world**
@@ -2564,6 +2624,38 @@ Three broad families (see OP-9 decision above):
   needed no change and turned out to be the honest second half — a band means "still drawing", and there is
   none after a terminal click. 500 headless tests green (7 new; `OrthoRunEndTest`, with an SVG golden for the
   mark).
+- **Session 4 — four user reports about *reaching* things: a group's members, and a parameter's name.** All
+  four were about the editor getting in the way of something already modelled, and each had one honest rule
+  behind it rather than a special case.
+  (1) **Which subject a gesture on a group member addresses is now decided at the press, from the selection
+  the press found** (OP-16's as-built note). Dragging a member of a group *nobody had selected* moved the
+  whole frame, which cannot be right when grouping is invisible until it is selected: nothing on the canvas
+  says the thing under the cursor belongs to anything. Press time picks the subject (frame only when the
+  group is selected as a whole, otherwise the member's own handle) and release time picks the selection (a
+  click cycles group→member→group, a drag leaves the element it moved selected — what dragging ungrouped
+  geometry does). That is one coherent scheme with the deferred Shift-toggle, and it is why the decision is
+  *not* re-made on release: a release cannot undo what the drag already moved. Flat groups needed no change,
+  and the magnet and axis lock work on the member drag because it *is* the ordinary element drag.
+  (2) **A frame marker is drawn only while a member is selected *and visible*.** Hiding a placed group left
+  its origin marker behind, which reads as unpickable geometry. One condition, both hide routes, no new
+  state.
+  (3) **A parameter's name is editable in place, and the format needed nothing** (OP-7). The script names
+  every scalar by its *current* name and resolves by name on load, so rename + save + load + save is
+  byte-equal with everything still wired. The interesting part was the *scope*: renameable is exactly
+  "named in the file". A measurement (OP-4) and an opening's own `pos`/`sill`/`head` (OP-21) carry no name
+  into the script — replay would regenerate the old one, and a reference under the new one would not load —
+  so they are refused with the reason instead of renamed in memory only. Two latent format bugs fell out on
+  the way: names are now normalised to one quote-free word (a space split the step, a quote came back
+  changed), and an opening's values are restated **positionally** instead of by matching its parameters'
+  names, so nothing can quietly stop tracking a renamed one.
+  (4) **Value fields are native number inputs, with the undo granularity stated.** Geometry follows every
+  spinner tick (a live, uncommitted write) and only a committed change is an undo step — `commit` is an
+  argument of one `Editor.setParameter`, so the shell's `input`/`change` split carries no policy of its own.
+  The shell's one new rule is that a parameter row holding the keyboard is not re-rendered; replacing it
+  under a live spinner destroys the focus and with it the next tick. 517 headless tests green (14 new:
+  drag-subject and marker visibility in `PlacedGroupTest`/`GroupTest`, rename + granularity in the new
+  `ParameterPanelTest`), plus the browser E2E extended for the two real-DOM rules (a name commits on Enter
+  without its letters arming tools; ArrowUp in a value field reaches the canvas and undoes as one step).
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

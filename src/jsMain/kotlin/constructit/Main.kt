@@ -10,12 +10,10 @@ import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.Format
 import constructit.editor.PointerButton
-import constructit.editor.ScalarEntry
 import constructit.editor.Scene3
 import constructit.editor.Tools
 import constructit.editor.Viewport3
 import constructit.editor.WebGlRenderer3
-import constructit.editor.quantityOf
 import constructit.geom.Justification
 import constructit.geom.Vec2
 import constructit.units.Dimension
@@ -335,15 +333,32 @@ private fun setupApp() {
             r.className = if (r.getAttribute("data-sid") == sid) "prow active" else "prow"
         }
     })
-    // edit a parameter value (pval) or wire it to another scalar (pbind), on commit
+    // A spinner tick (or a keystroke) in a value field writes the value **live and uncommitted**: the
+    // geometry follows every tick, and the undo step is taken where the browser says the value changed
+    // (see [Editor.setParameter]). Nothing else is routed here — a name is renamed on commit only, since
+    // renaming per keystroke would uniquify half-typed words and fill the undo stack with them.
+    paramsList.addEventListener("input", {
+        val t = it.target as? HTMLInputElement ?: return@addEventListener
+        if (!t.className.contains("pval")) return@addEventListener
+        val entry = editor.doc.scalars.firstOrNull { s -> s.id == t.getAttribute("data-sid") } ?: return@addEventListener
+        // an empty or half-typed field ("-", "1e") writes nothing and waits
+        val v = t.value.toDoubleOrNull() ?: return@addEventListener
+        editor.setParameter(entry, v, commit = false)
+    })
+    // edit a parameter value (pval), rename it (pname) or wire it to another scalar (pbind), on commit
     paramsList.addEventListener("change", {
         val t = it.target as? HTMLElement ?: return@addEventListener
         val entry = editor.doc.scalars.firstOrNull { s -> s.id == t.getAttribute("data-sid") } ?: return@addEventListener
         when {
             t is HTMLInputElement && t.className.contains("pval") -> {
                 val v = t.value.toDoubleOrNull() ?: return@addEventListener
-                editor.doc.setParameter(entry, quantityIn(entry, v))
-                editor.checkpoint()
+                editor.setParameter(entry, v) // commits: one undo step per committed change
+                repaint()
+            }
+            // renaming is the panel's own operation (OP-7): the field shows the name it actually took,
+            // which a clash or a blank field makes different from what was typed
+            t is HTMLInputElement && t.className.contains("pname") -> {
+                t.value = editor.renameParameter(entry, t.value) ?: entry.name
                 repaint()
             }
             t is HTMLSelectElement && t.className.contains("pbind") -> {
@@ -610,29 +625,43 @@ private fun renderPanel(
                 "</div>"
         }
 
-    // parameters (editable)
+    // parameters (editable). While a row of this list has the keyboard the DOM is left exactly as it is:
+    // replacing it under a live spinner or a half-typed name would destroy the focus — and with it the
+    // next tick. Everything else still repaints, so the canvas follows every tick (Editor.setParameter).
     val plist = document.getElementById("params-list") as HTMLElement
-    plist.innerHTML =
-        editor.doc.scalars.filter { it.editable }.joinToString("") { s ->
-            val active = if (s === editor.activeScalar) " active" else ""
-            val q = ev.scalar(s.ref)
-            val boundId = editor.doc.boundEntry(s)?.id ?: ""
-            // wire options: other scalars of the same dimension
-            val opts = StringBuilder("<option value=\"\">free</option>")
-            for (t in editor.doc.scalars) {
-                if (t === s) continue
-                val td = (ev.eval(t.ref.node) as? constructit.core.EvalResult.Ok)?.let { (it.value as? constructit.core.ScalarValue)?.q?.dim }
-                if (td == null || td != q.dim) continue
-                opts.append("<option value=\"${t.id}\"${if (t.id == boundId) " selected" else ""}>=${t.name}</option>")
+    val editingParams = (document.activeElement as? HTMLElement)?.closest("#params-list") != null
+    if (!editingParams) {
+        plist.innerHTML =
+            editor.doc.scalars.filter { it.editable }.joinToString("") { s ->
+                val active = if (s === editor.activeScalar) " active" else ""
+                val q = ev.scalar(s.ref)
+                val boundId = editor.doc.boundEntry(s)?.id ?: ""
+                // wire options: other scalars of the same dimension
+                val opts = StringBuilder("<option value=\"\">free</option>")
+                for (t in editor.doc.scalars) {
+                    if (t === s) continue
+                    val td = (ev.eval(t.ref.node) as? constructit.core.EvalResult.Ok)?.let { (it.value as? constructit.core.ScalarValue)?.q?.dim }
+                    if (td == null || td != q.dim) continue
+                    opts.append("<option value=\"${t.id}\"${if (t.id == boundId) " selected" else ""}>=${t.name}</option>")
+                }
+                val disabled = if (editor.doc.isBound(s)) " disabled" else ""
+                // the name is editable exactly where the file can carry it (OP-7); the others say why not
+                val name =
+                    if (editor.doc.canRenameParameter(s)) {
+                        "<input class=\"pname\" data-sid=\"${s.id}\" value=\"${s.name}\" title=\"Rename — Enter to commit\">"
+                    } else {
+                        "<span class=\"pname\" title=\"Named by the step that created it, so it cannot be renamed\">${s.name}</span>"
+                    }
+                "<div class=\"prow$active\" data-sid=\"${s.id}\">" +
+                    name +
+                    // a native number field: the browser's own up/down arrows and arrow keys nudge it, and
+                    // every tick is a live write (OP-13 — typing and nudging are the same operation)
+                    "<input class=\"pval\" type=\"number\" step=\"${stepFor(q.dim)}\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"$disabled>" +
+                    "<span class=\"punit\">${unitLabel(q.dim)}</span>" +
+                    "<select class=\"pbind\" data-sid=\"${s.id}\">$opts</select>" +
+                    "</div>"
             }
-            val disabled = if (editor.doc.isBound(s)) " disabled" else ""
-            "<div class=\"prow$active\" data-sid=\"${s.id}\">" +
-                "<span class=\"pname\">${s.name}</span>" +
-                "<input class=\"pval\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"$disabled>" +
-                "<span class=\"punit\">${unitLabel(q.dim)}</span>" +
-                "<select class=\"pbind\" data-sid=\"${s.id}\">$opts</select>" +
-                "</div>"
-        }
+    }
 
     // measurements (read-only)
     val mlist = document.getElementById("measure-list") as HTMLElement
@@ -659,17 +688,20 @@ private fun unitLabel(dim: Dimension): String =
         else -> ""
     }
 
+/**
+ * The step a value field's spinner nudges by: 1 mm / 1° for the dimensions a drawing is measured in, 0.1
+ * for a dimensionless factor, where 1 would jump past every useful value. Uniform on purpose — a
+ * per-parameter step is a preference nobody asked for.
+ */
+private fun stepFor(dim: Dimension): String =
+    when (dim) {
+        Dimension.LENGTH, Dimension.ANGLE -> "1"
+        else -> "0.1"
+    }
+
 private fun displayValue(q: Quantity): String =
     when (q.dim) {
         Dimension.ANGLE -> Format.num(q.deg)
         Dimension.LENGTH -> Format.num(q.mm)
         else -> Format.num(q.value)
     }
-
-private fun quantityIn(
-    entry: ScalarEntry,
-    value: Double,
-): Quantity {
-    val dim = (Evaluator().eval(entry.ref.node) as? constructit.core.EvalResult.Ok)?.let { (it.value as constructit.core.ScalarValue).q.dim } ?: Dimension.LENGTH
-    return quantityOf(dim, value)
-}
