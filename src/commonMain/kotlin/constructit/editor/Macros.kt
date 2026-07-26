@@ -229,6 +229,9 @@ class CreateDialog(
             mode: CreateMode,
             members: List<Element>,
             analysis: MacroAnalysis,
+            // how to name an element to the user — its script-local name (OP-18, [Document.nameOf]); a
+            // function because a dialog is built from an analysis and has no document to ask
+            name: (Element) -> String = { it.id },
         ): CreateDialog {
             val tool = mode == CreateMode.TOOL
             // A tool's point rows are the *free points* only — an input port is clicked, and only a free point
@@ -240,7 +243,7 @@ class CreateDialog(
                     // Ticked by default: the free points the selection *owns*. When it owns none — the user
                     // selected only derived geometry — its ancestors are ticked instead, since otherwise there
                     // would be no input at all and nothing to place an instance by.
-                    analysis.points.map { InputCandidate(it.id, it, null, !anyOwned || it.id in analysis.owned) } +
+                    analysis.points.map { InputCandidate(name(it), it, null, !anyOwned || it.id in analysis.owned) } +
                         analysis.parameters.map { InputCandidate(it.name, null, it, true) }
                 } else {
                     analysis.freedoms.map { InputCandidate(it.label, it.element, null, true) }

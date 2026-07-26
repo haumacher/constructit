@@ -831,6 +831,40 @@ that tool's own clicks on every replay (`jointBetween`), and a determined ortho 
 circle branch by nearness. Both are re-derived from geometry the same replay rebuilds, so they are stable
 under reload — but they are the same *shape* of risk, and they are the next things to move into `signs=`.
 
+#### The name the file gives an element is the only name (as built, on a user report)
+
+There were **two** numbering schemes for one thing. The file names elements script-locally (`e1`, `e2`, … per
+the journal, from 1, gapless — the whole point being that the format does not depend on runtime id generation),
+while the panel, the status line, the inspector header and every dialog showed `Element.id`, the *runtime* id
+from a counter that also numbers parameters, measurements, riders' parameters, frames and local coordinates. So
+the numbers drifted apart the moment a drawing had a parameter in it: a file that said `e17` had the user
+looking at `e21`. Reported as a defect, and rightly — a name whose purpose is to be *said* ("what is wrong with
+e17?") is worthless when the two sides of the conversation number differently.
+
+**The script-local name is now the only user-visible name**, and the document is its one authority
+(`Document.nameOf`): it derives the map from the journal exactly as the writer does, and the writer *asks it*
+rather than deriving it a second time, so the two cannot drift. Everything that shows a name goes through it —
+panel rows, selection labels, pick-cycle hints, status lines, every refusal note, the create dialog's candidate
+rows, the space dropdown, the load's own findings. The runtime id stays exactly what it was and is now purely
+internal: the DOM rows still key on it, the per-element maps still key on it, and nothing shows it.
+
+- **Cached, and recomputed when the journal changes.** An append names only new elements, so existing names are
+  stable; a delete replays the whole script into a fresh document anyway. That covers every case the user can
+  observe, which is why no id-preservation machinery was needed.
+- **An element created by the operation *now recording* can already be named**, because its name is determined:
+  the journal grows at the end, and the step about to be appended declares what it created in creation order. Without
+  that, exactly the notes that report what a gesture just built — "e7 split into e8 and e9" — would have fallen
+  back to internal ids.
+- **A retired element keeps its number.** A vertex a join coalesced is still created by the replay (the later
+  `orthojoin` must have something to collapse), so it still occupies a name in the file. That is the one place
+  where a name is not the name of anything visible, and the file wins: the point of the name is to be the same
+  on both sides.
+- **The migration findings finally reach the user.** `Document.loadNotes` — the "which element could I not
+  decide about" of the *Versioning & migration* rule above — was published into the document's one-shot note,
+  which only a tool run reads, and then `Editor.replaceDocument` cleared the status line as its last act. The
+  one thing a migration owes the user was written and thrown away. Opening a file now says it, once, naming the
+  element the way the file does.
+
 #### Visibility is recorded after all — a reversal (as built, on a user report)
 
 This decision is **reversed**. What it said, and why, is kept verbatim because the reasoning was sound and the
@@ -1543,6 +1577,47 @@ status line says which form was chosen. One DOF before, one after; nothing moves
   the reloaded drawing behaves identically under the same edit. One correction fell out of it: a step's `dofs=`
   is now written for the re-parameterizations **that step performed**, not for every relative point it
   *references*, or a circle through a relative point would carry that point's distance and angle as its own.
+
+### Freeing a rider — the same conversion, and the view that makes it possible (as built, on a user report)
+
+*Make absolute* worked on a point that had been **dragged** onto a curve and **refused** the identical point
+made by the snap or by the point-on-line / point-on-circle tools. The two are indistinguishable on the canvas —
+one degree of freedom along a host, the same handle, the same panel row — and the difference was entirely in how
+the element was *published*: an attached point still published its own `SourceNode` (bound onto the on-curve
+node), so unbinding handed its coordinates back, while a tool-created rider's element published the **derived**
+on-curve node itself. There was no literal to hand back, and no way to give it one: OP-5 forbids rewriting a
+consumer's input list, so re-pointing the point at a free source would have meant rebuilding everything built on
+it. The refusal even said something true ("derived by the construction") about a point the user had just placed
+by clicking, which is why it read as a bug rather than as a rule.
+
+**The substrate already existed, one dimension up.** OP-16's `IndirectNode` — the re-pointable view an ortho
+vertex is published through, so a placement can insert `frameApply` in front of it without rewiring a consumer —
+is exactly this problem: *a derived value that must be able to become another derived value in place*. Every
+rider is now published through one (`Document.addRider`, the single seam every rider-creation route already went
+through), and freeing it is a **re-point**: the view stops naming the on-curve node and names a fresh
+`SourceNode` holding the position the point has at that instant.
+
+- **Nothing moves at the moment of the change**, and everything built on the rider keeps working and follows the
+  *point* from then on — a perpendicular through it, a fillet on that, an arrayed copy of the lot. That is the
+  property the reported wheel drawing is the regression for (`RiderDetachTest`): its `e18` rides a perpendicular
+  bisector and carries a six-fold array of a whole figure, and freeing it moves not one of the drawing's points.
+- **Old files gain it on load**, with no migration and no format change: replay runs the same creation code, so a
+  rider saved by any earlier build comes back publishing a view.
+- **One progression, three steps**, all through the one affordance: a rider *measured from a base of its carrier*
+  → *riding the world* → *free of the curve*. Each step is invertible, each is a re-parameterization that moves
+  nothing (OP-4 case b), and the second one is what the earlier slice built.
+- **The freed point is a free point in every sense**, not merely one that draws in the right place: it welds,
+  attaches, is made relative, is captured by a group's frame and reports its coordinates as its handle fields.
+  That uniformity is one question asked in one place — *does this element own its coordinates?* — over both
+  shapes a point's node can have (`Document.literalNode`), and it replaced a dozen casts to `SourceNode`.
+- **The freed position is state, so the step restates it** (OP-18): `absolute e4 dofs=70mm;55mm`. It has to be,
+  because the point can be dragged anywhere afterwards, and the rider's own parameter no longer describes where
+  it is. The step is the ordinary `dofs=` seam every other re-parameterization uses, and it goes through
+  `restatedPosition`, so a later placement capture does not make the step describe post-capture geometry.
+- **What still refuses, and why:** an ortho path's **corner**. Its coordinates are *shared* with its neighbours
+  (that sharing is what keeps a leg axis-aligned, OP-19) and a meeting point's freedom belongs to its junction
+  (OP-20) — so a corner freed of its path would be a path that is not rectilinear, which is not a point's
+  decision to make. The refusal there names the construction, which is now the truth.
 
 ### Dimensions (as built)
 
@@ -2619,8 +2694,8 @@ immediately — the user's back-side drill, end to end, by clicking. `FaceSketch
 - **The frame, and the flip convention, stated once.** `Geom3.sideFace(feature, piece)` returns the face's
   plane with its normal pointing **out of the material** — the convention `facePlane` already uses for
   `TOP`/`BOTTOM` — with `u` along the picked edge and `v` = world **+Z**. The **sketch** plane is that
-  plane *flipped*, so its normal points **into** the material and a positive extrude depth **drills
-  inward** by default. The flip is `Plane3.flipped`, which mirrors `v` (a right-handed frame cannot flip
+  plane *flipped*, so its normal points **into** the material, which is the direction a *Cut* sweeps (a plain
+  *Extrude* builds a boss the other way — see *Two corrections from the same face*, below). The flip is `Plane3.flipped`, which mirrors `v` (a right-handed frame cannot flip
   its normal and keep its 2D coordinates — there is no third option), and that fixes the rest of the
   convention: the frame is anchored at the edge's start corner **at the face's top edge**, because only a
   top anchor leaves the face itself at `v ∈ 0..height` once `v` is mirrored. So in the space the user
@@ -2657,7 +2732,9 @@ immediately — the user's back-side drill, end to end, by clicking. `FaceSketch
 - **Features from a face space: one rule.** The *Extrude* and *Revolve* tools sketch on
   `Document.activePlane()` — the active space's plane, which for the plan is the world XY plane exactly as
   before. So no tool grew an argument, and "sketch on a face" is a *space* decision rather than a per-tool
-  one. *Extrude on face* stays as it was for the top-face stacking case (a storey, a boss): it names a
+  one. (One qualification, added later: *which way* a feature builds is the operation's, so a face-space
+  *Extrude* offsets its start plane to build outward — the space's frame is untouched. See *Two corrections
+  from the same face*.) *Extrude on face* stays as it was for the top-face stacking case (a storey, a boss): it names a
   solid instead of switching spaces, because that plan is drawn in the plan.
   - The drill's subtraction is **cross-axis**, so it takes the general engine (OP-9's `MeshBool`) — which
     has worked since session 5 but was unreachable from the toolbar, because there was no way to *name* a
@@ -2740,6 +2817,44 @@ immediately — the user's back-side drill, end to end, by clicking. `FaceSketch
   - A **mesh-only** solid (the general boolean's result) still has no footprint, so the drilled part is not
     pickable in 2D at all — OP-9's own open point, unchanged, and the reason the drill flow ends in the 3D
     view. Picking it wants 3D picking, which is still cut.
+
+#### Two corrections from the same face (as built, on user reports)
+
+**(1) One stamping seam, and it has to be the only one.** Reported: an ortho path drawn in a face view put its
+*legs* in the face space and its corner *points* in the plan. `Element.space` is stamped by `Document.add`, "the
+one place an element is born" — except one route built its `Element` by hand, and that route makes every
+*constrained point*: a path corner, a rider, a ratio point, an arc break's split point. In a face view those
+points are then invisible and unpickable (one canvas shows one space, deliberately), while the plan shows a
+scatter of points whose coordinates mean nothing there and which drag the face's geometry about when clicked.
+The fix is the seam itself — the route now goes through `add` — and the audit that follows it is the point: one
+regression per creation route, drawn on a face (`SpaceStampingTest`), plus the reported file itself. One route
+was corrected in the other direction while auditing: a **copy** (an array, a mirror, a rotate) now keeps its
+original's space, as it already keeps its kind, so transforming the part a face is a face *of* — the one
+cross-space pick there is — stays in the plan where its footprint is drawn.
+
+**(2) Which way a feature builds belongs to the operation, not to the space.** Reported (GitHub #1) as a glitch:
+a profile drawn on a face and extruded produced no visible solid, only two surfaces flickering against each
+other. The solid was there, the right size and in the right place — *buried inside the part*, sharing its base
+plane with the face. A face space's plane is the face's plane **flipped** (OP-17's frame convention, above), and
+a plain *Extrude* inherited that direction: every boss was a wart inside the material, and only *Cut* was
+reachable. The rule now stated: **Cut goes in, Extrude goes out**, and a face-space *Extrude* is a boss.
+
+- **The space keeps its frame, and that is not a free choice.** A right-handed plane's normal cannot be reversed
+  without mirroring its `v` (`Plane3.flipped`, and there is no third option — the frame note above says so), so
+  turning the space's plane round would move every face-space drawing ever saved. The *extrude* therefore starts
+  its sweep `depth` **behind** the face — `sketchOn(planeOffset(facePlane, −depth))`, still swept the space's own
+  way — so the material lands between the face and `depth` outside it and not one drawn coordinate changes
+  meaning. No kernel change either: the sweep stays positive, which is what the cap-winding rule is tied to.
+- **No version bump, and the reasoning matters** (OP-18's doctrine is about stored *literals*): the depth still
+  means what it meant, and the direction was never in a file at all. What changes for an existing drawing is
+  that a buried wart comes back where it was drawn, which is the repair. The one behaviour that goes with it:
+  *Extrude* + *Subtract* by hand no longer drills a face — an outward boss subtracted removes nothing — and the
+  operation for that is *Cut*, which is what it was built for. Said in the tool help, the space's own note and
+  the status line.
+- **Stated limit: a partial *Revolve* in a face space still sweeps inward.** An extrude can be turned round by
+  moving its start plane, which changes no coordinate; a sweep cannot — reversing it means a negative angle, and
+  the kernel ties its cap winding to a positive sweep (the same rule that refuses a negative extrude depth). The
+  honest fix is a `dir` argument on the feature, which is not built. A full turn is unaffected.
 
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
@@ -4111,8 +4226,29 @@ Three broad families (see OP-9 decision above):
   four fillets tangent to both legs at r=14, all four variants now stamped, and `save → load → save` byte-stable
   at v2. What is *not* recoverable from the second file is the 3.52 mm the rider had slid: nothing in the
   committed history reproduces that shift from a load, so the value it carries is the only statement of where
-  that point was, and the migration keeps it rather than inventing a better one. **13 new tests**
+  that point was, and the migration keeps it rather than inventing a better one. **14 new tests**
   (`FormatVersionTest`, which carries the reported drawing verbatim), whole suite green.
+- **Session 14 — three queued defects and the first issue, all at the `Document` seam.** The asks were
+  unrelated on the surface and turned out to share one shape: *something the user reads or reaches is derived in
+  two places, and the two disagree.* (1) **A rider could not be freed.** *Make absolute* worked on a point
+  dragged onto a curve and refused the identical point placed by clicking, because only the first published its
+  own `SourceNode`. OP-16's `IndirectNode` — built so a placement could put a frame in front of an ortho vertex
+  without rewiring a consumer — is the same problem one level down, so every rider is now published through one
+  and freeing it is a re-point: nothing moves, every consumer follows the point, and old files gain the
+  behaviour on load with no format change. The reported wheel is the regression, six-fold array and all. (2)
+  **The panel and the file numbered elements differently** — the file names them script-locally while every UI
+  surface showed the runtime id, which also counts parameters and hidden nodes, so a file's `e17` was the user's
+  `e21`. The script-local name is now the *only* user-visible name and the writer asks the document for it, so
+  they cannot drift; the load's own migration findings, which `replaceDocument` used to clear before anyone
+  could read them, ride the same authority. (3) **An ortho path drawn on a face left its corners in the plan** —
+  one creation route built its `Element` by hand and so missed the sketch-space stamp; fixed at the seam, with a
+  regression per creation route and a copy now keeping its original's space. (4) **GitHub #1: an extrude on a
+  face built into the material** — the boss was buried inside the part, z-fighting the face it was drawn on.
+  Which way a feature builds belongs to the *operation*: *Cut* in, *Extrude* out, realized by starting the
+  sweep behind the face so that no drawn coordinate changes meaning (a right-handed frame cannot flip its normal
+  without mirroring `v`, and files exist). The reported file is the regression: its wart now stands where it was
+  drawn. **31 new tests** (`RiderDetachTest`, `NameAuthorityTest`, `SpaceStampingTest`, `FaceExtrudeOutwardTest`,
+  `LoadNoteTest`, plus the boss on a face in `FaceSketchTest`), 785 green, browser E2E green.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -4521,6 +4657,19 @@ nothing else was retired for them, and they left nothing parked: the keyboard tw
 than cut, and the *unpickable ray* they uncovered is fixed rather than deferred. What the cycle does **not**
 do, stated so it is not looked for: a bulk drag of a multi-selection (that is the frame's job, OP-16) and any
 hover cue before a press (picking is still consulted only on press — the cut OP-21's jamb note already records).
+
+**Retired in session 14: the two naming schemes, the rider that could not be freed, and the face-space stamp.**
+Three queued defects, all of them at the `Document` seam, plus the first GitHub issue. (a) *A rider created by
+the snap or by a point-on-curve tool refused to be made absolute* — it is now published through OP-16's
+re-pointable view, so freeing it is a re-point and old files gain it on load (see *Freeing a rider* under OP-4).
+(b) *The panel and the file numbered elements differently* — the file's script-local name is now the only
+user-visible name, with one authority the writer itself asks (see *The name the file gives an element* under
+OP-18); the migration findings that used to be discarded on load ride the same fix. (c) *An ortho path drawn on
+a face left its corners in the plan* — one stamping seam, plus an audit of every creation route (see *Two
+corrections from the same face* under OP-17). And (d) GitHub #1, *an extrude on a face builds into the
+material*: the inward direction belongs to *Cut*, and a face-space *Extrude* is a boss. They left one thing
+parked, stated where it belongs: a partial **revolve** in a face space still sweeps inward, which needs a
+direction argument on the feature.
 
 1. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
    connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by

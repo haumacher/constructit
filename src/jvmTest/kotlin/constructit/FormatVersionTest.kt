@@ -288,7 +288,7 @@ group "hole" els=e43,e26,e33,e25,e44,e34,e45,e35,e1,e3,e18
         assertEquals(ElementKind.ON_CURVE, e18.kind, "the rider on the perpendicular bisector")
         assertClose(riderParam(doc, e18), 52.86964276686915, 1e-9, "exactly the value the file carries")
         assertClose((pos(e18) - Vec2(-4.670790821513371, 53.014077539242976)).length(), 0.0, 1e-9)
-        assertTrue(doc.loadNotes.any { it.contains(e18.id) && it.contains("off that carrier") }, "got: ${doc.loadNotes}")
+        assertTrue(doc.loadNotes.any { it.contains(doc.nameOf(e18)) && it.contains("off that carrier") }, "got: ${doc.loadNotes}")
 
         // …and every fillet is a real rounding of f = 14 mm: tangent to both its legs, which is what a sharp
         // corner is the absence of. Asserted per fillet, in mm, against the legs the step named.
@@ -348,6 +348,26 @@ group "hole" els=e43,e26,e33,e25,e44,e34,e45,e35,e1,e3,e18
         val t = (Evaluator().eval(turned.elements[16].ref.node) as EvalResult.Ok).value as LineValue
         val tl = t.line
         assertClose(((recorded - tl.origin) - tl.dir * (recorded - tl.origin).dot(tl.dir)).length(), 19.059487428891327, 1e-9)
+    }
+
+    /**
+     * **The second save of the incident**, which differs from the first in exactly one number: the rider had
+     * slid 3.52 mm along its carrier between the two. Nothing in the committed history reproduces that shift
+     * from a load, so this value is the only statement of where that point was — and the migration keeps it
+     * rather than inventing a better one. What is recoverable is everything else: the file loads at its own
+     * value, its fillets are tangent, and it is stable at v2.
+     */
+    @Test
+    fun theSecondSaveOfTheIncidentIsRecoveredAtItsOwnValue() {
+        val doc = DocumentFormat.load(wheel.replaceFirst("dofs=52.86964276686915mm", "dofs=56.38876034496988mm"))
+        assertClose(riderParam(doc, doc.elements[17]), 56.38876034496988, 0.0, "bit for bit, as the file states it")
+        assertClose((pos(doc.elements[17]) - Vec2(-4.576353864651768, 56.53192776198929)).length(), 0.0, 1e-9)
+        assertTangent(doc, fillet = 25, legs = listOf(5, 19))
+        assertTangent(doc, fillet = 26, legs = listOf(23, 22))
+        assertTangent(doc, fillet = 34, legs = listOf(24, 16))
+        assertTangent(doc, fillet = 35, legs = listOf(16, 8))
+        val saved = DocumentFormat.save(doc)
+        assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "byte-stable at v2")
     }
 
     /** And the migrated file is a v2 file that says everything the v1 one only implied. */

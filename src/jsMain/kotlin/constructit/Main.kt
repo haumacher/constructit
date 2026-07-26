@@ -773,7 +773,7 @@ private fun renderPanel(
     val spaceSel = document.getElementById("v-space") as HTMLSelectElement
     val spaceOptions =
         editor.doc.spaces.joinToString("") { s ->
-            val label = if (s.isPlan) "plan" else "${s.name} (face of ${s.anchor?.id})"
+            val label = if (s.isPlan) "plan" else "${s.name} (face of ${s.anchor?.let { editor.doc.nameOf(it) }})"
             "<option value=\"${s.name}\"${if (s.name == editor.activeSpace.name) " selected" else ""}>$label</option>"
         }
     if (spaceSel.innerHTML != spaceOptions) spaceSel.innerHTML = spaceOptions
@@ -912,7 +912,9 @@ private fun renderPanel(
             // the tree lists the whole document, so a row the canvas is not drawing says where it lives
             // (OP-17): one canvas shows one sketch space
             val where = if (it.space == editor.activeSpace.name) "" else " · ${it.space}"
-            "<div class=\"item$active\" data-eid=\"${it.id}\">${it.kind.name.lowercase()}$where<span class=\"eid\">${it.id}</span></div>"
+            // `data-eid` stays the internal id — it is how a click finds the element again — while what the
+            // row *shows* is the drawing's one name for it, the file's (OP-18, [Document.nameOf])
+            "<div class=\"item$active\" data-eid=\"${it.id}\">${it.kind.name.lowercase()}$where<span class=\"eid\">${editor.doc.nameOf(it)}</span></div>"
         }
 }
 

@@ -252,7 +252,7 @@ class PickCycleTest {
         assertEquals(plain.id, ed.selection?.id)
         ed.drag(at, Vec2(40.0, 15.0))
 
-        assertTrue(ed.statusHint.contains(plain.id), "the reason names it: ${ed.statusHint}")
+        assertTrue(ed.statusHint.contains(ed.doc.nameOf(plain)), "the reason names it: ${ed.statusHint}")
         assertClose(pos(point).y, 1.0, msg = "the point did not move")
         assertClose(legY(leg), legWas, msg = "and neither did the leg")
         assertEquals(plain.id, ed.selection?.id, "the selection is left where the cycle put it")

@@ -105,7 +105,8 @@ enum class ElementKind {
  * construction is [plane] — the very argument `sketchOn` already takes. The default space is the **plan**
  * (world XY, [plane] null so every feature keeps building its own `planeXY` node exactly as before); a
  * *face* space names the solid and the boundary-piece index its plane is derived from (OP-8), and its
- * plane is the side face's, **flipped** so a positive extrude depth drills into the material.
+ * plane is the side face's, **flipped**, so its normal points into the material: that is the direction *Cut*
+ * drills (`Document.cutOnFace`), while *Extrude* builds a boss outward from the same footprint.
  */
 class SketchSpace(
     val name: String,
@@ -592,8 +593,10 @@ class Document {
     internal fun reparamDofs(
         step: Step,
         ev: Evaluator,
-    ): List<Quantity> =
-        elements.filter { reparamSteps[it.id] === step }.flatMap { relativeDofs(it, ev) }
+    ): List<Quantity> {
+        val at = journal.indexOfFirst { it === step }
+        return elements.filter { reparamSteps[it.id] === step }.flatMap { relativeDofs(it, ev, at) }
+    }
 
     /**
      * What the operation just run has to say, in the user's terms — a result worth reading, or the reason it
@@ -627,6 +630,7 @@ class Document {
         // an identity snapshot, not a count: a step may *remove* elements too (a break replaces one
         // leg with three), and then a count would mistake shifted survivors for new ones
         val before = elements.toHashSet()
+        pendingBefore = before
         val scalarsBefore = scalars.size
         val editsBefore = edits
         try {
@@ -648,6 +652,7 @@ class Document {
             return result
         } finally {
             recordDepth--
+            pendingBefore = null
         }
     }
 
@@ -836,7 +841,7 @@ class Document {
         piece: Int,
         ev: Evaluator = Evaluator(),
     ): String? {
-        val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return "${solid.id} has no solid to take a face from"
+        val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return "${nameOf(solid)} has no solid to take a face from"
         return Geom3.sideFace(feature, piece).second
     }
 
@@ -844,7 +849,10 @@ class Document {
      * Create a sketch space on boundary piece [piece] of the solid [solid] (OP-17), and make it active.
      *
      * The plane is **derived**: `sideFacePlane` recomputes from the solid's own feature and is then flipped
-     * so its normal points into the material, which is what makes a positive extrude depth a *cut*. So the
+     * so its normal points into the material — the direction a *Cut* sweeps ([cutOnFace]); which way an
+     * operation builds is the operation's business, and a boss goes the other way ([extrudeSolid]). The flip
+     * stays because it is what fixes the drawing's own coordinates (`v` down from the top face): reversing a
+     * right-handed frame's normal mirrors `v`, so the frame is not a free choice once files exist. So the
      * frame is parametric — stretch the part and the face, its sketch and everything built from it follow.
      * That is face-**relative** positioning, and it is the honest intent here: a hole is dimensioned from
      * the part's own edge, where a rider on a wall wants a world coordinate (OP-20's absolute rule).
@@ -912,6 +920,65 @@ class Document {
         if (activeSpace === scriptSpace) return
         journal.add(Step("space", listOf(Arg.Label(activeSpace.name))))
         scriptSpace = activeSpace
+    }
+
+    // ---- names: one authority, and it is the file's (OP-18) ----
+
+    /**
+     * **The** name of [el], everywhere a user can read one: its **script-local** name (`e1`, `e2`, …) —
+     * derived from the journal exactly as [DocumentFormat.save] derives it, because it *is* what the save
+     * writes.
+     *
+     * There used to be two numbering schemes for one thing. The panel, the status line and every dialog
+     * showed the runtime [Element.id], which counts *everything* the document ever created (parameters,
+     * measurements, frames, local coordinates — [nextId] is one counter), while the file numbers only the
+     * elements the journal declares, from 1, gapless. Same `eN` shape, different numbers, so a drawing whose
+     * file said `e17` had the user looking at `e21` — reported as a defect, and it garbled every conversation
+     * *about* a drawing, which is the point of a name.
+     *
+     * The runtime id stays exactly what it was: an internal, stable key (the DOM rows, the per-element maps,
+     * the undo snapshots all address elements by it). What changed is that nothing *shows* it.
+     *
+     * The map is cached and recomputed when the journal changes ([namesStamp]). An append is stable — a new
+     * step names only new elements — and a delete replays the whole script into a fresh document anyway, so
+     * names are stable in exactly the cases the user can observe.
+     */
+    fun nameOf(el: Element): String {
+        val names = scriptNames()
+        names[el.id]?.let { return it }
+        // An element the operation *now recording* created already has its name determined: the journal grows
+        // at the end, and its step will declare what it created in creation order — so the note an operation
+        // writes about what it just built can name it, instead of falling back to the internal id.
+        pendingBefore?.let { before ->
+            val i = elements.filter { it !in before }.indexOfFirst { it === el }
+            if (i >= 0) return "e${names.size + 1 + i}"
+        }
+        return el.id
+    }
+
+    /** The elements that existed when the operation now recording began — see [nameOf] and [recording]. */
+    private var pendingBefore: Set<Element>? = null
+
+    private var nameCache: Map<String, String>? = null
+    private var namesStamp: Int = -1
+
+    /**
+     * Every element's script-local name, by runtime id — the *whole* map, since a panel asks for all of them.
+     *
+     * A retired element (a vertex a join coalesced) keeps its name: replay must still create it before the
+     * later step removes it again, so it still occupies a number in the file. That is the one place where
+     * "the name the file gives it" and "the name of something you can see" differ, and the file wins, because
+     * the point of the name is to be the same on both sides.
+     */
+    private fun scriptNames(): Map<String, String> {
+        var stamp = journal.size
+        for (s in journal) stamp = stamp * 31 + s.creates.size
+        nameCache?.let { if (stamp == namesStamp) return it }
+        val names = HashMap<String, String>()
+        for (step in journal) for (el in step.creates) names[el.id] = "e${names.size + 1}"
+        nameCache = names
+        namesStamp = stamp
+        return names
     }
 
     // ---- delete: the unit of removal is the journal step (OP-18) ----
@@ -1102,6 +1169,19 @@ class Document {
 
     /** The element displaying [ref], if any — the inverse of the adders below. */
     fun elementFor(ref: Ref<*>): Element? = elements.lastOrNull { it.ref === ref }
+
+    /**
+     * Add [ref] as a **copy of [source]**: same kind, same style — and the same **sketch space** (OP-17).
+     *
+     * A copy belongs where its original is drawn, exactly as it keeps its original's kind: 2D coordinates
+     * only mean something in one space, so a transform of the part a face space is a face *of* (the one
+     * cross-space pick there is, [addressableIn]) must stay in the plan where its footprint is drawn rather
+     * than being stamped into the face's coordinates.
+     */
+    private fun addLike(
+        ref: Ref<*>,
+        source: Element,
+    ): Element = add(ref, source.kind, source.style).also { it.space = source.space }
 
     private fun addDerived(ref: PointRef): PointRef {
         add(ref, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
@@ -1344,7 +1424,7 @@ class Document {
      * a framed point is not a welded alias (it stays visible and draggable, through its local node).
      */
     fun isFramed(el: Element): Boolean {
-        val node = el.ref.node as? SourceNode ?: return false
+        val node = literalNode(el) ?: return false
         return allGroups.any { g -> g.captures.any { it.original === node } }
     }
 
@@ -1396,9 +1476,9 @@ class Document {
                         rec.carrierRelative && rec.base?.let { it in memberSet || dependsOn(it.ref.node, rec.host.ref.node, HashSet()) } == true ->
                             rigid.add(f)
                         rec.host !in memberSet ->
-                            uncapturable.add("${f.element.id} rides ${rec.host.id}, which is not in the group")
+                            uncapturable.add("${nameOf(f.element)} rides ${nameOf(rec.host)}, which is not in the group")
                         carrierBaseFor(rec) == null ->
-                            uncapturable.add("${f.element.id} rides ${rec.host.id}, which has no point of its own to measure from")
+                            uncapturable.add("${nameOf(f.element)} rides ${nameOf(rec.host)}, which has no point of its own to measure from")
                         else -> ridersToAnchor.add(f)
                     }
                 }
@@ -1408,7 +1488,7 @@ class Document {
                         rigid.add(f)
                     } else {
                         uncapturable.add(
-                            "${f.element.id} follows ${anchor?.id ?: "a point"} outside the group, so it will not move with it",
+                            "${nameOf(f.element)} follows ${anchor?.let { nameOf(it) } ?: "a point"} outside the group, so it will not move with it",
                         )
                     }
                 }
@@ -1420,7 +1500,7 @@ class Document {
                     if (host != null && host in memberSet) {
                         rigid.add(f)
                     } else {
-                        uncapturable.add("${f.element.id} rides ${host?.id ?: "a circle"}, which is not in the group")
+                        uncapturable.add("${nameOf(f.element)} rides ${host?.let { nameOf(it) } ?: "a circle"}, which is not in the group")
                     }
                 }
             }
@@ -1469,7 +1549,7 @@ class Document {
         val (stuck, drivers) = deformingMembers(groupMembers(g), prospective)
         if (stuck.isNotEmpty()) {
             out.add(
-                "this group cannot move independently — ${stuck.joinToString(", ") { it.id }} " +
+                "this group cannot move independently — ${stuck.joinToString(", ") { nameOf(it) }} " +
                     "${if (stuck.size == 1) "is" else "are"} held by ${drivers.joinToString(", ")}, " +
                     "shared with the drawing outside the group (tick those in, or group them too)",
             )
@@ -1520,16 +1600,16 @@ class Document {
             val owned = el in memberSet
             val rec = riderOf(el)
             val rel = relativeOf(el)
-            val node = el.ref.node as? SourceNode
+            val node = literalNode(el)
             when {
                 rec != null && rec.form == RiderForm.CIRCLE_ANGLE ->
-                    out.add(Freedom(el, FreedomKind.ON_CIRCLE, "${el.id} — on circle ${rec.host.id}", owned, rider = rec))
+                    out.add(Freedom(el, FreedomKind.ON_CIRCLE, "${nameOf(el)} — on circle ${nameOf(rec.host)}", owned, rider = rec))
                 rec != null ->
                     out.add(
                         Freedom(
                             el,
                             FreedomKind.RIDER,
-                            "${el.id} — " + (rec.base?.let { "${it.id} + distance along ${rec.host.id}" } ?: "slides on ${rec.host.id}"),
+                            "${nameOf(el)} — " + (rec.base?.let { "${nameOf(it)} + distance along ${nameOf(rec.host)}" } ?: "slides on ${nameOf(rec.host)}"),
                             owned,
                             rider = rec,
                         ),
@@ -1539,12 +1619,12 @@ class Document {
                         Freedom(
                             el,
                             FreedomKind.RELATIVE,
-                            "${el.id} — relative to ${elementFor(rel.anchor)?.id ?: "an anchor"}",
+                            "${nameOf(el)} — relative to ${elementFor(rel.anchor)?.let { nameOf(it) } ?: "an anchor"}",
                             owned,
                         ),
                     )
                 el.handle is RatioPointHandle ->
-                    out.add(Freedom(el, FreedomKind.SPAN_RATIO, "${el.id} — a ratio along its span", owned))
+                    out.add(Freedom(el, FreedomKind.SPAN_RATIO, "${nameOf(el)} — a ratio along its span", owned))
                 el.kind == ElementKind.POINT && node?.boundTo == null && node != null ->
                     out.add(Freedom(el, FreedomKind.FREE_POINT, el.id, owned))
             }
@@ -1656,7 +1736,7 @@ class Document {
             // frame's origin, and the frame's angle then *turns* what it carries
             val local = SourceNode(nextId("lp"), PointValue(w - f.origin))
             src.boundTo = cx.frameApply(frame, Ref<PointValue>(local)).node
-            val el = elements.lastOrNull { it.ref.node === src }
+            val el = elementOwning(src)
             val prior = el?.handle
             // its DOF is now the local point, so its handle must write *that* — by inverse-mapping the
             // cursor, which keeps the drag landing under the pointer and the fields reading world values
@@ -1869,7 +1949,7 @@ class Document {
             g = allGroups.firstOrNull { grp -> grp.capturedPaths.any { it === path } } ?: return world
             localNode = path.vertices.first { it.ref === el.ref }.local.node
         } else {
-            val node = el.ref.node as? SourceNode ?: return world
+            val node = literalNode(el) ?: return world
             g = allGroups.firstOrNull { grp -> grp.captures.any { it.original === node } } ?: return world
             localNode = g.captures.first { it.original === node }.local
         }
@@ -1886,17 +1966,25 @@ class Document {
         ev: Evaluator,
     ): Vec2? = ((ev.eval(node) as? EvalResult.Ok)?.value as? PointValue)?.p
 
+    /**
+     * The element that *displays* [node] — publishing it directly, or through the re-pointable view a
+     * detached rider keeps ([detachRider]). One lookup, so a freed rider is as much the owner of its
+     * coordinates as a point created free is.
+     */
+    private fun elementOwning(node: SourceNode): Element? =
+        elements.lastOrNull { it.ref.node === node || (it.ref.node as? IndirectNode)?.boundTo === node }
+
     /** Whether the element that *displays* [node] is one of [members] — see [analysePlacement]. */
     private fun ownedBy(
         node: SourceNode,
         members: Set<Element>,
     ): Boolean {
-        val owner = elements.lastOrNull { it.ref.node === node } ?: return true
+        val owner = elementOwning(node) ?: return true
         return owner in members
     }
 
-    /** How to name a source node to the user: the element showing it, else the node's own id. */
-    private fun labelOf(node: Node): String = elements.lastOrNull { it.ref.node === node }?.id ?: node.id
+    /** How to name a source node to the user: the element showing it (by its one name, OP-18), else the node's own id. */
+    private fun labelOf(node: Node): String = (node as? SourceNode)?.let { elementOwning(it) }?.let { nameOf(it) } ?: node.id
 
     /** [roots] and every node they (transitively) depend on. */
     private fun ancestors(roots: List<Node>): List<Node> {
@@ -1987,7 +2075,7 @@ class Document {
         val memberSet = members.toHashSet()
         val free =
             elements.filter { el ->
-                el.kind == ElementKind.POINT && (el.ref.node as? SourceNode)?.boundTo == null && el.ref.node.id in closure
+                el.kind == ElementKind.POINT && el.ref.node.let { it is SourceNode && it.boundTo == null } && el.ref.node.id in closure
             }
         // The points the selection **owns** come first, so the anchor (the first point input) is by
         // default one of its own rather than something it merely leans on. That matters as soon as a
@@ -2234,7 +2322,7 @@ class Document {
         (el.handle as? OrthoCornerHandle)?.let { corner ->
             return listOfNotNull(writableMaster(corner.xNode), writableMaster(corner.yNode)).distinct()
         }
-        return listOfNotNull((el.ref.node as? SourceNode)?.takeIf { it.boundTo == null })
+        return listOfNotNull(literalNode(el)?.takeIf { it.boundTo == null })
     }
 
     /**
@@ -2307,7 +2395,7 @@ class Document {
      * placing one is not).
      */
     fun isWelded(el: Element): Boolean =
-        el.kind == ElementKind.POINT && (el.ref.node as? SourceNode)?.boundTo != null && !isFramed(el) &&
+        el.kind == ElementKind.POINT && literalNode(el)?.boundTo != null && !isFramed(el) &&
             relativeOf(el) == null
 
     /**
@@ -2326,7 +2414,7 @@ class Document {
         alias: Element,
         master: Element,
     ): Boolean {
-        val node = alias.ref.node as? SourceNode ?: return false
+        val node = literalNode(alias) ?: return false
         if (alias.kind != ElementKind.POINT || node.boundTo != null) return false
         if (!master.isPoint || master === alias) return false
         val masterNode = master.ref.node
@@ -2341,7 +2429,7 @@ class Document {
     fun unweld(alias: Element) = recording("unweld", Arg.El(alias), skipIfEmpty = true) { unweldNow(alias) }
 
     private fun unweldNow(alias: Element) {
-        val node = alias.ref.node as? SourceNode ?: return
+        val node = literalNode(alias) ?: return
         val cur = (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p }
         if (node.boundTo != null) noteEdit()
         node.boundTo = null
@@ -2405,33 +2493,33 @@ class Document {
         // the point still has exactly the one degree of freedom it had (see [anchorRiderTo]). A polar offset
         // there would be two DOF where the construction allows one, i.e. it would have to leave the curve.
         if (onSharedCarrier(pt, anchor)) return anchorRiderTo(pt, anchor, dofs.firstOrNull { it.dim == Dimension.LENGTH })
-        val node = pt.ref.node as? SourceNode
+        val node = literalNode(pt)
         if (node == null || pt.kind != ElementKind.POINT || node.boundTo != null) {
             val rec = riderOf(pt)
             note =
                 if (rec?.base != null) {
                     // the same rule the polar form follows: one anchor at a time, freed before it is replaced
-                    "${pt.id} is already measured from ${rec.base?.id} — free it first (Make absolute), then measure it from something else"
+                    "${nameOf(pt)} is already measured from ${rec.base?.let { nameOf(it) }} — free it first (Make absolute), then measure it from something else"
                 } else if (rec != null && rec.line != null && !rec.carrierRelative) {
                     // it *could* be re-anchored, but not to this point: the offset of a rider is a distance
                     // along its own carrier, so the base has to be a position on that carrier
-                    "${pt.id} rides ${rec.host.id}: to measure it from something, pick a point on ${rec.host.id} — " +
+                    "${nameOf(pt)} rides ${nameOf(rec.host)}: to measure it from something, pick a point on ${nameOf(rec.host)} — " +
                         "one of its ends, or another point riding it"
                 } else if (node?.boundTo != null) {
-                    "${pt.id} already follows something — free it first (Make absolute), then anchor it"
+                    "${nameOf(pt)} already follows something — free it first (Make absolute), then anchor it"
                 } else {
-                    "${pt.id} is not a free point: only a point that owns its coordinates can be re-anchored"
+                    "${nameOf(pt)} is not a free point: only a point that owns its coordinates can be re-anchored"
                 }
             return false
         }
         @Suppress("UNCHECKED_CAST")
         val anchorRef = anchor.ref as? PointRef
         if (anchorRef == null || !anchor.isPoint || anchor === pt) {
-            note = "${anchor.id} is not a point to anchor ${pt.id} to"
+            note = "${nameOf(anchor)} is not a point to anchor ${nameOf(pt)} to"
             return false
         }
         if (anchorRef.node === node || joinWouldCycle(pt, anchorRef.node)) {
-            note = "Can't anchor ${pt.id} to ${anchor.id}: ${anchor.id} already follows ${pt.id}"
+            note = "Can't anchor ${nameOf(pt)} to ${nameOf(anchor)}: ${nameOf(anchor)} already follows ${nameOf(pt)}"
             return false
         }
         val ev = Evaluator()
@@ -2448,7 +2536,7 @@ class Document {
         pt.handle = RelativePointHandle(anchorRef, dNode, aNode)
         pt.style = Styles.ON_CURVE // derived-but-draggable, the same reading an attached point gets
         noteEdit()
-        note = "${pt.id} now follows ${anchor.id} — distance and angle are its degrees of freedom (drag it, or type them)"
+        note = "${nameOf(pt)} now follows ${nameOf(anchor)} — distance and angle are its degrees of freedom (drag it, or type them)"
         return true
     }
 
@@ -2458,29 +2546,94 @@ class Document {
      * (OP-4 case b). Anything else that binds a point ([unweld] — a weld, an attach) is undone here too, so
      * one affordance answers "give this point its freedom back" however it lost it.
      */
-    fun makeAbsolute(pt: Element): Boolean {
-        val node = pt.ref.node as? SourceNode
+    fun makeAbsolute(
+        pt: Element,
+        dofs: List<Quantity> = emptyList(),
+    ): Boolean = recording("absolute", Arg.El(pt), skipIfEmpty = true) { makeAbsoluteNow(pt, dofs) }
+
+    private fun makeAbsoluteNow(
+        pt: Element,
+        dofs: List<Quantity>,
+    ): Boolean {
+        val node = literalNode(pt)
         // A rider whose parameter was re-anchored to a base of its own carrier has an absolute form to go back
-        // to — its position along the world-anchored carrier (OP-20) — and for a rider the *tool* created that
-        // is the only freedom it has, there being no literal of its own to hand back. So this case is answered
-        // first, and a point that owns coordinates *and* was re-anchored is freed outright as before.
+        // to — its position along the world-anchored carrier (OP-20) — so that case is answered first: it is
+        // one step of the same progression, *measured from a base* → *riding the world* → *free of the curve*.
         if (node?.boundTo == null && riderOf(pt)?.carrierRelative == true) return releaseRider(pt)
+        // A rider the *tool* created publishes its position through a re-pointable view (see [addRider]), so
+        // there is a substrate to hand a literal back after all: re-point it at a free source where the point
+        // now stands. Uniform with the drag-attached case below, which unbinds its own `SourceNode`.
+        if (node?.boundTo == null && riderOf(pt) != null) return detachRider(pt, dofs)
         if (node?.boundTo == null) {
             note =
                 if (node != null) {
-                    "${pt.id} is already a free point"
+                    "${nameOf(pt)} is already a free point"
                 } else {
                     // a path corner, an intersection: it has no literal of its own to hand back
-                    "${pt.id} is derived by the construction, not a point holding its own coordinates"
+                    "${nameOf(pt)} is derived by the construction, not a point holding its own coordinates"
                 }
             return false
         }
         val wasRelative = relativeOf(pt) != null
         riderOf(pt)?.takeIf { it.carrierRelative }?.let { releaseRiderNow(pt) }
         unweld(pt)
-        note = if (wasRelative) "${pt.id} keeps its position and is free again" else "${pt.id} is a free point again"
+        note = if (wasRelative) "${nameOf(pt)} keeps its position and is free again" else "${nameOf(pt)} is a free point again"
         return true
     }
+
+    /**
+     * Free rider [pt] from its host: its view ([IndirectNode]) is re-pointed at a fresh free source holding
+     * the position it has right now, so **nothing moves at the moment of the change** and everything built on
+     * it — a perpendicular through it, a fillet, an arrayed copy — keeps working, following the point instead
+     * of the curve from here on (OP-5's bind-in-place, one level up: OP-16's view).
+     *
+     * [dofs] is the freed position as a replay hands it back (OP-18): the point is an ordinary free point from
+     * now on and may be dragged anywhere, so its coordinates are **state** and ride the same `dofs=` seam
+     * every other re-parameterization uses ([relativeDofs]) rather than being re-derived from the rider the
+     * step detached.
+     */
+    private fun detachRider(
+        pt: Element,
+        dofs: List<Quantity>,
+    ): Boolean {
+        val view = pt.ref.node as? IndirectNode ?: return false
+        val rec = riderOf(pt) ?: return false
+        val here = pointOf(view, Evaluator()) ?: return false
+        val lengths = dofs.filter { it.dim == Dimension.LENGTH }
+        val at = if (lengths.size == 2) Vec2(lengths[0].mm, lengths[1].mm) else here
+        val free = SourceNode(nextId("fp"), PointValue(at))
+        view.boundTo = free
+        // it rides nothing any more: its record goes, and with it its registration for the gesture-time
+        // compensation a carrier-anchored parameter needs (OP-20) — there is no longer anything to compensate
+        riders.remove(pt.id)
+        carrierRiders.removeAll { it.dof === rec.param }
+        detached[pt.id] = free
+        pt.kind = ElementKind.POINT
+        pt.style = Styles.FREE_POINT
+        pt.handle = FreePointHandle(free)
+        noteReparam(pt)
+        noteEdit()
+        note = "${nameOf(pt)} keeps its position and is off ${nameOf(rec.host)} — it is an ordinary free point again"
+        return true
+    }
+
+    /** Riders freed by [detachRider], by element id: the free source their view now points at. */
+    private val detached = HashMap<String, SourceNode>()
+
+    /**
+     * The **literal-holding node** [el] publishes, seen through a re-pointable view: a free point's own
+     * source, or the source a detached rider's view now points at ([detachRider]).
+     *
+     * One question — *does this element own its coordinates?* — asked of both shapes an element's point can
+     * have, so a freed rider is a free point in every sense (weldable, attachable, re-anchorable) and not
+     * merely a point that happens to draw in the right place.
+     */
+    private fun literalNode(el: Element): SourceNode? =
+        when (val n = el.ref.node) {
+            is SourceNode -> n
+            is IndirectNode -> n.boundTo as? SourceNode
+            else -> null
+        }
 
     // ---- relative on a shared carrier: OP-4 case (b) for a rider, where the offset is along the host ----
 
@@ -2535,7 +2688,7 @@ class Document {
         val here = ((ev.eval(rec.param) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
         val there = ((ev.eval(baseParam.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
         if (here == null || there == null) {
-            note = "Can't measure ${pt.id} from ${base.id} yet — the carrier has no position of its own"
+            note = "Can't measure ${nameOf(pt)} from ${nameOf(base)} yet — the carrier has no position of its own"
             return false
         }
         val offset = SourceNode(nextId("cd"), ScalarValue(Quantity.mm(d?.mm ?: (here - there))))
@@ -2543,7 +2696,7 @@ class Document {
         // the acyclicity every connection is checked for (OP-4): a base measured from *this* rider would put
         // the rider inside its own input cone, and a cyclic graph is a dead one rather than a wrong drawing
         if (dependsOn(bound.node, rec.param, HashSet())) {
-            note = "Can't measure ${pt.id} from ${base.id}: ${base.id} is already measured from ${pt.id}"
+            note = "Can't measure ${nameOf(pt)} from ${nameOf(base)}: ${nameOf(base)} is already measured from ${nameOf(pt)}"
             return false
         }
         rec.param.boundTo = bound.node
@@ -2555,7 +2708,7 @@ class Document {
         carrierRiders.removeAll { it.dof === rec.param }
         noteEdit()
         note =
-            "${pt.id} is now ${Format.num(abs(here - there))} mm from ${base.id} along ${rec.host.id} — " +
+            "${nameOf(pt)} is now ${Format.num(abs(here - there))} mm from ${nameOf(base)} along ${nameOf(rec.host)} — " +
             "that distance is its degree of freedom (drag it along, or type it)"
         return true
     }
@@ -2602,10 +2755,10 @@ class Document {
     /** Give a re-anchored rider its absolute parameter back, where it now stands — [anchorRiderTo]'s inverse. */
     private fun releaseRider(pt: Element): Boolean {
         val rec = riderOf(pt) ?: return false
-        val base = rec.base?.id ?: return false
+        val base = rec.base?.let { nameOf(it) } ?: return false
         if (!releaseRiderNow(pt)) return false
         noteEdit()
-        note = "${pt.id} keeps its place on ${rec.host.id} and is measured from the world again, not from $base"
+        note = "${nameOf(pt)} keeps its place on ${nameOf(rec.host)} and is measured from the world again, not from $base"
         return true
     }
 
@@ -2633,11 +2786,18 @@ class Document {
     fun relativeDofs(
         el: Element,
         ev: Evaluator,
+        stepIndex: Int = journal.size,
     ): List<Quantity> {
         relativeOf(el)?.let { r ->
             return listOfNotNull(scalarOf(r.distance, ev), scalarOf(r.angle, ev))
         }
         riderOf(el)?.offset?.let { o -> return listOfNotNull(scalarOf(o, ev)) }
+        // a **freed** rider (OP-16's view re-pointed, see [detachRider]) owns its coordinates from then on, so
+        // what its step restates is the position it now has — through [restatedPosition], because a later
+        // placement capture must not make the step describe post-capture geometry
+        if (detached.containsKey(el.id)) {
+            restatedPosition(el, stepIndex, ev)?.let { return listOf(Quantity.mm(it.x), Quantity.mm(it.y)) }
+        }
         return emptyList()
     }
 
@@ -2689,7 +2849,7 @@ class Document {
         pt: Element,
         curve: Element,
     ): Vec2? {
-        val node = pt.ref.node as? SourceNode ?: return null
+        val node = literalNode(pt) ?: return null
         if (pt.kind != ElementKind.POINT || node.boundTo != null) return null
         return curveProjection(pt, curve)
     }
@@ -3159,7 +3319,7 @@ class Document {
         pt: Element,
         curve: Element,
     ): Boolean {
-        val node = pt.ref.node as? SourceNode ?: return false
+        val node = literalNode(pt) ?: return false
         if (attachTargetPos(pt, curve) == null) return false
         val p = (Evaluator().eval(node) as EvalResult.Ok).let { (it.value as PointValue).p }
         val rider = riderOn(curve, p, "") ?: return false
@@ -3299,28 +3459,28 @@ class Document {
         el: Element,
         target: Element,
     ): String? {
-        if (el === target) return "${el.id} cannot be joined onto itself"
+        if (el === target) return "${nameOf(el)} cannot be joined onto itself"
         val corner = el.handle as? OrthoCornerHandle
         if (corner != null) {
             if (!corner.isEndpoint) {
-                return "${el.id} is already connected — a run that ends on something is a terminus, not a loose end"
+                return "${nameOf(el)} is already connected — a run that ends on something is a terminus, not a loose end"
             }
             if (pathFrameOf(corner) != null) {
-                return "${el.id}'s path is placed in a group, so its coordinates are the frame's local ones — unplace the group first"
+                return "${nameOf(el)}'s path is placed in a group, so its coordinates are the frame's local ones — unplace the group first"
             }
         } else if (isFramed(el)) {
-            return "${el.id} is held by a placed group's frame, so its position is already derived"
+            return "${nameOf(el)} is held by a placed group's frame, so its position is already derived"
         }
-        val driver = (if (target.isPoint) target.ref.node else carrierNodeOf(target)) ?: return "${target.id} cannot carry a connection"
-        if (joinWouldCycle(el, driver)) return "${target.id} already follows ${el.id}"
+        val driver = (if (target.isPoint) target.ref.node else carrierNodeOf(target)) ?: return "${nameOf(target)} cannot carry a connection"
+        if (joinWouldCycle(el, driver)) return "${nameOf(target)} already follows ${nameOf(el)}"
         if (corner != null) {
             val free = listOfNotNull(writableMaster(corner.xNode), writableMaster(corner.yNode)).distinct()
             if (free.isEmpty()) {
-                return "both of ${el.id}'s coordinates are already driven, so it has no freedom left to give"
+                return "both of ${nameOf(el)}'s coordinates are already driven, so it has no freedom left to give"
             }
             if (free.size < 2 && target.isPoint) {
                 val axis = if (writableMaster(corner.xNode) == null) "x" else "y"
-                return "${el.id}'s $axis is already held by ${heldBy(corner)}, and welding onto a point pins both — " +
+                return "${nameOf(el)}'s $axis is already held by ${heldBy(corner)}, and welding onto a point pins both — " +
                     "reach the leg through that point instead, which needs only the one coordinate"
             }
         }
@@ -3330,7 +3490,7 @@ class Document {
     /** What already drives one of [corner]'s coordinates, named for a refusal message. */
     private fun heldBy(corner: OrthoCornerHandle): String {
         val j = junctionOf(corner.xNode) ?: junctionOf(corner.yNode)
-        return j?.curve?.let { "the junction on ${it.id}" } ?: "another connection"
+        return j?.curve?.let { "the junction on ${nameOf(it)}" } ?: "another connection"
     }
 
     /** The node a junction on [curve] would ride — its carrier line, or the circle itself. */
@@ -3489,7 +3649,10 @@ class Document {
         if (dof != null && restated != null && restated.dim == (dof.value as? ScalarValue)?.q?.dim) {
             dof.value = ScalarValue(restated)
         }
-        elements.add(Element(nextId("e"), ref, ElementKind.ON_CURVE, Styles.ON_CURVE, handle = handle))
+        // through [add], because that is where an element's sketch space is stamped (OP-17): building the
+        // Element here instead left every constrained point in the **plan** whatever space it was drawn in,
+        // and an ortho path drawn on a face came out as legs on the face with their corners in the plan
+        add(ref, ElementKind.ON_CURVE, Styles.ON_CURVE).handle = handle
         return ref
     }
 
@@ -3533,10 +3696,16 @@ class Document {
         at: Vec2? = null,
     ): PointRef {
         val (value, finding) = migratedRiderDof(rider, at, dof)
-        val ref = addConstrained(rider.point, rider.handle, rider.dof, value)
+        // Published through a **re-pointable view** ([IndirectNode], OP-16's substrate), never as the derived
+        // on-curve node itself. A rider has no literal of its own, so *Make absolute* had nothing to hand back
+        // and refused — while the very same point created by *dragging* a free point onto the curve detached,
+        // because there the element still published its own `SourceNode`. The view is what makes the two
+        // uniform: [detachRider] re-points it at a free source and every consumer follows in place, exactly as
+        // a welded point's consumers follow its master (OP-5).
+        val ref = addConstrained(cx.indirect(rider.point), rider.handle, rider.dof, value)
         elements.lastOrNull()?.let {
             noteRider(it, host, rider)
-            if (finding != null) noteLoad("${it.id} on ${host.id}: $finding")
+            if (finding != null) noteLoad("${nameOf(it)} on ${nameOf(host)}: $finding")
         }
         return ref
     }
@@ -4349,11 +4518,11 @@ class Document {
         // a break *replaces* a curve, and a macro definition names its elements (OP-6) — the same refusal
         // [breakOrthoLeg] makes, for the same reason
         if (definesAMacro(listOf(el))) {
-            note = "${el.id} is part of a tool's definition — breaking it would replace it; retire the tool first"
+            note = "${nameOf(el)} is part of a tool's definition — breaking it would replace it; retire the tool first"
             return null
         }
         if (creatingStep(el) == null) {
-            note = "${el.id} has no construction step, so a break has nothing to build the halves from"
+            note = "${nameOf(el)} has no construction step, so a break has nothing to build the halves from"
             return null
         }
         // A **placed** group holds its members' positions frame-relative (OP-16), and the freedom a break
@@ -4362,7 +4531,7 @@ class Document {
         // path in place is: membership is recorded in the group's step and a step's arguments are never
         // rewritten, so the new point cannot simply join the group.
         placedGroupOf(el)?.let { g ->
-            note = "${el.id} belongs to placed group ${g.name} — unplace it to break it, or the joint would not follow the frame"
+            note = "${nameOf(el)} belongs to placed group ${g.name} — unplace it to break it, or the joint would not follow the frame"
             return null
         }
         return when (el.kind) {
@@ -4370,7 +4539,7 @@ class Document {
             ElementKind.ARC -> breakArcAt(el, world)
             ElementKind.BEZIER -> breakBezierAt(el, world)
             else -> {
-                note = "${el.id} is not a segment, an arc or a Bézier"
+                note = "${nameOf(el)} is not a segment, an arc or a Bézier"
                 null
             }
         }
@@ -4434,18 +4603,18 @@ class Document {
     ): BreakResult? {
         val seg =
             (Evaluator().eval(el.ref.node) as? EvalResult.Ok)?.value as? SegmentValue ?: run {
-                note = "${el.id} has no position to split (its construction is invalid)"
+                note = "${nameOf(el)} has no position to split (its construction is invalid)"
                 return null
             }
         val ab = seg.seg.b - seg.seg.a
         if (ab.length() < Vec2.EPS) {
-            note = "${el.id} has no length to split"
+            note = "${nameOf(el)} has no length to split"
             return null
         }
         // the projection of the click onto the segment — so the two halves *are* the one segment, exactly
         val t = (world - seg.seg.a).dot(ab) / ab.dot(ab)
         if (t <= breakEndSlack || t >= 1.0 - breakEndSlack) {
-            note = "Click away from ${el.id}'s ends — a break there would leave a zero-length piece"
+            note = "Click away from ${nameOf(el)}'s ends — a break there would leave a zero-length piece"
             return null
         }
         val at = seg.seg.a + ab * t
@@ -4453,7 +4622,7 @@ class Document {
         val consumers = consumersOf(el)
         val ends =
             own ?: keyPointsOf(el, 2) ?: run {
-                note = "${el.id} has no endpoints to hang the halves on"
+                note = "${nameOf(el)} has no endpoints to hang the halves on"
                 return null
             }
         val p = freePoint(Quantity.mm(at.x), Quantity.mm(at.y))
@@ -4476,25 +4645,25 @@ class Document {
     ): BreakResult? {
         val arc =
             ((Evaluator().eval(el.ref.node) as? EvalResult.Ok)?.value as? ArcValue)?.arc ?: run {
-                note = "${el.id} has no position to split (its construction is invalid)"
+                note = "${nameOf(el)} has no position to split (its construction is invalid)"
                 return null
             }
         val angle = (world - arc.center).angle()
         if (!GeomMath.arcContains(arc, angle)) {
-            note = "That point is not on ${el.id}'s sweep — click on the arc itself"
+            note = "That point is not on ${nameOf(el)}'s sweep — click on the arc itself"
             return null
         }
         val sweep = abs(GeomMath.sweep(arc))
         val from = abs(atan2(sin(angle - arc.startAngle), cos(angle - arc.startAngle)))
         val to = abs(atan2(sin(angle - arc.endAngle), cos(angle - arc.endAngle)))
         if (sweep < Vec2.EPS || from / sweep <= breakEndSlack || to / sweep <= breakEndSlack) {
-            note = "Click away from ${el.id}'s ends — a break there would leave a zero-length piece"
+            note = "Click away from ${nameOf(el)}'s ends — a break there would leave a zero-length piece"
             return null
         }
         val consumers = consumersOf(el)
         val made =
             breakArc(el, Quantity.rad(angle), arc.ccw) ?: run {
-                note = "${el.id} could not be split there"
+                note = "${nameOf(el)} could not be split there"
                 return null
             }
         // an arc's halves are trims of *it* (OP-14: a trimmed circle is an arc), so the original is always a
@@ -4551,19 +4720,19 @@ class Document {
     ): BreakResult? {
         val bez =
             ((Evaluator().eval(el.ref.node) as? EvalResult.Ok)?.value as? BezierValue)?.bezier ?: run {
-                note = "${el.id} has no position to split (its construction is invalid)"
+                note = "${nameOf(el)} has no position to split (its construction is invalid)"
                 return null
             }
         val t0 = GeomMath.bezierNearestParam(bez, world)
         if (t0 <= breakEndSlack || t0 >= 1.0 - breakEndSlack) {
-            note = "Click away from ${el.id}'s ends — a break there would leave a zero-length piece"
+            note = "Click away from ${nameOf(el)}'s ends — a break there would leave a zero-length piece"
             return null
         }
         val own = drawnFromPoints(el, Tools.BEZIER, 4)
         val consumers = consumersOf(el)
         val c =
             own ?: keyPointsOf(el, 4) ?: run {
-                note = "${el.id} has no control points to hang the halves on"
+                note = "${nameOf(el)} has no control points to hang the halves on"
                 return null
             }
         val t = newParameter("t", Quantity.number(t0))
@@ -4601,11 +4770,11 @@ class Document {
         // set last: every recording above clears the note, since a note belongs to the operation being run
         note =
             if (replaces) {
-                "${el.id} split into ${halves[0].id} and ${halves[1].id} — drag ${split.id} to bend the joint"
+                "${nameOf(el)} split into ${nameOf(halves[0])} and ${nameOf(halves[1])} — drag ${nameOf(split)} to bend the joint"
             } else {
                 val by = consumers.firstOrNull()?.let { "$it is built on it" } ?: why
-                "${el.id} stays (hidden): $by — ${halves[0].id} and ${halves[1].id} are new, " +
-                    "so nothing it feeds changes meaning; drag ${split.id} to bend the joint"
+                "${nameOf(el)} stays (hidden): $by — ${nameOf(halves[0])} and ${nameOf(halves[1])} are new, " +
+                    "so nothing it feeds changes meaning; drag ${nameOf(split)} to bend the joint"
             }
         return BreakResult(el, split, halves, replaces)
     }
@@ -5301,23 +5470,39 @@ class Document {
      *
      * The depth stays a **panel parameter**: it is the feature's degree of freedom, and OP-13 is
      * satisfied through the parameter rather than through a 3D drag handle, which there is no picking in
-     * this view to grab (see [Viewport3]). In a face space the depth runs **into** the material, because
-     * the space's plane is the face's own plane flipped (see [createFaceSpace]).
+     * this view to grab (see [Viewport3]).
+     *
+     * **In a face space it builds a boss — outward, out of the material** (reported: an extrude on a face
+     * produced a solid buried inside the part, visible only as its base z-fighting the face). *Which way an
+     * operation builds is the operation's business, not the space's*: the space says where the drawing is and
+     * which way its `v` runs, and *Cut* is the operation that goes inward ([cutOnFace]). Realized without
+     * touching the space's frame — the sketch is put on the plane **[depth] behind** the face and swept the
+     * space's own way, so the material lands between the face and `depth` outside it, and every drawn (u, v)
+     * still means exactly what it meant (a right-handed frame cannot reverse its normal without mirroring `v`,
+     * and mirroring `v` would move every face-space drawing ever saved — see [createFaceSpace]).
      */
     fun extrudeSolid(
         el: Element,
         depth: ScalarRef,
     ): Element? {
         val region = regionOf(el) ?: return null
-        return add(cx.extrude(cx.sketchOn(activePlane(), region), depth), ElementKind.SOLID, Styles.SOLID)
+        val face = activeSpace.plane
+        val plane = if (face == null) activePlane() else cx.planeOffset(face, cx.neg(depth))
+        return add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
     }
 
     /**
      * Extrude the area [el] by [depth] on the active **face** space's plane and subtract it from [part]
      * (OP-17): the drill, the pocket, the slot — one gesture.
      *
-     * Nothing here is new machinery: it is [extrudeSolid] followed by [combineSolids], which is the click
-     * path a user can also take by hand. It exists because the *space* already says which part is being cut,
+     * **This is the operation that goes inward**, and it is the only one: it sweeps the face's own plane the
+     * space's way (the normal points into the material — [createFaceSpace]), which is what makes a drill a
+     * drill. Its twin *Extrude* builds the same footprint outward as a boss ([extrudeSolid]), so the pair
+     * covers both intents by naming them rather than by a sign the user cannot see.
+     *
+     * Nothing here is new machinery: it is an extrude followed by [combineSolids], which is the click
+     * path a user can also take by hand — with *Cut* rather than *Extrude* as the first half, since a
+     * manual boss subtracted from the part removes nothing. It exists because the *space* already says which part is being cut,
      * so asking for that pick again is asking the user to repeat what they said by choosing the face. Two
      * solids come out of it — the tool and the cut part — and the tool is the cut's operand, so the 3D view
      * draws only the part (Scene3's material rule) and deleting the part takes its tool with it.
@@ -5392,6 +5577,12 @@ class Document {
      * the line: drag the centreline and the turned part follows. A profile touching the axis is legal, one
      * crossing it makes the node invalid with a reason and heals when it is dragged back (OP-3) — all of
      * that is [constructit.geom.Geom3.revolve]'s, unchanged.
+     *
+     * **Stated limit in a face space:** a partial turn sweeps toward the space's normal, i.e. *into* the
+     * material, where [extrudeSolid]'s boss now goes outward. An extrude can be turned round by moving its
+     * start plane, which changes no coordinate; a sweep cannot — reversing it means a negative angle, and the
+     * kernel ties its cap winding to a positive sweep (the same rule that refuses a negative extrude depth).
+     * So the honest answer here is a `dir` argument on the feature, and it is not built (DESIGN.md, OP-17).
      */
     fun revolveSolid(
         el: Element,
@@ -6342,7 +6533,7 @@ class Document {
             val step = k.toDouble()
             val sx = cx.scale(dx, step)
             val sy = cx.scale(dy, step)
-            geoms.map { geom -> add(cx.translateGeom(geom.ref as Ref<Value>, sx, sy), geom.kind, geom.style) }
+            geoms.map { geom -> addLike(cx.translateGeom(geom.ref as Ref<Value>, sx, sy), geom) }
         }
     }
 
@@ -6363,7 +6554,7 @@ class Document {
         if (count < 2 || geoms.isEmpty()) return emptyList()
         return (1 until count).flatMap { k ->
             val angle = cx.const((360.0 * k / count).deg)
-            geoms.map { geom -> add(cx.rotate(geom.ref as Ref<Value>, center, angle), geom.kind, geom.style) }
+            geoms.map { geom -> addLike(cx.rotate(geom.ref as Ref<Value>, center, angle), geom) }
         }
     }
 
@@ -6410,28 +6601,28 @@ class Document {
     fun mirror(
         geom: Element,
         axis: Element,
-    ) = add(cx.mirror(geom.ref as Ref<Value>, axis.ref as LineRef), geom.kind, geom.style)
+    ) = addLike(cx.mirror(geom.ref as Ref<Value>, axis.ref as LineRef), geom)
 
     @Suppress("UNCHECKED_CAST")
     fun rotate(
         geom: Element,
         center: PointRef,
         angle: ScalarRef,
-    ) = add(cx.rotate(geom.ref as Ref<Value>, center, angle), geom.kind, geom.style)
+    ) = addLike(cx.rotate(geom.ref as Ref<Value>, center, angle), geom)
 
     @Suppress("UNCHECKED_CAST")
     fun scale(
         geom: Element,
         center: PointRef,
         factor: ScalarRef,
-    ) = add(cx.scaleGeom(geom.ref as Ref<Value>, center, factor), geom.kind, geom.style)
+    ) = addLike(cx.scaleGeom(geom.ref as Ref<Value>, center, factor), geom)
 
     @Suppress("UNCHECKED_CAST")
     fun translateByVector(
         geom: Element,
         from: PointRef,
         to: PointRef,
-    ) = add(cx.translateByVector(geom.ref as Ref<Value>, from, to), geom.kind, geom.style)
+    ) = addLike(cx.translateByVector(geom.ref as Ref<Value>, from, to), geom)
 
     // ---- measurements ----
 

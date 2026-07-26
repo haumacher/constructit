@@ -97,7 +97,11 @@ object DocumentFormat {
         val out = StringBuilder(HEADER).append('\n')
         for ((index, step) in doc.journal.withIndex()) {
             val args = restate(doc, step, index, ev, present, names).joinToString(" ") { encode(it, names) }
-            val created = step.creates.map { el -> "e${names.size + 1}".also { names[el.id] = it } }
+            // asked of the document, which derives it from this very journal ([Document.nameOf]) — so the name
+            // written here and the name the panel, the status line and every dialog show cannot drift apart.
+            // The local map is still what [encode] resolves *references* through, because a reference no
+            // earlier step declared has to stand out as one (`?e17`) rather than read as a name.
+            val created = step.creates.map { el -> doc.nameOf(el).also { names[el.id] = it } }
             out.append(step.kind)
             if (args.isNotEmpty()) out.append(' ').append(args)
             if (created.isNotEmpty()) out.append(" -> ").append(created.joinToString(","))
@@ -178,7 +182,12 @@ object DocumentFormat {
             // the same rule for a re-parameterization recorded on its own rather than through a tool
             // (OP-4 case b): the offset is state, so it is restated — one distance and one angle for a polar
             // offset, one signed distance for a rider measured along its carrier
-            "relative" -> {
+            // and its inverse, for the one case that hands a *literal* back rather than taking one away: a
+            // rider freed from its host (OP-16's view re-pointed — [Document.detachRider]) owns its two
+            // coordinates from then on and may be dragged anywhere, so they are state on this step. Every
+            // other reading of *Make absolute* restates nothing, because what it restores was already stated
+            // by the step that created the point.
+            "relative", "absolute" -> {
                 val dofs = relativeDofs(doc, step, ev)
                 if (dofs.isEmpty()) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(dofs))
             }
@@ -494,6 +503,10 @@ object DocumentFormat {
             // recorded simply has none, and the click position places the rider as it always did
             "pointoncurve" -> doc.pointOnCurve(el(1), parsePos(words[2]), keyedNums(words, "dofs").firstOrNull())
             "relative" -> doc.makeRelative(el(1), el(2), keyedNums(words, "dofs"))
+            // `dofs=` is the freed position of a rider taken off its host, restated (see [restate]); every
+            // other form of *Make absolute* needs none, and an older script that has none frees the point
+            // where the geometry puts it, exactly as the gesture did
+            "absolute" -> doc.makeAbsolute(el(1), keyedNums(words, "dofs"))
             "tool" -> applyTool(doc, words, byName)
             "macrodef" -> applyMacroDef(doc, words, byName)
             "group" -> applyGroup(doc, words, byName)

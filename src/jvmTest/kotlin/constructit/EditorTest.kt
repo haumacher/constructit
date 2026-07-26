@@ -1042,7 +1042,7 @@ class EditorTest {
         ed.setTool(Tools.SELECT)
         ed.click(Vec2(20.0, 0.0))
         assertTrue(ed.selection === path.legs[0], "clicking a leg selects it")
-        assertEquals("leg ${path.legs[0].id}", ed.selectionLabel())
+        assertEquals("leg ${ed.doc.nameOf(path.legs[0])}", ed.selectionLabel())
         assertEquals(listOf("y", "length (move end)", "length (move start)"), ed.selectionFields().map { it.label })
 
         // typing into "length (move end)" is the same write as dragging V1 along the leg

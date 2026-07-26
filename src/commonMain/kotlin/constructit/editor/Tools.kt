@@ -335,7 +335,7 @@ object Tools {
             // the offset is the tool's own DOF, restated on save through `dofs=` exactly as a dimension's
             // placement is (OP-13/OP-18), so a dragged or typed distance comes back
             ToolDef(MAKE_RELATIVE, "Make relative", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), help = "Click a free point, then the point it should follow: it keeps its distance and angle to that anchor, so moving the anchor takes it along. Drag it (or type distance / angle) to change the offset; Make absolute undoes it.") { d, p, _ -> d.makeRelative(p.elements[0], p.elements[1], p.dofs) },
-            ToolDef(MAKE_ABSOLUTE, "Make absolute", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), help = "Click a point that follows something — relative to an anchor, welded, or attached to a curve — to give it its own coordinates again, where it now stands.") { d, p, _ -> d.makeAbsolute(p.elements[0]) },
+            ToolDef(MAKE_ABSOLUTE, "Make absolute", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), help = "Click a point that follows something — relative to an anchor, welded, or riding a curve — to give it its own coordinates again, where it now stands.") { d, p, _ -> d.makeAbsolute(p.elements[0], p.dofs) },
             // ----- Curves -----
             ToolDef(LINE, "Line", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to draw an infinite line.") { d, p, _ -> d.line(p.points[0], p.points[1]) },
             ToolDef(SEGMENT, "Segment", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), shortcut = 'L', help = "Click two points to draw a segment.") { d, p, _ -> d.segment(p.points[0], p.points[1]) },
@@ -372,7 +372,7 @@ object Tools {
             // projects to exactly that edge, so the edge names the face and the solid at once. Like the
             // path and opening tools this one records a step of its own (`sketchspace`, naming the
             // boundary-piece index — a discrete choice, OP-18), so the Editor runs its click.
-            ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.SOLIDS, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that side face, where u runs along the edge from its start and v runs down from the top. Extrude there drills into the material.") { _, _, _ -> },
+            ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.SOLIDS, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that side face, where u runs along the edge from its start and v runs down from the top. Cut there drills into the material; Extrude builds a boss out of it.") { _, _, _ -> },
             // `facePartOperand` makes elements[0] the part being cut — the *tip* of its boolean chain as it
             // stands, resolved by the editor and recorded in the step, so cuts chain instead of forking
             ToolDef(CUT, "Cut", ToolCategory.SOLIDS, listOf(SlotKind.AREA), scalars = listOf(len("depth")), facePartOperand = true, help = "In a face view: type a depth (or pick a parameter in the panel), then click an area — it is extruded into the material and subtracted from the part this face belongs to (a drilled hole, a pocket, a slot).") { d, p, s -> d.cutOnFace(p.elements[0], p.elements[1], s[0]) },

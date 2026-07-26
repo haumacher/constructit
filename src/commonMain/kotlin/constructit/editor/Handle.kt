@@ -142,7 +142,10 @@ fun dimensionOf(ref: ScalarRef): Dimension =
  * is invisible, so a silent dead drag reads as a bug. Name the driven values instead; the inspector
  * greys out exactly the same ones.
  */
-fun explainImmovable(el: Element): String {
+fun explainImmovable(
+    el: Element,
+    name: String = el.id,
+): String {
     val handle = el.handle
     val fields = handle?.fields().orEmpty()
     val dragged: Set<Node> = handle?.dragNodes.orEmpty().toSet()
@@ -151,11 +154,11 @@ fun explainImmovable(el: Element): String {
     // unwritable field is the reason instead.
     val candidates = fields.filter { it.node != null && it.node in dragged }.ifEmpty { fields }
     val driven = candidates.filter { !it.writable }.map { it.label }
-    if (driven.isEmpty()) return "${el.id} can't be moved: it is fully determined by the construction."
+    if (driven.isEmpty()) return "$name can't be moved: it is fully determined by the construction."
     val verb = if (driven.size == 1) "is" else "are"
     val editable = fields.filter { it.writable }.map { it.label }
     val alternative = if (editable.isEmpty()) "" else " You can still set ${editable.joinToString(", ")} in the panel."
-    return "${el.id} has no free direction: ${driven.joinToString(", ")} $verb driven by the construction " +
+    return "$name has no free direction: ${driven.joinToString(", ")} $verb driven by the construction " +
         "(a welded or attached end, or a closed loop). Move what drives it instead.$alternative"
 }
 

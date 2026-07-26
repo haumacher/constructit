@@ -85,11 +85,14 @@ class CarrierRelativeTest {
         ed.click(pos(el(ed, base)))
     }
 
-    /** The document's own id of the element the comments call `eN` — what the status line and notes name. */
+    /**
+     * What the status line and the notes call the element the comments call `eN` — its **script-local** name
+     * (OP-18), which is the drawing's one name for it and is exactly `eN` again.
+     */
     private fun idOf(
         ed: Editor,
         id: String,
-    ): String = el(ed, id).id
+    ): String = ed.doc.nameOf(el(ed, id))
 
     // ---- the specialization, both bases ----
 
@@ -105,7 +108,7 @@ class CarrierRelativeTest {
             "got: ${ed.statusHint}",
         )
         assertEquals(listOf("distance"), el(ed, "e5").handle!!.fields().map { it.label }, "one DOF, and it is that distance")
-        assertEquals(idOf(ed, "e4"), ed.doc.riderOf(el(ed, "e5"))!!.base!!.id)
+        assertEquals(idOf(ed, "e4"), ed.doc.nameOf(ed.doc.riderOf(el(ed, "e5"))!!.base!!))
 
         // it still slides along its host — one degree of freedom before, one after
         ed.drag(pos(el(ed, "e5")), Vec2(80.0, 0.0))
@@ -123,7 +126,7 @@ class CarrierRelativeTest {
             ed.statusHint.contains("from ${idOf(ed, "e1")} along ${idOf(ed, "e3")}"),
             "got: ${ed.statusHint}",
         )
-        assertEquals(idOf(ed, "e1"), ed.doc.riderOf(el(ed, "e4"))!!.base!!.id)
+        assertEquals(idOf(ed, "e1"), ed.doc.nameOf(ed.doc.riderOf(el(ed, "e4"))!!.base!!))
         assertClose(distanceField(ed, "e4"), 30.0, 1e-9)
 
         // typing the distance reaches exactly as far as dragging (OP-13)
@@ -263,7 +266,7 @@ class CarrierRelativeTest {
         fresh.replaceDocument(reloaded)
         assertEquals(pos(el(ed, "e4")), pos(el(fresh, "e4")))
         assertEquals(pos(el(ed, "e5")), pos(el(fresh, "e5")))
-        assertEquals(idOf(fresh, "e4"), fresh.doc.riderOf(el(fresh, "e5"))!!.base!!.id, "as a chain, not as two loose riders")
+        assertEquals(idOf(fresh, "e4"), fresh.doc.nameOf(fresh.doc.riderOf(el(fresh, "e5"))!!.base!!), "as a chain, not as two loose riders")
         // and the reloaded drawing behaves the same way under the same edit
         ed.drag(Vec2(100.0, 0.0), Vec2(0.0, 100.0), steps = 4)
         fresh.drag(Vec2(100.0, 0.0), Vec2(0.0, 100.0), steps = 4)

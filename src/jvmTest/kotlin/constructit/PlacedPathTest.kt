@@ -580,7 +580,7 @@ class PlacedPathTest {
         assertEquals(1, g.capturedPaths.size, "path A is captured; B, whose freedom leaves the group, is not")
         assertTrue(g.capturedPaths.single() === a)
         assertTrue(ed.statusHint.contains("will not follow it"), "and that is reported: ${ed.statusHint}")
-        assertTrue(ed.statusHint.contains(ed.doc.elementFor(b.vertices.first().ref)!!.id), "naming B: ${ed.statusHint}")
+        assertTrue(ed.statusHint.contains(ed.doc.nameOf(ed.doc.elementFor(b.vertices.first().ref)!!)), "naming B: ${ed.statusHint}")
 
         // moving the frame proves it: A rides along, B stays hung on the outside point
         val bStart = (Evaluator().valueOf(b.vertices.first().ref) as PointValue).p
@@ -733,11 +733,11 @@ class PlacedPathTest {
         ed.click(mid)
         ed.click(mid)
         assertEquals(1, ed.selectionCount)
-        assertEquals("leg ${path(ed).legs[0].id}", ed.selectionLabel())
+        assertEquals("leg ${ed.doc.nameOf(path(ed).legs[0])}", ed.selectionLabel())
         // and *not* where it used to be before the turn
         ed.click(Vec2(-300.0, -300.0))
         ed.click(Vec2(50.0, 0.0))
-        assertTrue(ed.selectionCount == 0 || ed.selectionLabel() != "leg ${path(ed).legs[0].id}")
+        assertTrue(ed.selectionCount == 0 || ed.selectionLabel() != "leg ${ed.doc.nameOf(path(ed).legs[0])}")
     }
 
     /**

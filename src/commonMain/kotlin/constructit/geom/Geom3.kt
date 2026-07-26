@@ -1197,8 +1197,8 @@ object Geom3 {
      * [plane]'s normal points **out of the material** — the same convention [facePlane] uses for `TOP`
      * and `BOTTOM` — and its axes are `u` along the boundary piece, `v` = world **+Z**. The origin is the
      * piece's start corner at the face's **top** edge, which is a deliberate choice and not an accident:
-     * a sketch on this face wants the *flipped* plane (normal into the material, so a positive extrude
-     * depth drills inward), the flip mirrors `v` ([Plane3.flipped]), and only a top anchor leaves the face
+     * a sketch on this face wants the *flipped* plane (normal into the material, the direction a cut
+     * sweeps), the flip mirrors `v` ([Plane3.flipped]), and only a top anchor leaves the face
      * itself at `v` in `0..height` in those flipped coordinates. So in the space a user sketches in, `u`
      * runs along the picked edge from its start and `v` runs **down the face from its top edge**.
      *

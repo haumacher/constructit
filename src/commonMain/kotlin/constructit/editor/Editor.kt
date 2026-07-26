@@ -121,8 +121,22 @@ class Editor(
         undoStack.clear()
         redoStack.clear()
         lastCommitted = DocumentFormat.save(fresh)
-        statusHint = ""
+        // What the *load* had to decide says so here, or it says it nowhere: a migration finding
+        // (`Document.loadNotes`, OP-18's *Versioning & migration*) names an element whose stored literal was
+        // ambiguous, and until now it was published into the document's one-shot note that only a *tool* run
+        // reads — so it was overwritten by this very line. It stays until the next user action, like every
+        // other status line.
+        statusHint = loadNote(fresh) ?: ""
         onChange()
+    }
+
+    /** The loaded document's migration findings as one line — the first, and how many more (OP-18). */
+    private fun loadNote(fresh: Document): String? {
+        val notes = fresh.loadNotes
+        fresh.takeNote() // it is being said here instead, so no later tool run repeats it
+        if (notes.isEmpty()) return null
+        val more = if (notes.size == 1) "" else " (and ${notes.size - 1} more)"
+        return "Loaded with a note: ${notes.first()}$more"
     }
 
     /** Swap [fresh] in, resetting every transient reference into the old document (selection, picks). */
@@ -240,7 +254,7 @@ class Editor(
             selectedJamb?.let {
                 statusHint =
                     "Delete can't reach an opening yet: it has no element of its own. Delete the wall " +
-                    "(${it.path.footprint.id}) to remove it with its openings."
+                    "(${doc.nameOf(it.path.footprint)}) to remove it with its openings."
                 onChange()
             }
             return false
@@ -249,7 +263,7 @@ class Editor(
         for (el in targets) {
             val root = doc.creatingStep(el)
             if (root == null) {
-                statusHint = "${el.id} has no construction step to remove"
+                statusHint = "${doc.nameOf(el)} has no construction step to remove"
                 onChange()
                 return false
             }
@@ -267,7 +281,7 @@ class Editor(
             val (def, instances) = losses.first()
             statusHint =
                 "Can't delete that: it defines tool ${def.name}, used by ${instances.size} instance " +
-                "element${if (instances.size == 1) "" else "s"} (${instances.take(4).joinToString(", ") { it.id }}) — " +
+                "element${if (instances.size == 1) "" else "s"} (${instances.take(4).joinToString(", ") { doc.nameOf(it) }}) — " +
                 "delete the instances first"
             onChange()
             return false
@@ -286,7 +300,7 @@ class Editor(
                 onChange()
                 return false
             }
-        val what = if (targets.size == 1) targets[0].id else "${targets.size} elements"
+        val what = if (targets.size == 1) doc.nameOf(targets[0]) else "${targets.size} elements"
         adopt(fresh)
         checkpoint()
         statusHint = if (dependents == 0) "Deleted $what" else "Deleted $what and $dependents dependent${if (dependents == 1) "" else "s"}"
@@ -562,7 +576,7 @@ class Editor(
         val target = s.target
         if (el == null || target == null) return "could not join here."
         val why = doc.connectRefusal(el, target)
-        return "can't join ${el.id} onto ${target.id}${if (why == null) "" else " — $why"}."
+        return "can't join ${doc.nameOf(el)} onto ${doc.nameOf(target)}${if (why == null) "" else " — $why"}."
     }
 
     /**
@@ -753,8 +767,8 @@ class Editor(
         if (space.isPlan) {
             "Plan view — the drawing's own space (world XY)."
         } else {
-            "Sketching on ${space.name}, the side face of ${space.anchor?.id}: u along the edge from its start, " +
-                "v down from the top face. Extrude (or Cut) here drills into the material."
+            "Sketching on ${space.name}, the side face of ${space.anchor?.let { doc.nameOf(it) }}: u along the edge from its start, " +
+                "v down from the top face. Cut here drills into the material; Extrude builds outward, as a boss."
         }
 
     /**
@@ -781,7 +795,7 @@ class Editor(
             val why = doc.faceRefusal(solid, piece)
             val space = if (why == null) doc.createFaceSpace(solid, piece) else null
             if (space == null) {
-                statusHint = "No sketch space on that edge of ${solid.id}: ${why ?: "it has no planar side face there"}"
+                statusHint = "No sketch space on that edge of ${doc.nameOf(solid)}: ${why ?: "it has no planar side face there"}"
             } else {
                 // the document already made it active; the *view* follows it here
                 spaceCameras[from] = camera
@@ -861,7 +875,7 @@ class Editor(
 
     /** Short name for the selection, for the inspector header. */
     fun selectionLabel(): String {
-        selectedJamb?.let { return "opening on leg ${it.interval.legIndex + 1} of ${it.path.footprint.id}" }
+        selectedJamb?.let { return "opening on leg ${it.interval.legIndex + 1} of ${doc.nameOf(it.path.footprint)}" }
         selectedFrame()?.let { return "frame of ${it.name}" }
         if (selected.size > 1) return "${selected.size} elements"
         return elementLabel(selection ?: return "")
@@ -875,7 +889,7 @@ class Editor(
                 is OrthoCornerHandle -> "corner"
                 else -> el.kind.name.lowercase()
             }
-        return "$kind ${el.id}"
+        return "$kind ${doc.nameOf(el)}"
     }
 
     /**
@@ -909,7 +923,7 @@ class Editor(
         }
         val clash = selected.firstNotNullOfOrNull { el -> doc.groupOf(el)?.let { el to it } }
         if (clash != null) {
-            statusHint = "${clash.first.id} is already in group ${clash.second.name} — an element is in at most one group; ungroup it first"
+            statusHint = "${doc.nameOf(clash.first)} is already in group ${clash.second.name} — an element is in at most one group; ungroup it first"
             onChange()
             return null
         }
@@ -951,7 +965,7 @@ class Editor(
             return null
         }
         val members = selectedElements
-        val d = CreateDialog.of(mode, members, doc.analyseMacro(members))
+        val d = CreateDialog.of(mode, members, doc.analyseMacro(members)) { doc.nameOf(it) }
         createDialog = d
         statusHint = d.help
         onChange()
@@ -1056,7 +1070,7 @@ class Editor(
         if (instances.isNotEmpty()) {
             statusHint =
                 "Can't remove tool ${def.name}: ${instances.size} instance element${if (instances.size == 1) "" else "s"} " +
-                "still use it (${instances.take(4).joinToString(", ") { it.id }}) — delete the instances first"
+                "still use it (${instances.take(4).joinToString(", ") { doc.nameOf(it) }}) — delete the instances first"
             onChange()
             return false
         }
@@ -1102,7 +1116,7 @@ class Editor(
         val analysis = doc.analysePlacement(g)
         if (analysis.conflicts.isNotEmpty()) {
             val points = analysis.conflicts.map { it.point }.distinct()
-            val consumers = analysis.conflicts.map { it.consumer.id }.distinct()
+            val consumers = analysis.conflicts.map { doc.nameOf(it.consumer) }.distinct()
             val verb = if (points.size == 1) "is" else "are"
             statusHint =
                 "Can't place ${g.name}: ${points.joinToString(", ")} $verb also used by " +
@@ -1135,7 +1149,7 @@ class Editor(
             if (result.unfollowed.isEmpty()) {
                 ""
             } else {
-                " — ${result.unfollowed.joinToString(", ") { it.id }} " +
+                " — ${result.unfollowed.joinToString(", ") { doc.nameOf(it) }} " +
                     "${if (result.unfollowed.size == 1) "is" else "are"} driven from outside and will not follow it"
             }
         val carried =
@@ -1608,7 +1622,7 @@ class Editor(
             // why it cannot — and either way nothing else is grabbed instead
             if (primedElement != null) {
                 if (!primedElement.hasFreeDof) {
-                    statusHint = explainImmovable(primedElement)
+                    statusHint = explainImmovable(primedElement, doc.nameOf(primedElement))
                     pendingNote = statusHint
                     onChange()
                     return
@@ -1629,7 +1643,7 @@ class Editor(
                 // way to get the frame instead (OP-16)
                 if (placedGroup != null && (selected.size != 1 || selection !== hit)) {
                     note =
-                        "Dragging ${hit.id} alone — group ${placedGroup.name} is not selected as a whole; " +
+                        "Dragging ${doc.nameOf(hit)} alone — group ${placedGroup.name} is not selected as a whole; " +
                         "click without moving to select it, then drag to move the frame"
                 }
                 dragTarget = movable
@@ -1644,7 +1658,7 @@ class Editor(
                 dragRiders = doc.riderAnchors()
                 statusHint = note
             } else {
-                statusHint = explainImmovable(hit)
+                statusHint = explainImmovable(hit, doc.nameOf(hit))
             }
             // …and what the press said is kept for the release: a first click must read exactly as it always
             // did (the reason an immovable element cannot be dragged included), with only the pile's position
@@ -1704,9 +1718,9 @@ class Editor(
                         // a break *replaces* the leg, so it is refused on a leg a tool is defined from
                         // (OP-6) — say which, since "click a segment" would be a lie there
                         if (doc.definesAMacro(listOf(hit))) {
-                            "${hit.id} is part of a tool's definition — breaking it would replace it; retire the tool first"
+                            "${doc.nameOf(hit)} is part of a tool's definition — breaking it would replace it; retire the tool first"
                         } else {
-                            "${hit.id} can't be broken there"
+                            "${doc.nameOf(hit)} can't be broken there"
                         }
                     }
                 else -> breakCurveAt(hit, world)
@@ -1728,7 +1742,7 @@ class Editor(
         el: Element,
         world: Vec2,
     ): String {
-        val res = doc.breakCurve(el, world) ?: return doc.takeNote() ?: "${el.id} can't be broken there"
+        val res = doc.breakCurve(el, world) ?: return doc.takeNote() ?: "${doc.nameOf(el)} can't be broken there"
         val note = doc.takeNote() ?: ""
         if (!res.replacesOriginal) return note
         val root = doc.creatingStep(el) ?: return note
@@ -1779,10 +1793,10 @@ class Editor(
                 val placedEnd = s.target?.let { t -> (t.handle as? OrthoCornerHandle)?.let { doc.pathFrameOf(it) != null } } == true
                 statusHint =
                     if (linked && placedEnd) {
-                        "$what starts on ${s.target?.id} — a placed path is not extended in place; " +
+                        "$what starts on ${s.target?.let { doc.nameOf(it) }} — a placed path is not extended in place; " +
                             "this is a new run joined to it (unplace its group to extend it)"
                     } else if (linked) {
-                        "$what starts on ${s.target?.id} (${s.label}); click the next point"
+                        "$what starts on ${s.target?.let { doc.nameOf(it) }} (${s.label}); click the next point"
                     } else if (s.linked) {
                         // the click landed on geometry and the link was refused: say why here too, or the
                         // run would start looking joined and only come apart when something else moved
@@ -1816,7 +1830,7 @@ class Editor(
                     snapHint = null
                     finishPath() // which marks the terminus and says the run is over — see [markTerminal]
                     // the same sentence, naming what was reached rather than the vertex that reached it
-                    statusHint = "$what ends on ${s.target?.id} (${s.label})$RUN_FINISHED"
+                    statusHint = "$what ends on ${s.target?.let { doc.nameOf(it) }} (${s.label})$RUN_FINISHED"
                     onChange()
                     return
                 }
@@ -2099,7 +2113,7 @@ class Editor(
         // a still-dangling end is not a terminus — it is exactly the end a later click may continue
         if (!closed && doc.orthoEndpoint(el) != null) return null
         terminalHint = (ev().valueOf(v.ref) as? PointValue)?.p
-        return "$what ${if (closed) "closed on" else "ends on"} ${el.id}$RUN_FINISHED"
+        return "$what ${if (closed) "closed on" else "ends on"} ${doc.nameOf(el)}$RUN_FINISHED"
     }
 
     // ---- the one pick cycle (OP-16 / OP-13 / OP-21) ----
@@ -2223,8 +2237,8 @@ class Editor(
                 val g = doc.groupOf(c.element)
                 when {
                     g == null -> ""
-                    g.placed -> "${c.element.id} alone (of group ${g.name}) — dragging it moves it inside the frame"
-                    else -> "${c.element.id} alone (of group ${g.name})"
+                    g.placed -> "${doc.nameOf(c.element)} alone (of group ${g.name}) — dragging it moves it inside the frame"
+                    else -> "${doc.nameOf(c.element)} alone (of group ${g.name})"
                 }
             }
             is Candidate.Opening -> {
@@ -2253,7 +2267,7 @@ class Editor(
         when (c) {
             is Candidate.Whole -> "group ${c.group.name}"
             is Candidate.One -> elementLabel(c.element)
-            is Candidate.Opening -> "opening on leg ${c.jamb.interval.legIndex + 1} of ${c.jamb.path.footprint.id}"
+            is Candidate.Opening -> "opening on leg ${c.jamb.interval.legIndex + 1} of ${doc.nameOf(c.jamb.path.footprint)}"
         }
 
     /** Step the cycle on, from wherever the last click left it. */
@@ -2458,11 +2472,11 @@ class Editor(
                 val ok = if (ortho) doc.weldOrthoEndpointToPoint(dragged, weld) else doc.weld(dragged, weld)
                 // the magnet promised this join, so a release that quietly does nothing is the worst of the
                 // three outcomes — the reason is the document's, and the same one a path click reports
-                statusHint = if (ok) "Joined ${dragged.id} onto ${weld.id}" else joinRefused(dragged, weld)
+                statusHint = if (ok) "Joined ${doc.nameOf(dragged)} onto ${doc.nameOf(weld)}" else joinRefused(dragged, weld)
                 onChange()
             } else if (attach != null) {
                 val ok = if (ortho) doc.attachOrthoEndpointToCurve(dragged, attach) else doc.attachToCurve(dragged, attach)
-                statusHint = if (ok) "Attached ${dragged.id} to ${attach.id}" else joinRefused(dragged, attach)
+                statusHint = if (ok) "Attached ${doc.nameOf(dragged)} to ${doc.nameOf(attach)}" else joinRefused(dragged, attach)
                 onChange()
             }
         }
@@ -2487,7 +2501,7 @@ class Editor(
         if (dragged != null) {
             joinFlattenedEnds(dragged)?.let {
                 select(listOf(it), it)
-                statusHint = "Joined into ${it.id} — the flattened corner is gone"
+                statusHint = "Joined into ${doc.nameOf(it)} — the flattened corner is gone"
                 onChange()
             }
             // the release is where a drag commits — moves, welds, attaches and joins are one operation
@@ -2501,7 +2515,7 @@ class Editor(
         target: Element,
     ): String {
         val why = doc.connectRefusal(dragged, target)
-        return "Can't join ${dragged.id} onto ${target.id}${if (why == null) "" else ": $why"}"
+        return "Can't join ${doc.nameOf(dragged)} onto ${doc.nameOf(target)}${if (why == null) "" else ": $why"}"
     }
 
     /** Whether the pointer travelled far enough since the press for the gesture to count as a drag. */
@@ -2670,7 +2684,7 @@ class Editor(
             // because a point that lights up for everything else and not for this one reads as a glitch
             if (doc.joinWouldCycle(dragged, point)) {
                 clearMagnet()
-                statusHint = "Can't join ${dragged.id} onto ${point.id}: ${point.id} already follows ${dragged.id}."
+                statusHint = "Can't join ${doc.nameOf(dragged)} onto ${doc.nameOf(point)}: ${doc.nameOf(point)} already follows ${doc.nameOf(dragged)}."
                 return
             }
             weldTarget = point
@@ -2749,11 +2763,11 @@ class Editor(
             val cur = chain.lastOrNull()?.first ?: start
             val next = doc.continuationsFrom(cur, entered, ev)
             if (next.isEmpty()) {
-                stop = "nothing continues past ${cur.id}"
+                stop = "nothing continues past ${doc.nameOf(cur)}"
                 break
             }
             if (next.size > 1) {
-                stop = "${next.size} pieces meet past ${cur.id}, so the boundary forks there — pick the one you mean"
+                stop = "${next.size} pieces meet past ${doc.nameOf(cur)}, so the boundary forks there — pick the one you mean"
                 break
             }
             val step = next.single()
@@ -2764,11 +2778,11 @@ class Editor(
                 break
             }
             if (pickedElements.any { it === step.piece } || chain.any { it.first === step.piece }) {
-                stop = "the boundary rejoins ${step.piece.id}, which is already in it"
+                stop = "the boundary rejoins ${doc.nameOf(step.piece)}, which is already in it"
                 break
             }
             if (step.piece.kind == ElementKind.CIRCLE) {
-                stop = "${step.piece.id} continues there, but which arc of a whole circle the boundary takes is a choice — click it"
+                stop = "${doc.nameOf(step.piece)} continues there, but which arc of a whole circle the boundary takes is a choice — click it"
                 break
             }
             chain.add(step.piece to step.at)
@@ -2801,7 +2815,7 @@ class Editor(
         val last = pickedElements.last()
         val why = stop?.let { " — $it" } ?: ""
         statusHint =
-            "Followed ${chain.size} piece${if (chain.size == 1) "" else "s"} to ${last.id} " +
+            "Followed ${chain.size} piece${if (chain.size == 1) "" else "s"} to ${doc.nameOf(last)} " +
             "($filledSlots picked)$why; click the next piece, or Enter to close"
     }
 

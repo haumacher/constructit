@@ -33,9 +33,11 @@ import kotlin.test.assertTrue
  * user's back-side drill, end to end.
  *
  * The headline is [aDrillOnASideFaceLandsWhereTheFaceCoordinatesPutIt]: a plate drawn and extruded in
- * plan, a circle drawn *on one of its side faces*, extruded to a typed depth and subtracted. That cut is
+ * plan, a circle drawn *on one of its side faces*, and *Cut* to a typed depth. That cut is
  * **cross-axis**, so it goes to the general engine (OP-9, `MeshBool`) — which already worked from the DSL
- * and now works from the toolbar, because there is finally a way to *name* a vertical plane.
+ * and now works from the toolbar, because there is finally a way to *name* a vertical plane. Its twin is
+ * [anExtrudeOnASideFaceBuildsABossOutOfTheMaterial]: the same footprint, built *out* of the material,
+ * which is what a plain *Extrude* on a face means (GitHub #1).
  *
  * What the rest asserts is that a space is nothing but organisation and view state: the frame is derived
  * (stretch the plate and the bore rides the face), spaces isolate picking, the file records which space
@@ -99,8 +101,9 @@ class FaceSketchTest {
 
     /**
      * The face frame, spelled out in world coordinates: `u` along the picked edge from its start, `v`
-     * **down** from the face's top, and the sketch plane's normal pointing **into** the material, which is
-     * what makes a positive extrude depth a cut.
+     * **down** from the face's top, and the sketch plane's normal pointing **into** the material, which is the
+     * direction a *Cut* sweeps (an *Extrude* builds a boss the other way — see
+     * `anExtrudeOnASideFaceBuildsABossOutOfTheMaterial`).
      */
     @Test
     fun theFaceFrameRunsAlongTheEdgeAndDownFromTheTop() {
@@ -116,7 +119,7 @@ class FaceSketchTest {
         assertClose(p.origin.z, 20.0, msg = "...at the face's top edge, so the flip leaves the face at v >= 0")
         assertClose(p.u.x, 1.0, msg = "u runs along the edge")
         assertClose(p.v.z, -1.0, msg = "v runs down the face")
-        assertClose(p.normal.y, 1.0, msg = "and the normal points into the material, so an extrude drills")
+        assertClose(p.normal.y, 1.0, msg = "and the normal points into the material, which is the way a Cut sweeps")
 
         // the reference outline the face view draws: the rectangle the face actually covers
         val r = assertNotNull(ed.doc.faceOutline(space, Evaluator()))
@@ -131,14 +134,18 @@ class FaceSketchTest {
 
     /**
      * Plate in plan → extrude → *Sketch on face* on a side edge → a ⌀5 circle at (25, 8) in the face's own
-     * coordinates → *Extrude* 10 deep → *Subtract*. The result is a watertight plate with a horizontal bore
-     * exactly where the face coordinates put it.
+     * coordinates → *Cut* 10 deep. The result is a watertight plate with a horizontal bore exactly where the
+     * face coordinates put it.
      *
      * The numbers: the face frame maps (25, 8) to the world point (25, 0, 12) — 25 mm along the front edge,
      * 8 mm down from the 20 mm-thick plate's top face — and the bore runs 10 mm inward along +Y. So the
      * cylinder is x ∈ 22.5..27.5, y ∈ 0..10, z ∈ 9.5..14.5, and the material lost is π·2.5²·10 = 196.35 mm³
      * (a little less, because an inscribed tessellated circle removes slightly too little — the direction
      * such an error *must* take, so it is asserted).
+     *
+     * **Cut is the operation that goes inward** — the drill drills because that is what *Cut* means, not
+     * because of which way the space's plane happens to face. Its twin builds the same footprint outward as a
+     * boss (`anExtrudeOnASideFaceBuildsABossOutOfTheMaterial`), which is what a plain *Extrude* here means.
      */
     @Test
     fun aDrillOnASideFaceLandsWhereTheFaceCoordinatesPutIt() {
@@ -157,14 +164,14 @@ class FaceSketchTest {
         val circle = ed.doc.elements.last { it.kind == ElementKind.CIRCLE }
         assertEquals(ed.activeSpace.name, circle.space, "the circle belongs to the face space")
 
-        // ...extrude it to a typed depth: the space's plane is the face's, flipped, so this drills inward
-        ed.setTool(Tools.EXTRUDE)
+        // ...cut it to a typed depth: *Cut* sweeps the face's own plane inward, which is what drills
+        ed.setTool(Tools.CUT)
         ed.key("1")
         ed.key("0")
         ed.key("Enter")
         ed.click(Vec2(27.5, 8.0)) // the circle, by its boundary
-        assertEquals(2, ed.solids().size, "the drill is a solid of its own: ${ed.statusHint}")
-        val drill = ed.solids().last()
+        assertEquals(3, ed.solids().size, "one gesture, two solids — the drill and the cut part: ${ed.statusHint}")
+        val drill = ed.solids()[1]
 
         // the face frame's mapping, asserted twice: exactly, on the frame itself...
         val world = Evaluator().plane(ed.activeSpace.plane!!).toWorld(Vec2(25.0, 8.0))
@@ -179,11 +186,7 @@ class FaceSketchTest {
         assertClose(db.second.y, 10.0, tol = 1e-9, msg = "and runs 10 mm into the material")
         assertClose(db.second.x - db.first.x, 5.0, tol = 0.05, msg = "a ⌀5 drill")
 
-        // ...and subtract it: cross-axis, so the general engine (OP-9)
-        ed.setTool(Tools.SUBTRACT)
-        ed.click(onFrontEdge) // the plate, addressable in this space *as this face*
-        ed.click(Vec2(27.5, 8.0)) // the drill
-        assertEquals(3, ed.solids().size, "the cut part exists: ${ed.statusHint}")
+        // ...and the part it left: a cross-axis subtraction, so the general engine (OP-9)
         val part = ed.solids().last()
         val mesh = ed.meshOf(part)
         assertManifold(mesh, "drilled plate")
@@ -201,6 +204,67 @@ class FaceSketchTest {
         assertClose(pb.first.x, 0.0, tol = 1e-3)
         assertClose(pb.second.x, 80.0, tol = 1e-3)
         assertClose(pb.second.z, 20.0, tol = 1e-3)
+        assertClose(Geom3.volume(ed.meshOf(base)), 80.0 * 50.0 * 20.0, tol = 1e-6, msg = "the plate itself is untouched")
+    }
+
+    /**
+     * **The other half of the pair, and the defect that named it** (GitHub #1): a plain *Extrude* in a face
+     * space builds a **boss — outward, out of the material**.
+     *
+     * Reported as a glitch on a face: the extrude produced a solid of the right size in the right place that
+     * was *buried inside the part*, visible only as its base z-fighting the face it was drawn on. The cause was
+     * that the space's plane is the face's plane flipped — the frame that fixes what the drawing's `v` means —
+     * and a plain extrude inherited that direction, so every boss was a wart inside the material and only
+     * *Cut* was reachable. Which way an operation builds belongs to the **operation**: `Cut` goes in, `Extrude`
+     * goes out, and the drawn (u, v) coordinates are untouched by the fix (they could not change: reversing a
+     * right-handed frame's normal mirrors `v`, which would move every face-space drawing ever saved).
+     *
+     * The numbers, against the same plate and the same circle as the drill: material is at y > 0, so the boss
+     * occupies y ∈ −10..0 — flush against the face, entirely outside the plate — and unioning it adds exactly
+     * its own volume.
+     */
+    @Test
+    fun anExtrudeOnASideFaceBuildsABossOutOfTheMaterial() {
+        requireEngine()
+        val ed = plate()
+        val base = ed.solids().single()
+        ed.sketchOnFront()
+        ed.setTool(Tools.CIRCLE_R)
+        ed.key("2")
+        ed.key(".")
+        ed.key("5")
+        ed.key("Enter")
+        ed.click(Vec2(25.0, 8.0))
+
+        ed.setTool(Tools.EXTRUDE)
+        ed.key("1")
+        ed.key("0")
+        ed.key("Enter")
+        ed.click(Vec2(27.5, 8.0))
+        assertEquals(2, ed.solids().size, "the boss is a solid of its own: ${ed.statusHint}")
+        val boss = ed.solids().last()
+
+        val bb = assertNotNull(Geom3.bounds(ed.meshOf(boss)))
+        assertClose((bb.first.x + bb.second.x) / 2, 25.0, tol = 0.02, msg = "where the face coordinates put it")
+        assertClose((bb.first.z + bb.second.z) / 2, 12.0, tol = 0.02)
+        assertClose(bb.second.y, 0.0, tol = 1e-9, msg = "it ends on the face itself")
+        assertClose(bb.first.y, -10.0, tol = 1e-9, msg = "and stands 10 mm out of the material, not into it")
+        assertManifold(ed.meshOf(boss), "boss")
+
+        // and it is material added: the union is the plate plus the boss, not the plate with a wart inside it
+        ed.setTool(Tools.UNION)
+        ed.click(onFrontEdge) // the plate, addressable here as this face
+        ed.click(Vec2(27.5, 8.0)) // the boss
+        assertEquals(3, ed.solids().size, "the joined part exists: ${ed.statusHint}")
+        val part = ed.solids().last()
+        val mesh = ed.meshOf(part)
+        assertManifold(mesh, "plate with a boss")
+        val exact = PI * 2.5 * 2.5 * 10.0
+        val added = Geom3.volume(mesh) - 80.0 * 50.0 * 20.0
+        assertTrue(added < exact, "an inscribed boss adds slightly too little ($added of $exact mm³)")
+        assertTrue(added > exact * 0.98, "...but only by what the chord tolerance explains ($added)")
+        val pb = assertNotNull(Geom3.bounds(mesh))
+        assertClose(pb.first.y, -10.0, tol = 1e-3, msg = "the part now reaches 10 mm past the face")
         assertClose(Geom3.volume(ed.meshOf(base)), 80.0 * 50.0 * 20.0, tol = 1e-6, msg = "the plate itself is untouched")
     }
 
@@ -377,12 +441,13 @@ class FaceSketchTest {
         ed.key("5")
         ed.key("Enter")
         ed.click(Vec2(25.0, 8.0))
-        ed.setTool(Tools.EXTRUDE)
+        ed.setTool(Tools.CUT)
         ed.key("1")
         ed.key("0")
         ed.key("Enter")
         ed.click(Vec2(27.5, 8.0))
-        val drill = ed.solids().last()
+        // the cut's *tool* solid is the bore; the part is what it left (OP-17's one gesture, two solids)
+        val drill = ed.solids()[1]
 
         // stretch the plate in the plan view: the corner (0,0) goes to (-20,-10)
         assertTrue(ed.setActiveSpace(Document.PLAN_SPACE))

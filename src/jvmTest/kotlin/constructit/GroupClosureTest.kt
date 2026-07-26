@@ -120,8 +120,9 @@ group "g1" els=e6,e3
         val d = assertNotNull(ed.beginCreate(CreateMode.GROUP))
         val labels = d.candidates.map { it.label }
         assertEquals(4, labels.size, "two free points, the rider, the relative point: $labels")
-        assertTrue(labels.any { it.startsWith("${el(ed, 4).id} — slides on ${el(ed, 3).id}") }, "$labels")
-        assertTrue(labels.any { it.startsWith("${el(ed, 5).id} — relative to ${el(ed, 4).id}") }, "$labels")
+        // the labels name elements the way the file does (OP-18): what the panel says is what the script says
+        assertTrue(labels.any { it.startsWith("e4 — slides on e3") }, "$labels")
+        assertTrue(labels.any { it.startsWith("e5 — relative to e4") }, "$labels")
         assertTrue(d.candidates.all { it.checked }, "and the group default is to take them along")
 
         d.name = "fig"
@@ -292,13 +293,13 @@ group "g1" els=e6,e3
         assertTrue(d.warnings.isNotEmpty(), "but it says what placement would refuse")
         assertTrue(d.warnings.any { it.contains("cannot move independently") }, "got: ${d.warnings}")
         assertTrue(d.warnings.any { it.contains("shared with the drawing outside") }, "got: ${d.warnings}")
-        assertTrue(d.warnings.any { it.contains(el(ed, 1).id) }, "naming what holds it: ${d.warnings}")
+        assertTrue(d.warnings.any { it.contains("e1") }, "naming what holds it: ${d.warnings}")
         // …and placing it is still allowed — the group does own the rider's freedom — so the frame tick placed
         // it, and the placement says, as it always did, which members the frame will not move (OP-16's
         // boundary-attachment rule). That sentence used to arrive far too late; now it arrives here.
         assertTrue(ed.doc.groups.single().placed, "got: ${ed.statusHint}")
         assertTrue(ed.statusHint.contains("will not follow it"), "got: ${ed.statusHint}")
-        assertTrue(ed.statusHint.contains(el(ed, 3).id), "the segment is one of them: ${ed.statusHint}")
+        assertTrue(ed.statusHint.contains("e3"), "the segment is one of them: ${ed.statusHint}")
     }
 
     /**
