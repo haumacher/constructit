@@ -33,6 +33,10 @@ first-class goal and the current implementation focus.
   an **arc** — the carrier is what the construction is about.
 - **Hide/show is part of the drawing** — hiding scaffolding is a recorded step, so it survives save/load
   and undoes like anything else (a welded alias stays hidden by construction, and is not recorded).
+- **The file is the construction** — a `.cit` drawing is the readable sequence of steps that built it, and
+  loading replays them (which is also the undo substrate). The drawing's **name** is a field in the topbar,
+  not something stored in the file: where the browser offers it, the first Save asks for a file and every
+  later Save writes back to that same one, with *Save as…* for a new one and a plain download everywhere else.
 - **Shapes by construction** — a rectangle's other two corners *share* the clicked corners'
   coordinates and a polygon's vertices are rotations of one, so they cannot stop being rectangular or
   regular however you drag them; an array copy is a transform node over the original, so the copies
@@ -57,7 +61,9 @@ first-class goal and the current implementation focus.
   frame, and moving or turning it is one edit on that one frame (its x / y / angle are ordinary typed
   fields). The internals are re-read as local coordinates, so an ortho path in a placed group is
   axis-aligned **in the group** — turn the frame and a building sited at an angle still draws
-  orthogonally, walls, openings and the solids cut from them following along.
+  orthogonally, walls, openings and the solids cut from them following along. A group is also a tool
+  **operand**: with it selected as a whole, clicking any member (or its row in the panel) arrays *every*
+  member in one step — and only then, because a group nobody selected still behaves as loose elements.
 - **Architectural layer** — a rectilinear **ortho-path** (shared-coordinate model: local vertex
   editing, axis-aligned by construction, closeable loops) and parametric **walls**: a *thick path*,
   i.e. one offset region around the path (mitred corners, end caps, a ring where the path closes),

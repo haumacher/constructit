@@ -7,6 +7,7 @@ import constructit.editor.Camera
 import constructit.editor.CreateDialog
 import constructit.editor.CreateMode
 import constructit.editor.DocumentFormat
+import constructit.editor.DocumentName
 import constructit.editor.Editor
 import constructit.editor.Format
 import constructit.editor.PointerButton
@@ -289,7 +290,9 @@ private fun setupApp() {
             // that frame rather than its points
             t.className.contains("gplace") -> if (g.placed) editor.unplaceGroup(g) else editor.placeGroup(g)
             t.className.contains("gdrop") -> editor.ungroup(g)
-            else -> editor.selectGroup(g)
+            // the row selects the group — or **feeds** it to a tool waiting for a geometry slot (OP-16),
+            // which is the Editor's decision, not the DOM's
+            else -> editor.clickGroup(g)
         }
     })
 
@@ -395,15 +398,187 @@ private fun setupApp() {
         fileNote.className = if (error) "err" else ""
     }
 
-    fun loadScript(text: String) {
+    fun loadScript(text: String): Boolean {
+        var ok = false
         try {
             val fresh = DocumentFormat.load(text)
             editor.replaceDocument(fresh)
             note("Loaded ${fresh.elements.size} element(s)")
+            ok = true
         } catch (e: Throwable) {
             note(e.message ?: "could not load that file", error = true)
         }
         repaint()
+        return ok
+    }
+
+    // ---- the drawing's name, and Save (OP-18: the name is shell state, never part of the file) ----
+    //
+    // The field *is* the state: every save reads it, so nothing has to be kept in step with it and a value
+    // typed without committing still saves under the name the user can see. [DocumentName] (commonMain,
+    // unit-tested) owns the arithmetic — the default, what a typed name means, what a picked file is called.
+    val nameField = document.getElementById("f-name") as HTMLInputElement
+    nameField.value = DocumentName.DEFAULT
+
+    fun docName(): String = DocumentName.normalize(nameField.value)
+
+    fun setDocName(raw: String) {
+        nameField.value = DocumentName.normalize(raw)
+    }
+    // normalise what was typed as soon as it is committed, so the field never shows a name Save would change
+    nameField.addEventListener("change", { setDocName(nameField.value) })
+
+    // The **File System Access API**, where it exists: the first Save asks for a file, later Saves write back
+    // to that same handle — a real Save rather than a pile of numbered downloads. Feature-detected, no
+    // library, and every failure path ends in the download that always worked.
+    //
+    // Excluded over `file:`, deliberately: a page with an opaque origin has nothing to remember a handle
+    // *for*, and Chrome refuses the picker there — which is also the E2E's environment, so the test exercises
+    // the fallback rather than hanging on a native dialog.
+    val fsApi: Boolean =
+        js("typeof window.showSaveFilePicker === 'function' && window.location.protocol !== 'file:'") as Boolean
+
+    /** The file a real Save writes back to, once there is one. Null means "ask". */
+    var fileHandle: dynamic = null
+    val anchor = document.getElementById("f-anchor") as org.w3c.dom.HTMLAnchorElement
+
+    /** The fallback that always works: hand the script to the browser as a download. */
+    fun downloadScript(
+        text: String,
+        why: String = "",
+    ) {
+        val blob = Blob(arrayOf(text), BlobPropertyBag(type = "text/plain"))
+        val url = URL.createObjectURL(blob)
+        anchor.href = url
+        anchor.download = DocumentName.fileName(docName())
+        anchor.click()
+        URL.revokeObjectURL(url)
+        note("Saved ${anchor.download}$why")
+    }
+
+    /** Write [text] through [handle]; any refusal (a revoked permission, a vanished file) falls back. */
+    fun saveViaHandle(
+        handle: dynamic,
+        text: String,
+    ) {
+        fun failed() {
+            // the handle is no longer good for anything, so stop pretending it is
+            fileHandle = null
+            downloadScript(text, " (the file could not be written, so it was downloaded)")
+        }
+        try {
+            val created: dynamic = handle.createWritable()
+            created.then(
+                { w: dynamic ->
+                    val written: dynamic = w.write(text)
+                    written.then(
+                        { _: dynamic ->
+                            val closed: dynamic = w.close()
+                            closed.then(
+                                { _: dynamic ->
+                                    // the file the bytes went into names the drawing from now on
+                                    setDocName(DocumentName.fromFileName(handle.name as String))
+                                    note("Saved ${DocumentName.fileName(docName())}")
+                                },
+                                { _: dynamic -> failed() },
+                            )
+                        },
+                        { _: dynamic -> failed() },
+                    )
+                },
+                { _: dynamic -> failed() },
+            )
+        } catch (e: Throwable) {
+            failed()
+        }
+    }
+
+    /** The `.cit` file type, as both pickers want it described. */
+    fun citTypes(): dynamic {
+        val accept: dynamic = js("({})")
+        accept["text/plain"] = arrayOf(DocumentName.EXTENSION)
+        val type: dynamic = js("({})")
+        type.description = "ConstructIt drawing"
+        type.accept = accept
+        return arrayOf(type)
+    }
+
+    /**
+     * Save. [askForFile] is *Save as…*: it always asks for a new handle, while a plain Save reuses the one
+     * it has. Without the API — or with the prompt refused — this is the download flow, unchanged.
+     */
+    fun saveDrawing(askForFile: Boolean) {
+        val text = DocumentFormat.save(editor.doc)
+        val handle = fileHandle
+        if (!fsApi) {
+            downloadScript(text)
+            return
+        }
+        // the handle is reused only while it still *is* the drawing's name: the field says what the drawing is
+        // called, so renaming it and pressing Save must produce a file of that name rather than quietly
+        // overwriting the old one — which is Save-as by another route, and asks
+        val sameName = handle != null && DocumentName.fromFileName(handle.name as String) == docName()
+        if (handle != null && sameName && !askForFile) {
+            saveViaHandle(handle, text)
+            return
+        }
+        try {
+            val opts: dynamic = js("({})")
+            opts.suggestedName = DocumentName.fileName(docName())
+            opts.types = citTypes()
+            val asked: dynamic = window.asDynamic().showSaveFilePicker(opts)
+            asked.then(
+                { h: dynamic ->
+                    fileHandle = h
+                    saveViaHandle(h, text)
+                },
+                { e: dynamic ->
+                    // A *cancelled* picker is not a failure, and downloading behind the user's back would be
+                    // the wrong answer to "not that name". Anything else — a refused prompt, no gesture —
+                    // is the API being unavailable in practice, so it falls back.
+                    if ((e.name as? String) == "AbortError") note("Save cancelled") else downloadScript(text, " (the file picker was refused)")
+                },
+            )
+        } catch (e: Throwable) {
+            downloadScript(text, " (the file picker was refused)")
+        }
+    }
+
+    /** Open through the API, keeping the handle so later Saves write back to it. False when unavailable. */
+    fun openWithPicker(fallback: () -> Unit): Boolean {
+        if (!fsApi || js("typeof window.showOpenFilePicker !== 'function'") as Boolean) return false
+        try {
+            val opts: dynamic = js("({})")
+            opts.types = citTypes()
+            opts.multiple = false
+            val asked: dynamic = window.asDynamic().showOpenFilePicker(opts)
+            asked.then(
+                { handles: dynamic ->
+                    val h: dynamic = handles[0]
+                    val file: dynamic = h.getFile()
+                    file.then(
+                        { f: dynamic ->
+                            val read: dynamic = f.text()
+                            read.then(
+                                { t: dynamic ->
+                                    if (loadScript(t as String)) {
+                                        // it came from a handle, so Save goes straight back into it
+                                        fileHandle = h
+                                        setDocName(DocumentName.fromFileName(h.name as String))
+                                    }
+                                },
+                                { _: dynamic -> note("could not read that file", error = true) },
+                            )
+                        },
+                        { _: dynamic -> note("could not read that file", error = true) },
+                    )
+                },
+                { e: dynamic -> if ((e.name as? String) == "AbortError") note("Open cancelled") else fallback() },
+            )
+        } catch (e: Throwable) {
+            return false
+        }
+        return true
     }
 
     (document.getElementById("v-dim") as HTMLInputElement).addEventListener("change", { e ->
@@ -431,22 +606,26 @@ private fun setupApp() {
             { note("Clipboard refused; use Save instead", error = true) },
         )
     })
-    (document.getElementById("f-download") as HTMLElement).addEventListener("click", {
-        val blob = Blob(arrayOf(DocumentFormat.save(editor.doc)), BlobPropertyBag(type = "text/plain"))
-        val a = document.createElement("a") as org.w3c.dom.HTMLAnchorElement
-        a.href = URL.createObjectURL(blob)
-        a.download = "drawing.cit"
-        a.click()
-        URL.revokeObjectURL(a.href)
-        note("Saved drawing.cit")
-    })
+    (document.getElementById("f-download") as HTMLElement).addEventListener("click", { saveDrawing(askForFile = false) })
+    (document.getElementById("f-saveas") as HTMLElement).addEventListener("click", { saveDrawing(askForFile = true) })
     val filePicker = document.getElementById("f-file") as HTMLInputElement
-    (document.getElementById("f-load") as HTMLElement).addEventListener("click", { filePicker.click() })
+    (document.getElementById("f-load") as HTMLElement).addEventListener("click", {
+        // the API's Open when it is there (its handle is what makes the *next* Save a real one), else the
+        // ordinary file input, which has no handle to give
+        if (!openWithPicker { filePicker.click() }) filePicker.click()
+    })
     filePicker.addEventListener("change", {
         val file = filePicker.files?.item(0)
         if (file != null) {
             val reader = FileReader()
-            reader.onload = { _ -> loadScript(reader.result as String) }
+            reader.onload = { _ ->
+                if (loadScript(reader.result as String)) {
+                    // a file input yields no writable handle, so the next Save has to ask for one — and the
+                    // drawing takes the picked file's name either way
+                    fileHandle = null
+                    setDocName(DocumentName.fromFileName(file.name))
+                }
+            }
             reader.readAsText(file)
         }
     })

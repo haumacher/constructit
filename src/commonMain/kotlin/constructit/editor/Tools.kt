@@ -130,6 +130,16 @@ class ToolDef(
      * needs three vertices, an array two instances. Non-zero is what makes the count field apply.
      */
     val minCount: Int = 0,
+    /**
+     * Whether a **whole group** may fill this tool's [SlotKind.GEOMETRY] slot (OP-16): the slot then holds
+     * *every* member and [build] fans over the whole of [Picks.elements] instead of taking `elements[0]`.
+     *
+     * Declared per tool rather than inferred, for two reasons. A tool must *fan* to accept it, and only the
+     * tool knows whether it can — and a tool with a second element slot (Mirror's axis) indexes
+     * [Picks.elements] positionally, which a multi-element geometry slot would silently break. So opting in
+     * is a promise about [build], made in the table like every other tool property.
+     */
+    val groupOperand: Boolean = false,
     val build: (Document, Picks, List<ScalarRef>) -> Unit,
 )
 
@@ -323,9 +333,11 @@ object Tools {
             ToolDef(SCALE, "Scale", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), scalars = listOf(num("factor")), help = "Type a factor (or pick a parameter in the panel), click geometry, then the centre.") { d, p, s -> d.scale(p.elements[0], p.points[0], s[0]) },
             ToolDef(TRANSLATE_V, "Translate by vector", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT, SlotKind.POINT), help = "Click geometry, then two points defining the translation vector.") { d, p, _ -> d.translateByVector(p.elements[0], p.points[0], p.points[1]) },
             // arrays: the interactive generalization of the boltCircle / holePattern macros (OP-6) — the
-            // count is structural, so a different count is a different construction, not an edited value
-            ToolDef(ARRAY_LINEAR, "Linear array", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT, SlotKind.POINT), minCount = 2, help = "Set the number of instances, then click the geometry and two points giving the step vector; every copy follows both.") { d, p, _ -> d.linearArray(p.elements[0], p.points[0], p.points[1], p.count) },
-            ToolDef(ARRAY_CIRCULAR, "Circular array", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), minCount = 2, help = "Set the number of instances, then click the geometry and the centre; the copies are spaced evenly round it.") { d, p, _ -> d.circularArray(p.elements[0], p.points[0], p.count) },
+            // count is structural, so a different count is a different construction, not an edited value.
+            // Their geometry slot takes a **whole group** as one operand (`groupOperand`, OP-16), which is
+            // why both build from the whole of `p.elements`: one element is the list of one.
+            ToolDef(ARRAY_LINEAR, "Linear array", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT, SlotKind.POINT), minCount = 2, groupOperand = true, help = "Set the number of instances, then click the geometry and two points giving the step vector; every copy follows both. With a whole group selected, clicking any member arrays the whole group.") { d, p, _ -> d.linearArray(p.elements, p.points[0], p.points[1], p.count) },
+            ToolDef(ARRAY_CIRCULAR, "Circular array", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), minCount = 2, groupOperand = true, help = "Set the number of instances, then click the geometry and the centre; the copies are spaced evenly round it. With a whole group selected, clicking any member arrays the whole group.") { d, p, _ -> d.circularArray(p.elements, p.points[0], p.count) },
             // ----- Measure -----
             ToolDef(DISTANCE, "Distance", ToolCategory.MEASURE, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to measure their distance.") { d, p, _ -> d.measureDistance(p.points[0], p.points[1]) },
             ToolDef(ANGLE, "Angle", ToolCategory.MEASURE, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click a point, the vertex, then another point.") { d, p, _ -> d.measureAngle(p.points[0], p.points[1], p.points[2]) },

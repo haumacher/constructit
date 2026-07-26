@@ -857,6 +857,15 @@ class Document {
     /** The group [el] belongs to, or null. At most one at this step — see [Group]. */
     fun groupOf(el: Element): Group? = groups.firstOrNull { g -> g.members.any { it === el } }
 
+    /**
+     * Where [g] *is*: its members' bounding-box centre — the same point a placement puts the frame at.
+     *
+     * What a pick **by name** stands in for (OP-16): feeding a group to a tool slot from the panel has no
+     * click position of its own, and the slot's click list is positional, so the group's own centre is
+     * recorded rather than a fabricated coordinate or a hole in the list.
+     */
+    fun groupCentre(g: Group): Vec2? = boundsCentre(groupMembers(g))
+
     /** Names are unique so the panel is unambiguous; blank auto-numbers ("group1", "group2", …). */
     private fun uniqueGroupName(base: String): String {
         // one word, since a step's arguments are split on spaces (as for scalar names)
@@ -4331,45 +4340,56 @@ class Document {
     // ---- arrays: the interactive generalization of the boltCircle / holePattern macros (OP-6) ----
 
     /**
-     * [count]-1 copies of [geom], each translated by a whole multiple of the vector [from] → [to].
+     * [count]-1 copies of every element of [geoms], each translated by a whole multiple of the vector
+     * [from] → [to].
      *
      * A **fan, not a chain**: copy *k* is `k·v` from the original rather than one step from copy *k-1*, so
      * no copy depends on a sibling — deleting one leaves the rest, and every copy recomputes directly from
      * the original and the two vector points. The copy keeps the source's kind and style, so an array of a
      * circle is circles and an array of a segment is segments, with no per-kind case anywhere.
+     *
+     * **A list, because the geometry slot may hold a whole group** (OP-16): one element is the list of one,
+     * so the single-element array is unchanged and a group is *k*-1 further instances of all of it. The step
+     * nodes are created once and shared by every member's copies — sharing a node is equality (OP-5), so
+     * the whole array re-spaces from one drag of the vector. Instance-major order, so the copies read as
+     * "the whole group again, and again".
      */
     @Suppress("UNCHECKED_CAST")
     fun linearArray(
-        geom: Element,
+        geoms: List<Element>,
         from: PointRef,
         to: PointRef,
         count: Int,
     ): List<Element> {
-        if (count < 2) return emptyList()
+        if (count < 2 || geoms.isEmpty()) return emptyList()
         val dx = cx.sub(cx.measureX(to), cx.measureX(from))
         val dy = cx.sub(cx.measureY(to), cx.measureY(from))
-        return (1 until count).map { k ->
+        return (1 until count).flatMap { k ->
             val step = k.toDouble()
-            add(cx.translateGeom(geom.ref as Ref<Value>, cx.scale(dx, step), cx.scale(dy, step)), geom.kind, geom.style)
+            val sx = cx.scale(dx, step)
+            val sy = cx.scale(dy, step)
+            geoms.map { geom -> add(cx.translateGeom(geom.ref as Ref<Value>, sx, sy), geom.kind, geom.style) }
         }
     }
 
     /**
-     * [count]-1 copies of [geom] rotated about [center], evenly spaced round the full turn — the
-     * interactive form of the bolt circle, whose macro does exactly this with points and holes.
+     * [count]-1 copies of every element of [geoms] rotated about [center], evenly spaced round the full
+     * turn — the interactive form of the bolt circle, whose macro does exactly this with points and holes.
      *
      * The angles are constants because [count] is structural: `360°/count` is not a value the user edits
-     * afterwards, it is what "six of them, evenly spaced" *means*.
+     * afterwards, it is what "six of them, evenly spaced" *means*. A list of sources for the same reason
+     * [linearArray] takes one — a whole group is one operand of the geometry slot (OP-16).
      */
     @Suppress("UNCHECKED_CAST")
     fun circularArray(
-        geom: Element,
+        geoms: List<Element>,
         center: PointRef,
         count: Int,
     ): List<Element> {
-        if (count < 2) return emptyList()
-        return (1 until count).map { k ->
-            add(cx.rotate(geom.ref as Ref<Value>, center, cx.const((360.0 * k / count).deg)), geom.kind, geom.style)
+        if (count < 2 || geoms.isEmpty()) return emptyList()
+        return (1 until count).flatMap { k ->
+            val angle = cx.const((360.0 * k / count).deg)
+            geoms.map { geom -> add(cx.rotate(geom.ref as Ref<Value>, center, angle), geom.kind, geom.style) }
         }
     }
 

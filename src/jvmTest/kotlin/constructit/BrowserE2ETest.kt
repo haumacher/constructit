@@ -276,6 +276,54 @@ class BrowserE2ETest {
             assertTrue(row.contains("1×"), "and the panel should count it; got: $row")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/07-custom-tool.png")))
 
+            // ---- the drawing's name, and Save through the fallback (OP-18: the name is shell state) ----
+            //
+            // Over `file:` the File System Access API is deliberately off (see Main.kt), so this exercises
+            // exactly the path every other browser takes: the anchor download, named from the field. Only a
+            // browser has an anchor, a download attribute or that field at all.
+            assertTrue(page.querySelector("#f-name").inputValue() == "drawing", "the default name is in the topbar")
+            page.fill("#f-name", " plans/west wing ")
+            page.click("#f-download")
+            assertTrue(
+                page.querySelector("#f-anchor").getAttribute("download") == "west wing.cit",
+                "Save names the file from the field, normalised; got: ${page.querySelector("#f-anchor").getAttribute("download")}",
+            )
+            assertTrue(
+                page.querySelector("#file-note").textContent() == "Saved west wing.cit",
+                "and says so; got: ${page.querySelector("#file-note").textContent()}",
+            )
+            assertTrue(page.querySelector("#f-name").inputValue() == "west wing", "the field shows the name it took")
+
+            // ---- a circular array over the whole group, fed from the groups panel (OP-16) ----
+            //
+            // The panel route, end to end in the DOM: with the tool armed, the group's *row* fills the
+            // geometry slot, and the remaining click lands on the canvas as usual.
+            val itemsBeforeArray = page.querySelectorAll("#tree .item").size
+            val members = page.querySelector("#groups-list .grow .gcount").textContent().toInt()
+            page.fill("#t-count", "2")
+            page.querySelector("#t-count").press("Enter")
+            page.click("#tool-arraycircular")
+            assertTrue(
+                page.querySelector("#status").textContent().contains("count 2"),
+                "the structural count is what the field says; got: ${page.querySelector("#status").textContent()}",
+            )
+            page.click("#groups-list .grow .gname") // the row feeds the armed geometry slot
+            assertTrue(
+                page.querySelector("#status").textContent().contains("is the geometry"),
+                "the row should feed the slot; got: ${page.querySelector("#status").textContent()}",
+            )
+            page.mouse().click(box.x + box.width * 0.5, box.y + box.height * 0.05) // the centre of rotation
+            assertTrue(
+                page.querySelectorAll("#tree .item").size == itemsBeforeArray + members + 1,
+                "one copy of every member (plus the centre point); " +
+                    "got ${page.querySelectorAll("#tree .item").size - itemsBeforeArray} for $members members",
+            )
+            assertTrue(
+                page.querySelector("#status").textContent().contains("not grouped"),
+                "and the copies land ungrouped, out loud; got: ${page.querySelector("#status").textContent()}",
+            )
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/11-group-array.png")))
+
             assertTrue(
                 meshBoolLines.size == 1 && meshBoolLines[0].contains("Manifold"),
                 "the general boolean engine should report itself exactly once (OP-9); got: $meshBoolLines",

@@ -639,7 +639,8 @@ letters included, because the shell's keydown seam skips fields and modifiers.
    centre), the interactive generalization of the bolt-circle/hole-pattern macros: each copy is a
    transform node over the original (a fan, not a chain), any element kind works with no per-kind case,
    the copies recompute live and delete as the original's dependents, and the count is structural (see
-   *Tool inputs* above). Remaining: snap modes — key points of *derived* geometry (endpoint/midpoint/
+   *Tool inputs* above). A whole **group** fills the geometry slot as one operand (OP-16), so one step arrays
+   every member — from the canvas or from the groups panel. Remaining: snap modes — key points of *derived* geometry (endpoint/midpoint/
    quadrant, which need the derived point materialized, not just its coordinate) and arcs (no carrier
    circle yet); drag-to-attach onto **arcs** and onto **derived points** (the two cases the weld
    magnet doesn't yet cover — see *Welding*).
@@ -649,9 +650,13 @@ letters included, because the shell's keydown seam skips fields and modifiers.
    a **frame**: placing a group retrofits the free points it owns to frame-relative form, after which
    moving the group is one literal write on the frame (drag, or typed x/y/angle) and its derived
    geometry follows for free. **Group → macro promotion is done** with item 6: both are the same dialog
-   over the same closure analysis, so the promotion path is "open it in the other mode". Remaining:
-   **relocate-origin / re-parent / constructed frames (mates)**, and capturing an **ortho path's** shared
-   coordinate nodes under a frame (the rotated project frame — walls do not yet follow a frame, and say so).
+   over the same closure analysis, so the promotion path is "open it in the other mode". An **ortho path is
+   captured whole** by a frame (the rotated project frame — walls follow it), and a group is a tool **operand**:
+   with the group selected as a whole, a geometry-slot click on any member — or a click on its panel row —
+   feeds the group, so an array copies every member in one step. Remaining: **relocate-origin / re-parent /
+   constructed frames (mates)**, grouping the copies an array of a group makes (they land ungrouped, on
+   purpose — see the as-built note), and letting Mirror/Rotate/Scale/Translate take a group the same way (their
+   builds index `Picks.elements` positionally).
 5. **Result layer (OP-14) — done end to end.** Trim ops, `Loop`/`Region`, areas, the *Outline* tool,
    derived scaffolding + a dim toggle, and cubic Béziers (OP-15) taking part in a boundary. Remaining
    here: **rework the wall as an output feature** (OP-21), regions with holes from traced outlines
@@ -760,6 +765,38 @@ group and restates its frame, and replay re-runs the same retrofit. The members'
 restating **world** positions — they replay before the placement, which then derives the local
 coordinates from world position and frame — so a placed group adds no local coordinates and no node
 names to the file, and a `place` step whose group step is gone goes with it.
+
+#### The drawing's **name** is not in the file (decision)
+
+A drawing now has a name — an editable field in the topbar, defaulting to `drawing`, and Save writes
+`<name>.cit`. **The name is shell state and is deliberately not a step, not a header field and not part of the
+format.** The reasoning is the format's own: the file *is* the construction, a name constructs nothing, and the
+filesystem already holds it — better, because it stays true under the operations a file undergoes. Rename the
+file and a name stored inside it is a lie; copy the file and the copy claims to be the original; two drawings
+saved from the same session would disagree with their own contents. Loading therefore takes the name **from the
+picked file** (its base name, extension stripped), which is the same fact read from the place that owns it.
+
+This is not the visibility reversal in reverse. Hiding is a *decision the user made about the drawing*, so
+dropping it is data loss; a file's name is a *fact about the file*, and storing it duplicates something the
+environment already answers. The test that keeps the two apart is the round trip: `save → load → save` must be
+byte-equal, and it is unaffected by what the drawing is called.
+
+What is shared code is the arithmetic — `DocumentName` in `commonMain`, unit-tested: the default, what a typed
+name normalizes to (trimmed, path part dropped, a typed `.cit` not doubled, file-illegal characters replaced,
+bounded in length), and how a picked file's name is read back. The *platform* half can only live in `jsMain`.
+
+**Save is a real Save where the browser has one.** With the File System Access API (Chrome's
+`showSaveFilePicker`) the first Save asks once and every later Save writes back to that **same handle**, so
+repeated saving is one file rather than a pile of numbered downloads; *Save as…* is the separate affordance that
+asks for a new one, and Open through `showOpenFilePicker` hands back a handle too, which is what makes the next
+Save a real one. The handle is kept only while it still *is* the drawing's name: edit the name field and Save
+asks again, because the field says what the drawing is called and silently overwriting the old file would make
+it a lie in the other direction. Feature-detected, no library, and **every** failure path ends in the download that always
+worked: no API, a refused prompt, a revoked permission, a vanished file. One case deliberately does *not* fall
+back — a **cancelled** picker, because downloading behind the user's back is the wrong answer to "not that
+name". The API is also switched off over `file:`, where a page has no origin to remember a handle for and Chrome
+refuses the picker anyway; that keeps the browser E2E on the fallback path, where it asserts the download's
+name rather than hanging on a native dialog.
 
 ### Junctions own the freedom at a meeting point (OP-20 — RESOLVED)
 
@@ -1776,6 +1813,69 @@ placement (a break inside a placed group) runs on already-captured geometry and 
 into the frame, so there the world position is what is written. The file still holds no local coordinates
 and no node names — only positions its own steps can be replayed from, and `save → load → save` is
 byte-equal after placing, a frame drag, a corner drag, a rotation and a break.
+
+### Implementation status (as built — a whole group as a tool *operand*)
+
+A user report closed the last gap between "a group is a thing" and "a group is a thing you can *build with*":
+*"I cannot create a circular array from a group as input."* Grouping bought select-together, naming, bulk
+visibility and a frame — but every tool still took one element per slot, so the answer to "array this room"
+was to array eight walls eight times.
+
+**The rule is the one the drag subject already established, applied to a pick.** *A group acts as a whole
+only when selected as a whole.* So a click into a `GEOMETRY` slot means the **group** when `selectedGroup`
+names the group the click landed in, and means that element alone otherwise — a member deliberately reached
+alone, or a group nobody has selected. That is not a second convention: it is the same sentence the press-time
+drag rule says, and it holds for the same reason — grouping is invisible until something of it is selected, so
+a click must never copy more than the user can see. Both readings stay reachable with no modifier and no mode.
+
+**Opting in is a `ToolDef` property, because accepting a group is a promise about `build`.** `groupOperand =
+true` on the two array tools, and `linearArray`/`circularArray` take a `List<Element>` where they took one —
+*one element is the list of one*, exactly as the scalar-input list generalized a single active parameter. The
+flag is not inferred from the slot kind for a concrete reason: a tool with a **second** element slot (Mirror's
+axis) indexes `Picks.elements` positionally, and a multi-element geometry slot would silently break it. So the
+table says which tools fan, and the array tools' step vector nodes are created **once** and shared by every
+member's copies — sharing a node is equality (OP-5), so one drag of the vector re-spaces the whole array.
+
+**The panel is the second route into the same slot** (OP-13: the panel is as much an input as the canvas). A
+click on a group's row feeds a waiting geometry slot and otherwise selects, as it always did — one entry point
+(`Editor.clickGroup`), so the shell only routes and the decision (which tool is armed, how many slots are
+filled) stays where it can be tested. Naming *is* the pick there, so it needs no prior selection; and the
+selection is deliberately left alone, because a pick is not a selection — the members get the *picked* mark
+every other half-finished operation gets. The slot has no click of its own, so the group's **bounding-box
+centre** is recorded for it: the click list is positional (a fillet reads `clicks[0]`/`clicks[1]`), so a hole
+in it would be a trap, and the group's centre is the one position that is not a fabrication.
+
+**Persistence: the file names the members, and never the group.** `tool arraycircular pts=e3 els=e1,e2
+count=3` — the geometry slot's picks, which are now several. A `group=` argument was considered and rejected:
+the group is a fact about the **gesture**, not about the construction, and three things fall out of leaving it
+out. Ungrouping afterwards cannot orphan an array. The delete cascade needs no new rule — the step references
+the members, so deleting one takes the array with it, and the group is left consistent by the rule it already
+had. And nothing has to guarantee that a `group` step precedes the arrays that used it. `save → load → save`
+is byte-equal, which is the whole test.
+
+**The count means what it always meant**, and that is worth stating because a group makes it ambiguous-looking:
+*N instances including the original*, so N = 3 over a two-member group is **4** new copies. The one thing a
+group changes is the bound: `members × (count-1)` copies, capped by the same `MAX_COUNT` that protects a single
+element from a mistyped count, and **refused with the numbers** rather than clamped — a different number of
+copies is a different construction (OP-18), so quietly building fewer would be answering a question nobody
+asked.
+
+**Placed groups: it just works, and the probe says why.** A copy is a transform node over the member's
+*published* point, which a placement has already bound onto `frameApply(frame, local)` — so the copies are
+downstream of the frame and a frame drag moves them with everything else. Nothing in the array knows a frame
+exists (OP-5 again). The **other order is refused, by the rule that was already there**: array first and the
+copies are non-members depending on a free point the group owns, which is exactly `analysePlacement`'s
+"owned, shared, or outside" conflict — so placing says which elements are in the way. The honest sequence is
+*place, then array*, and both directions are pinned in `GroupArrayTest`.
+
+**Cuts, named.** The copies land **ungrouped** — a deliberate first cut. Grouping each copy is the obvious next
+step and it is not free: a group is recorded membership, so *k* copies would mean *k* new `group` steps whose
+names have to be generated, deleted and undone as a unit, and a copy's group would want to be a *linked* copy
+of the original's rather than an independent one (edit the original room, and does the fifth copy's membership
+follow?). Recorded as follow-up rather than guessed at. The status line says the copies are not grouped, so
+nothing has to be discovered by clicking one. And only the two array tools opt in: Mirror, Rotate, Scale and
+Translate could fan the same way once their positional `elements` indexing is addressed, which is a change to
+those builds, not to this mechanism.
 
 ## Going to 3D
 
@@ -3033,6 +3133,47 @@ Three broad families (see OP-9 decision above):
   visible arc would break). 561 headless tests green (24 new: `OutlineFollowTest`, `VisibilityTest`,
   `FilletCurvesTest`, `ArcCarrierTest`), and the browser E2E extended with the group-visibility toggle —
   pixels gone, one undo, panel state following.
+
+- **Session 7 — two user reports: a group you can *build with*, and a drawing that has a name.**
+  (1) **"I cannot create a circular array from a group as input."** The fix was not a group-array tool but the
+  missing half of a rule the previous session had already written down: *a group acts as a whole only when
+  selected as a whole.* That sentence decided the drag subject; applied to a **pick**, it decides that a
+  geometry-slot click on a member feeds the *group* while the group is what is selected, and that element alone
+  otherwise — the old behaviour, pinned by a test, because grouping is invisible until something of it is
+  selected. Accepting a group is a promise about `build`, so it is a `ToolDef` property (`groupOperand`) rather
+  than something inferred from the slot kind: a tool with a second element slot (Mirror's axis) indexes
+  `Picks.elements` positionally, and a multi-element geometry slot would have broken it silently. The arrays
+  now take a `List<Element>` where they took one, and *one element is the list of one* — the same
+  generalization the ordered scalar list made.
+  (2) **The panel is the second route into the same slot**, since it is as much an input as the canvas (OP-13):
+  a group's row feeds a waiting geometry slot and otherwise selects, through one commonMain entry point, so the
+  shell only routes. Naming is the pick there, so it needs no selection — and the slot's missing click position
+  is filled by the group's own bounding-box centre, because the click list is positional and a hole in it would
+  be a trap for the next tool that reads `clicks[1]`.
+  (3) **What the file records is the members, never the group** (`els=e1,e2`). A `group=` argument was
+  considered and rejected: the group is a fact about the *gesture*, and leaving it out means ungrouping cannot
+  orphan an array, the delete cascade needs no new rule, and no step ordering has to be guaranteed. The count
+  keeps meaning *instances including the original* (N = 3 over two members is 4 copies), and the one thing a
+  group changes — `members × (count-1)` — is bounded by the same `MAX_COUNT` and **refused with the numbers**
+  instead of clamped, since a different number of copies is a different construction.
+  (4) **Arraying a *placed* group needed no code at all, and the probe says why**: a copy is a transform node
+  over the member's published point, which a placement has already bound onto the frame, so the copies are
+  downstream of it (OP-5). The reverse order is refused by the conflict rule that was already there, naming the
+  copies in the way. The named cut is that copies land **ungrouped** — grouping per copy wants generated names,
+  a delete/undo unit, and an answer to whether a copy's membership *follows* the original's, so it is recorded
+  as follow-up rather than guessed at, and the status line says the copies are not grouped.
+  (5) **A drawing has a name, and the name is not in the file** (recorded under OP-18). The file is the
+  construction; a name constructs nothing and the filesystem already holds it — and holds it *truthfully* under
+  rename and copy, which a stored name would not. So loading takes the name from the picked file, and
+  `save → load → save` byte-equality is untouched. Deliberately *not* the visibility reversal in reverse:
+  hiding is a decision about the drawing, a file's name is a fact about the file.
+  (6) **Save became a real Save** where the browser has the File System Access API: ask once, then overwrite the
+  same handle, with *Save as…* as the separate affordance and Open handing back a handle too. Every failure path
+  falls back to the download — no API, refused prompt, revoked permission — except a *cancelled* picker, which
+  must not download behind the user's back. The API is off over `file:`, which is both honest (no origin to
+  remember a handle for) and what keeps the E2E on the fallback path, asserting the download's name instead of
+  hanging on a native dialog. 583 headless tests green (19 new: `GroupArrayTest`, `DocumentNameTest`), and the
+  browser E2E extended with the name field, a fallback Save and a group array fed from the panel.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

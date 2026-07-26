@@ -20,7 +20,12 @@ private const val CLICK_SLOP_PX = 3.0
 /** How many panel picks are remembered — no tool asks for more scalars than this. */
 private const val SCALAR_PICK_MEMORY = 4
 
-/** Upper bound on a structural count, so a slip of the keyboard cannot build a million nodes. */
+/**
+ * Upper bound on a structural count, so a slip of the keyboard cannot build a million nodes — and, since a
+ * whole group can fill a geometry slot (OP-16), the same bound on the **copies** one step may build:
+ * `members × (count-1)`. For a single element the two are the same number, so nothing about the
+ * single-element case changes.
+ */
 private const val MAX_COUNT = 512
 
 /**
@@ -461,6 +466,15 @@ class Editor(
     private val pickedClicks = ArrayList<Vec2>()
     private var filledSlots = 0
 
+    /**
+     * The group that filled the armed tool's geometry slot, if a whole group did (OP-16) — kept only so
+     * the status line can name it, since the *step* records the members and nothing else.
+     */
+    private var pickedGroup: Group? = null
+
+    /** Why the last pick was refused, when there is a better reason than "that click hit nothing". */
+    private var pickRefusal: String? = null
+
     // ortho-path (turtle) state — the path itself is retained in the document while being drawn
     private var activePath: OrthoPath? = null
     private var pathAtEnd = true // which end of a resumed path is growing
@@ -527,6 +541,8 @@ class Editor(
         pickedElements.clear()
         pickedClicks.clear()
         filledSlots = 0
+        pickedGroup = null
+        pickRefusal = null
         dragTarget = null
         dragFrame = null
         dragStart = null
@@ -846,6 +862,82 @@ class Editor(
         select(listOf(el), el)
         statusHint = "${selectionLabel()} selected"
         onChange()
+    }
+
+    /**
+     * The groups panel's row click. A tool waiting for a geometry slot takes the **group** (OP-16 — the
+     * panel is as much an input as the canvas, OP-13); otherwise the row selects it, as it always did.
+     *
+     * One entry point, so the shell only routes: which of the two a click means depends on the armed tool
+     * and on how many slots are already filled, neither of which the DOM knows anything about.
+     */
+    fun clickGroup(g: Group) {
+        if (!feedGroupToSlot(g)) selectGroup(g)
+    }
+
+    /**
+     * Why a whole group must not fill [tool]'s geometry slot, as a sentence — or null when it may.
+     *
+     * The one reason is size: a group multiplies a structural count by its member count, so the bound that
+     * protects a single element from a mistyped count ([MAX_COUNT]) has to be applied to the *copies*. Said
+     * rather than clamped, because the count is structural: quietly building a different number of copies
+     * from the one asked for would be a different construction (OP-18).
+     */
+    private fun groupFanRefusal(
+        tool: ToolDef,
+        g: Group,
+        members: Int,
+    ): String? {
+        val instances = toolCount(tool)
+        val copies = members * (instances - 1)
+        if (instances < 2 || copies <= MAX_COUNT) return null
+        return "Group ${g.name} has $members elements, so $instances instances would build $copies copies — " +
+            "more than $MAX_COUNT; lower the count, or array fewer elements"
+    }
+
+    /**
+     * Fill the armed tool's pending [SlotKind.GEOMETRY] slot with the whole of [g], or return false when no
+     * such slot is waiting (or the tool cannot take a group — see [ToolDef.groupOperand]).
+     *
+     * The naming *is* the pick, so unlike the canvas route this needs no prior selection: it is the panel's
+     * answer to the same question a click on a member answers by position. The remaining slots then proceed
+     * by canvas clicks exactly as usual — and a tool whose slots this completes builds on the spot, which is
+     * why the completion path is the shared one.
+     *
+     * A pick is not a selection, so the selection is deliberately left alone: the members get the *picked*
+     * mark (see [toolPicks]), which is what every other half-finished operation gets.
+     */
+    private fun feedGroupToSlot(g: Group): Boolean {
+        val tool = doc.toolDef(toolId) ?: return false
+        if (!tool.groupOperand || tool.slots.getOrNull(filledSlots) != SlotKind.GEOMETRY) return false
+        val members = doc.groupMembers(g)
+        // the group's own centre stands in for the click this pick did not have — see [Document.groupCentre]
+        val at = doc.groupCentre(g)
+        if (members.isEmpty() || at == null) return false
+        // a refusal still *consumes* the click: falling through to selecting the group would replace the
+        // reason with a selection note, and the row would look as if it had done nothing
+        groupFanRefusal(tool, g, members.size)?.let {
+            statusHint = it
+            onChange()
+            return true
+        }
+        pickedElements.addAll(members)
+        pickedGroup = g
+        filledSlots++
+        pickedClicks.add(at)
+        if (filledSlots >= tool.slots.size) {
+            if (!maybeCompleteTool(at)) statusHint = scalarPrompt(tool)
+        } else {
+            statusHint = "${groupFedNote(g)} ${tool.help} (${tool.slots.size - filledSlots} more)"
+        }
+        onChange()
+        return true
+    }
+
+    /** How the status line says a whole group filled a geometry slot — one wording for both routes. */
+    private fun groupFedNote(g: Group): String {
+        val n = doc.groupMembers(g).size
+        return "Group ${g.name} ($n element${if (n == 1) "" else "s"}) is the geometry — every member is copied."
     }
 
     /** Select every member of [g] — what clicking a member on the canvas does. */
@@ -1980,6 +2072,7 @@ class Editor(
     private fun runToolClick(screen: Vec2) {
         val tool = doc.toolDef(toolId) ?: return
         val world = camera.screenToWorld(screen)
+        pickRefusal = null
         // a repeating tool closes when the first pick is clicked again — the boundary is complete
         if (tool.repeating && filledSlots >= 2) {
             val again = HitTest.nearest(doc, ev(), world, tolWorld()) { it === pickedElements.firstOrNull() }
@@ -2005,7 +2098,7 @@ class Editor(
                 // ...and an arc also carries a circle: the twin coercion, so a circle slot takes one
                 SlotKind.CIRCLE -> pickElement(world) { it.isCentric }
                 SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
-                SlotKind.GEOMETRY -> pickElement(world) { true }
+                SlotKind.GEOMETRY -> pickGeometry(world, tool)
                 SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.handle is OnCircleHandle }
                 SlotKind.CENTRIC -> pickElement(world) { it.isCentric }
                 // a fillet leg: either carrier will do, since all the rounding needs is something to be
@@ -2022,12 +2115,14 @@ class Editor(
         if (!picked) {
             // A miss must *say* it missed, and say where the operation stands. Silently keeping the old
             // count is the worst of the three possible answers: the drawing does not change, so nothing on
-            // screen distinguishes "that curve is in" from "that click landed in space".
+            // screen distinguishes "that curve is in" from "that click landed in space". A pick that hit
+            // something and was *refused* has a better reason of its own, and says that instead.
+            val refused = pickRefusal
             statusHint =
-                if (tool.repeating) {
-                    "That click hit no curve — $filledSlots picked so far. ${tool.help}"
-                } else {
-                    "That click hit nothing pickable — ${tool.help}"
+                when {
+                    refused != null -> refused
+                    tool.repeating -> "That click hit no curve — $filledSlots picked so far. ${tool.help}"
+                    else -> "That click hit nothing pickable — ${tool.help}"
                 }
             onChange()
             return
@@ -2051,9 +2146,42 @@ class Editor(
             // the picks away was the older answer, and it made the geometry pay for a value's absence.
             if (!maybeCompleteTool(world)) statusHint = scalarPrompt(tool)
         } else {
-            statusHint = "${tool.help} (${tool.slots.size - filledSlots} more)"
+            val fed = pickedGroup?.let { groupFedNote(it) + " " } ?: ""
+            statusHint = "$fed${tool.help} (${tool.slots.size - filledSlots} more)"
         }
         onChange()
+    }
+
+    /**
+     * A geometry pick, which is the one slot a **whole group** can fill (OP-16).
+     *
+     * The rule is the one the drag subject already follows: *a group acts as a whole only when selected as a
+     * whole.* With [selectedGroup] naming the group the click landed in, the slot takes every member and the
+     * tool fans over them; without it — a member reached alone, or a group nobody selected — the click means
+     * that element and nothing else, exactly as before. Grouping is invisible until something of it is
+     * selected, so this is the only reading under which a click cannot copy more than the user can see.
+     */
+    private fun pickGeometry(
+        world: Vec2,
+        tool: ToolDef,
+    ): Boolean {
+        val hit = HitTest.nearest(doc, ev(), world, tolWorld()) { true } ?: return false
+        val whole = if (tool.groupOperand) selectedGroup?.takeIf { doc.groupOf(hit) === it } else null
+        val members = whole?.let { doc.groupMembers(it) }
+        if (whole == null || members.isNullOrEmpty()) {
+            pickedElements.add(hit)
+            return true
+        }
+        // too many copies is a refusal, not a quiet fallback to the one element clicked: the user asked for
+        // the group, and arraying one member instead would be a different construction
+        val why = groupFanRefusal(tool, whole, members.size)
+        if (why != null) {
+            pickRefusal = why
+            return false
+        }
+        pickedElements.addAll(members)
+        pickedGroup = whole
+        return true
     }
 
     /**
@@ -2069,10 +2197,22 @@ class Editor(
         val scalars = toolScalars(tool) ?: return false
         val where = at ?: pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0)
         val picks = Picks(pickedPoints.toList(), pickedElements.toList(), where, pickedClicks.toList(), count = toolCount(tool))
+        // read before [resetPicks] drops it: a group operand is worth reporting, because the one thing the
+        // canvas cannot show is *how much* the tool just took (OP-16)
+        val fedGroup = pickedGroup
+        val members = picks.elements.size
         doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
         checkpoint() // the tool application — earlier slot clicks were only halves of it
         resetPicks()
-        statusHint = ""
+        statusHint =
+            if (fedGroup == null) {
+                ""
+            } else {
+                // the copies are deliberately *not* grouped (see OP-16's as-built note), so say it here
+                // rather than leave the user to discover it by clicking one
+                "${tool.label}: ${picks.count} instances of group ${fedGroup.name}'s $members element" +
+                    "${if (members == 1) "" else "s"} — the copies are not grouped"
+            }
         return true
     }
 

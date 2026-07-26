@@ -9,6 +9,10 @@
         #app { display: flex; flex-direction: column; height: 100%; }
         #topbar { display: flex; align-items: baseline; gap: 16px; padding: 6px 12px; border-bottom: 1px solid #ddd; background: #fafafa; }
         #topbar .brand { font-weight: 600; color: #1f77b4; }
+        /* the drawing's name: shell state, not part of the file — see DocumentName */
+        #f-name { font: inherit; font-size: 13px; width: 14ch; padding: 1px 4px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #444; }
+        #f-name:hover { border-color: #ddd; background: #fff; }
+        #f-name:focus { border-color: #1f77b4; background: #fff; outline: none; }
         #edit-actions button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
         #edit-actions button:hover:enabled { background: #f0f0f0; }
         #edit-actions button:disabled { color: #bbb; border-color: #e5e5e5; cursor: default; }
@@ -109,6 +113,9 @@
 <div id="app">
     <div id="topbar">
         <span class="brand">ConstructIt</span>
+        <input id="f-name" value="drawing" spellcheck="false" autocomplete="off"
+               title="The drawing's name. Save writes &lt;name&gt;.cit; it is not stored in the file (the file is the construction).">
+        <a id="f-anchor" hidden></a>
         <span id="edit-actions">
             <button id="e-undo" title="Undo (Ctrl+Z)">Undo</button>
             <button id="e-redo" title="Redo (Ctrl+Y / Ctrl+Shift+Z)">Redo</button>
@@ -127,7 +134,8 @@
             <h3>Drawing</h3>
             <div id="file-actions">
                 <button id="f-copy" title="Copy the drawing as a construction script">Copy</button>
-                <button id="f-download" title="Download the drawing as a .cit file">Save</button>
+                <button id="f-download" title="Save the drawing — back to the same file once it has one">Save</button>
+                <button id="f-saveas" title="Save under a new name or in another place">Save as…</button>
                 <button id="f-load" title="Load a construction script">Open…</button>
                 <input id="f-file" type="file" accept=".cit,.txt" hidden>
             </div>
