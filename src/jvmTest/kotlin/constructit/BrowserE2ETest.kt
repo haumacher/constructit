@@ -863,4 +863,110 @@ class BrowserE2ETest {
             browser.close()
         }
     }
+
+    /**
+     * **A datum sketch plane, in the real browser** (OP-17's datum extension, GitHub #6): a plate, then a
+     * sketch plane on one of its footprint edges at **45°** — the general case sketch-on-face is the special
+     * one of — and a boss extruded on it.
+     *
+     * What only a browser can answer: the palette really grew the button, one click on a line really opens a
+     * space the topbar names *by its angle and its line*, and a feature drawn there really comes out (the
+     * tree lists a second solid, and the 3D view is not blank). The angle comes from the panel with its unit
+     * selector, which is also the only place a *negative* one can be typed.
+     */
+    @Test
+    fun datumSketchPlaneInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status() = page.querySelector("#status").textContent()
+
+            fun tree() = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+            fun solids() = tree().count { it.startsWith("solid") }
+
+            val box = page.querySelector("#canvas").boundingBox()
+            val rx1 = box.x + box.width * 0.30
+            val rx2 = box.x + box.width * 0.70
+            val ry1 = box.y + box.height * 0.35
+            val ry2 = box.y + box.height * 0.60
+
+            // the plate, exactly as the face-sketch flow builds it
+            page.click("#tool-${Tools.RECTANGLE}")
+            page.mouse().click(rx1, ry1)
+            page.mouse().click(rx2, ry2)
+            page.fill("#p-name", "thickness")
+            page.fill("#p-value", "20")
+            page.click("#p-add")
+            page.click("#tool-${Tools.EXTRUDE}")
+            page.mouse().click((rx1 + rx2) / 2, ry2)
+            assertTrue(solids() == 1, "the plate should be one solid; tree: ${tree()}")
+
+            // ---- the datum: 45 degrees on the plate's front footprint edge ----
+            val planPixels = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            page.fill("#p-name", "tilt")
+            page.fill("#p-value", "45")
+            page.selectOption("#p-unit", "deg")
+            page.click("#p-add")
+            page.click("#tool-${Tools.SKETCH_PLANE}")
+            page.mouse().click((rx1 + rx2) / 2, ry2)
+            assertTrue(
+                page.querySelector("#v-space").inputValue() == "plane1",
+                "the topbar indicator should name the new plane; got ${page.querySelector("#v-space").inputValue()}",
+            )
+            assertTrue(status().contains("datum plane"), "and the conventions are said out loud; got: ${status()}")
+            assertTrue(
+                page.querySelector("#v-space").textContent().contains("45° on"),
+                "the space list names a datum by its angle and its line; got: ${page.querySelector("#v-space").textContent()}",
+            )
+            val datumPixels = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            assertTrue(datumPixels != planPixels, "a datum view draws its own space, not the plan's")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/16-datum-plane-2d.png")))
+
+            // ---- a boss on it: Extrude follows the plane's own normal ----
+            val cx = box.x + box.width * 0.5
+            val cy = box.y + box.height * 0.5
+            page.click("#tool-${Tools.RECTANGLE}")
+            page.mouse().click(cx - 100.0, cy - 60.0)
+            page.mouse().click(cx + 100.0, cy + 40.0)
+            page.fill("#p-name", "boss")
+            page.fill("#p-value", "10")
+            page.selectOption("#p-unit", "mm")
+            page.click("#p-add")
+            page.click("#tool-${Tools.EXTRUDE}")
+            page.mouse().click(cx, cy + 40.0) // the rectangle's lower edge, in the plane's own coordinates
+            assertTrue(solids() == 2, "the boss should be a solid of its own; tree: ${tree()}, status: ${status()}")
+
+            page.click("#v-3d")
+            page.waitForSelector("#canvas3:visible")
+            page.mouse().move(cx, cy)
+            page.mouse().down()
+            page.mouse().move(cx + 70.0, cy - 50.0)
+            page.mouse().up()
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/17-datum-plane-3d.png")))
+            val drawn = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
+            val blank =
+                page.evaluate(
+                    "() => { const c = document.createElement('canvas'); " +
+                        "c.width = document.querySelector('#canvas3').width; c.height = document.querySelector('#canvas3').height; " +
+                        "return c.toDataURL(); }",
+                ) as String
+            assertTrue(drawn != blank, "the 3D view should have drawn the tilted feature")
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

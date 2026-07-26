@@ -100,13 +100,13 @@ object SceneRenderer {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
         if (grid) drawGrid(cam, target, view)
-        // Reference context of a **face** sketch space (OP-17): the rectangle the face covers, in this
-        // space's own (u, v) — so the user can see where the face *is* before drawing on it. Drawn with the
-        // grid's weight because it is not this space's geometry; it is nevertheless where a pick of the
-        // solid the face belongs to lands ([Document.faceOutlineOf]), since that face is what that solid
-        // looks like here. Ghosting the *other* spaces is deliberately not attempted (see DESIGN.md).
+        // Reference context of a sketch space (OP-17): a **face**'s rectangle, or a **datum**'s hinge line
+        // (GitHub #6), in this space's own (u, v) — so the user can see where the plane *is* before drawing
+        // on it. Drawn with the grid's weight because it is not this space's geometry; it is nevertheless
+        // where a pick of the part this plane cuts lands ([Document.partOutlineOf]). Ghosting the *other*
+        // spaces is deliberately not attempted (see DESIGN.md).
         val tip = doc.facePartTip(ev)
-        doc.faceOutline(doc.activeSpace, ev)?.let { r ->
+        doc.spaceOutline(doc.activeSpace, ev)?.let { r ->
             target.polyline((r + r.first()).map { cam.worldToScreen(it) }, faceStyle)
         }
         for (el in doc.elements) {
@@ -248,7 +248,7 @@ object SceneRenderer {
         if (!el.visible) return
         // the same substitution picking makes (OP-17): in a face space the part that face belongs to *is*
         // the face rectangle, so that is what a pick of it highlights
-        doc.faceOutlineOf(el, ev, tip)?.let { r ->
+        doc.partOutlineOf(el, ev, tip)?.let { r ->
             target.polyline((r + r.first()).map { cam.worldToScreen(it) }, style)
             return
         }

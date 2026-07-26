@@ -161,6 +161,17 @@ second bore on a second face lands in the part with the first bore in it rather 
 records which solid it cut so a reload rebuilds the same chain. The elements panel follows the view: it lists
 the active space's 2D geometry plus the solids, which belong to no space and are shown in the 3D view.
 
+**...and on any plane at all.** Sketch-on-face turns out to be the special case: *Sketch plane (line + angle)*
+takes **any** line in the drawing — a segment, a construction line, a wall's centreline, a footprint edge — and
+**any** angle, and gives a sketch space whose plane contains that line and is tilted out of the current one by
+that angle. At 90° on a footprint edge it *is* the face plane sketch-on-face derives; at 45° on a plan segment it
+is a miter. `u` runs along the line, `v` rises out of the old plane, *Extrude* builds along the new plane's
+normal and *Cut* goes the other way — so the **sign** of the angle chooses which. The angle stays a parameter:
+retype it and the plane tilts, with every feature built on it following, and a tilted cut through a part is one
+gesture (a 45° miter through a plate: exactly the wedge, watertight). Planes compose — a plane on a line drawn on
+another plane — and the file records the line and the angle, never the frame, so a part edited since comes back
+with its planes where they now are.
+
 Mesh export is next. See [`DESIGN.md`](DESIGN.md) for the full design record and open questions.
 
 ## Build & run

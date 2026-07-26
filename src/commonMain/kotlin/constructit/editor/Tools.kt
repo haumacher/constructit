@@ -230,6 +230,12 @@ object Tools {
 
     private fun ang(name: String) = ScalarSlot(name, Dimension.ANGLE)
 
+    /** An angle slot the tool can do without: [deg] is what it means with nothing typed. */
+    private fun ang(
+        name: String,
+        deg: Double,
+    ) = ScalarSlot(name, Dimension.ANGLE, Quantity.deg(deg))
+
     private fun num(name: String) = ScalarSlot(name, Dimension.NONE)
 
     /** A dimensionless slot the tool can do without — [ScalarSlot.default] names what it then means. */
@@ -312,6 +318,12 @@ object Tools {
     // a named 2D sketch space on a solid's *side* face (OP-17), and the cut that space makes cheap
     const val SKETCH_ON_FACE = "sketchface"
     const val CUT = "cut"
+
+    /**
+     * A **datum** sketch space: any line, any angle (OP-17's datum extension, GitHub #6). *Sketch on face*
+     * is its special case (a boundary segment at 90°) and *Section* is its parallel one.
+     */
+    const val SKETCH_PLANE = "sketchplane"
 
     // Booleans between same-axis prisms (OP-22), and the architectural application of them
     const val UNION = "union"
@@ -441,6 +453,12 @@ object Tools {
             // path and opening tools this one records a step of its own (`sketchspace`, naming the
             // boundary-piece index — a discrete choice, OP-18), so the Editor runs its click.
             ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.SOLIDS, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that side face, where u runs along the edge from its start and v runs down from the top. Cut there drills into the material; Extrude builds a boss out of it.") { _, _, _ -> },
+            // ----- ...and the general form of the same thing (GitHub #6): **any** line, **any** angle. One
+            // LINE pick (a line, a segment, a ray or an ortho leg — the ordinary carrier coercion) plus a
+            // *defaulted* angle slot, so the gesture is one click and typing a number first tilts the plane.
+            // It records its own `sketchspace` step, like the face tool, and does not replicate: a sketch
+            // space is organisation, not geometry an orbit could fan (OP-23).
+            ToolDef(SKETCH_PLANE, "Sketch plane (line + angle)", ToolCategory.SOLIDS, listOf(SlotKind.LINE), scalars = listOf(ang("angle", 90.0)), recordsSteps = true, replicates = false, help = "Type an angle (90° if you type none), then click a line, segment or wall leg: the 2D view switches to a new sketch plane through that line, tilted by that angle out of the space you are in. u runs along the line, v rises out of the old plane; Extrude builds along the new plane's normal and Cut goes the other way, so a negative angle swaps them. The angle stays a parameter — retype it and the plane tilts, with everything drawn on it.") { d, p, s -> d.createDatumSpace(p.elements[0], s.firstOrNull()) },
             // `facePartOperand` makes elements[0] the part being cut — the *tip* of its boolean chain as it
             // stands, resolved by the editor and recorded in the step, so cuts chain instead of forking
             // it **does** replicate, and as a *chain*: the part operand is re-resolved per copy, so a Cut on one

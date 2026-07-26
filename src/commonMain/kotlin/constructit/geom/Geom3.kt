@@ -1277,6 +1277,53 @@ object Geom3 {
         return SideFace(Plane3(Vec3(wa.x, wa.y, zHi), u, Vec3.Z), len, zHi - zLo) to null
     }
 
+    // ---- datum planes: an arbitrary sketch plane, by a line and an angle (OP-17, GitHub #6) ----
+
+    /**
+     * The **datum plane** through the carrier of the 2D [line] — read in [base]'s own (u, v) — rotated
+     * [angle] radians about it, out of [base] (OP-17's datum extension, GitHub #6).
+     *
+     * The whole frame is [base]'s frame **rotated about the line by [angle], right-hand rule about the
+     * line's direction**, re-anchored on the line. Concretely, with `n` = [base]'s normal and
+     * `w = n × u` (the in-plane perpendicular, so `u × w = n`):
+     *
+     * - `u` = the line's direction, embedded in [base]. The hinge is therefore the datum's own u axis, and
+     *   a point of the drawing at `v = 0` lies in *both* planes — which is what makes an angle edit rotate
+     *   the plane about the line the user picked rather than about anything else.
+     * - `v = w·cos θ + n·sin θ`, so `θ = 0` reproduces [base] exactly (same point set, same normal — a
+     *   datum at zero degrees *is* the space it was defined in, re-anchored) and `θ = 90°` stands the plane
+     *   upright with `v` pointing out of [base] along its normal.
+     * - `normal = u × v = n·cos θ − w·sin θ`, i.e. [base]'s normal rotated the same way. **The sign of the
+     *   angle therefore flips the normal**, which is the only control a datum has over which side is
+     *   "out": unlike a face ([sideFace]) a datum plane has no material to point away from.
+     *
+     * The origin is the point of the **carrier** nearest [base]'s own 2D origin, mapped into the world —
+     * OP-20's anchoring rule verbatim, and for the same reason: an anchor at the picked segment's *start*
+     * would slide along the plane whenever that segment is stretched, whereas the carrier's foot moves only
+     * when the carrier itself does. Nothing about the datum's coordinates depends on how far the host
+     * reaches.
+     *
+     * Refused (OP-3, healing) only for a line with no direction; every angle is legal, including the ones
+     * that give a coplanar datum (0° and 180°, the latter being [base] flipped).
+     */
+    fun datumPlane(
+        base: Plane3,
+        line: Line,
+        angle: Double,
+    ): Pair<Plane3?, String?> {
+        val len = line.dir.length()
+        if (len <= WELD_TOL) return null to "that line has no direction, so it fixes no sketch plane"
+        val dir = line.dir * (1.0 / len)
+        // OP-20's anchor: the carrier's nearest-origin point, so stretching the host cannot move the datum
+        val anchor = line.origin - dir * line.origin.dot(dir)
+        val u = (base.u * dir.x + base.v * dir.y).normalized()
+        val n = base.normal.normalized()
+        val w = n.cross(u)
+        val v = (w * cos(angle) + n * sin(angle)).normalized()
+        if (u.length() < Vec3.EPS || v.length() < Vec3.EPS) return null to "that sketch plane's own frame is degenerate"
+        return Plane3(base.toWorld(anchor), u, v) to null
+    }
+
     // ---- sections: the downward half of the seam (OP-17), exact for prisms (OP-22) ----
 
     /**

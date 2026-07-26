@@ -780,7 +780,9 @@ private fun renderPanel(
     val spaceSel = document.getElementById("v-space") as HTMLSelectElement
     val spaceOptions =
         editor.doc.spaces.joinToString("") { s ->
-            val label = if (s.isPlan) "plan" else "${s.name} (face of ${s.anchor?.let { editor.doc.nameOf(it) }})"
+            // the label is the document's answer (a face of what, a datum at what angle on what line) — the
+            // shell only renders it, the same discipline the elements list follows
+            val label = editor.doc.spaceLabel(s)
             "<option value=\"${s.name}\"${if (s.name == editor.activeSpace.name) " selected" else ""}>$label</option>"
         }
     if (spaceSel.innerHTML != spaceOptions) spaceSel.innerHTML = spaceOptions

@@ -871,6 +871,7 @@ it:
 | `tool pointon*` **clicks** | a pre-`dofs=` writer rewrote the last click to the rider's position | none needed: with no `dofs=` the click places the rider, which is exactly what that writer meant |
 | `relative dofs=` | the list is positional *per form* (distance+angle for a polar offset, one signed distance along a carrier), and which form applies is decided by the construction, not by the file | none |
 | `wall` justification, `breakarc` ccw, `opening pos/sill/head`, `place at/angle`, `count=`, `sketchspace piece=` | unchanged | none (absent justification still defaults to centred) |
+| `sketchspace line= / angle= / part=` — the **datum** variant (OP-17, GitHub #6) | new arguments in this build; the face variant (`el=`/`piece=`) is untouched and told apart by `line=` | none, and **no version bump**: an argument that never existed cannot have meant something else, so no stored literal changes meaning. `part=` is a choice recorded at creation (never re-derived on load); the angle is *state* and rides the `param` step of the parameter this one names |
 
 Known residual, recorded rather than papered over: the **Outline** tracer still resolves its handovers from
 that tool's own clicks on every replay (`jointBetween`), and a determined ortho meeting still picks its
@@ -3203,6 +3204,101 @@ reachable. The rule now stated: **Cut goes in, Extrude goes out**, and a face-sp
   the kernel ties its cap winding to a positive sweep (the same rule that refuses a negative extrude depth). The
   honest fix is a `dir` argument on the feature, which is not built. A full turn is unaffected.
 
+#### Datum planes — any line, any angle (as built, on GitHub #6)
+
+The general form of a sketch space, and the request that named it: *"in general it should be possible to define
+an arbitrary 2D sketching plane … a new plane can be either parallel to the base plane (already possible with
+Section) or intersect the base plane in a line under some angle. Sketch-on-face is the special case where the
+line is a boundary segment and the angle is 90°. Any line in the base sketch can be used, and any angle."*
+
+That reading is exactly right, and building it that way is what makes it cheap: a space still contributes *one
+thing* to a construction — the plane its features sketch on — so this adds **one op** (`datumPlane`), one
+`ToolDef`, one variant of the `sketchspace` step, and no value type, no evaluation rule and no second concept.
+*Sketch plane (line + angle)* takes a `LINE` pick (a line, a segment, a ray or an ortho/wall leg — the ordinary
+carrier coercion, so a wall's centreline carries a plane) plus a **defaulted** angle slot, so the gesture is one
+click and typing a number first is what tilts it. `DatumPlaneTest` is the record.
+
+- **The frame: the base space's frame rotated about the line, right-hand rule.** With `n` the base plane's
+  normal and `w = n × u` (its in-plane perpendicular, so `u × w = n`): `u` is the line's direction embedded in
+  the base plane, `v = w·cos θ + n·sin θ`, hence `normal = u × v = n·cos θ − w·sin θ`. Three properties fall out
+  and each is asserted: at **0°** the datum *is* the space it came from (same point set, same normal),
+  re-anchored on the line; at **90°** it stands upright with `v` along the base normal; and the hinge lies in
+  **both** planes at `v = 0`, which is what "intersect the base plane in a line" means — so an angle edit
+  rotates the plane about the line the user picked and about nothing else.
+- **The origin is absolute, and that is the opposite of a face's rule.** It is the **carrier's**
+  nearest-origin point (OP-20's anchoring rule, one dimension up), not the picked segment's start: stretching
+  the host must not slide the datum's coordinates along it, and only the carrier's foot has that property —
+  dragging a segment's start 15 mm along its own carrier moves nothing on the plane, asserted. A face frame is
+  deliberately the other way (anchored at the face's *top* edge, so a bore stays 8 mm below the top face when
+  the plate is thickened) because a hole is dimensioned from the part's own edge. Same distinction OP-20 draws
+  between a host that merely *carries* a thing and a host that is what the thing is *measured from* — and here
+  the two answers sit in one file, one line apart, which is why both are written down.
+- **Which way a feature builds: Extrude follows +normal, Cut follows −normal.** On a face the rule is stated
+  against the *material* (Cut goes in, Extrude goes out — *Two corrections from the same face*), because a face
+  plane has a material side by construction. **A datum has none**, so the rule is stated against the datum's
+  own normal instead, and the normal's sign is fixed by the right-hand rule about the line: **the sign of the
+  angle flips both, deliberately**, and it is said in the tool's help, the space's note and the status line.
+  Mechanically the two are one implementation: the operation that goes the *other* way starts its sweep `depth`
+  behind the plane and sweeps positively, so the kernel's positive-depth cap rule is untouched and not one drawn
+  coordinate changes meaning (the same move GitHub #1's boss needed).
+- **Sketch-on-face is the special case, asserted as an equivalence.** A **90°** datum on a footprint edge has
+  the same `u`, the same `v` and the same normal as `sideFacePlane` derives for that edge, and the face plane's
+  origin lies in the datum's plane — the two frames differ by an offset **along `v` only**, the part's own
+  height, which is precisely the anchoring difference above. A **−90°** datum is the plane the *Sketch on face*
+  tool actually opens (that space's plane is the face's flipped, normal into the material), so "8 mm below the
+  top face" is `v = 8` there and `v = 8 − 20` here and nothing else differs. Both directions asserted.
+- **The part a datum cuts, and why it is a recorded choice.** *Cut* means "subtract from the part this plane
+  belongs to", and a face space *names* its solid while a datum names a line. So the part is resolved from the
+  hinge — the newest visible solid the line is part of the construction of (**ancestry**, not material, which is
+  the opposite of `facePartTip`'s test and for a stated reason) — resolved **once, at creation**, when the
+  datum's own plane node does not exist yet, so the tool solid a *Cut* is about to build cannot be mistaken for
+  the part being cut. It is then **recorded in the step** (`part=e5`) and never re-derived on load: OP-18's rule
+  that a scored choice is persisted at creation. From there the ordinary sequential-feature rule takes over —
+  `facePartTip` chains onto whatever this resolved to, so a second cut chains instead of forking. A datum whose
+  hinge belongs to no solid is a **free-standing** sketch plane: *Extrude* works, and *Cut* declines with a
+  reason that names *Extrude*.
+- **The tilted cut is cross-axis, so it is OP-9's engine, and the numbers are exact.** A datum hinged on the
+  plate's front bottom edge at 45° is the plane `z = y`; *Cut* sweeps −normal, so with a sketch rectangle and a
+  depth that both overhang the part the removed set is precisely `plate ∩ {z ≤ y}` = 64000 mm³ and what is left
+  is the triangular prism `½·20·20·80` = **16000 mm³**, watertight, `Feature3.MeshBoolean` — a 45° miter by
+  clicking. That is also the first exactly-predictable assertion on the general boolean path.
+- **The angle is a live parameter, which is the whole point of it being a node.** Retyping it tilts the plane
+  and every feature built on it follows by recompute — `nodesCreated` flat (OP-21's rule) — and a rigid prism
+  stays rigid while its bounding box turns. A datum's angle is an ordinary panel parameter, so it can be wired,
+  shared or measured like any other; and a **negative** one is typed there, since the canvas's numeric entry
+  takes digits only.
+- **Spaces compose, and one ordering rule had to be made explicit.** A datum can hinge on a line drawn in
+  another datum space — asserted as a two-level chain, where the second plane's `v` at 90° *is* the first
+  plane's normal — because the base is `Document.activePlane()`, an ordinary node. That is the first step that
+  is rotated out of *the space it was built in*, so the lazy `space` switch (OP-18) has to be written **before**
+  it: by the time the `sketchspace` step is appended the new space is already active, so `createDatumSpace` asks
+  for the switch itself. Round-tripped byte-equal with a switch back and forth in between.
+- **What the datum view renders: the hinge, in the plane's own (u, v)** — the datum's `u` axis, over the extent
+  the picked element reaches, at the grid's weight, and it is where a pick of the part lands (one rule: what is
+  visible is pickable, `Document.spaceOutline` serving the renderer, the distance test, the marquee and the
+  first camera). An **unbounded** hinge (an infinite line, a ray) has no extent and none is invented for it.
+- **The division of labor with Section, stated so neither grows the other's job.** *Section* is the **parallel**
+  answer (`sectionAt`, an offset along the base normal, cutting a solid into 2D geometry); a **datum** is the
+  **angled** one (a hinge line plus an angle, giving a plane to draw *on*). A general `section(solid, plane)` —
+  the cut OP-17's downward slice recorded as "wanting datum-plane UI" — is now unblocked but still not built: it
+  needs a plane-*valued* tool slot, which is a slot kind, not a plane.
+- **Cuts in this slice, deliberately:**
+  - **No projected reference context.** The base space's silhouette behind the datum is not drawn; the hinge
+    answers the question the user actually has (*where on the drawing am I standing*), and a silhouette is a
+    projection decision — which of the other spaces, projected how — of exactly the kind the face view already
+    declines to make.
+  - **A boolean between a datum-space solid and a plan solid cannot be picked in one gesture.** Each solid draws
+    its footprint hint in the space its sketch was drawn in (which is what makes it honest), and one canvas
+    shows one space, so a two-operand *Subtract* across two spaces has no gesture. *Cut* covers the case that
+    matters by naming the part for the user, which is why it exists; the general case wants 3D picking (OP-9's
+    own open point, unchanged).
+  - **No datum from a 3D edge**, only from a line in a sketch — the issue's own scope. A solid's edges are not
+    addressable objects yet (that is Manifold face/edge provenance, OP-9), and the one 3D-derived plane a click
+    can reach is already `sideFacePlane`'s.
+  - **No parallel-offset datum** (a plane at a distance from the active one, with no hinge): it would be a
+    second tool for `planeOffset`, and nothing has asked for it — *Extrude on face* and *Section* cover the
+    stacking cases the plan actually reaches.
+
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
 **Decision:** an **analytic construction layer is the source of truth**; the mesh is an
@@ -4732,6 +4828,55 @@ Three broad families (see OP-9 decision above):
   probes (`PatternProbeTest`), 843 green, browser E2E extended with a fifth flow
   (`patternOrbitsInBrowser`: the ring, the one gesture that becomes six sides, and the count field re-stamping
   in place).
+- **Session 16 — "any line, any angle": the sketch plane stops being a special case (GitHub #6).** The user's own
+  generalization, and the reason it cost so little is that it was stated as one: *"sketch-on-face is the special
+  case where the line is a boundary segment and the angle is 90°."* Because OP-17 decided at the outset that 2D stays
+  abstract and a space contributes only the plane its features sketch on, the whole feature is **one op**
+  (`datumPlane`), one `ToolDef`, one variant of an existing step — no value type, no evaluation rule, no second
+  concept, and the equivalence the user asserted is now a test rather than a claim: a 90° datum on a footprint edge
+  has the same `u`, `v` and normal as `sideFacePlane`, differing from the face frame by an offset along `v` only.
+  Five decisions were genuinely open, and each one had a right answer that the existing doctrine already implied.
+  (1) **The frame is the base frame rotated about the line, right-hand rule.** Stated that way rather than as
+  three formulas, it pays immediately: 0° *is* the space it came from, 90° stands upright, and the hinge lies in
+  both planes at `v = 0` — so an angle edit turns the plane about the line the user picked and nothing else. It
+  also fixes the sign question below without a second convention.
+  (2) **The origin is the carrier's nearest-origin point — absolute — and a face's is not.** OP-20's anchoring
+  rule, one dimension up: an origin at the picked segment's "defining start" would slide the plane's coordinates
+  along it whenever the host is stretched, and the carrier's foot cannot. That is the *opposite* of the face
+  frame's deliberate anchoring at the face's top edge, and the two now sit one method apart in the same file —
+  which is exactly why OP-20's distinction (a host that *carries* a thing versus a host a thing is *measured
+  from*) is worth having written down. The discriminating drag is asserted.
+  (3) **Extrude follows +normal, Cut follows −normal, and the angle's sign flips both.** A face plane has a
+  material side, so GitHub #1's rule could be stated against the material ("Cut goes in, Extrude goes out"). A
+  datum has no material side, and inventing one — "the side the base solid is on" — would have been a guess in
+  exactly the shape this design refuses. So the rule is stated against the datum's own normal, with the sign of
+  the angle as the visible control, and mechanically the two are the same implementation: whichever operation goes
+  the other way starts its sweep `depth` behind the plane, so the kernel's positive-depth rule is untouched.
+  (4) **What a datum *Cut* subtracts from is a choice, and it is recorded at creation.** A face space names its
+  solid; a datum names a line. The honest bridge is the construction — the newest visible solid the hinge is part
+  of (ancestry, not material, which is the *opposite* of `facePartTip`'s test) — resolved once, at a moment when
+  the datum's own plane does not exist yet, so a cut tool cannot be mistaken for the part it cuts, and then
+  written into the step as `part=`. That is OP-18's "a scored choice is persisted at creation, never re-scored on
+  replay" reaching a third kind of choice. A hinge that belongs to no solid gives a free-standing plane where
+  *Extrude* works and *Cut* declines naming *Extrude* — the refusal-with-a-reason pattern, again.
+  (5) **Spaces compose, and that exposed a real ordering bug before it could ship.** A datum is rotated out of the
+  space it was *built in*, so unlike every earlier step the lazy `space` switch has to be written **before** it —
+  and by the time the step is appended the new space is already active, so `createDatumSpace` asks for the switch
+  itself. Round-tripped byte-equal with a switch back and forth in between, and asserted as a two-level chain (a
+  datum on a line drawn in another datum, where the second plane's `v` at 90° *is* the first plane's normal).
+  Two dividends worth recording. The **panel rule of GitHub #2 needed no case at all** — it is stated over spaces,
+  not over faces, so a datum's list is right by construction — and the same is true of the delete cascade, the
+  stamping seam and the space dropdown (whose label became a document query, since which spaces exist and what
+  they are *of* is a fact about the model). And the tilted cut gave the **general boolean path its first exactly
+  predictable assertion**: a datum on the plate's front bottom edge at 45° is the plane `z = y`, so a *Cut* that
+  overhangs the part removes `plate ∩ {z ≤ y}` and leaves the triangular prism `½·20·20·80` = 16000 mm³ — a 45°
+  miter, by clicking, watertight. **19 new tests** (`DatumPlaneTest`: the frame, the sign, 0°, the anchoring drag,
+  both halves of the sketch-on-face equivalence, the 45° extrude, the live angle with `nodesCreated` flat, the
+  tilted cut, the free-standing refusal, the two-level chain, two round trips, the delete cascade, the hinge as
+  reference context, the unbounded hinge, the panel rule, the space list, and a wall leg as a hinge), 862 green,
+  browser E2E extended with a further flow (`datumSketchPlaneInBrowser`: a 45° plane on a footprint edge and a boss
+  on it). One thing is deliberately still cut and it is named in the queue: two solids drawn in two different
+  spaces cannot both be picked by one boolean gesture, because one canvas shows one space.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -5201,6 +5346,21 @@ gestures made. The limitation still stands verbatim for an **array's** count and
 which store no rule — that is precisely the difference the new OP is about. It leaves one thing parked, stated
 where it belongs: a **pattern of a pattern**, and a whole **group** as a pattern's reference member (OP-23's
 closing note).
+
+**Retired in session 16: "a rotated sketch plane is reachable only from the DSL", and the plane-choosing UI two
+other cuts were waiting on.** Not a queue line but a *stated limit* in three places, and GitHub #6 arrived as the
+demand that closed it — see *Datum planes — any line, any angle* under OP-17. (a) OP-17's seam-downward slice
+recorded that "a **flipped or rotated** sketch plane — reachable only from the DSL today — would need the hint and
+the 2D pick to apply the same in-plane map `sectionAt` applies": rotated planes are now reachable by clicking, and
+the caveat is retired rather than repaired, because the *space* rule already answers it — a solid's footprint hint
+is drawn in the space its sketch was drawn in, at that sketch's own coordinates, so nothing is ever projected into
+a plan it has no honest projection into. (b) The same slice's cut "sectioning along a **plane other than
+horizontal** … wants datum-plane UI" is **unblocked but not built**: the UI exists, and what a general
+`section(solid, plane)` still needs is a plane-*valued* tool slot. (c) OP-9's "cross-axis booleans are unreachable
+from the toolbar" was closed for *faces* in session 8 and is now closed for arbitrary angles, with the first
+exactly-predictable assertion on that path (a 45° miter, 16000 mm³). It leaves one thing parked, stated where it
+belongs: **a two-operand boolean whose operands live in two different spaces has no gesture**, because one canvas
+shows one space; *Cut* covers the case that matters by naming the part, and the general case wants 3D picking.
 
 1. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
    connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by

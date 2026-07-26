@@ -147,8 +147,9 @@ object HitTest {
 
     /**
      * Distance to [el] **as the document's active sketch space shows it** (OP-17) — the one place the
-     * space enters picking. For everything drawn in the space that is its own geometry; for the solid a
-     * *face* space was cut from it is the face rectangle, which is what that solid looks like there.
+     * space enters picking. For everything drawn in the space that is its own geometry; for the part a
+     * *face* or *datum* space cuts into it is that space's reference context — the face rectangle, or the
+     * datum's hinge — which is what that solid looks like there.
      */
     private fun distanceIn(
         doc: Document,
@@ -156,7 +157,14 @@ object HitTest {
         el: Element,
         world: Vec2,
         tip: Element?,
-    ): Double? = doc.faceOutlineOf(el, ev, tip)?.let { ringDistance(world, it) } ?: distanceTo(ev, el, world)
+    ): Double? {
+        doc.partOutlineOf(el, ev, tip)?.let { return ringDistance(world, it) }
+        // ...and *only* as that context: a part with none to measure against (an unbounded datum hinge, a solid
+        // with no value) is simply not pickable here. Falling back to its own geometry would measure a
+        // coordinate from another space, which is the one thing one-canvas-one-space exists to prevent.
+        if (el.space != doc.activeSpace.name) return null
+        return distanceTo(ev, el, world)
+    }
 
     private fun ringDistance(
         world: Vec2,
@@ -219,7 +227,12 @@ object HitTest {
         val tip = doc.facePartTip(ev)
         return doc.elements.filter { el ->
             el.visible && doc.addressableIn(el, tip) &&
-                (doc.faceOutlineOf(el, ev, tip)?.let { r -> ringMeets(r, lo, hi) } ?: meetsRect(ev, el, lo, hi))
+                (
+                    doc.partOutlineOf(el, ev, tip)?.let { r -> ringMeets(r, lo, hi) }
+                        // the same rule as [distanceIn]: the part is met as this space's reference context or not
+                        // at all, never by geometry belonging to another space's coordinates
+                        ?: (el.space == doc.activeSpace.name && meetsRect(ev, el, lo, hi))
+                )
         }
     }
 

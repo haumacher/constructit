@@ -1425,6 +1425,28 @@ class Construction {
             EvalResult.Ok(PlaneValue((it[0] as PlaneValue).plane.translated(sc(it[1]).mm)))
         }
 
+    /**
+     * A **datum plane**: the plane containing the carrier of [line] — a 2D line read in [base]'s own
+     * (u, v) — rotated by [angle] about it, out of [base] (OP-17's datum extension, GitHub #6).
+     *
+     * The general answer to "sketch somewhere else", of which sketch-on-face is the special case (the line
+     * a boundary segment, the angle 90°) and [planeOffset] is the *parallel* one. Every input is a node:
+     * the line is the drawn line the user picked, so the datum follows it, and the angle is an ordinary
+     * scalar parameter, so retyping it tilts the plane and every feature sketched on it. Which side counts
+     * as "out" is the **sign of the angle** — see [constructit.geom.Geom3.datumPlane] for the frame, the
+     * origin's anchoring rule and what is refused.
+     */
+    fun datumPlane(
+        base: PlaneRef,
+        line: LineRef,
+        angle: ScalarRef,
+    ): PlaneRef =
+        op(base, line, angle) {
+            val a = sc(it[2]).requireDim(Dimension.ANGLE, "sketch plane angle").base
+            val (p, why) = Geom3.datumPlane((it[0] as PlaneValue).plane, ln(it[1]), a)
+            if (p == null) EvalResult.Invalid(why ?: "cannot place that sketch plane") else EvalResult.Ok(PlaneValue(p))
+        }
+
     /** [plane] with its normal reversed (and its in-plane frame mirrored, as it must be). */
     fun planeFlipped(plane: PlaneRef): PlaneRef =
         op(plane) { EvalResult.Ok(PlaneValue((it[0] as PlaneValue).plane.flipped())) }

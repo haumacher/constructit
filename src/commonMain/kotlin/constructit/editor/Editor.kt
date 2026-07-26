@@ -795,24 +795,38 @@ class Editor(
 
     /** How a space introduces itself — the frame's convention, said where the user is about to use it. */
     private fun spaceNote(space: SketchSpace): String =
-        if (space.isPlan) {
-            "Plan view — the drawing's own space (world XY)."
-        } else {
-            "Sketching on ${space.name}, the side face of ${space.anchor?.let { doc.nameOf(it) }}: u along the edge from its start, " +
-                "v down from the top face. Cut here drills into the material; Extrude builds outward, as a boss."
+        when {
+            space.isPlan -> "Plan view — the drawing's own space (world XY)."
+            // a datum plane (GitHub #6): the hinge, the angle, and the one thing its sign decides
+            space.isDatum ->
+                "Sketching on ${space.name}, a datum plane on ${space.hinge?.let { doc.nameOf(it) }} at " +
+                    "${Format.num(doc.spaceAngleDeg(space))}° from ${space.from}: u runs along that line, v rises out of " +
+                    "${space.from} as the angle grows. Extrude builds along this plane's normal, Cut the other way — " +
+                    "a negative angle swaps them. Retype the angle to tilt the plane and everything on it." +
+                    (if (space.anchor == null) " Nothing here to cut into: its line is part of no solid." else "")
+            else ->
+                "Sketching on ${space.name}, the side face of ${space.anchor?.let { doc.nameOf(it) }}: u along the edge from its start, " +
+                    "v down from the top face. Cut here drills into the material; Extrude builds outward, as a boss."
         }
 
     /**
-     * The first view of a space: the plan centred as always, a face framed on the rectangle it *is*, so
-     * switching over never lands on an empty view with the face off screen.
+     * The first view of a space: the plan centred as always, a face or datum framed on the reference
+     * context it *is* ([Document.spaceOutline]), so switching over never lands on an empty view with the
+     * plane off screen.
      */
     private fun cameraFor(space: SketchSpace): Camera {
-        val r = doc.faceOutline(space, ev()) ?: return Camera.centered(canvasW, canvasH)
-        val w = r[2].x
-        val h = r[2].y
-        if (w <= 0.0 || h <= 0.0) return Camera.centered(canvasW, canvasH)
-        val scale = minOf(canvasW / (w * 1.6), canvasH / (h * 1.6)).coerceIn(0.02, 400.0)
-        return Camera(canvasW / 2 - w / 2 * scale, canvasH / 2 + h / 2 * scale, scale)
+        val r = doc.spaceOutline(space, ev())?.takeIf { it.isNotEmpty() } ?: return Camera.centered(canvasW, canvasH)
+        val lo = Vec2(r.minOf { it.x }, r.minOf { it.y })
+        val hi = Vec2(r.maxOf { it.x }, r.maxOf { it.y })
+        val w = hi.x - lo.x
+        val h = hi.y - lo.y
+        // a datum's hinge is a *line*: it has extent along u and none across it, so the extent it does have
+        // sets the zoom for both axes rather than the view collapsing
+        val ew = if (w > 0.0) w else h
+        val eh = if (h > 0.0) h else w
+        if (ew <= 0.0 || eh <= 0.0) return Camera.centered(canvasW, canvasH)
+        val scale = minOf(canvasW / (ew * 1.6), canvasH / (eh * 1.6)).coerceIn(0.02, 400.0)
+        return Camera(canvasW / 2 - (lo.x + w / 2) * scale, canvasH / 2 + (lo.y + h / 2) * scale, scale)
     }
 
     /** One click of the *Sketch on face* tool: a solid's footprint edge names a side face (OP-17). */
@@ -2889,8 +2903,14 @@ class Editor(
         // here rather than at completion, so the reason is the one the user reads
         if (tool.facePartOperand && doc.facePartTip() == null) {
             statusHint =
-                "${tool.label} works on a face: use Sketch on face to pick a solid's edge first, " +
-                "then draw and cut there"
+                if (doc.activeSpace.isDatum) {
+                    // a datum plane with no part (GitHub #6): honest, and it names the operation that does work
+                    "${tool.label} needs a part to cut into, and ${doc.activeSpace.name}'s line " +
+                        "(${doc.activeSpace.hinge?.let { doc.nameOf(it) }}) is part of no solid — Extrude builds a solid on this plane instead"
+                } else {
+                    "${tool.label} works on a face: use Sketch on face to pick a solid's edge first, " +
+                        "then draw and cut there"
+                }
             onChange()
             return
         }
@@ -3045,6 +3065,10 @@ class Editor(
         val plan = doc.replicationOf(tool, picks)
         var orbitNote: String? = plan?.refusal
         var replicated = false
+        // a tool may *create a sketch space* and make it active (Sketch plane, GitHub #6) — the view then has
+        // to follow it here, exactly as [faceClick] does for Sketch on face, because switching the canvas is
+        // the editor's half of a space (one camera each, selection dropped)
+        val spaceBefore = doc.activeSpace
         // a tool that records its own steps is *not* wrapped in a `tool` step (OP-18): what it builds has
         // degrees of freedom of its own that the steps it emits restate — see [ToolDef.recordsSteps]
         if (tool.recordsSteps) {
@@ -3062,6 +3086,12 @@ class Editor(
         }
         checkpoint() // the tool application — earlier slot clicks were only halves of it
         resetPicks()
+        val entered = doc.activeSpace.takeIf { it !== spaceBefore }
+        if (entered != null) {
+            spaceCameras[spaceBefore.name] = camera
+            camera = cameraFor(entered)
+            clearSelection()
+        }
         // A tool that only *rewires* changes nothing the canvas can show (OP-4 case b: a point made relative
         // sits exactly where it did), so a silent success reads the same as a silent refusal. The document says
         // what happened — one channel, not a case per tool here.
@@ -3077,7 +3107,16 @@ class Editor(
             }
         // an orbit's own note comes second to what the document said about the geometry it built, except when
         // the document said nothing — and a *refusal* to replicate leads, since it is the surprise
-        statusHint = listOfNotNull(orbitNote.takeIf { !replicated }, note, group, orbitNote.takeIf { replicated }).joinToString(" — ")
+        statusHint =
+            listOfNotNull(
+                orbitNote.takeIf { !replicated },
+                note,
+                group,
+                orbitNote.takeIf { replicated },
+                // ...and, last, where the user now *is*: a tool that opened a space says its conventions,
+                // which is the one thing the canvas cannot show about a plane it is looking straight at
+                entered?.let { spaceNote(it) },
+            ).joinToString(" — ")
         onChange()
         return true
     }

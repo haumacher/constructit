@@ -107,16 +107,41 @@ enum class ElementKind {
  * *face* space names the solid and the boundary-piece index its plane is derived from (OP-8), and its
  * plane is the side face's, **flipped**, so its normal points into the material: that is the direction *Cut*
  * drills (`Document.cutOnFace`), while *Extrude* builds a boss outward from the same footprint.
+ *
+ * A **datum** space is the general form of the same thing (GitHub #6): its plane contains the carrier of a
+ * drawn line ([hinge]) and is rotated out of the space it was defined in by [angle], a live parameter. A
+ * datum has no material side, so which way its features build is fixed by its own normal — see
+ * `Document.createDatumSpace` for the conventions and `Geom3.datumPlane` for the frame.
  */
 class SketchSpace(
     val name: String,
     /** The sketch plane, or null for the plan space — which is the world XY plane by construction. */
     val plane: PlaneRef?,
-    /** The solid this space is a face of (null for the plan), and which of its boundary pieces (OP-8). */
+    /**
+     * The solid this space is a **face of** — or, for a datum, the part its features cut into (null when
+     * its hinge belongs to no solid, and null for the plan). What `Document.facePartTip` chains from.
+     */
     val anchor: Element? = null,
+    /** Which of [anchor]'s boundary pieces this face is (OP-8); −1 for the plan and for a datum. */
     val piece: Int = -1,
+    /**
+     * DATUM only: the **line element** whose carrier this plane contains — the hinge it turns about, and
+     * the datum's own u axis. Null for the plan and for a face space.
+     */
+    val hinge: Element? = null,
+    /** DATUM only: the live angle between this plane and [from]'s — retyping it tilts the plane. */
+    val angle: ScalarEntry? = null,
+    /** DATUM only: the name of the space this plane was rotated out of (spaces compose). */
+    val from: String = Document.PLAN_SPACE,
 ) {
-    val isPlan: Boolean get() = anchor == null
+    /** The plan is exactly the space with no plane node of its own: the world XY plane, by construction. */
+    val isPlan: Boolean get() = plane == null
+
+    /** A datum plane (a line and an angle), as opposed to a solid's face or the plan. */
+    val isDatum: Boolean get() = hinge != null
+
+    /** A space on a solid's planar side face (OP-8's `sideFacePlane`). */
+    val isFace: Boolean get() = plane != null && hinge == null
 }
 
 /** A retained, displayable/selectable graph output with style + kind. */
@@ -847,6 +872,7 @@ class Document {
     private var scriptSpace: SketchSpace = planSpace
 
     private var spaceCounter = 0
+    private var datumCounter = 0
 
     fun spaceNamed(name: String): SketchSpace? = spaces.firstOrNull { it.name == name }
 
@@ -895,9 +921,10 @@ class Document {
     fun listedElements(): List<Element> = elements.filter { listedIn(it) }
 
     /**
-     * The **tip** of the part the active face space is a face of: the most recent visible solid made *of*
-     * the space's base solid (a boolean chain), or the base itself while nothing has consumed it yet. Null
-     * in the plan space, which is a face of nothing.
+     * The **tip** of the part the active space cuts into: the most recent visible solid made *of* the
+     * space's base solid (a boolean chain), or the base itself while nothing has consumed it yet. Null in
+     * the plan space, which is a face of nothing — and null for a datum plane whose hinge belongs to no
+     * solid, where there is likewise nothing to cut ([createDatumSpace]).
      *
      * **The sequential-feature rule** (OP-17), and the reason it exists: a second cut on a second face must
      * subtract from *the part*, not from the plate the part started as. Anchoring the boolean to the space's
@@ -948,6 +975,7 @@ class Document {
         space: SketchSpace,
         ev: Evaluator,
     ): List<Vec2>? {
+        if (!space.isFace) return null
         val anchor = space.anchor ?: return null
         val solid = (ev.valueOf(anchor.ref) as? SolidValue)?.solid ?: return null
         val (face, _) = Geom3.sideFace(solid.feature, space.piece)
@@ -956,7 +984,47 @@ class Document {
     }
 
     /**
-     * [faceOutline] of the active space, but only for the one element it stands for — the part at its
+     * The two ends of a **datum** space's hinge, in that space's own (u, v) — the reference context that
+     * says where the drawing is (GitHub #6). Null for every other space, and null for a hinge with no
+     * extent (see below).
+     *
+     * The hinge *is* the datum's u axis by construction (`Geom3.datumPlane`), so what is left to say is how
+     * far along it the picked element reaches: a segment's or an ortho leg's two ends, projected onto the
+     * carrier and measured from the datum's own anchor. For an **infinite** line or a ray there is no
+     * extent to draw and this is null — the space's note says the hinge is the whole u axis, rather than a
+     * length being invented for it.
+     *
+     * A *drawing* rather than a node, exactly like [faceOutline] — and, like it, the geometry a pick of the
+     * part measures against ([partOutlineOf]).
+     */
+    fun datumHinge(
+        space: SketchSpace,
+        ev: Evaluator,
+    ): List<Vec2>? {
+        val hinge = space.hinge ?: return null
+        // the segment's *own* carrier, computed here rather than through [carrierLine]: this is a drawing,
+        // asked on every repaint and every pick, and an op node per call would grow the graph as the mouse moves
+        val seg = (ev.valueOf(hinge.ref) as? SegmentValue)?.seg ?: return null
+        val dir = (seg.b - seg.a).normalized()
+        if ((seg.b - seg.a).length() < Vec2.EPS) return null
+        val anchor = seg.a - dir * seg.a.dot(dir)
+        return listOf(Vec2((seg.a - anchor).dot(dir), 0.0), Vec2((seg.b - anchor).dot(dir), 0.0))
+    }
+
+    /**
+     * The **reference context** of [space] in its own (u, v): a face's rectangle ([faceOutline]) or a
+     * datum's hinge ([datumHinge]). Null for the plan, which is the drawing itself and needs no context.
+     *
+     * One query, because one rule holds for both: what is drawn as context is also what a pick of the part
+     * lands on ([partOutlineOf]), and it is what a first view of the space is framed on.
+     */
+    fun spaceOutline(
+        space: SketchSpace,
+        ev: Evaluator,
+    ): List<Vec2>? = faceOutline(space, ev) ?: datumHinge(space, ev)
+
+    /**
+     * [spaceOutline] of the active space, but only for the one element it stands for — the part at its
      * current [tip] — else null.
      *
      * The rectangle is the *base's* face (its geometry belongs to that solid) and it stands for the part as
@@ -964,11 +1032,11 @@ class Document {
      * picks the cut and not the plate it came from — the same sequential-feature rule [facePartTip] states,
      * reaching the manual *Extrude → Subtract* path as well as the one-gesture *Cut*.
      */
-    fun faceOutlineOf(
+    fun partOutlineOf(
         el: Element,
         ev: Evaluator,
         tip: Element? = facePartTip(ev),
-    ): List<Vec2>? = if (tip != null && el === tip) faceOutline(activeSpace, ev) else null
+    ): List<Vec2>? = if (tip != null && el === tip) spaceOutline(activeSpace, ev) else null
 
     /**
      * The plane the active space embeds on (OP-17) — what every feature built here sketches on.
@@ -1051,6 +1119,139 @@ class Document {
         return "face$i"
     }
 
+    private fun nextDatumName(): String {
+        var i = datumCounter + 1
+        while (spaceNamed("plane$i") != null) i++
+        datumCounter = i
+        return "plane$i"
+    }
+
+    /**
+     * Create a **datum sketch space** on the line element [line], rotated [angle] out of the active space,
+     * and make it active (OP-17's datum extension, GitHub #6 — *"any line in the base sketch can be used,
+     * and any angle"*).
+     *
+     * The general case of which sketch-on-face is the special one (a boundary segment at 90°, [createFaceSpace])
+     * and *Section* is the parallel one (an offset, no hinge). Everything here is a node, so nothing is
+     * captured: the plane contains the line's **carrier** (a segment or an ortho leg counts as the line it
+     * determines, exactly as every other line slot does), and the **angle is a live parameter** — retype it
+     * and the plane tilts, taking every feature sketched on it along.
+     *
+     * The conventions, all three of them stated once:
+     *
+     * - **The frame.** `u` runs along the line, `v` rises out of the base plane as the angle grows, and the
+     *   whole frame is the base space's rotated about the line by the right-hand rule — see
+     *   [Geom3.datumPlane]. At 0° the datum *is* the space it came from; at 90° it stands upright on the line.
+     * - **The origin is absolute.** It is the carrier's point nearest the base space's own origin (OP-20's
+     *   anchoring rule), *not* the picked segment's start: stretching the host must not slide the datum's
+     *   coordinates along it, and only the carrier's foot has that property. This is deliberately the
+     *   opposite of a face space, whose frame is face-**relative** because a hole is dimensioned from the
+     *   part's own edge — the same distinction OP-20 and OP-17 already draw between carrying a thing and
+     *   being what it is measured from.
+     * - **Which way a feature builds.** A face plane points into the material, so *Cut* goes in and
+     *   *Extrude* goes out. A datum has **no material side**, so the rule is stated on the datum's own
+     *   normal instead: **Extrude follows +normal, Cut follows −normal**, and the normal's sign is fixed by
+     *   the right-hand rule about the line — so **the sign of the angle flips both**, deliberately and
+     *   visibly (it is in the tool's help, the space's note and the status line).
+     *
+     * [part] is the solid a *Cut* here subtracts from. Resolved once, at creation, as the newest visible
+     * solid the hinge is part of the construction of — so a datum on a footprint edge cuts the part that
+     * footprint made, which is exactly what sketch-on-face does — and then **recorded in the step** (OP-18:
+     * a choice is persisted at creation, never re-scored on replay), which is why a replay passes it back
+     * rather than re-deriving it. Null when the hinge belongs to no solid: then this is a free-standing
+     * sketch plane, *Extrude* works and *Cut* declines with a reason.
+     */
+    fun createDatumSpace(
+        line: Element,
+        angle: ScalarRef?,
+        named: String? = null,
+        part: Element? = null,
+    ): SketchSpace? {
+        if (!line.isLinear) return null
+        val name = named ?: nextDatumName()
+        if (spaceNamed(name) != null) return null
+        val base = activeSpace
+        // the angle is a panel parameter either way: the tool's typed one, or the 90° its slot defaults to
+        val entry = angle?.let { scalarEntryFor(it) } ?: newParameter("angle", Quantity.deg(90.0))
+        // the part is the file's answer on a replay and the drawing's answer live — never re-derived on load
+        val cuts = part ?: if (replayingVersion != null) null else datumPartOf(line)
+        // the journal must be *in the base space* before this step, or a replay would rotate the datum out
+        // of the wrong plane — the same lazy switch every other step gets ([noteSpace]), asked for early
+        // because by the time this step is appended the new space is already the active one
+        noteSpaceSwitch()
+        return recording(
+            "sketchspace",
+            Arg.Label(name),
+            Arg.Keyed("line", Arg.El(line)),
+            Arg.Keyed("angle", Arg.Sc(entry)),
+            *(if (cuts == null) emptyArray() else arrayOf(Arg.Keyed("part", Arg.El(cuts)))),
+        ) {
+            val plane = cx.datumPlane(activePlane(), carrierLine(line), entry.ref)
+            val space = SketchSpace(name, plane, cuts, hinge = line, angle = entry, from = base.name)
+            spaces.add(space)
+            activeSpace = space
+            space
+        }
+    }
+
+    /**
+     * The solid a datum's features cut into: the **newest visible solid the line [line] is part of the
+     * construction of**, or null (GitHub #6).
+     *
+     * Ancestry, not material — the opposite of [facePartTip]'s test, and for a reason: a face space *names*
+     * its solid, while a datum names a line, and the only honest way from a line to "the part this line
+     * belongs to" is the construction that used it (a footprint edge → the area → the extrude). Asked once,
+     * at the moment the space is created, when the datum's own plane node does not exist yet — so the tool
+     * solid a *Cut* is about to build cannot be mistaken for the part it is cutting. From there the ordinary
+     * sequential-feature rule takes over: [facePartTip] chains onto whatever this resolves to.
+     */
+    fun datumPartOf(
+        line: Element,
+        ev: Evaluator = Evaluator(),
+    ): Element? {
+        val target = line.ref.node
+        return elements.lastOrNull { el ->
+            el.kind == ElementKind.SOLID && el.visible && (ev.valueOf(el.ref) is SolidValue) && descendsFrom(el.ref.node, target)
+        }
+    }
+
+    /** Whether [target] is an ancestor of [node] — a plain input walk, every kind of input counting. */
+    private fun descendsFrom(
+        node: Node,
+        target: Node,
+    ): Boolean {
+        val seen = HashSet<String>()
+
+        fun walk(n: Node): Boolean {
+            if (!seen.add(n.id)) return false
+            for (i in n.inputs) if (i === target || walk(i)) return true
+            return false
+        }
+        return walk(node)
+    }
+
+    /**
+     * How a space names itself in the toolbar's list — the document's answer, because which spaces exist and
+     * what they are *of* is a fact about the model and not about the DOM (the same discipline [listedIn]
+     * follows). The shell renders whatever this returns.
+     */
+    fun spaceLabel(space: SketchSpace): String =
+        when {
+            space.isPlan -> "plan"
+            space.isDatum ->
+                "${space.name} (${Format.num(spaceAngleDeg(space))}° on ${space.hinge?.let { nameOf(it) }}" +
+                    (if (space.from == PLAN_SPACE) ")" else ", from ${space.from})")
+            else -> "${space.name} (face of ${space.anchor?.let { nameOf(it) }})"
+        }
+
+    /** A datum space's angle in degrees, as it stands (0 for any other space). */
+    fun spaceAngleDeg(space: SketchSpace): Double =
+        space.angle?.let { e ->
+            ((Evaluator().eval(e.ref.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.let {
+                if (it.dim == Dimension.ANGLE) it.deg else 0.0
+            }
+        } ?: 0.0
+
     /**
      * Switch the active space (view state — see [activeSpace]); false when there is no such space.
      *
@@ -1085,6 +1286,16 @@ class Document {
             scriptSpace = activeSpace
             return
         }
+        noteSpaceSwitch()
+    }
+
+    /**
+     * The lazy switch itself: a `space` step when the journal is not where the user is. Called by
+     * [noteSpace] for an ordinary step, and *directly* by [createDatumSpace] — which needs the switch
+     * written **before** its own step, since a datum is rotated out of the space it was defined in and by
+     * the time the step is appended the new space is already the active one.
+     */
+    private fun noteSpaceSwitch() {
         if (activeSpace === scriptSpace) return
         journal.add(Step("space", listOf(Arg.Label(activeSpace.name))))
         scriptSpace = activeSpace
@@ -5769,14 +5980,26 @@ class Document {
      * space's own way, so the material lands between the face and `depth` outside it, and every drawn (u, v)
      * still means exactly what it meant (a right-handed frame cannot reverse its normal without mirroring `v`,
      * and mirroring `v` would move every face-space drawing ever saved — see [createFaceSpace]).
+     *
+     * **On a datum plane it sweeps the plane's own +normal** and offsets nothing (GitHub #6). The two rules
+     * are the same rule stated against what each space actually has: a face plane points *into* material, so
+     * the directions are named against the material; a datum has no material side at all, so they are named
+     * against its own normal — which the **sign of its angle** turns round ([createDatumSpace]).
      */
     fun extrudeSolid(
         el: Element,
         depth: ScalarRef,
     ): Element? {
         val region = regionOf(el) ?: return null
-        val face = activeSpace.plane
-        val plane = if (face == null) activePlane() else cx.planeOffset(face, cx.neg(depth))
+        val space = activeSpace
+        val plane =
+            when {
+                space.plane == null -> activePlane()
+                // a face: start `depth` behind the face, so the material lands outside it — a boss
+                space.isFace -> cx.planeOffset(space.plane, cx.neg(depth))
+                // a datum: along its own +normal, which is the direction its angle's sign chose
+                else -> space.plane
+            }
         return add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
     }
 
@@ -5799,6 +6022,12 @@ class Document {
      * [part] is **the part as it stands**, not the space's base: the editor resolves [facePartTip] at click
      * time and the step records it by name, so a second cut chains onto the first instead of forking the
      * model (the sequential-feature rule). Null in the plan space, where there is no face to cut into.
+     *
+     * **On a datum plane it sweeps −normal instead**, by starting the sweep `depth` behind the plane — the
+     * mirror image of what [extrudeSolid] does on a face, and for the mirror reason: a datum has no material
+     * side, so *Extrude* takes its +normal and *Cut* takes the other one, with the sign of the datum's angle
+     * choosing which is which (GitHub #6). The part it subtracts from is the one the datum's hinge belongs to
+     * ([datumPartOf]), chained by the same tip rule.
      */
     @Suppress("UNCHECKED_CAST")
     fun cutOnFace(
@@ -5806,9 +6035,11 @@ class Document {
         el: Element,
         depth: ScalarRef,
     ): Element? {
-        val plane = activeSpace.plane ?: return null
+        val space = activeSpace
+        val on = space.plane ?: return null
         if (part.kind != ElementKind.SOLID) return null
         val region = regionOf(el) ?: return null
+        val plane = if (space.isFace) on else cx.planeOffset(on, cx.neg(depth))
         val tool = add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
         return add(cx.subtract(part.ref as SolidRef, tool.ref as SolidRef), ElementKind.SOLID, Styles.SOLID)
     }

@@ -625,13 +625,21 @@ object DocumentFormat {
     }
 
     /**
-     * Replay a **sketch space on a face** (OP-17): `sketchspace "name" el=e7 piece=2`.
+     * Replay a sketch space (OP-17). Two variants, one step kind:
      *
-     * The step carries the *description* of the frame — which solid, which boundary piece — and never the
-     * frame itself, so the plane is re-derived on load and a part edited since comes back with its faces
-     * where they now are. The piece index is a **discrete choice** and is therefore recorded verbatim
-     * (OP-18), not re-derived from the click that made it: the click was a position, and a position that
-     * lands on one edge today can land on its neighbour after an edit.
+     * - a **face**: `sketchspace "name" el=e7 piece=2` — which solid, which boundary piece;
+     * - a **datum**: `sketchspace "name" line=e3 angle="tilt" part=e5` — which line it hinges on, which
+     *   parameter holds its angle, and which solid a *Cut* there subtracts from (GitHub #6). Told apart by
+     *   `line=`, and no version bump goes with it: an argument that never existed cannot have meant
+     *   something else, so no stored literal changes meaning (OP-18's doctrine).
+     *
+     * Either way the step carries the *description* of the frame and never the frame itself, so the plane is
+     * re-derived on load and a part edited since comes back with its faces where they now are. The piece
+     * index, and the part, are **discrete choices** recorded verbatim (OP-18) rather than re-derived from the
+     * click or from the drawing as it stands: a position that lands on one edge today can land on its
+     * neighbour after an edit, and which solid a datum cuts is a fact about the moment it was created. The
+     * *angle*, by contrast, is state — it lives in the parameter this step names, and that parameter's own
+     * `param` step restates it.
      */
     private fun applySketchSpace(
         doc: Document,
@@ -641,13 +649,29 @@ object DocumentFormat {
         val name = unquote(words.getOrElse(1) { throw LoadError("sketchspace is missing a name") })
         var solid: Element? = null
         var piece = -1
+        var line: Element? = null
+        var part: Element? = null
+        var angle: ScalarEntry? = null
         for (w in words.drop(2)) {
             val v = w.substringAfter('=', "")
             when (w.substringBefore('=')) {
                 "el" -> solid = byName[v] ?: throw LoadError("unknown element '$v'")
                 "piece" -> piece = v.toIntOrNull() ?: throw LoadError("malformed piece index '$v'")
+                "line" -> line = byName[v] ?: throw LoadError("unknown element '$v'")
+                "part" -> part = byName[v] ?: throw LoadError("unknown element '$v'")
+                "angle" ->
+                    angle =
+                        unquote(v).let { n ->
+                            doc.scalars.firstOrNull { it.name == n } ?: throw LoadError("unknown scalar '$n'")
+                        }
                 else -> throw LoadError("unknown sketchspace argument '${w.substringBefore('=')}'")
             }
+        }
+        if (line != null) {
+            val a = angle ?: throw LoadError("a datum sketch plane is missing 'angle='")
+            doc.createDatumSpace(line, a.ref, named = name, part = part)
+                ?: throw LoadError("'${doc.nameOf(line)}' carries no line to place a sketch plane on")
+            return
         }
         val on = solid ?: throw LoadError("sketchspace is missing 'el='")
         doc.createFaceSpace(on, piece, named = name)
