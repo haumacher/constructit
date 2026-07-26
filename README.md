@@ -47,7 +47,14 @@ first-class goal and the current implementation focus.
   a quarter of the tessellation tolerance of the exact curve — with the standard tip, root and pitch
   proportions, so a pair of them meshes at centre distance m·z.
 - **Constrained, draggable points** — point-on-line / point-on-circle (1-DOF), and *drag-to-weld*:
-  drag a free point onto another to join them, or onto a curve to attach it as a sliding point.
+  drag a free point onto another to join them, or onto a curve to attach it as a sliding point. A point
+  riding a curve keeps its place while the curve is stretched, moved, *or turned* — a gesture that reshapes
+  a host re-solves what rides it to where it stood, so nothing you did not touch runs away.
+- **Relative points** — *Make relative* re-parameterizes a free point as a distance and an angle from
+  another point, so it follows that anchor (move a circle's centre and its radius holds) while staying
+  fully draggable — and its distance is the radius, as a number you can type. *Make absolute* undoes it,
+  and un-welds or detaches a point too. A conversion, not a constraint: two degrees of freedom before,
+  two after, and nothing moves at the moment you say it.
 - **Dimensions** — linear (aligned), radial and angular dimension graphics whose value *is* a
   measurement node: the number and the drawing follow the geometry live, and nothing is asserted. The
   dimension line's own placement is draggable and typeable like any other degree of freedom.

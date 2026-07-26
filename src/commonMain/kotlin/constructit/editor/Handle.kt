@@ -10,6 +10,7 @@ import constructit.core.ScalarValue
 import constructit.core.SourceNode
 import constructit.dsl.CircleRef
 import constructit.dsl.LineRef
+import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.dsl.valueOf
 import constructit.geom.Vec2
@@ -639,6 +640,31 @@ class OrthoEdgeHandle(private val doc: Document, private val path: OrthoPath, pr
             lengthField("length (move start)", start, end),
         )
     }
+}
+
+/**
+ * A point re-parameterized as an offset from an [anchor] point (OP-4 case b): its two degrees of freedom are
+ * the [distance] and the [angle] of that offset, which is what makes a *radius* something one can type.
+ *
+ * Dragging inverts the offset from the cursor, so the point still lands under the pointer and the anchor
+ * stays put — the same discipline as a framed point's drag (OP-13). A cursor *on* the anchor leaves the angle
+ * alone rather than snapping it to whatever `atan2(0, 0)` returns, so passing through the anchor and out the
+ * far side does not spin the point.
+ */
+class RelativePointHandle(private val anchor: PointRef, private val distance: SourceNode, private val angle: SourceNode) : Handle {
+    override val dragNodes: List<SourceNode> get() = listOf(distance, angle)
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        val a = (ev.valueOf(anchor) as? PointValue)?.p ?: return
+        val v = world - a
+        distance.value = ScalarValue(Quantity.mm(v.length()))
+        if (v.length() >= Vec2.EPS) angle.value = ScalarValue(Quantity.rad(v.angle()))
+    }
+
+    override fun fields(): List<HandleField> = listOf(coordField("distance", distance), angleField("angle", angle))
 }
 
 /** Point on a circle: the handle's one DOF is the angle around the centre. */

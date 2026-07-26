@@ -182,6 +182,12 @@ object Tools {
     const val KEY_POINTS = "keypoints"
     const val JOIN = "join"
 
+    // OP-4 case (b): re-parameterize a free point onto an anchor, and the conversion back. Two tools rather
+    // than one that guesses from what was clicked — a tool's slots say what it takes, and "make relative"
+    // takes two points while "make absolute" takes one.
+    const val MAKE_RELATIVE = "makerel"
+    const val MAKE_ABSOLUTE = "makeabs"
+
     // Curves
     const val LINE = "line"
     const val SEGMENT = "segment"
@@ -287,6 +293,10 @@ object Tools {
             ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTRIC), help = "Click a circle or arc to add its centre point.") { d, p, _ -> d.centerOf(p.elements[0]) },
             ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.CURVE), help = "Click a curve to add its defining points (endpoints, centre) — even on mirrored/derived geometry.") { d, p, _ -> d.extractPoints(p.elements[0]) },
             ToolDef(JOIN, "Join points", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), help = "Click the point to keep, then a free point to weld onto it (they become one).") { d, p, _ -> d.weld(p.elements[1], p.elements[0]) },
+            // the offset is the tool's own DOF, restated on save through `dofs=` exactly as a dimension's
+            // placement is (OP-13/OP-18), so a dragged or typed distance comes back
+            ToolDef(MAKE_RELATIVE, "Make relative", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), help = "Click a free point, then the point it should follow: it keeps its distance and angle to that anchor, so moving the anchor takes it along. Drag it (or type distance / angle) to change the offset; Make absolute undoes it.") { d, p, _ -> d.makeRelative(p.elements[0], p.elements[1], p.dofs) },
+            ToolDef(MAKE_ABSOLUTE, "Make absolute", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), help = "Click a point that follows something — relative to an anchor, welded, or attached to a curve — to give it its own coordinates again, where it now stands.") { d, p, _ -> d.makeAbsolute(p.elements[0]) },
             // ----- Curves -----
             ToolDef(LINE, "Line", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to draw an infinite line.") { d, p, _ -> d.line(p.points[0], p.points[1]) },
             ToolDef(SEGMENT, "Segment", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), shortcut = 'L', help = "Click two points to draw a segment.") { d, p, _ -> d.segment(p.points[0], p.points[1]) },

@@ -892,14 +892,71 @@ Two decisions inside that:
 - **A diagonal host has no world coordinate to offer, so it keeps a distance along the line — but anchored
   to the line, not to the host.** The anchor is the point of the line *nearest the world origin*, so the
   parameter is `world · dir`: a property of the carrier alone. Dragging a slanted wall's endpoint *along its
-  own line* — an edit that changes nothing one can see — no longer slides what rides it. The honest limit is
-  that **turning** the host still moves the rider, and no parameter along a curve can avoid that; a second,
-  smaller one is that reversing the line's direction mirrors the rider about that anchor. Both are recorded
-  rather than papered over, and both are unreachable on an axis-aligned host, which is where walls live.
+  own line* — an edit that changes nothing one can see — no longer slides what rides it. The limit is that
+  **turning** the host still moves the rider, and no parameter along a curve can avoid that — *but a
+  **gesture** compensates, which supersedes the limit where it was felt* (see below); a second, smaller one is
+  that reversing the line's direction mirrors the rider about that anchor, and projection turns out to cure
+  that too. Both were recorded rather than papered over, and both are unreachable on an axis-aligned host,
+  which is where walls live.
 
 The file format needed **nothing**: a step restates the *position* its creation produced and the attach
 steps re-derive their parameter on replay, so old files come back with absolute anchoring simply by being
 loaded (OP-18's "replay reconstructs" earning its keep again).
+
+### A gesture compensates the riders of the host it turns (as built)
+
+The recorded limit came back as a report: on the drawing above's diagonal cousin — a segment with two riders
+on it joined by a third segment — dragging the host's right endpoint 90° down made the inner segment slide
+dramatically along the turning host, "even beyond its extent". Both riders kept their distance *along* the
+carrier while the carrier's direction changed under them, so the pair travelled rigidly along a line that was
+sweeping.
+
+**The limit is a property of the parameter, so the answer is the edit, not another parameter.** While a
+gesture edits a host, every rider whose parameter is carrier-anchored is **re-solved on every move** so it
+sits at the projection of the world position it had **at grab time** onto the host's current geometry. These
+are ordinary literal writes inside the gesture — OP-13's discipline (*a drag writes free source nodes*)
+extended from the thing grabbed to what depends on it. Nothing is asserted, no solver appears, the model
+stays a pure function of its parameters, and the file restates the compensated values like any others.
+
+Five decisions make it one rule rather than a family of patches.
+
+- **The reference is the grab, never the previous move.** That single choice buys all three properties at
+  once: a stretch or a translation that leaves the host's direction alone writes *nothing at all* (projection
+  is the identity there — the parameter already holds `world · dir`), a rotation moves each rider
+  continuously and by the least the host allows, and dragging back to where the gesture started restores
+  every rider **bit for bit**, because an unturned host restores the grab-time literal itself instead of
+  recomputing it. An incremental reference would have drifted on all three.
+- **Which riders: only the carrier-anchored ones, and they are known structurally.** A rider on a host that
+  is axis-aligned by construction stores a world coordinate, and one on a circle stores an angle about the
+  centre; both are anchored to something no edit to the host can move, so compensation there would be a
+  write with nothing to correct. Such riders are therefore **never registered**, which is the cheap check —
+  `Document.riderAnchors()` on a wall drawing is empty, and the absolute semantics above are reached by
+  exactly the code they always were.
+- **One seam, not one per handle.** The registry is filled in `riderOn`, the single helper that already
+  decides every rider's parameter, and the compensation runs once in `Editor.pointerMove` after the handle's
+  drag. So endpoint drags, leg drags and the junction delegation of OP-20's own per-axis rule are all
+  covered without knowing about each other — and the **discrete twin** (a typed field, a panel parameter that
+  drives a host) is the same call around the write, because typing and dragging are one operation.
+- **A rider the gesture itself writes is never compensated**: its own drag wins. It is recognised by its
+  parameter no longer holding what the compensation last left there, which needs no knowledge of *which*
+  handle is being driven — the delegated junction of a corner drag identifies itself the same way an
+  explicitly grabbed slider does.
+- **Chains are compensated outer to inner.** A rider may *carry* another rider's host (a segment drawn
+  through it), and projecting the inner one onto geometry still about to move would be wrong; the pass is
+  ordered by the ordinary `dependsOn` walk, and the evaluator is renewed after each write so the next rider
+  sees the corrected geometry.
+
+Undo needed nothing: the whole drag is one checkpoint as before, and a checkpoint is the saved script, so the
+compensated literals ride the same snapshot. That did expose one real gap in the file, fixed here: the
+`pointoncurve` step restated *nothing*, so a rider's position — dragged, typed, or compensated — was rebuilt
+from the click that first placed it. It now carries the rider's own parameter as `dofs=`, the same seam a
+dimension's placement uses; the click stays verbatim, because what the click encodes is a **choice** (which
+curve, which side of a circle) and replay must repeat it, while where the rider sits is state.
+
+What is deliberately *not* compensated is a **placed group's frame drag** (OP-16): that gesture moves the host
+and everything on it as one rigid body, which is exactly the intent, and re-projecting the riders against a
+grab-time reference would fight the gesture rather than help it. The rule is about a host being **reshaped**,
+not about the whole drawing being carried somewhere else.
 
 This supersedes an earlier attempt that had each handle search the graph upstream for a free DOF and
 invert numerically. That worked, but its candidate choice was itself order-dependent — papering over
@@ -1204,13 +1261,54 @@ spinner destroys the focus and with it the next tick.
 ### freeze / convert
 - **(a) Freeze to constant — IN v1.** Replace a measurement's consumers with an editable
   `Parameter` initialized to the current value (a pure detach). Always possible.
-- **(b) Re-parameterize a free source — DEFERRED (on-demand later; no further design now).**
+- **(b) Re-parameterize a free source — DELIVERED (the demand arrived; see *Relative points* below).**
   Not graph inversion but a coordinate change: replace a *free* source node (e.g. a free
   point, 2 DOF cartesian) with an equivalent construction that exposes the measured quantity
   as a driving parameter, capturing residual DOF from current geometry
   (e.g. `P2 = P1 + PolarVector(d, θ)`). Preserves DOF count → **no solver**. Refused when the
   quantity's endpoints are fully determined (no free DOF to absorb the input).
 - **(c) General inversion** (solve for a determined quantity) — out of scope (needs a solver).
+
+### Relative points — OP-4 case (b), as built
+
+The demand arrived as a drawing: a circle built centre-and-point, whose **centre rides a segment** and whose
+rim passes through a **free point**. Dragging the segment moved the centre and *changed the radius*, because
+the rim point stayed where it was. The user's intent was that the rim point belongs to the centre — and
+stating that intent is a **re-parameterization, not a constraint**: `P = polarPoint(anchor, d, θ)`, with `d`
+and `θ` read off the geometry the point already has.
+
+- **Two DOF before, two after, and nothing moves at the moment of the change.** That is the whole test of
+  case (b): the point is not pinned, it is *described differently*. `d` and `θ` are ordinary free scalar
+  sources, so the point is still dragged (the drag inverts the offset from the cursor) and still typed —
+  now as a **distance and an angle**, which is how a two-point circle finally gains "type the radius"
+  (OP-13, at no cost: a handle's fields are its drag).
+- **Polar rather than a vector offset**, because the two numbers a user wants for a rim point are its
+  radius and its bearing; a `dx/dy` pair would have made the radius unreachable again.
+- **The substrate is the bind-in-place one welding uses** (`SourceNode.boundTo`, OP-5): the free point's
+  node is bound onto the `polarPoint` node, so *everything already referring to that point follows* — the
+  circle here — with no input list rewired and no element replaced. This is the third feature that
+  binding-rather-than-sharing has paid for (weld, ortho legs, this).
+- **Invertible, and that is what makes it a conversion.** *Make absolute* unbinds and writes the point's
+  current world position back into its literal — the point does not move, and the drawing behaves as it
+  did before. One affordance covers every way a point can have lost its coordinates (relative, welded,
+  attached), because they are all the same rewiring seen from the user's side.
+- **Two tools, not one that guesses** (`ToolCategory.POINTS`): *Make relative* takes two points, *Make
+  absolute* takes one. A tool's slots are its promise about what it takes, so a single tool that meant
+  different things depending on what the first click hit would have needed controller code to say so.
+- **Cycles are refused by the predicate every other connection uses** (`joinWouldCycle`): anchoring a point
+  to something that already follows it would put it inside its own input cone, which is OP-4's acyclicity
+  applied to a re-parameterization. Refused *with a reason*, and a refusal records no step.
+- **Persistence needed no new mechanism.** The offset is state (dragged, typed), so it rides the same
+  **`dofs=`** seam a dimension's placement uses: `tool makerel els=e5,e4 clicks=… dofs=25.3mm;-118deg`,
+  restated from the live nodes on every save and taken verbatim on replay — hence exact, byte-stable
+  round trips and no drift. (`Document.makeRelative` called directly records the same thing as a
+  `relative` step, for the same reason `weld` has one.)
+- **One general seam fell out of it**, worth naming because the next such tool needs nothing: a tool that
+  only *rewires* changes nothing the canvas can show, so a silent success is indistinguishable from a
+  silent refusal. The document now carries a one-shot **`note`** which the controller reads after any tool
+  completes — no case per tool. The same absence had a second symptom, fixed here: a tool whose build
+  created no element had its journal step dropped as "empty", so the **Join points tool's weld was lost on
+  save** although the identical weld by drag was kept. An in-place rewiring now counts as an effect.
 
 ### Dimensions (as built)
 
@@ -2626,7 +2724,9 @@ Three broad families (see OP-9 decision above):
       automatically** when inputs return to a valid range.
 - [x] **OP-4 Measurements** — RESOLVED: first-class derived Scalar/Angle nodes in v1;
       forward-only (driven), never cyclic; driving XOR driven. freeze-to-constant (a) in v1;
-      re-parameterize-a-free-source (b) deferred on-demand; general inversion (c) out of scope.
+      re-parameterize-a-free-source (b) **delivered** on demand as *relative points*
+      (`P = polarPoint(anchor, d, θ)`, DOF-preserving and invertible — see *Relative points*);
+      general inversion (c) out of scope.
 - [x] **OP-5 Node graph data model** — RESOLVED: one uniform, strongly-typed dataflow DAG;
       unified numbers+geometry; exactly one output per node; intersections emit an ordered
       `PointSet` value consumed by a separate `Select(set, sign)` node (computed once, shared);
@@ -2675,7 +2775,10 @@ Three broad families (see OP-9 decision above):
 - [x] **OP-20 Where things meet** — RESOLVED: a meeting point is a `Junction` that **owns** the shared
       freedom, with everything meeting there bound to it. Fixes the order-dependent *attribution* of
       DOF that made two runs at one junction behave differently; drags and typed values both reach the
-      shared freedom through the junction, in closed form. See *Junctions own the freedom*.
+      shared freedom through the junction, in closed form. Where a thing sits along its host is an
+      absolute quantity, never a share of the host; and where the host has no absolute to offer, a
+      **gesture compensates** its riders to the projection of their grab-time positions. See *Junctions
+      own the freedom* and *A gesture compensates the riders of the host it turns*.
 - [x] **OP-19 Break / join legs** — RESOLVED and built: threshold-triggered topology edits by
       gesture (join on jog collapse, committed on release; break as a tool inserting a zero-length
       perpendicular). Required ortho coordinates to move from *shared* nodes to *bound* ones — a
@@ -3396,6 +3499,38 @@ Three broad families (see OP-9 decision above):
   E2E now serves the distribution over **http** from the JDK's own server so the WASM engine can load — the
   first browser coverage of a cross-axis boolean, screenshotted with the bore in it.
 
+- **Session 9 — two reports, one package: a gesture that compensates, and relative points.** Both were the
+  same shape of complaint — *"editing this moved something I did not touch"* / *"editing this changed something
+  that should have followed"* — and both were answered without a constraint appearing anywhere.
+  (1) **The recorded limit came back as a bug, so it stopped being acceptable.** OP-20 stores a rider on a
+  diagonal host as a distance along the carrier and noted that turning the host still moves the rider. Turning
+  one by 90° slid a whole inner segment along it. The fix belongs to the **edit**, not to the parameter: while
+  a gesture reshapes a host, every carrier-anchored rider is re-solved each move to the projection of the
+  world position it had **at grab time**. Grab-time (not incremental) is the load-bearing word — it makes an
+  unturned host write *nothing*, a rotation continuous, and a drag back to the start exact to the bit. It also
+  cures the second, smaller limit for free, since projection is direction-blind.
+  (2) **One seam, found by asking where host geometry changes rather than which handles change it.** The
+  registry is filled by `riderOn` — already the single decider of every rider's parameter — and the
+  compensation runs once after the handle's drag in `pointerMove`, so endpoint drags, leg drags and OP-20's own
+  junction delegation are covered without any of them knowing. The typed twin is the same call around a field
+  or parameter write (OP-13). Riders that are *already* absolutely anchored are never registered, so the
+  wall drawings of `JunctionAnchorTest` are provably untouched; chains are ordered by `dependsOn`.
+  (3) **Relative points closed OP-4 case (b) on demand**, on a drawing where dragging a segment moved a
+  circle's centre and changed its radius. `polarPoint(anchor, d, θ)` bound in place over the free point —
+  2 DOF before, 2 after, nothing moves at the moment of the change, and *every existing reference follows*
+  because binding is the OP-5 substrate welding already uses. Polar rather than dx/dy because the number the
+  user wanted was the **radius**, and a handle's fields are its drag, so "type the radius" arrived at no cost.
+  Invertible by *Make absolute*, which also became the missing UI for un-welding and detaching.
+  (4) **Two gaps the work exposed, both fixed rather than noted.** A tool whose build creates no element had
+  its journal step dropped as "empty" — so the *Join points* tool's weld was silently lost on save, while the
+  same weld by drag was kept; an in-place rewiring now counts as an effect. And `pointoncurve` restated
+  nothing, so a rider's position (dragged, typed, or compensated) was rebuilt from the click that first placed
+  it; it now carries its parameter as `dofs=`, the seam a dimension's placement already uses — which is also
+  what lets the compensated values ride the undo snapshot, since a checkpoint *is* the saved script.
+  (5) **A general channel instead of a per-tool case**: a tool that only rewires changes nothing the canvas can
+  show, so the document now carries a one-shot `note` the controller reads after any tool completes. 623
+  headless tests green (19 new: `RiderCompensationTest`, `RelativePointTest`).
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -3732,23 +3867,18 @@ Then 3D walls = extrude + boolean.
 Kept here so no in-flight plan lives only in a session. Per-feature deliberate cuts stay recorded in
 their own as-built notes; this is the *ordered queue* as of 2026-07-26:
 
-1. **Edit stability** (in flight): gesture-time rider compensation — while a drag or field write turns
-   a host, each carrier-anchored rider is re-solved to the projection of its grab-time world position,
-   superseding OP-20's "turning the host moves the rider" limit at the gesture level; and **relative
-   points** = OP-4 case (b) delivered on demand (`P = anchor + polar(d, θ)` via the bind-in-place
-   substrate; make/unmake recorded, d/θ typed fields — a two-point circle gains "type the radius").
-2. **Opening handles**: an opening's two DOF become grabbable at its jambs — the leading jamb slides
+1. **Opening handles**: an opening's two DOF become grabbable at its jambs — the leading jamb slides
    `pos` (whole opening moves, width start-relative hence preserved), the trailing jamb writes
    `width = cursor − pos`. No new elements: the plan-convention jambs become hit-testable, resolving to
    interval handles owned by the thick path (the ortho-leg addressing pattern).
-3. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
+2. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
    connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by
    curve direction); junctions are shared carrier vertices, branch vertices resolved by cyclic order —
    which is the honest form of the long-deferred T/L wall-junction cleanup; offsets exact for
    lines/arcs, bézier offsets in OP-15's approximated class; footprint key points exposed as OP-6
    provenance accessors (`corner(i)`, `face(side)` — the accessors cut in the first OP-21 slice, now
    demanded); openings measure along any curve kind by arc length.
-4. **Incremental recompute** (the OP-5 dirty-marking the implementation still owes): persistent
+3. **Incremental recompute** (the OP-5 dirty-marking the implementation still owes): persistent
    cross-pass value cache keyed by source-node versions, so a repaint recomputes only the changed input
    cone — the fix for revolve-sized meshes making even the 2D view lag. Acceptance: recompute counters
    flat across repaints that change nothing upstream. Optional afterwards: a low-poly view mode.

@@ -52,6 +52,7 @@ import constructit.geom.Segment
 import constructit.geom.SolidFace
 import constructit.geom.ThickFaces
 import constructit.geom.Vec2
+import constructit.units.Dimension
 import constructit.units.Quantity
 import constructit.units.deg
 import constructit.units.mm
@@ -483,6 +484,34 @@ class Document {
     private var recordDepth = 0
 
     /**
+     * How many **in-place rewirings** this document has seen: a weld, an attach, a re-parameterization
+     * (OP-4 case b). Such an edit changes the construction while creating neither an element nor a scalar,
+     * which is exactly what [recording]'s `skipIfEmpty` used to mistake for "the tool did nothing" — the
+     * *Join points* tool welded two points and then had its step dropped as empty, so the join was lost on
+     * save although the same weld performed by dragging was kept.
+     */
+    private var edits = 0
+
+    /** Say that an in-place rewiring happened — see [edits]. */
+    private fun noteEdit() {
+        edits++
+    }
+
+    /**
+     * What the operation just run has to say, in the user's terms — a result worth reading, or the reason it
+     * refused. Consumed once, by whoever ran it ([takeNote]).
+     *
+     * An operation that only rewires ([makeRelative], [makeAbsolute]) changes nothing the canvas can show, so
+     * a silent success is indistinguishable from a silent refusal. One channel rather than a per-tool case in
+     * the controller, so the next such tool needs no work there either.
+     */
+    var note: String? = null
+        private set
+
+    /** Read [note] and clear it: a note is about the operation that produced it, and only about that one. */
+    fun takeNote(): String? = note.also { note = null }
+
+    /**
      * Run [body] as one journal step. Nested calls are absorbed into the outermost one, so a tool that
      * calls several document operations is recorded as the single tool application the user performed —
      * which is also the only granularity that replays correctly.
@@ -495,15 +524,18 @@ class Document {
     ): T {
         if (recordDepth > 0) return body()
         recordDepth++
+        note = null // a note is about the operation being run now, never about the one before it
         // an identity snapshot, not a count: a step may *remove* elements too (a break replaces one
         // leg with three), and then a count would mistake shifted survivors for new ones
         val before = elements.toHashSet()
         val scalarsBefore = scalars.size
+        val editsBefore = edits
         try {
             val result = body()
             val created = elements.filter { it !in before }
-            // a tool whose build had no effect is not part of the construction
-            if (skipIfEmpty && created.isEmpty() && scalars.size == scalarsBefore) return result
+            // a tool whose build had no effect is not part of the construction — where "effect" counts an
+            // in-place rewiring too, since a tool may bind rather than build (see [edits])
+            if (skipIfEmpty && created.isEmpty() && scalars.size == scalarsBefore && edits == editsBefore) return result
             val step = Step(kind, args.toList())
             step.creates.addAll(created)
             step.createsScalars.addAll(scalars.subList(scalarsBefore, scalars.size))
@@ -784,7 +816,7 @@ class Document {
     fun creatingStep(el: Element): Step? = journal.firstOrNull { s -> s.creates.any { it === el } }
 
     /** Elements a step's arguments reference, keyed wrappers included. */
-    private fun referencedElements(step: Step): List<Element> {
+    internal fun referencedElements(step: Step): List<Element> {
         val out = ArrayList<Element>()
 
         fun walk(a: Arg) {
@@ -1970,7 +2002,8 @@ class Document {
      * placing one is not).
      */
     fun isWelded(el: Element): Boolean =
-        el.kind == ElementKind.POINT && (el.ref.node as? SourceNode)?.boundTo != null && !isFramed(el)
+        el.kind == ElementKind.POINT && (el.ref.node as? SourceNode)?.boundTo != null && !isFramed(el) &&
+            relativeOf(el) == null
 
     /**
      * Weld free point [alias] onto [master] so they coincide: [alias] becomes a driven alias of
@@ -1995,6 +2028,7 @@ class Document {
         if (masterNode === node || joinWouldCycle(alias, masterNode)) return false // no cycles
         node.boundTo = masterNode
         alias.visible = false
+        noteEdit()
         return true
     }
 
@@ -2004,12 +2038,122 @@ class Document {
     private fun unweldNow(alias: Element) {
         val node = alias.ref.node as? SourceNode ?: return
         val cur = (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p }
+        if (node.boundTo != null) noteEdit()
         node.boundTo = null
+        relatives.remove(alias.id)
         if (cur != null) node.value = PointValue(cur)
         alias.kind = ElementKind.POINT
         alias.handle = FreePointHandle(node) // an independent free point again, handle included
         alias.style = Styles.FREE_POINT
         alias.visible = true
+    }
+
+    // ---- relative points: re-parameterize a free point onto an anchor (OP-4 case b) ----
+
+    /**
+     * A point re-parameterized as **an offset from another point**: `P = anchor + PolarVector(distance,
+     * angle)` (OP-4 case b). Its two degrees of freedom are those two scalars, so nothing is lost and
+     * nothing is asserted — the point simply says what it always meant.
+     */
+    class RelativePoint(val anchor: PointRef, val distance: SourceNode, val angle: SourceNode)
+
+    /** Points re-parameterized onto an anchor, by element id — see [makeRelative]. */
+    private val relatives = HashMap<String, RelativePoint>()
+
+    /** How [el] is anchored, if it has been made relative. */
+    fun relativeOf(el: Element): RelativePoint? = relatives[el.id]
+
+    /**
+     * Re-parameterize free point [pt] as an offset from [anchor]: **the demand OP-4 case (b) deferred.**
+     *
+     * Reported on a circle whose centre rides a segment and whose rim goes through a free point: dragging the
+     * segment moved the centre and *changed the radius*, because the free point stayed where it was. What the
+     * user meant was that the rim point belongs to the centre, and saying so is a re-parameterization, not a
+     * constraint: the point's literal position gives way to `polarPoint(anchor, d, θ)` with `d` and `θ` read
+     * off the geometry it already has, so nothing moves at the moment of the change and the radius now follows
+     * the centre.
+     *
+     * Two degrees of freedom before, two after — and both still draggable and typeable, now as a distance and
+     * an angle (which is how a radius becomes a number one can type, OP-13). The binding goes through
+     * [SourceNode.boundTo], so every existing reference to [pt] follows without a single input list being
+     * rewired (OP-5), and [makeAbsolute] gives the point its own coordinates back.
+     *
+     * [dofs] is the offset a replay hands back (OP-18); absent, it is captured from the current geometry.
+     * Refused — with a reason, and recording nothing, since a refusal rewires nothing and `skipIfEmpty` reads
+     * that off [edits] — when [pt] is not an unbound free point, when [anchor] is not a point, or when
+     * [anchor] already depends on [pt]: that would be a cycle, and OP-4's acyclicity applies to a
+     * *re*-parameterization exactly as it does to a measurement.
+     */
+    fun makeRelative(
+        pt: Element,
+        anchor: Element,
+        dofs: List<Quantity> = emptyList(),
+    ): Boolean = recording("relative", Arg.El(pt), Arg.El(anchor), skipIfEmpty = true) { makeRelativeNow(pt, anchor, dofs) }
+
+    private fun makeRelativeNow(
+        pt: Element,
+        anchor: Element,
+        dofs: List<Quantity>,
+    ): Boolean {
+        val node = pt.ref.node as? SourceNode
+        if (node == null || pt.kind != ElementKind.POINT || node.boundTo != null) {
+            note =
+                if (node?.boundTo != null) {
+                    "${pt.id} already follows something — free it first (Make absolute), then anchor it"
+                } else {
+                    "${pt.id} is not a free point: only a point that owns its coordinates can be re-anchored"
+                }
+            return false
+        }
+        @Suppress("UNCHECKED_CAST")
+        val anchorRef = anchor.ref as? PointRef
+        if (anchorRef == null || !anchor.isPoint || anchor === pt) {
+            note = "${anchor.id} is not a point to anchor ${pt.id} to"
+            return false
+        }
+        if (anchorRef.node === node || joinWouldCycle(pt, anchorRef.node)) {
+            note = "Can't anchor ${pt.id} to ${anchor.id}: ${anchor.id} already follows ${pt.id}"
+            return false
+        }
+        val ev = Evaluator()
+        val here = pointOf(node, ev) ?: return false
+        val there = pointOf(anchorRef.node, ev) ?: return false
+        val offset = here - there
+        val d = dofs.firstOrNull { it.dim == Dimension.LENGTH }?.mm ?: offset.length()
+        val a = dofs.firstOrNull { it.dim == Dimension.ANGLE }?.base ?: offset.angle()
+        val dNode = SourceNode(nextId("rd"), ScalarValue(Quantity.mm(d)))
+        val aNode = SourceNode(nextId("ra"), ScalarValue(Quantity.rad(a)))
+        node.boundTo = cx.polarPoint(anchorRef, Ref<ScalarValue>(dNode), Ref<ScalarValue>(aNode)).node
+        relatives[pt.id] = RelativePoint(anchorRef, dNode, aNode)
+        pt.handle = RelativePointHandle(anchorRef, dNode, aNode)
+        pt.style = Styles.ON_CURVE // derived-but-draggable, the same reading an attached point gets
+        noteEdit()
+        note = "${pt.id} now follows ${anchor.id} — distance and angle are its degrees of freedom (drag it, or type them)"
+        return true
+    }
+
+    /**
+     * Give a relative point its own coordinates back, at the position it currently has — the inverse of
+     * [makeRelative], and the reason the re-parameterization is a *conversion* rather than a commitment
+     * (OP-4 case b). Anything else that binds a point ([unweld] — a weld, an attach) is undone here too, so
+     * one affordance answers "give this point its freedom back" however it lost it.
+     */
+    fun makeAbsolute(pt: Element): Boolean {
+        val node = pt.ref.node as? SourceNode
+        if (node?.boundTo == null) {
+            note =
+                if (node != null) {
+                    "${pt.id} is already a free point"
+                } else {
+                    // a path corner, an intersection: it has no literal of its own to hand back
+                    "${pt.id} is derived by the construction, not a point holding its own coordinates"
+                }
+            return false
+        }
+        val wasRelative = relativeOf(pt) != null
+        unweld(pt)
+        note = if (wasRelative) "${pt.id} keeps its position and is free again" else "${pt.id} is a free point again"
+        return true
     }
 
     // ---- drag-to-attach: weld a free point onto a curve so it slides along it (1 DOF) ----
@@ -2071,6 +2215,8 @@ class Document {
     private class Rider(
         val point: PointRef,
         val handle: Handle,
+        /** The single source node carrying this rider's freedom — its parameter, whatever kind it is. */
+        val dof: SourceNode,
         val place: (axis: Int, value: Double) -> Boolean,
     )
 
@@ -2152,7 +2298,7 @@ class Document {
                 val cNode = SourceNode(nextId(prefix + "c"), ScalarValue(Quantity.mm(if (axis == 0) at.x else at.y)))
                 val point = cx.select(cx.intersectLL(axisLineAt(Ref<ScalarValue>(cNode), axis), lr), 1)
                 if (ev.eval(point.node) is EvalResult.Ok) {
-                    return Rider(point, OnAxisHandle(cNode, axis)) { a, value ->
+                    return Rider(point, OnAxisHandle(cNode, axis), cNode) { a, value ->
                         // the host fixes the other coordinate, so this one is all there is to place — exactly
                         if (a != axis) {
                             false
@@ -2165,7 +2311,9 @@ class Document {
             }
             val l = (ev.eval(lr.node) as? EvalResult.Ok)?.value as? LineValue ?: return null
             val tNode = SourceNode(nextId(prefix + "t"), ScalarValue(Quantity.mm(at.dot(l.line.dir))))
-            return Rider(alongLine(lr, Ref<ScalarValue>(tNode)), OnLineHandle(lr, tNode)) { a, value ->
+            val along = alongLine(lr, Ref<ScalarValue>(tNode))
+            noteCarrierRider(along, lr, tNode)
+            return Rider(along, OnLineHandle(lr, tNode), tNode) { a, value ->
                 // a line is affine in its parameter: t = (value - anchor) / dir, exactly
                 val line = ((Evaluator().eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line
                 val d = if (a == 0) line?.dir?.x else line?.dir?.y
@@ -2185,7 +2333,7 @@ class Document {
             // an angle about the centre is already absolute: it re-anchors on nothing an edit to the
             // circle's extent can move, since a circle has no ends to stretch
             val aNode = SourceNode(nextId(prefix + "a"), ScalarValue(Quantity.rad((at - c.circle.center).angle())))
-            return Rider(cx.pointOnCircle(cr, Ref<ScalarValue>(aNode)), OnCircleHandle(cr, aNode)) { axis, value ->
+            return Rider(cx.pointOnCircle(cr, Ref<ScalarValue>(aNode)), OnCircleHandle(cr, aNode), aNode) { axis, value ->
                 // a circle has two angles per coordinate; keep the one nearer where it already sits
                 val circle = ((Evaluator().eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue)?.circle
                 val centre = if (axis == 0) circle?.center?.x else circle?.center?.y
@@ -2203,6 +2351,127 @@ class Document {
             }
         }
         return null
+    }
+
+    // ---- gesture-time compensation: a rider keeps its place while its host turns (OP-20) ----
+
+    /**
+     * A rider whose stored parameter is **carrier-anchored** — a distance along a line, the form OP-20 keeps
+     * for a host with no world coordinate to offer. Its parameter's *meaning* turns with the carrier, which
+     * is the one thing no parameter along a curve survives, so an edit that turns the carrier compensates it.
+     *
+     * Only this form is registered. A rider on a host that is axis-aligned by construction stores a world
+     * coordinate and one about a circle's centre stores an angle; both are already anchored to something the
+     * host cannot move, so compensating them would be a write with nothing to correct (see [riderOn]).
+     */
+    internal class CarrierRider(val point: PointRef, val line: LineRef, val dof: SourceNode)
+
+    private val carrierRiders = ArrayList<CarrierRider>()
+
+    private fun noteCarrierRider(
+        point: PointRef,
+        line: LineRef,
+        dof: SourceNode,
+    ) {
+        carrierRiders.add(CarrierRider(point, line, dof))
+    }
+
+    /**
+     * Where one carrier-anchored rider stood when the gesture began, and what its parameter held then — the
+     * reference [compensateRiders] re-solves against on every move.
+     */
+    class RiderAnchor internal constructor(
+        internal val rider: CarrierRider,
+        internal val world: Vec2,
+        internal val dir: Vec2,
+        internal val t: Double,
+    ) {
+        /** The literal this compensation last left in place — how a rider driven by the gesture is spotted. */
+        internal var expected: Double = t
+
+        /** True once the gesture itself wrote this rider's parameter: its own drag wins, forever after. */
+        internal var driven: Boolean = false
+    }
+
+    /**
+     * Snapshot every carrier-anchored rider: taken once, where the gesture starts.
+     *
+     * The reference is deliberately the **grab-time** world position rather than the previous move's, so a
+     * gesture is a pure function of where it started and where the cursor is now: a stretch that does not turn
+     * the host writes nothing at all, a rotation moves each rider continuously, and dragging back to the start
+     * restores every rider exactly instead of accumulating a walk.
+     *
+     * The list comes back in dependency order, once: a gesture writes literals and never rewires, so the order
+     * cannot change while it lasts — and the graph walk that finds it has no business running per move.
+     */
+    fun riderAnchors(): List<RiderAnchor> {
+        if (carrierRiders.isEmpty()) return emptyList()
+        val ev = Evaluator()
+        return inRiderOrder(
+            carrierRiders.mapNotNull { r ->
+                val p = pointOf(r.point.node, ev) ?: return@mapNotNull null
+                val l = ((ev.eval(r.line.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: return@mapNotNull null
+                val t = ((ev.eval(r.dof) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.base ?: return@mapNotNull null
+                RiderAnchor(r, p, l.dir, t)
+            },
+        )
+    }
+
+    /**
+     * Re-solve each rider's parameter so it sits at the **projection of its grab-time position onto its
+     * host's current geometry** — the compensation OP-20's as-built limit asked for: the parameter's meaning
+     * turns with the carrier, so an edit that turns the carrier must restate it.
+     *
+     * Three rules make this safe to run after *every* move of *every* gesture:
+     * - a host whose direction is unchanged is left completely alone. Projection is the identity there
+     *   (`t = world · dir` is what the parameter already holds), so writing would only churn a literal — and
+     *   a stretch, a perpendicular move and a translation must be exactly as stable as they were.
+     * - a rider the gesture *itself* wrote is never touched again: its own drag wins. It is recognised by its
+     *   parameter no longer holding what this compensation last left there, which needs no knowledge of which
+     *   handle the gesture is driving — endpoint, leg, junction delegation or typed field alike.
+     * - riders are compensated **outer to inner** — the order [riderAnchors] already put them in: a rider that
+     *   carries another rider's host has to be put right first, or the inner one would be projected onto
+     *   geometry that is still about to move.
+     */
+    fun compensateRiders(anchors: List<RiderAnchor>) {
+        if (anchors.isEmpty()) return
+        var ev = Evaluator()
+        for (a in anchors) {
+            if (a.driven) continue
+            val now = ((ev.eval(a.rider.dof) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.base ?: continue
+            if (now != a.expected) {
+                a.driven = true
+                continue
+            }
+            val line = ((ev.eval(a.rider.line.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: continue
+            // the grab-time value *is* the projection onto the grab-time line, exactly — so an unturned host
+            // restores it bit for bit rather than through arithmetic that could drift
+            val want = if (line.dir == a.dir) a.t else a.world.dot(line.dir)
+            if (want == now) continue
+            a.rider.dof.value = ScalarValue(Quantity.mm(want))
+            a.expected = want
+            ev = Evaluator() // what a compensated rider carries has just moved; the next one must see it
+        }
+    }
+
+    /**
+     * [anchors] ordered so a rider comes after every rider its own host is built from — the dependency order
+     * a chain of riders needs (see [compensateRiders]). The graph is acyclic, so the pick always succeeds;
+     * the fallback only keeps a corrupted graph from looping.
+     */
+    private fun inRiderOrder(anchors: List<RiderAnchor>): List<RiderAnchor> {
+        if (anchors.size < 2) return anchors
+        val rest = ArrayList(anchors)
+        val out = ArrayList<RiderAnchor>(anchors.size)
+        while (rest.isNotEmpty()) {
+            val next =
+                rest.firstOrNull { a ->
+                    rest.none { b -> b !== a && dependsOn(a.rider.line.node, b.rider.point.node, HashSet()) }
+                } ?: rest.first()
+            out.add(next)
+            rest.remove(next)
+        }
+        return out
     }
 
     /**
@@ -2232,6 +2501,7 @@ class Document {
         pt.handle = rider.handle
         pt.kind = ElementKind.ON_CURVE
         pt.style = Styles.ON_CURVE
+        noteEdit()
         return true
     }
 
@@ -2510,10 +2780,21 @@ class Document {
         line: Element,
     ) = addDerived(cx.projectToLine(p, carrierLine(line)))
 
+    /**
+     * Add a rider element over [ref]. [dof] is the rider's own parameter node and [restated] the value a
+     * replay hands back for it (OP-18): a rider's position is **state**, since dragging it writes that
+     * parameter, so the step restates the parameter itself rather than leaving the file describing the click
+     * that first placed the rider. Given verbatim, so a saved drawing reloads bit for bit.
+     */
     private fun addConstrained(
         ref: PointRef,
         handle: Handle,
+        dof: SourceNode? = null,
+        restated: Quantity? = null,
     ): PointRef {
+        if (dof != null && restated != null && restated.dim == (dof.value as? ScalarValue)?.q?.dim) {
+            dof.value = ScalarValue(restated)
+        }
         elements.add(Element(nextId("e"), ref, ElementKind.ON_CURVE, Styles.ON_CURVE, handle = handle))
         return ref
     }
@@ -2528,14 +2809,17 @@ class Document {
     fun pointOnLine(
         line: Element,
         at: Vec2,
+        dof: Quantity? = null,
     ): PointRef {
         val rider = riderOn(line, at, "")
-        if (rider != null) return addConstrained(rider.point, rider.handle)
+        if (rider != null) return addConstrained(rider.point, rider.handle, rider.dof, dof)
         // the line cannot be evaluated (invalid upstream, OP-3): the point still exists and still slides, it
         // simply has nowhere to be until its line does
         val lineRef = carrierLine(line)
         val tNode = SourceNode(nextId("t"), ScalarValue(Quantity.mm(0.0)))
-        return addConstrained(alongLine(lineRef, Ref<ScalarValue>(tNode)), OnLineHandle(lineRef, tNode))
+        val along = alongLine(lineRef, Ref<ScalarValue>(tNode))
+        noteCarrierRider(along, lineRef, tNode)
+        return addConstrained(along, OnLineHandle(lineRef, tNode), tNode, dof)
     }
 
     /** Fully-determined point on a line at [distance] from [from]; direction from the click side of [at]. */
@@ -2568,12 +2852,13 @@ class Document {
     fun pointOnCircle(
         circle: Element,
         at: Vec2,
+        dof: Quantity? = null,
     ): PointRef {
         val rider = riderOn(circle, at, "")
-        if (rider != null) return addConstrained(rider.point, rider.handle)
+        if (rider != null) return addConstrained(rider.point, rider.handle, rider.dof, dof)
         val circleRef = carrierCircle(circle)
         val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad(0.0)))
-        return addConstrained(cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode)), OnCircleHandle(circleRef, aNode))
+        return addConstrained(cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode)), OnCircleHandle(circleRef, aNode), aNode, dof)
     }
 
     /**
@@ -2642,19 +2927,27 @@ class Document {
         return addDerived(best.second)
     }
 
-    /** A point that slides along [el] at [at] — the on-curve form of a click landing on a curve. */
+    /**
+     * A point that slides along [el] at [at] — the on-curve form of a click landing on a curve.
+     *
+     * [dof] is the rider's parameter as a replay hands it back (OP-18): the click position stays what it was,
+     * because *which* curve and which side of it are choices replay must repeat, while where the rider now
+     * sits along that curve is state — dragged, typed, or compensated while its host turned (OP-20).
+     */
     fun pointOnCurve(
         el: Element,
         at: Vec2,
-    ): PointRef? = recording("pointoncurve", Arg.El(el), Arg.Pos(at)) { pointOnCurveNow(el, at) }
+        dof: Quantity? = null,
+    ): PointRef? = recording("pointoncurve", Arg.El(el), Arg.Pos(at)) { pointOnCurveNow(el, at, dof) }
 
     private fun pointOnCurveNow(
         el: Element,
         at: Vec2,
+        dof: Quantity?,
     ): PointRef? =
         when {
-            el.isLinear -> pointOnLine(el, at)
-            el.kind == ElementKind.CIRCLE -> pointOnCircle(el, at)
+            el.isLinear -> pointOnLine(el, at, dof)
+            el.kind == ElementKind.CIRCLE -> pointOnCircle(el, at, dof)
             else -> null
         }
 

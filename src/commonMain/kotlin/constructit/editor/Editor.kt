@@ -464,6 +464,13 @@ class Editor(
     private var dragFrame: Group? = null // a placed group being moved by its frame (OP-16 step 2)
     private var dragStart: Vec2? = null // where on the geometry the drag began — the axis-lock origin
     private var grabOffset: Vec2 = Vec2(0.0, 0.0) // cursor minus that, so a grab never jumps
+
+    /**
+     * Where every carrier-anchored rider stood when this drag began (OP-20). Captured at the press and never
+     * refreshed: the compensation each move applies is measured from the *grab*, so a gesture is a pure
+     * function of where it started and where the cursor is now — see [Document.compensateRiders].
+     */
+    private var dragRiders: List<Document.RiderAnchor> = emptyList()
     private var joinHints: List<Vec2> = emptyList() // corners this drag has flattened, marked on canvas
     private var terminalHint: Vec2? = null // the vertex a run just ended *on* — see [markTerminal]
     private var weldTarget: Element? = null // a point to weld onto
@@ -1097,10 +1104,23 @@ class Editor(
     ): Boolean {
         val f = selectionFields().getOrNull(index) ?: return false
         if (!f.writable) return false
-        f.write(quantityOf(f.dim, value))
+        compensating { f.write(quantityOf(f.dim, value)) }
         checkpoint()
         onChange()
         return true
+    }
+
+    /**
+     * Run [edit] with rider compensation around it — the **discrete twin** of a drag's compensation (OP-13:
+     * typing and dragging are one operation, so a typed value that turns a host must not catapult what rides
+     * it either). The reference is where the riders stand before the write, which for a single write is the
+     * same thing a drag's grab time is.
+     */
+    private fun <T> compensating(edit: () -> T): T {
+        val anchors = doc.riderAnchors()
+        val result = edit()
+        doc.compensateRiders(anchors)
+        return result
     }
 
     // ---- panel parameter edits (OP-7): the shell routes, the controller decides ----
@@ -1126,7 +1146,8 @@ class Editor(
         commit: Boolean = true,
     ): Boolean {
         if (!e.editable || doc.isBound(e)) return false
-        doc.setParameter(e, quantityOf(dimensionOf(e.ref), value))
+        // a parameter can drive a host's geometry (a leg length, an angle), so the same compensation applies
+        compensating { doc.setParameter(e, quantityOf(dimensionOf(e.ref), value)) }
         if (commit) checkpoint()
         onChange()
         return true
@@ -1309,6 +1330,9 @@ class Editor(
                 val anchor = grabAnchor(movable, world)
                 grabOffset = world - anchor
                 dragStart = anchor
+                // …and where everything riding a host stands right now, for the same reason: the drag may turn
+                // a host, and a rider measured along that host has to be re-solved against where it *was*
+                dragRiders = doc.riderAnchors()
                 statusHint = note
             } else {
                 statusHint = explainImmovable(hit)
@@ -1785,6 +1809,9 @@ class Editor(
                 val el = dragTarget!!
                 val world = axisLocked(camera.screenToWorld(screen) - grabOffset, el)
                 el.handle?.drag(world, ev())
+                // one seam for every route that can turn a host — an endpoint, a whole leg, a junction the
+                // handle delegated to (OP-20): whatever the drag wrote, the riders are re-solved after it
+                doc.compensateRiders(dragRiders)
                 // a free point and an open path end can connect on release; nothing else can
                 if (canConnect(el)) updateMagnet(el, world) else clearMagnet()
                 // a jog dragged shut is *visually* already a single leg, so nothing needs to change
@@ -1833,6 +1860,7 @@ class Editor(
         dragTarget = null
         dragFrame = null
         dragStart = null
+        dragRiders = emptyList()
         joinHints = emptyList()
         clearMagnet() // clear before rendering so the magnet halo doesn't linger
         panning = false
@@ -2344,6 +2372,14 @@ class Editor(
         doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
         checkpoint() // the tool application — earlier slot clicks were only halves of it
         resetPicks()
+        // A tool that only *rewires* changes nothing the canvas can show (OP-4 case b: a point made relative
+        // sits exactly where it did), so a silent success reads the same as a silent refusal. The document says
+        // what happened — one channel, not a case per tool here.
+        doc.takeNote()?.let {
+            statusHint = it
+            onChange()
+            return true
+        }
         statusHint =
             if (fedGroup == null) {
                 ""

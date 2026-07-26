@@ -4,6 +4,7 @@ import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
 import constructit.core.ScalarValue
+import constructit.core.SourceNode
 import constructit.dsl.PointRef
 import constructit.geom.Justification
 import constructit.geom.Vec2
@@ -150,6 +151,22 @@ object DocumentFormat {
                 val e = (step.args[0] as Arg.Sc).entry
                 listOf(step.args[0], Arg.Text("="), Arg.Num(value(e, ev)))
             }
+            // a rider's position along its host is **state**: it is dragged, typed, and compensated while the
+            // host turns (OP-20). What the step restates is therefore the rider's own parameter (`dofs=`,
+            // the same seam a dimension's placement uses) and not the click, since *which* curve and which
+            // side of it are choices replay must repeat — see [Document.pointOnCurve].
+            "pointoncurve" -> {
+                val dof = step.creates.singleOrNull()?.handle?.dragNodes?.singleOrNull()
+                val q = dof?.let { ((ev.eval(it) as? EvalResult.Ok)?.value as? ScalarValue)?.q }
+                if (q == null) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(listOf(q)))
+            }
+            // the same rule for a re-parameterization recorded on its own rather than through a tool
+            // (OP-4 case b): the offset is state, so it is restated
+            "relative" -> {
+                val r = doc.referencedElements(step).firstNotNullOfOrNull { doc.relativeOf(it) }
+                val dofs = if (r == null) emptyList() else listOfNotNull(scalarValue(r.distance, ev), scalarValue(r.angle, ev))
+                if (dofs.isEmpty()) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(dofs))
+            }
             "point", "orthostart", "orthovertex", "orthoprepend" ->
                 step.creates.firstOrNull()?.let { posOf(it) }?.let { listOf(Arg.Pos(it)) } ?: step.args
             // both of a break's positions are state: where the leg was split, and how far the jog has
@@ -194,7 +211,15 @@ object DocumentFormat {
                 // crossing — and replay must make the same choice (see this object's header).
                 // in creation order and consumed positionally, so this stays one rule however many
                 // annotations a step makes
-                val dofs = step.creates.mapNotNull { it.annotation }.flatMap { it.dofValues() }
+                //
+                // A tool that *creates* nothing can own a DOF too: making a point relative (OP-4 case b)
+                // captures a distance and an angle, and both are state — dragged, or typed in the panel. They
+                // ride the very same `dofs=` seam, so the format needed nothing new for them.
+                val dofs =
+                    step.creates.mapNotNull { it.annotation }.flatMap { it.dofValues() } +
+                        doc.referencedElements(step).mapNotNull { doc.relativeOf(it) }.flatMap { r ->
+                            listOfNotNull(scalarValue(r.distance, ev), scalarValue(r.angle, ev))
+                        }
                 if (dofs.isEmpty()) args else args + Arg.Keyed("dofs", Arg.Nums(dofs))
             }
             else -> step.args
@@ -205,6 +230,11 @@ object DocumentFormat {
         e: ScalarEntry,
         ev: Evaluator,
     ): Quantity = ((ev.eval(e.ref.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q ?: Quantity.mm(0.0)
+
+    private fun scalarValue(
+        node: SourceNode,
+        ev: Evaluator,
+    ): Quantity? = ((ev.eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q
 
     private fun encode(
         arg: Arg,
@@ -341,7 +371,10 @@ object DocumentFormat {
             "unweld" -> doc.unweld(el(1))
             "wire" -> doc.wireParameter(scalar(1), scalar(3))
             "intersectnear" -> doc.intersectNear(el(1), el(2), parsePos(words[3]))
-            "pointoncurve" -> doc.pointOnCurve(el(1), parsePos(words[2]))
+            // `dofs=` is the rider's own parameter, restated (see [restate]); a script written before it was
+            // recorded simply has none, and the click position places the rider as it always did
+            "pointoncurve" -> doc.pointOnCurve(el(1), parsePos(words[2]), keyedNums(words, "dofs").firstOrNull())
+            "relative" -> doc.makeRelative(el(1), el(2), keyedNums(words, "dofs"))
             "tool" -> applyTool(doc, words, byName)
             "macrodef" -> applyMacroDef(doc, words, byName)
             "group" -> applyGroup(doc, words, byName)
@@ -567,6 +600,15 @@ object DocumentFormat {
         if (v.startsWith("\"")) Regex("\"([^\"]*)\"").findAll(v).map { it.groupValues[1] }.toList() else listOf(v)
 
     private fun unquote(s: String) = s.removeSurrounding("\"")
+
+    /** The `key=a;b` numbers of a step, empty when it carries none (an older script, a tool with no DOF). */
+    private fun keyedNums(
+        words: List<String>,
+        key: String,
+    ): List<Quantity> =
+        words.firstOrNull { it.startsWith("$key=") }
+            ?.removePrefix("$key=")?.split(';')?.filter { it.isNotEmpty() }?.map { quantity(it) }
+            ?: emptyList()
 
     private fun parsePos(s: String): Vec2 {
         val parts = s.split(',')
