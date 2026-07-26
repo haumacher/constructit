@@ -2727,6 +2727,72 @@ class Document {
         }
     }
 
+    // ---- replaying an older format version: what the file meant, not what today's writer means (OP-18) ----
+
+    /**
+     * The **format version being replayed**, or null outside a load (OP-18, *Versioning & migration*).
+     *
+     * A load-time flag rather than a parameter threaded through every route, because what a version bump
+     * changes is the meaning of a *stored literal*, and the same literal reaches [pointOnLine] through two
+     * different steps — `pointoncurve` and the point-on-line **tool** — which must not be able to disagree
+     * about it. Set by [DocumentFormat.replay] around the whole script.
+     */
+    internal var replayingVersion: Int? = null
+
+    /**
+     * What a **migration** had to decide, or could not (OP-18). Notes rather than silence: where a v1 literal
+     * is genuinely ambiguous the load says which element it was unsure about and which reading it took, so a
+     * drawing never comes back quietly different from the one that was saved.
+     *
+     * Kept as a list on the document (and mirrored into [note]) because a load is one operation that may have
+     * several such findings, and the user must be able to read all of them.
+     */
+    val loadNotes = ArrayList<String>()
+
+    /** Record one migration finding — see [loadNotes]. */
+    internal fun noteLoad(message: String) {
+        loadNotes.add(message)
+    }
+
+    /**
+     * Put what the load found on the ordinary note channel, once the replay is over.
+     *
+     * At the end rather than as they happen, because every step clears [note] before it runs ([recording]) —
+     * a note is about the operation being performed — and a load is *one* operation from the user's chair.
+     */
+    internal fun publishLoadNotes() {
+        if (loadNotes.isNotEmpty()) note = loadNotes.joinToString(" · ")
+    }
+
+    // ---- scored discrete choices: decided once from the clicks, then persisted (OP-1, OP-18) ----
+
+    /**
+     * The signs each element's construction **scored from its clicks** — a fillet's variant, a chamfer's
+     * quadrant, an `intersectnear` branch — by element id.
+     *
+     * The point of the registry is the file: a scored choice used to live only in the `Select` nodes of the
+     * session that made it, so a *reload* re-ran the scoring against whatever the geometry had become since,
+     * and a fillet could come back as a different one of its eight variants than the user chose (reported as
+     * *"fillets inverted, producing sharp corners"*). OP-1 says a branch is stored; storing it in a node the
+     * file does not carry stores it only until the next save. So the step restates these signs
+     * ([storedSigns]) and replay consumes them verbatim, never re-scoring.
+     */
+    private val scoredSigns = HashMap<String, List<Int>>()
+
+    /** Say that [el]'s construction chose [signs] — see [scoredSigns]. */
+    private fun registerSigns(
+        el: Element,
+        signs: List<Int>,
+    ) {
+        scoredSigns[el.id] = signs
+    }
+
+    /**
+     * The scored signs [step] must restate (OP-18): those of the elements **it** created, in creation order.
+     * Empty for every step that scores nothing, which is why the writer needs no per-tool case.
+     */
+    internal fun storedSigns(step: Step): List<Int> = step.creates.flatMap { scoredSigns[it.id] ?: emptyList() }
+
     // ---- riding a curve: one DOF along a host, absolute wherever the host offers one (OP-20) ----
 
     /** Which of [riderOn]'s three parameter forms a rider's single degree of freedom is stated in. */
@@ -3440,7 +3506,7 @@ class Document {
         dof: Quantity? = null,
     ): PointRef {
         val rider = riderOn(line, at, "")
-        if (rider != null) return addRider(line, rider, dof)
+        if (rider != null) return addRider(line, rider, dof, at)
         // the line cannot be evaluated (invalid upstream, OP-3): the point still exists and still slides, it
         // simply has nowhere to be until its line does
         val lineRef = carrierLine(line)
@@ -3454,15 +3520,80 @@ class Document {
         )
     }
 
-    /** Add a rider element over [rider] and record what it rides — see [RiderRecord]. */
+    /**
+     * Add a rider element over [rider] and record what it rides — see [RiderRecord].
+     *
+     * The single seam through which every rider's stored parameter arrives, which is why the format
+     * migration ([migratedRiderDof]) is applied here and not in the two routes that call it.
+     */
     private fun addRider(
         host: Element,
         rider: Rider,
         dof: Quantity?,
+        at: Vec2? = null,
     ): PointRef {
-        val ref = addConstrained(rider.point, rider.handle, rider.dof, dof)
-        elements.lastOrNull()?.let { noteRider(it, host, rider) }
+        val (value, finding) = migratedRiderDof(rider, at, dof)
+        val ref = addConstrained(rider.point, rider.handle, rider.dof, value)
+        elements.lastOrNull()?.let {
+            noteRider(it, host, rider)
+            if (finding != null) noteLoad("${it.id} on ${host.id}: $finding")
+        }
         return ref
+    }
+
+    /**
+     * What a **format-1** `dofs=` names for a rider along a carrier, and what had to be decided (OP-18,
+     * *Versioning & migration*).
+     *
+     * This is the stored literal the anchoring rework put at risk (OP-20, *as built*): a distance along a
+     * carrier used to be measured from the carrier **line's** `origin` — for a segment, one of the segment's
+     * own endpoints — and is now measured from the point of the line nearest the world origin. Both readings
+     * are a plain length in mm, so nothing in the file itself tells them apart, and reading one as the other
+     * slides the rider along its host by the anchor's own offset.
+     *
+     * The arbiter is the step's **recorded position**, because a click is creation-time truth: whichever
+     * reading reproduces it is the one the writer meant. Three outcomes, and only the first is silent —
+     * - the position lies on the carrier and one reading lands on it: that reading, decided rather than
+     *   guessed (and only the legacy one is a change);
+     * - the position lies on the carrier and neither reading lands on it: the rider has been *moved* since it
+     *   was created, so its position cannot arbitrate. Today's reading is kept, and the load says so;
+     * - the position no longer lies on the carrier at all: an edit upstream has since turned or moved the
+     *   host, which is ordinary (the position stays verbatim while the parameter is restated — OP-18) and
+     *   leaves nothing to arbitrate with. Today's reading is kept, and the load says so.
+     *
+     * Only [RiderForm.ALONG_LINE] is affected: a world coordinate and an angle about a centre never changed
+     * meaning, which is exactly why OP-20 chose them.
+     */
+    private fun migratedRiderDof(
+        rider: Rider,
+        at: Vec2?,
+        dof: Quantity?,
+    ): Pair<Quantity?, String?> {
+        val version = replayingVersion ?: return dof to null
+        if (version >= 2 || dof == null || at == null) return dof to null
+        if (rider.form != RiderForm.ALONG_LINE || dof.dim != Dimension.LENGTH) return dof to null
+        val l =
+            ((Evaluator().eval(rider.line?.node ?: return dof to null)) as? EvalResult.Ok)
+                ?.let { (it.value as? LineValue)?.line } ?: return dof to null
+        // the two anchors, as points: the line's nearest-world-origin point (today) and its own origin (v1)
+        val today = l.origin - l.dir * l.origin.dot(l.dir) + l.dir * dof.mm
+        val legacy = l.origin + l.dir * dof.mm
+        val foot = l.origin + l.dir * (at - l.origin).dot(l.dir)
+        val off = (at - foot).length()
+        val kept = "kept its stored distance along the carrier, read the way this build writes it"
+        if (off > RIDER_MIGRATION_TOL) {
+            return dof to "its recorded position is ${Format.num(off)} mm off that carrier now, so it cannot say " +
+                "which anchor the file meant — $kept"
+        }
+        if ((today - at).length() <= RIDER_MIGRATION_TOL) return dof to null
+        if ((legacy - at).length() <= RIDER_MIGRATION_TOL) {
+            // the same place, restated against the anchor that belongs to the line rather than to the host
+            return Quantity.mm(dof.mm + l.origin.dot(l.dir)) to
+                "its distance was measured from the carrier's own end (format 1) — re-anchored to the carrier, " +
+                "in the place the file put it"
+        }
+        return dof to "it has been moved since it was created, so its recorded position cannot say which " +
+            "anchor the file meant — $kept"
     }
 
     /** Fully-determined point on a line at [distance] from [from]; direction from the click side of [at]. */
@@ -3551,19 +3682,44 @@ class Document {
     /**
      * The single intersection of [a] and [b] nearest [near], as a derived point — the branch the
      * click indicated, persisted as its `Select(sign)` (OP-1), never re-guessed later.
+     *
+     * *Never re-guessed* includes a reload (OP-18): the branch is scored from [near] against the geometry as
+     * it stood when the user pointed there, so the step restates the resolved [sign] and replay takes it
+     * verbatim. Which branch is nearer a fixed position is exactly the sort of answer an edit elsewhere can
+     * change, and a `Select` sign that lives only in the session's nodes is not stored at all.
      */
     fun intersectNear(
         a: Element,
         b: Element,
         near: Vec2,
-    ): PointRef? = recording("intersectnear", Arg.El(a), Arg.El(b), Arg.Pos(near)) { intersectNearNow(a, b, near) }
+        sign: Int? = null,
+    ): PointRef? =
+        recording("intersectnear", Arg.El(a), Arg.El(b), Arg.Pos(near)) {
+            intersectNearNow(a, b, near, sign, remember = true)
+        }
 
     private fun intersectNearNow(
         a: Element,
         b: Element,
         near: Vec2,
+        stored: Int? = null,
+        remember: Boolean = false,
     ): PointRef? {
         val (set, lineLine) = intersectionSet(a, b) ?: return null
+
+        // only where a *step* can restate them: the same helper serves the Outline tracer's handovers, which
+        // are re-derived from that tool's own clicks and own no `signs=` of their own
+        fun keep(
+            sign: Int,
+            ref: PointRef,
+        ): PointRef {
+            val out = addDerived(ref)
+            if (remember) elements.lastOrNull()?.let { registerSigns(it, listOf(sign)) }
+            return out
+        }
+        // a restated branch is taken as it stands — invalid included, which is ordinary invalidity (OP-3) and
+        // not licence to pick the other one
+        if (stored != null) return keep(stored, cx.select(set, stored))
         val ev = Evaluator()
         val candidates = if (lineLine) listOf(+1) else listOf(+1, -1)
         val best =
@@ -3572,7 +3728,7 @@ class Document {
                 .mapNotNull { (sign, ref) ->
                     ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? PointValue)?.let { Triple(sign, ref, (it.p - near).length()) }
                 }.minByOrNull { it.third } ?: return null
-        return addDerived(best.second)
+        return keep(best.first, best.second)
     }
 
     /**
@@ -5754,6 +5910,12 @@ class Document {
      * never re-picks a different one; a radius too large for any tangency makes the node invalid with a
      * reason and heals when it comes back down (OP-3).
      *
+     * *Persisted* now means persisted **in the file** too (OP-18): given [signs] — the step's own
+     * `signs=`, restated on save — the variant is taken verbatim and the scoring does not run. It used to
+     * run again on every load, against whatever the geometry had become since, so a reload could hand back a
+     * different one of the eight variants than the clicks chose (*"fillets inverted, producing sharp
+     * corners"*). Scoring happens exactly once: when the user clicks.
+     *
      * The arc is emitted **quietly** — one element, no visible points — as the line-line fillet always was;
      * the tangencies are registered as joints instead ([registerJoint]), which is what lets a filleted chain
      * be traced by the Outline tool's boundary-follow.
@@ -5764,10 +5926,11 @@ class Document {
         radius: ScalarRef,
         clickA: Vec2,
         clickB: Vec2,
+        signs: List<Int> = emptyList(),
     ): Element? =
         when {
-            leg1.isLinear && leg2.isLinear -> filletLineLine(leg1, leg2, radius, clickA, clickB)
-            isFilletLeg(leg1) && isFilletLeg(leg2) -> filletMixed(leg1, leg2, radius, clickA, clickB)
+            leg1.isLinear && leg2.isLinear -> filletLineLine(leg1, leg2, radius, clickA, clickB, signs)
+            isFilletLeg(leg1) && isFilletLeg(leg2) -> filletMixed(leg1, leg2, radius, clickA, clickB, signs)
             else -> null
         }
 
@@ -5786,12 +5949,14 @@ class Document {
         radius: ScalarRef,
         clickA: Vec2,
         clickB: Vec2,
+        signs: List<Int>,
     ): Element {
         val l1 = carrierLine(leg1)
         val l2 = carrierLine(leg2)
-        val (sign1, sign2) = legSigns(l1, l2, clickA, clickB)
+        val (sign1, sign2) = storedLegSigns(signs) ?: legSigns(l1, l2, clickA, clickB)
         val arc = cx.filletBetweenLines(l1, l2, radius, sign1, sign2)
         val el = add(arc, ElementKind.ARC, Styles.CURVE)
+        registerSigns(el, listOf(sign1, sign2))
         // the op builds the arc from leg1's tangency to leg2's, so its own ends *are* the two joints
         registerJoint(el, leg1, cx.arcStart(arc))
         registerJoint(el, leg2, cx.arcEnd(arc))
@@ -5812,8 +5977,14 @@ class Document {
         radius: ScalarRef,
         clickA: Vec2,
         clickB: Vec2,
+        signs: List<Int>,
     ): Element? {
-        val v = filletVariantFor(leg1, leg2, radius, clickA, clickB) ?: return null
+        val v =
+            if (signs.size >= 3) {
+                FilletVariant(signs[0], signs[1], signs[2])
+            } else {
+                filletVariantFor(leg1, leg2, radius, clickA, clickB)
+            } ?: return null
         val reason = "no circle of that radius is tangent to both legs there"
         val set =
             when {
@@ -5837,6 +6008,7 @@ class Document {
         val t1 = tangencyOn(leg1, centre)
         val t2 = tangencyOn(leg2, centre)
         val el = add(cx.filletArc(centre, t1, t2), ElementKind.ARC, Styles.CURVE)
+        registerSigns(el, listOf(v.side1, v.side2, v.branch))
         registerJoint(el, leg1, t1)
         registerJoint(el, leg2, t2)
         supersedeCorner(leg1, leg2, el)
@@ -6001,15 +6173,19 @@ class Document {
         distance: ScalarRef,
         clickA: Vec2,
         clickB: Vec2,
+        signs: List<Int> = emptyList(),
     ): Element {
         val l1 = carrierLine(leg1)
         val l2 = carrierLine(leg2)
-        val (sign1, sign2) = legSigns(l1, l2, clickA, clickB)
+        val (sign1, sign2) = storedLegSigns(signs) ?: legSigns(l1, l2, clickA, clickB)
         // two lines meet in a single point, so the branch is not a choice at all
         val corner = cx.select(cx.intersectLL(l1, l2), +1)
         val a = addDerived(cx.pointAlongLine(l1, corner, distance, sign1))
         val b = addDerived(cx.pointAlongLine(l2, corner, distance, sign2))
         val bevel = segment(a, b)
+        // on the bevel, which is the step's *last* creation: the two ends are declared before it, and the
+        // signs have to be restated in a place the step can find them again (see [Document.storedSigns])
+        registerSigns(bevel, listOf(sign1, sign2))
         // the bevel's ends *are* where it hands over to each leg, and the corner it cut off is gone
         registerJoint(bevel, leg1, a)
         registerJoint(bevel, leg2, b)
@@ -6018,10 +6194,22 @@ class Document {
     }
 
     /**
+     * The quadrant a step **restated** (`signs=`), or null when it carries none and the clicks must decide.
+     *
+     * The whole reason the file carries them (OP-18): the clicks are positions, and the corner they were
+     * scored against *moves* when either leg is edited, so re-scoring on load is re-deciding — see
+     * [Document.scoredSigns].
+     */
+    private fun storedLegSigns(signs: List<Int>): Pair<Int, Int>? = if (signs.size >= 2) signs[0] to signs[1] else null
+
+    /**
      * Which way along each of two legs the clicked corner opens: `+1` along the leg's own direction, `-1`
      * against it. A stored discrete choice (OP-1) — the quadrant is decided once, when the tool is used,
      * and never re-derived as the legs move. Shared by the fillet and the chamfer, which differ only in
      * what they put in that corner.
+     *
+     * Called **only** for a live click now: a replayed step hands its answer back through [storedLegSigns],
+     * because the corner these clicks were scored against has moved with the legs since (OP-18).
      */
     private fun legSigns(
         l1: LineRef,
@@ -6411,6 +6599,16 @@ class Document {
         ): Boolean = (ev.eval(node) as? EvalResult.Ok)?.value is SolidValue
     }
 }
+
+/**
+ * How near a **format-1** rider's recorded position must be for it to arbitrate the anchor a stored distance
+ * along a carrier was measured from (mm) — see [Document.migratedRiderDof].
+ *
+ * A real tolerance rather than exact equality, because the position travelled through a whole construction's
+ * arithmetic before it was written; and far below anything a drawing can show, because the two candidate
+ * readings differ by the anchor's own offset, which is a visible distance whenever it is not zero.
+ */
+private const val RIDER_MIGRATION_TOL = 1.0e-6
 
 /** Head height a new interval carries by default (mm) — a door; the sill defaults to the floor. */
 private const val DEFAULT_HEAD = 2100.0

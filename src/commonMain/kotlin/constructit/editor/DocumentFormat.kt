@@ -74,7 +74,19 @@ class Step(val kind: String, val args: List<Arg>) {
  * rather than a silently different drawing.
  */
 object DocumentFormat {
-    const val HEADER = "constructit 1"
+    /**
+     * The version this build **writes**. See *Versioning & migration* in DESIGN.md (OP-18): a stored literal's
+     * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
+     * version bump plus a migration — never an edit to the reader.
+     */
+    const val VERSION = 2
+
+    /** The oldest version this build can still read. Every version in between is migrated on load. */
+    const val OLDEST_READABLE = 1
+
+    const val HEADER = "constructit $VERSION"
+
+    private const val MAGIC = "constructit"
 
     // ---- writing ----
 
@@ -222,11 +234,32 @@ object DocumentFormat {
                     listOfNotNull(riderDof) +
                         step.creates.mapNotNull { it.annotation }.flatMap { it.dofValues() } +
                         relativeDofs(doc, step, ev)
-                if (dofs.isEmpty()) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(dofs))
+                step.args + signsOf(doc, step) + if (dofs.isEmpty()) emptyList() else listOf(Arg.Keyed("dofs", Arg.Nums(dofs)))
             }
+            // the branch this step's click chose, restated so replay never scores it again (OP-1) — see
+            // [Document.intersectNear]
+            "intersectnear" -> step.args + signsOf(doc, step)
             else -> step.args
         }
     }
+
+    /**
+     * The **scored discrete choices** [step] must restate, as `signs=1;-1;1`, or nothing when it scored none.
+     *
+     * A choice is not state, so it is not re-read from the geometry — it is read from where the construction
+     * that made it recorded it ([Document.storedSigns]) and written unchanged for every save after. This is the
+     * half of OP-1 the file was missing: a `Select` sign the file drops is a sign the *load* has to re-decide,
+     * and it re-decided against geometry that had moved since the click — reported as *"fillets inverted,
+     * producing sharp corners"*. Written as plain integers rather than through `dofs=`, because they are the
+     * opposite of a degree of freedom.
+     */
+    private fun signsOf(
+        doc: Document,
+        step: Step,
+    ): List<Arg> =
+        doc.storedSigns(step).let {
+            if (it.isEmpty()) emptyList() else listOf(Arg.Keyed("signs", Arg.Text(it.joinToString(";"))))
+        }
 
     private fun value(
         e: ScalarEntry,
@@ -333,6 +366,22 @@ object DocumentFormat {
         return doc
     }
 
+    /**
+     * The format version [text] declares, checked against what this build can read (OP-18).
+     *
+     * A number rather than a whole-line match, so a *newer* file says so — "written by a newer version of
+     * ConstructIt" is a fact the user can act on, where "unsupported format" is not.
+     */
+    private fun versionOf(head: String): Int {
+        if (!head.startsWith("$MAGIC ")) throw LoadError("not a ConstructIt drawing: '$head'")
+        val v = head.removePrefix("$MAGIC ").trim().toIntOrNull() ?: throw LoadError("unsupported format: '$head'")
+        if (v > VERSION) {
+            throw LoadError("this drawing is format $v; this build reads up to $VERSION — it was written by a newer version")
+        }
+        if (v < OLDEST_READABLE) throw LoadError("this drawing is format $v; this build reads $OLDEST_READABLE and newer")
+        return v
+    }
+
     /** Replay [text] into [doc]; throws [LoadError] on a malformed or inconsistent script. */
     fun replay(
         doc: Document,
@@ -340,7 +389,21 @@ object DocumentFormat {
     ) {
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
         val head = lines.firstOrNull() ?: throw LoadError("empty document")
-        if (head != HEADER) throw LoadError("unsupported format: '$head' (expected '$HEADER')")
+        // the version is in force for the whole replay, and the *document* holds it, because the semantics that
+        // differ belong to the steps' own code (see [Document.replayingVersion])
+        doc.replayingVersion = versionOf(head)
+        try {
+            replaySteps(doc, lines)
+        } finally {
+            doc.replayingVersion = null
+        }
+        doc.publishLoadNotes()
+    }
+
+    private fun replaySteps(
+        doc: Document,
+        lines: List<String>,
+    ) {
         val byName = HashMap<String, Element>()
         for ((lineNo, line) in lines.drop(1).withIndex()) {
             val (body, declared) = split(line)
@@ -424,7 +487,9 @@ object DocumentFormat {
             "attachortho" -> doc.attachOrthoEndpointToCurve(el(1), el(2))
             "unweld" -> doc.unweld(el(1))
             "wire" -> doc.wireParameter(scalar(1), scalar(3))
-            "intersectnear" -> doc.intersectNear(el(1), el(2), parsePos(words[3]))
+            // `sign=` is the branch the click chose, restated (OP-1); a format-1 script carries none, and the
+            // click scores it once more — this time for good, since the save that follows writes it down
+            "intersectnear" -> doc.intersectNear(el(1), el(2), parsePos(words[3]), keyedInts(words, "signs").firstOrNull())
             // `dofs=` is the rider's own parameter, restated (see [restate]); a script written before it was
             // recorded simply has none, and the click position places the rider as it always did
             "pointoncurve" -> doc.pointOnCurve(el(1), parsePos(words[2]), keyedNums(words, "dofs").firstOrNull())
@@ -615,6 +680,7 @@ object DocumentFormat {
         var elements = emptyList<Element>()
         var clicks = emptyList<Vec2>()
         var dofs = emptyList<Quantity>()
+        var signs = emptyList<Int>()
         var scalars = emptyList<ScalarEntry>()
         var count = 0
         for (w in words.drop(2)) {
@@ -630,6 +696,8 @@ object DocumentFormat {
                 "els" -> elements = v.split(',').filter { it.isNotEmpty() }.map { byName[it] ?: throw LoadError("unknown element '$it'") }
                 "clicks" -> clicks = v.split(';').filter { it.isNotEmpty() }.map { parsePos(it) }
                 "dofs" -> dofs = v.split(';').filter { it.isNotEmpty() }.map { quantity(it) }
+                // the discrete choices this tool scored from its clicks, replayed verbatim (OP-1, OP-18)
+                "signs" -> signs = v.split(';').filter { it.isNotEmpty() }.map { it.toIntOrNull() ?: throw LoadError("malformed sign '$it'") }
                 // an ordered list, so a two-scalar tool needs no key of its own; names are quoted, hence
                 // split on the quotes rather than on the comma (a name may contain one)
                 "scalar" ->
@@ -643,7 +711,7 @@ object DocumentFormat {
             }
         }
         val at = clicks.lastOrNull() ?: Vec2(0.0, 0.0)
-        val picks = Picks(points, elements, at, clicks, dofs, count)
+        val picks = Picks(points, elements, at, clicks, dofs, count, signs)
         // replay through the same recorder the click used, so the reloaded document can be saved again
         doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
     }
@@ -662,6 +730,16 @@ object DocumentFormat {
     ): List<Quantity> =
         words.firstOrNull { it.startsWith("$key=") }
             ?.removePrefix("$key=")?.split(';')?.filter { it.isNotEmpty() }?.map { quantity(it) }
+            ?: emptyList()
+
+    /** The `key=1;-1` integers of a step — a discrete choice, so plain integers and no unit. */
+    private fun keyedInts(
+        words: List<String>,
+        key: String,
+    ): List<Int> =
+        words.firstOrNull { it.startsWith("$key=") }
+            ?.removePrefix("$key=")?.split(';')?.filter { it.isNotEmpty() }
+            ?.map { it.toIntOrNull() ?: throw LoadError("malformed sign '$it'") }
             ?: emptyList()
 
     private fun parsePos(s: String): Vec2 {

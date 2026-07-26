@@ -764,7 +764,7 @@ literal that was not restated, and any drift in naming, in one assertion.
   the click places the rider exactly as it always did.
 
 ```
-constructit 1
+constructit 2
 point 30,-60 -> e1
 point 30,60 -> e2
 tool segment pts=e1,e2 clicks=30,-60;30,60 -> e3
@@ -780,6 +780,56 @@ A step need not create geometry: `group "kitchen" els=e1,e3` records flat-group 
 element name and declares nothing. Membership is *state*, so the step is written with the members the
 script still declares — which is how deleting a member leaves a consistent group, and how a group whose
 members are all gone leaves no step at all.
+
+#### Versioning & migration — a stored literal's meaning is frozen (as built, on a data-loss report)
+
+The header is `constructit <version>`; this build writes **2** and reads **1 and 2**. A file that claims a
+higher version is refused as *written by a newer version*, which is a fact the user can act on, where the old
+whole-line comparison could only say "unsupported format".
+
+**The doctrine, in one rule: a stored literal's semantics are frozen the moment a build that might have
+written it could have shipped.** Changing what a stored number *means* is therefore not an edit to the reader —
+it is a **version bump plus a migration**, and the migration's job is to reproduce the geometry *the old
+writer meant*. Three corollaries, each of which this format had already brushed past:
+
+- **Replay is not a free pass.** OP-20 concluded that the anchoring rework "needed **nothing** from the file
+  format", and that was true *only* because at that moment a rider's position was still rebuilt from its
+  recorded click. Six commits later the `pointoncurve` step began restating the rider's own parameter — and
+  the same number now had two possible meanings (a distance from the carrier line's `origin`, or from the
+  point of that line nearest the world origin, which differ by the anchor's own offset). The order of those
+  two changes is the only reason no file was ever written under the old reading. That is luck, not design.
+- **A scored choice must be persisted at creation, not re-scored on replay.** OP-1 says a branch is a stored
+  discrete choice; a sign stored only in the session's `Select` nodes is stored *only until the next save*.
+  A fillet's variant was scored from its two clicks — and re-scored on every load, against whatever the
+  geometry had become since, so a reload could hand back a different one of the eight variants than the user
+  chose. Fillet, chamfer and `intersectnear` now write their resolved signs into the step (`signs=1;-1;1`),
+  and replay takes them verbatim: **scoring happens exactly once, when the user clicks.** `count=` and an arc
+  break's `ccw` were already verbatim; the same test applies to anything added later — *would a later edit
+  change what this argument re-derives?*
+- **Where a v1 value is genuinely ambiguous, say so.** The migration prefers the reading that reproduces the
+  step's **recorded position**, because a click is creation-time truth (`Document.migratedRiderDof`). When the
+  position cannot arbitrate — the rider was moved since, or an edit upstream has since turned its host, so the
+  position no longer lies on the carrier at all — today's reading is kept (it is what the last writer meant)
+  and the load **names the element** through `Document.loadNotes`. No silent guessing: a drawing that comes
+  back differently must say which element it was unsure about.
+
+The **semantic-change catalogue** as it stands, because the next bump needs to extend it rather than rediscover
+it:
+
+| stored literal | v1 → v2 | migration |
+|---|---|---|
+| `pointoncurve dofs=` / `tool pointon* dofs=` along a **carrier** | the anchor a distance is measured from changed with OP-20 (line `origin` → the line's nearest-world-origin point) | arbitrated by the recorded position; kept + reported when it cannot arbitrate |
+| the same, on an **axis-aligned** host or a **circle** | unchanged — a world coordinate and an angle about a centre were the *point* of OP-20 | none |
+| `tool fillet` / `tool chamfer` | re-scored from `clicks=` on every load → `signs=` restated | scored once during the v1 load, against the migrated geometry, then stamped |
+| `intersectnear` | re-scored from its position on every load → `signs=` restated | as above |
+| `tool pointon*` **clicks** | a pre-`dofs=` writer rewrote the last click to the rider's position | none needed: with no `dofs=` the click places the rider, which is exactly what that writer meant |
+| `relative dofs=` | the list is positional *per form* (distance+angle for a polar offset, one signed distance along a carrier), and which form applies is decided by the construction, not by the file | none |
+| `wall` justification, `breakarc` ccw, `opening pos/sill/head`, `place at/angle`, `count=`, `sketchspace piece=` | unchanged | none (absent justification still defaults to centred) |
+
+Known residual, recorded rather than papered over: the **Outline** tracer still resolves its handovers from
+that tool's own clicks on every replay (`jointBetween`), and a determined ortho meeting still picks its
+circle branch by nearness. Both are re-derived from geometry the same replay rebuilds, so they are stable
+under reload — but they are the same *shape* of risk, and they are the next things to move into `signs=`.
 
 #### Visibility is recorded after all — a reversal (as built, on a user report)
 
@@ -1381,6 +1431,18 @@ follow the nudge, which is the whole point of a spinner) and **only a committed 
 positions of a drag are not (a drag checkpoints on release too). The shell adds one rule to make it
 work: while a parameter row has the keyboard its DOM is left alone, since replacing it under a live
 spinner destroys the focus and with it the next tick.
+
+**A pick can be switched off, and it had to be** (a user report, and OP-13's symmetry: the panel is as much
+an input as the canvas, so it needs the same *never mind*). Clicking the **active** row again clears the
+active parameter and forgets it as a pick; Escape with no tool gesture pending does the same, and both say
+`no parameter active — tools use their defaults`. What made this a defect rather than a nicety is the
+interaction with a **defaulted** scalar slot: a defaulted slot adopts any pick of *its own dimension*
+(OP-7 keeps a length out of a ratio, but not a ratio out of a ratio), so the dimensionless factor left over
+from building one ratio point shadowed every dimensionless default for the rest of the session — *Midpoint*
+kept rebuilding that ratio point instead of the midpoint it was asked for, with no way to say otherwise. The
+decision lives in `Editor.clickScalar`, so the shell only routes the row's click, and focusing a value *field*
+still picks rather than toggles: that click is on the way to typing. Dropping a pick is not deleting a value —
+the parameter stays in the panel and in the file.
 
 ## Measurements & value feedback (OP-4 — RESOLVED)
 
@@ -2210,6 +2272,68 @@ follow?). Recorded as follow-up rather than guessed at. The status line says the
 nothing has to be discovered by clicking one. And only the two array tools opt in: Mirror, Rotate, Scale and
 Translate could fan the same way once their positional `elements` indexing is addressed, which is a change to
 those builds, not to this mechanism.
+
+### Implementation status (as built — one pick cycle, and a group that is framed by default)
+
+Three user items that turned out to be one **selection state machine**, plus the defect the machine exposed.
+
+**A group is framed by default, and *flat* is a purpose rather than a fallback.** The create dialog's
+`movable (with frame)` tick is on, so confirming runs `createGroup` **and** `placeGroup` under **one**
+checkpoint: giving a part its frame is not a second thing the user did, and one undo removes both. The reason
+the tick is not simply implied is the other reading, which a *user* found: a **flat group is the natural array
+original**, because the copies an array makes of it are transform nodes over the members' published points and
+therefore derive frame-free — array a *placed* group and the copies are downstream of the frame instead. So the
+dialog words both as intents ("a movable part…" / "a named set: no frame, e.g. an array original…"), never as
+success and shortfall. The creation-time placement warnings are unchanged, and a placement that is **refused**
+outright (a group owning no freedom at all, or a shared point) leaves the group standing, flat, with the reason
+Place would have given — arriving now at the gesture that caused it rather than at a button much later.
+
+**One pick cycle replaces two hand-built two-element cycles.** The group/member reach (OP-16) and jamb-vs-leg
+(OP-21) had grown separately, each remembering its own state, and each reaching exactly two things. A SELECT
+click now collects **every** candidate within the pick tolerance, ranks them, and selects the first; clicking
+the same spot again steps to the next, wrapping (`segment e12 (3 of 5 here — click again for the next)`).
+Five things are worth recording about it.
+
+- **The ranking is today's precedence, written down once.** Points first — the user's rationale, and it is why
+  precedence beats distance here: *a point cannot dodge, a curve can be clicked elsewhere.* Then draggable
+  curves, then a draggable annotation (last, so a dimension over the geometry it names never steals its grab),
+  then the **jamb**, which still competes with the curves *by distance* (along the wall the leg is nearer,
+  across it the jamb is), then everything else selectable, nearest first. The jamb rule stays the **ranking**;
+  what cycling adds is that the loser is reachable. A grouped hit contributes **two consecutive entries** —
+  the whole group, then that member alone — so the old reach is now two entries of the general list and its
+  order is unchanged.
+- **The first-click invariant is the acceptance bar**, and it is structural rather than tested-for: a press
+  with no cycle standing selects `candidates.first()`, which *is* what the press has always selected. Every
+  existing selection and gesture test passes unedited, including the ones that click the same member three
+  times — because the group entry repeats before each member, `click, click, click` still reads *group, member,
+  group*. A click far from the previous one, or one whose selection no longer stands, is a first click again.
+- **The repeat threshold is `REPEAT_CLICK_PX`, defined as `CLICK_SLOP_PX`** — deliberately the same notion,
+  one named constant: within it the pointer has not travelled, so "click again" means what it says and
+  click-vs-drag can never drift apart from repeat-vs-new.
+- **Applied on release, and only when the gesture did not move** — the discipline the group cycle already
+  used, and for the reason it was invented: deciding a drag's subject after re-picking made "click a member,
+  then drag it" move the member instead of the group. A drag keeps the press-time subject rules and leaves no
+  cycle behind. `Tab` is the keyboard twin (OP-13: nothing may be reachable one way and not the other) and is
+  consumed only while a cycle is live, so it keeps its usual meaning otherwise.
+- **Selection primes the drag**, which is what makes cycling worth having: a press that continues the cycle
+  drags what the cycle selected, overriding the ranking — step to the curve under a point, then drag the
+  *curve*. A **placed group selected as a whole** is this same rule and predates it (its frame branch is left
+  where it is rather than duplicated), and when the primed selection cannot move the press says why and moves
+  **nothing** — predictability over convenience; clicking elsewhere or Esc gives the ranking back. Only the
+  *primary* primes: a multi-selection has no single drag subject, and a bulk drag is the frame's job.
+  Consequently **selection rank and drag rank are two different rankings**, on purpose.
+
+**A parameter pick can be switched off** (see *Named values in the panel*), which the cycle's own "never mind"
+made conspicuous by contrast: the canvas had one and the panel did not.
+
+**And the machine exposed a picking hole: a ray could not be clicked at all.** `HitTest.distanceToValue` had no
+`RayValue` case, so every ray fell into the unpickable `else` — it drew, and a marquee took it (the rectangle
+test *did* have the kind), but no click could select it, cycle to it, or feed it to a slot, so *Perpendicular*
+refused a ray outright. One case in the one distance rule (a segment's clamp on the origin side only) brings
+all of that back at once, which is the payoff of picking having a single seam. The audit behind it: the kinds
+`SceneRenderer` draws and the kinds `distanceTo` measures must agree, and the one drawn kind deliberately left
+out is a `PointSetValue` — an ordered solution set is scaffolding for the `Select` beside it (OP-1), and it is
+that selected point, an element of its own, a click is meant to reach.
 
 ## Going to 3D
 
@@ -3905,6 +4029,90 @@ Three broad families (see OP-9 decision above):
   a recorded step whose arguments are never rewritten, so it cannot simply join. 709 headless tests green (26
   new, `BreakCurveTest`), and the browser E2E extended with a plain-segment break — which is where the
   journal rewrite earns its keep, since replaying swaps the document under the running shell.
+- **Session 13 — three user items that were one selection state machine.** The asks read as unrelated: *groups
+  should be movable without a second step*, *an active parameter should be un-clickable*, and *clicking again
+  should reach whatever else is under the cursor*. The third swallowed the first two's shape, and the useful
+  part was seeing that the editor already had **two** click cycles — the group/member reach (OP-16) and
+  jamb-vs-leg (OP-21) — each with its own remembered state and each reaching exactly two things. Five things
+  worth recording.
+  (1) **The invariant did the design work.** *A click that is not a repeat must select exactly what the old
+  code selected* — stated up front, it fixed the ranking (points, curves, annotation, jamb by distance, then
+  everything else), fixed where the machine may run (on release, only when the gesture did not move — the
+  discipline the group cycle already used) and made the whole change reviewable against the existing suite:
+  every selection, group, placed-group and opening test passes **unedited**, including the ones that click a
+  member three times. Making the group entry repeat before each member is what preserves *group, member,
+  group* without a rule of its own.
+  (2) **The user's rationale is the ranking's justification, and it generalized further than it was given.**
+  *A point cannot dodge, a curve can be clicked elsewhere* — so points outrank curves; and once said that way
+  it plainly does not depend on how the point was born, which exposed a second defect: a **derived** point (an
+  intersection, a midpoint on its own segment) lost the click to the curve under it, because only *draggable*
+  points had ever been ranked first. Fixing that is the one sanctioned exception to the invariant, and it
+  forced a distinction worth having: **selection rank and drag rank are two rankings**. A click reaches the
+  point; the grab still prefers a movable handle.
+  (3) **Cycling is only half a feature without priming.** The user's own follow-up: *selection primes the
+  drag* — a press that continues the cycle drags what the cycle selected, so "step to the thing you want, then
+  drag exactly it" holds. The pleasing part is that the placed group's frame rule (whole group selected → a
+  member press moves the frame) **is** that rule, and had been since session 4; it stayed where it was and the
+  new case was written as its sibling rather than as a second mechanism. Where the primed selection cannot
+  move, the press explains and moves nothing — predictability over convenience, since falling through would
+  move something the user did not point at.
+  (4) **The defaults question was really "what is a flat group *for*?"** Ticking the frame by default is
+  obvious once asked (a group is a part, and parts move); the interesting half is that unticking is not a
+  fallback. A user had already found the use: a **flat group is the array original**, because its copies derive
+  frame-free, and arraying a *placed* group makes them downstream of the frame instead. So the dialog words
+  both readings as intents, and create+place commit as **one** checkpoint — giving a part its frame is not a
+  second thing the user did. A refused placement leaves the group flat with the reason shown, which is the
+  honest-failure rule arriving at the gesture that caused it.
+  (5) **A machine built on one seam inherits that seam's holes.** Collecting candidates through `HitTest`
+  turned up a ray that **no click could reach**: `distanceToValue` had no `RayValue` case, so rays drew and
+  marqueed but could not be selected, cycled to, or fed to a slot — *Perpendicular* refused one outright. One
+  case (a segment's clamp on the origin side only) restored all of it, and the audit it prompted — the kinds
+  the renderer draws against the kinds picking measures — leaves exactly one drawn kind out on purpose, the
+  transient `PointSetValue`. The un-pickable parameter pick was the same shape of omission one layer up: the
+  canvas had a *never mind* and the panel did not, and a defaulted scalar slot silently adopted the stray pick
+  forever. 740 headless tests green (28 new: `PickCycleTest`, `FramedGroupDefaultTest`,
+  `ParameterDeselectTest`, `RayPickTest`), and the browser E2E extended by the two DOM routes that changed —
+  the dialog's frame tick, and a parameter row clicked twice.
+
+- **Session 14 — "the drawing came back wrong": the format gets a version, and a scored choice gets stored.**
+  Reported as data loss on a six-spoke wheel, in two symptoms: **the fillets were inverted, producing sharp
+  corners**, and **a rider on a construction line had moved along its carrier** between one save and the next.
+  The archaeology mattered more than the guess, and it went two ways.
+  (1) **The rider was *not* misread — and proving that is what kept the fix honest.** The file's
+  `pointoncurve e17 14.118741663069027,42.702264910197286 dofs=52.86964276686915mm` is internally consistent
+  under today's semantics, and every committed build since the parameter was first written (four of them,
+  checked in worktrees) loads and re-saves it **byte for byte**. What looked like the smoking gun — the
+  recorded position lies 19.06 mm off its carrier — turns out to be the format working as designed: put the
+  wheel's *other* rider back at its own recorded position (92.833° instead of the 118.462° its `dofs=` now
+  carries) and the first rider's recorded position lands on the perpendicular bisector to 1e-14 mm. The
+  position was exact when written; an edit upstream later turned the carrier under it. So a "repair" that
+  dragged the rider onto its recorded position would have **undone the user's own later edit** — one earlier
+  attempt at this did exactly that, and its output is the one genuinely corrupted file of the three. Recorded
+  because it is the trap this class of bug sets: *the stale literal is the one the format promises to keep.*
+  (2) **The near-miss is the real finding, and it is a rule, not a case.** The anchoring rework (OP-20) changed
+  what a distance along a carrier is measured *from*, and six commits later the file began storing exactly that
+  number. Nothing was corrupted only because the order happened to be that way round. So the header is now
+  versioned (`constructit 2`, reads 1 and 2), and the doctrine is written down: **a stored literal's meaning is
+  frozen the moment a build that writes it might have shipped** — changing it costs a version bump and a
+  migration, and where a v1 value is ambiguous the migration prefers the reading that reproduces the step's
+  **recorded position** and otherwise keeps today's reading and *says which element it could not decide about*
+  (`Document.loadNotes`). "Replay reconstructs" is not a free pass; it is a free pass only for what the file
+  does not state.
+  (3) **The second symptom was a real bug, and OP-1 had already named it.** A fillet's variant — which side of
+  each leg, R±r, which intersection branch — was scored from the two clicks *and re-scored on every load*,
+  against whatever the geometry had become since. A `Select` sign that lives only in the session's nodes is
+  stored only until the next save. Fillet, chamfer and `intersectnear` now write their resolved signs into
+  their step (`signs=1;-1;1`) and replay consumes them verbatim; the v1 files score once, on load, and are
+  stamped by the save that follows. The regression is the sharp version of the report: a fillet's crossing leg
+  is dragged *past* the click that scored it, so the old scoring would flip the rounding to the other side of
+  the corner — and the persisted sign holds it where the user put it.
+  (4) **What the reported files recover to.** Both fixtures load with their geometry unchanged to the last bit
+  (rider parameters 52.86964276686915 mm and 56.38876034496988 mm respectively — each file's own value), all
+  four fillets tangent to both legs at r=14, all four variants now stamped, and `save → load → save` byte-stable
+  at v2. What is *not* recoverable from the second file is the 3.52 mm the rider had slid: nothing in the
+  committed history reproduces that shift from a load, so the value it carries is the only statement of where
+  that point was, and the migration keeps it rather than inventing a better one. **13 new tests**
+  (`FormatVersionTest`, which carries the reported drawing verbatim), whole suite green.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -4296,7 +4504,7 @@ Then 3D walls = extrude + boolean.
 ## Open work queue (crash-safe snapshot; ordered)
 
 Kept here so no in-flight plan lives only in a session. Per-feature deliberate cuts stay recorded in
-their own as-built notes; this is the *ordered queue* as of 2026-07-28. Session 11's three items (ratio
+their own as-built notes; this is the *ordered queue* as of session 13. Session 11's three items (ratio
 points / relative parameterizations on a shared carrier / the grouping closure) arrived as **demands** rather
 than off this queue and are delivered, so nothing was retired for them; what they left behind is parked below.
 
@@ -4304,6 +4512,15 @@ than off this queue and are delivered, so nothing was retired for them; what the
 segment, an arc and a cubic Bézier as well, with one consumer rule over all of them — see *Break on a plain
 segment, an arc and a Bézier* under OP-19. It left nothing parked: the two limits it names (a curve a
 user-defined tool is built from, a member of a placed group) are refusals by design, not deferrals.
+
+**Retired in session 13: the two hand-built click cycles, and "a group you have to remember to place".** Both
+were *parked as behaviour*, not as queue lines: the group/member reach and jamb-vs-leg are now one ranked pick
+cycle with a first-click invariant, and a group is framed by default under one checkpoint — see *one pick
+cycle, and a group that is framed by default* under OP-16. Session 13's three items arrived as **demands**, so
+nothing else was retired for them, and they left nothing parked: the keyboard twin (`Tab`) was delivered rather
+than cut, and the *unpickable ray* they uncovered is fixed rather than deferred. What the cycle does **not**
+do, stated so it is not looked for: a bulk drag of a multi-selection (that is the frame's job, OP-16) and any
+hover cue before a press (picking is still consulted only on press — the cut OP-21's jamb note already records).
 
 1. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
    connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by

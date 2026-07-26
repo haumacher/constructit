@@ -121,7 +121,7 @@ class BreakCurveTest {
         val script = DocumentFormat.save(ed.doc)
         assertEquals(
             """
-constructit 1
+constructit 2
 point 0,0 -> e1
 point 100,50 -> e2
 point 40,20 -> e3

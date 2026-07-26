@@ -283,6 +283,8 @@ private fun setupApp() {
         when {
             t.id == "cd-ok" -> editor.confirmCreate()
             t.id == "cd-cancel" -> editor.cancelCreate()
+            // "movable (with frame)" — ticked by default, so confirming creates *and* places (OP-16 step 2)
+            t.id == "cd-framed" -> d.framed = (t as HTMLInputElement).checked
             // the checkbox has already flipped itself in the DOM; keep the model in step with it
             t is HTMLInputElement -> t.getAttribute("data-cidx")?.toIntOrNull()?.let { i -> d.toggle(i) }
         }
@@ -338,7 +340,9 @@ private fun setupApp() {
         val target = it.target as? HTMLElement ?: return@addEventListener
         if (target is HTMLInputElement) return@addEventListener
         val row = target.closest(".prow") ?: return@addEventListener
-        editor.activeScalar = editor.doc.scalars.firstOrNull { s -> s.id == row.getAttribute("data-sid") }
+        // one entry point: clicking the *active* row again switches the pick off, which is the Editor's
+        // decision (a defaulted scalar slot would otherwise be shadowed forever) — see Editor.clickScalar
+        editor.clickScalar(editor.doc.scalars.firstOrNull { s -> s.id == row.getAttribute("data-sid") })
         repaint()
     })
     // focusing a value field selects that parameter without rebuilding (keeps the caret)
@@ -652,10 +656,11 @@ private fun setupApp() {
         editor.selectElement(el)
     })
 
-    // a measurement can drive a new construction: click it to make it the active scalar (OP-4)
+    // a measurement can drive a new construction: click it to make it the active scalar (OP-4), and click it
+    // again to switch that pick off — the same one route as a parameter row
     (document.getElementById("measure-list") as HTMLElement).addEventListener("click", {
         val row = (it.target as? HTMLElement)?.closest(".mrow") ?: return@addEventListener
-        editor.activeScalar = editor.doc.scalars.firstOrNull { s -> s.id == row.getAttribute("data-sid") }
+        editor.clickScalar(editor.doc.scalars.firstOrNull { s -> s.id == row.getAttribute("data-sid") })
         repaint()
     })
 
@@ -730,10 +735,21 @@ private fun renderCreateDialog(editor: Editor) {
             "<label class=\"cdrow\"><input type=\"checkbox\" data-cidx=\"$i\"$checked>" +
                 "<span>${c.label}</span><span class=\"tports\">$what</span></label>"
         }
+    // the frame tick (OP-16 step 2), ticked by default: a group is nearly always a movable *part*, and
+    // unticking is the other intent — a named set, e.g. the original an array copies frame-free
+    val framed =
+        if (d.mode != CreateMode.GROUP) {
+            ""
+        } else {
+            "<label class=\"cdrow\" title=\"${d.flatMeaning}\"><input type=\"checkbox\" id=\"cd-framed\"" +
+                "${if (d.framed) " checked" else ""}><span>${d.framedLabel}</span>" +
+                "<span class=\"tports\">${d.framedMeaning}</span></label>"
+        }
     host.innerHTML =
         "<div class=\"cdtitle\">${d.title} — ${d.members.size} element(s)</div>" +
         "<div class=\"cdhelp\">${d.help}</div>" +
         "<input id=\"cd-name\" type=\"text\" placeholder=\"name\" value=\"${d.name}\">" +
+        framed +
         rows +
         "<div class=\"cdbuttons\"><button id=\"cd-ok\">Create</button><button id=\"cd-cancel\">Cancel</button></div>"
 }

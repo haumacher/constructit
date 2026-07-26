@@ -105,6 +105,13 @@ class Picks(
      * the tool step and re-run rather than edited afterwards (see *Structural count* in DESIGN.md).
      */
     val count: Int = 0,
+    /**
+     * Discrete choices a replay hands back **verbatim** — a fillet's variant, a chamfer's quadrant (OP-1,
+     * OP-18). Empty for a live click, where they are scored from [clicks] once and then restated by the step
+     * for every load after; a tool that is given them must not score again, since the corner the clicks were
+     * scored against moves with the legs.
+     */
+    val signs: List<Int> = emptyList(),
 )
 
 /**
@@ -385,11 +392,11 @@ object Tools {
             ToolDef(PARALLEL_AT, "Parallel at distance", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.SIDE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click the base line, then click the side you want the parallel on.") { d, p, s -> d.parallelAtDistance(p.elements[0], s[0], p.at) },
             ToolDef(TANGENT, "Tangent from point", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.CIRCLE), help = "Click an external point, then a circle or arc (an arc counts as its whole circle).") { d, p, _ -> d.tangentFromPoint(p.points[0], p.elements[0]) },
             ToolDef(TANGENT_AT, "Tangent at point", ToolCategory.CONSTRUCT, listOf(SlotKind.ON_CIRCLE_POINT), help = "Click a point that lies on a circle for the tangent there (use Point on circle).") { d, p, _ -> d.tangentAtPointOnCircle(p.elements[0]) },
-            ToolDef(FILLET, "Fillet", ToolCategory.CONSTRUCT, listOf(SlotKind.CARRIER, SlotKind.CARRIER), scalars = listOf(len("radius")), help = "Type a radius (or pick a parameter in the panel), then click the two legs — lines, segments, circles or arcs — where you want the rounding to touch them.") { d, p, s -> d.filletBetweenCurves(p.elements[0], p.elements[1], s[0], p.clicks[0], p.clicks[1]) },
+            ToolDef(FILLET, "Fillet", ToolCategory.CONSTRUCT, listOf(SlotKind.CARRIER, SlotKind.CARRIER), scalars = listOf(len("radius")), help = "Type a radius (or pick a parameter in the panel), then click the two legs — lines, segments, circles or arcs — where you want the rounding to touch them.") { d, p, s -> d.filletBetweenCurves(p.elements[0], p.elements[1], s[0], p.clicks[0], p.clicks[1], p.signs) },
             // line-only, deliberately: a bevel across a round leg has two honest readings (a chord, or an
             // arc of the same length), and until the convention is stated a tool that picked one silently
             // would be guessing — recorded in DESIGN.md rather than half-built here
-            ToolDef(CHAMFER, "Chamfer", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.LINE), scalars = listOf(len("distance")), help = "Type a chamfer distance (or pick a parameter in the panel), then click the two straight legs on the sides of the corner you want bevelled.") { d, p, s -> d.chamferBetweenLines(p.elements[0], p.elements[1], s[0], p.clicks[0], p.clicks[1]) },
+            ToolDef(CHAMFER, "Chamfer", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.LINE), scalars = listOf(len("distance")), help = "Type a chamfer distance (or pick a parameter in the panel), then click the two straight legs on the sides of the corner you want bevelled.") { d, p, s -> d.chamferBetweenLines(p.elements[0], p.elements[1], s[0], p.clicks[0], p.clicks[1], p.signs) },
             ToolDef(OUTER_TANGENTS, "Outer tangents", ToolCategory.CONSTRUCT, listOf(SlotKind.CIRCLE, SlotKind.CIRCLE), help = "Click two circles or arcs for their outer common tangents.") { d, p, _ -> d.commonTangents(p.elements[0], p.elements[1], inner = false) },
             ToolDef(INNER_TANGENTS, "Inner tangents", ToolCategory.CONSTRUCT, listOf(SlotKind.CIRCLE, SlotKind.CIRCLE), help = "Click two circles or arcs for their inner (crossing) common tangents.") { d, p, _ -> d.commonTangents(p.elements[0], p.elements[1], inner = true) },
             // ----- Transform -----

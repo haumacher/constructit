@@ -18,6 +18,19 @@ private const val UNDO_CAP = 100
 /** Below this screen distance a press-and-release is a *click*, not a drag. */
 private const val CLICK_SLOP_PX = 3.0
 
+/**
+ * How near the previous click a new one must land to count as **the same spot** — the repeat that steps the
+ * pick cycle on instead of starting a new pick (see [Editor.pickAt]).
+ *
+ * Deliberately *the same notion* as [CLICK_SLOP_PX], and one named constant: within it the pointer has not
+ * travelled, so "click again" means exactly what it says, and click-vs-drag can never drift apart from
+ * repeat-vs-new.
+ */
+private const val REPEAT_CLICK_PX = CLICK_SLOP_PX
+
+/** What the status line says when the active parameter is switched off (see [Editor.clickScalar]). */
+private const val NO_ACTIVE_PARAMETER = "no parameter active — tools use their defaults"
+
 /** How many panel picks are remembered — no tool asks for more scalars than this. */
 private const val SCALAR_PICK_MEMORY = 4
 
@@ -43,6 +56,47 @@ private const val RUN_FINISHED = " — the run is finished; click a point or leg
  * reports MIDDLE for Space+drag as well, so a one-button mouse can still pan.
  */
 enum class PointerButton { PRIMARY, MIDDLE }
+
+/**
+ * One thing a SELECT click could mean — an entry of the ranked pile [Editor.pickAt] collects.
+ *
+ * There is **one** cycle machine over this list, replacing the two hand-built two-element cycles that grew
+ * separately: the group/member reach (OP-16) and jamb-vs-leg (OP-21). Each entry is a *complete* answer to
+ * "what is selected", so applying one is history-free — which is what lets a click apply any of them without
+ * a rule of its own.
+ */
+private sealed class Candidate {
+    /** A whole group, as a click on one of its members addresses it first (OP-16), with the clicked member. */
+    class Whole(
+        val group: Group,
+        val primary: Element,
+    ) : Candidate()
+
+    /** One element alone — ungrouped geometry, or a member deliberately reached past its group. */
+    class One(
+        val element: Element,
+    ) : Candidate()
+
+    /** An opening's jamb (OP-21): a selection that owns no [Element] at all. */
+    class Opening(
+        val jamb: Jamb,
+    ) : Candidate()
+}
+
+/**
+ * What one SELECT press found at a position: every [Candidate] within the pick tolerance, ranked, plus the
+ * two facts the *press* needs and only it can decide — what a drag from here would move, and whether a jamb
+ * took the grab.
+ */
+private class PickPile(
+    val candidates: List<Candidate>,
+    /** What a drag would move: a draggable point, an ortho leg, a dimension's offset — today's rule verbatim. */
+    val movable: Element?,
+    /** The jamb that took the grab, i.e. nothing movable outranked it (OP-21); null when one did. */
+    val grabJamb: Jamb?,
+    /** The element the press addresses at all, movable or merely selectable; null when it hit nothing. */
+    val hit: Element?,
+)
 
 /**
  * Pure interaction controller. In SELECT mode it drags free points (live recompute), rubber-bands a
@@ -270,6 +324,38 @@ class Editor(
         }
 
     /**
+     * A click on a parameter (or measurement) row — the panel's route into a scalar slot (OP-13: the panel is
+     * as much an input as the canvas). One entry point, so the shell only routes and the decision stays here.
+     *
+     * Clicking the **active** row again switches it **off**. Without that there is no way to un-pick a
+     * parameter, and a pick of the wrong dimension is not merely idle: a *defaulted* slot adopts any pick of
+     * its own kind (see [toolScalars]), so one stray dimensionless pick shadows every dimensionless default
+     * for the rest of the session — Midpoint keeps building the ratio point of the factor picked long ago.
+     * Escape does the same with no gesture pending (see [key]).
+     */
+    fun clickScalar(entry: ScalarEntry?) {
+        if (entry != null && activeScalar !== entry) {
+            activeScalar = entry
+            onChange()
+            return
+        }
+        clearActiveScalar()
+        onChange()
+    }
+
+    /**
+     * Drop the active parameter, and forget it as a *pick* too — leaving it in the memory would keep it
+     * feeding the next tool that wants a scalar of its kind, which is the whole thing being switched off.
+     */
+    private fun clearActiveScalar(): Boolean {
+        val entry = activeScalar ?: return false
+        activeScalar = null
+        scalarPicks.removeAll { it === entry }
+        statusHint = NO_ACTIVE_PARAMETER
+        return true
+    }
+
+    /**
      * The panel picks, oldest first. A tool needing *k* scalars consumes the **last k** in pick order, so
      * a single-scalar tool means exactly "the active parameter" as before, a two-scalar tool means "x, then
      * y", and picking a wrong row is corrected by simply picking the right ones again. Deliberately not
@@ -392,6 +478,8 @@ class Editor(
         selection = null
         selectedGroup = null
         selectedJamb = null
+        // nothing is selected, so no pick cycle stands: the next click is a first click
+        resetCycle()
     }
 
     /** The frame the selection addresses: a **placed** group selected as a whole (OP-16 step 2). */
@@ -530,7 +618,26 @@ class Editor(
     private var lastScreen = Vec2(0.0, 0.0)
     private var downScreen: Vec2? = null // where the press landed, so a release can tell click from drag
     private var pendingToggle: Element? = null // Shift+click's toggle, applied on release (see [pointerUp])
-    private var pendingCycle: Element? = null // group/member cycle of a placed group's member, likewise on release
+
+    // ---- the pick cycle: one machine, applied on release exactly as the group/member cycle always was ----
+    //
+    // A SELECT click collects **every** candidate within tolerance ([pickAt]) and selects the first — which
+    // is, by construction, what the press has always selected. Clicking the same spot again steps to the
+    // next, wrapping, so nothing under the cursor is unreachable: the group *and* the member, the leg *and*
+    // the jamb that crosses it, the area *and* the outline over it. The ranking is unchanged (a jamb still
+    // wins off the centreline and loses along it) — cycling only makes the loser reachable.
+    //
+    // Applied **on release and only when the gesture did not move**, which is the discipline the group cycle
+    // already used and the reason it exists: deciding a drag's subject after re-picking made "click a member,
+    // then drag it" move the member instead of the group (OP-16).
+    private var pendingPile: PickPile? = null // what the press found, for the release to apply
+    private var pendingIndex = 0 // which of it this gesture will select
+    private var pendingApplied = false // whether the press already selected it (the release then keeps its note)
+    private var pendingNote = "" // what the press said, so a first click's status survives the release
+    private var cycleAt: Vec2? = null // where the click owning the live cycle landed, in screen pixels
+    private var cycleWorld: Vec2? = null // …and in world coordinates, so Tab can re-pick there
+    private var cycleIndex = 0 // which candidate that click selected
+    private var cycleCount = 0 // how many it found there
     private var marqueeFrom: Vec2? = null // rubber-band origin in world coordinates
     private var marqueeTo: Vec2? = null
     private var marqueeAdds = false // Shift+marquee adds to the selection instead of replacing it
@@ -720,7 +827,8 @@ class Editor(
         panning = false
         downScreen = null
         pendingToggle = null
-        pendingCycle = null
+        pendingPile = null
+        resetCycle()
         marqueeFrom = null
         marqueeTo = null
         marqueeAdds = false
@@ -756,7 +864,11 @@ class Editor(
         selectedJamb?.let { return "opening on leg ${it.interval.legIndex + 1} of ${it.path.footprint.id}" }
         selectedFrame()?.let { return "frame of ${it.name}" }
         if (selected.size > 1) return "${selected.size} elements"
-        val el = selection ?: return ""
+        return elementLabel(selection ?: return "")
+    }
+
+    /** What one element is called in a sentence — the same words for the inspector and for the pick cycle. */
+    private fun elementLabel(el: Element): String {
         val kind =
             when (el.handle) {
                 is OrthoEdgeHandle -> "leg"
@@ -786,7 +898,10 @@ class Editor(
      * Group the selection under [name] (auto-numbered when blank). Organizational only: no geometry,
      * no node and no handle changes — a member drags exactly as it did before.
      */
-    fun groupSelection(name: String = ""): Group? {
+    fun groupSelection(
+        name: String = "",
+        commit: Boolean = true,
+    ): Group? {
         if (selected.isEmpty()) {
             statusHint = "Select the elements to group first (Shift+click to add, or drag a box)"
             onChange()
@@ -805,7 +920,10 @@ class Editor(
             return null
         }
         selectedGroup = g // the selection now addresses the group it just became
-        checkpoint()
+        // [commit] is false when the caller is going to *place* this group as part of the same operation
+        // (the create dialog's default): creating and placing are then one checkpoint, and one undo removes
+        // both — see [confirmCreate].
+        if (commit) checkpoint()
         statusHint = "Grouped ${g.members.size} elements as ${g.name}"
         onChange()
         return g
@@ -849,7 +967,8 @@ class Editor(
     /**
      * Confirm the open dialog: a group of the selection (plus any ticked point, which is OP-16's
      * "membership = closure or inputs" answered the group way), or a macro whose ticked candidates are
-     * its input ports. One checkpoint either way — declaring a tool is one user-level operation.
+     * its input ports. One checkpoint either way — declaring a tool is one user-level operation, and so is
+     * making a movable part, even though that is a `group` step *and* a `place` step (see [CreateDialog]).
      */
     fun confirmCreate(): Boolean {
         val d = createDialog ?: return false
@@ -862,16 +981,35 @@ class Editor(
             if (d.mode == CreateMode.GROUP) {
                 val members = d.members + d.checkedPoints.filter { p -> d.members.none { it === p } }
                 select(members, d.members.firstOrNull())
-                val g = groupSelection(d.name)
+                // held back: with the frame ticked, the placement below belongs to the same checkpoint
+                val g = groupSelection(d.name, commit = false)
                 // **Say at creation time what placement would refuse** (OP-16's honest-failure rule): the
                 // freedom an unticked row leaves outside the group is exactly what makes the group immovable,
                 // and it is invisible on canvas — so the reason belongs to the gesture that caused it, not to
                 // a Place click much later.
                 if (g != null) {
+                    val n = doc.groupMembers(g).size
                     d.warnings = doc.placementWarnings(g)
-                    if (d.warnings.isNotEmpty()) {
-                        statusHint = "Grouped ${doc.groupMembers(g).size} elements as ${g.name}, but " + d.warnings.joinToString("; ")
-                    }
+                    val made = "Grouped $n element${if (n == 1) "" else "s"} as ${g.name}"
+                    // The frame is the default, so the everyday group is movable the moment it exists. A
+                    // refusal is **not** a failure of the gesture: the group is created flat and the reason is
+                    // shown, which is the same honest answer Place gives — and a flat group is a purpose of
+                    // its own (an array original), not a consolation. [Editor.placeGroup] says which of the
+                    // two happened, and that is the half the canvas cannot show, so it is kept verbatim.
+                    val placeNote =
+                        if (!d.framed) {
+                            null
+                        } else {
+                            placeGroup(g, commit = false)
+                            statusHint
+                        }
+                    statusHint =
+                        when {
+                            placeNote != null -> "$made. $placeNote"
+                            d.warnings.isEmpty() -> "$made — a named set, with no frame"
+                            else -> "$made, but " + d.warnings.joinToString("; ")
+                        }
+                    checkpoint() // the whole operation: the group, and the frame it was born with
                 }
                 g != null
             } else {
@@ -952,7 +1090,10 @@ class Editor(
      * group cannot move independently, and which of the two should own the point is a modelling decision
      * the editor must not make silently (OP-16).
      */
-    fun placeGroup(g: Group): Boolean {
+    fun placeGroup(
+        g: Group,
+        commit: Boolean = true,
+    ): Boolean {
         if (g.placed) {
             statusHint = "${g.name} is already placed — drag any member to move it, or Unplace it first"
             onChange()
@@ -986,7 +1127,8 @@ class Editor(
             onChange()
             return false
         }
-        checkpoint()
+        // false only when the group was *created* by the same operation — one checkpoint for both halves
+        if (commit) checkpoint()
         // the deformable boundary is stated at placement time, because it is invisible on canvas: those
         // members are driven from outside the group and the frame does not move them (OP-16)
         val deforms =
@@ -1050,6 +1192,7 @@ class Editor(
      */
     fun selectElement(el: Element) {
         select(listOf(el), el)
+        resetCycle() // the tree picked this, not a click on the canvas
         val space = doc.spaceOf(el)
         statusHint =
             if (space.name == doc.activeSpace.name) {
@@ -1141,6 +1284,7 @@ class Editor(
         val members = doc.groupMembers(g)
         select(members, members.firstOrNull())
         selectedGroup = g
+        resetCycle() // the panel picked this, not a click on the canvas
         val what = if (g.placed) " (placed — the panel shows its frame)" else ""
         statusHint = "Group ${g.name}: ${members.size} element${if (members.size == 1) "" else "s"} selected$what"
         onChange()
@@ -1352,25 +1496,42 @@ class Editor(
         }
         if (toolId == Tools.SELECT) {
             val world = camera.screenToWorld(screen)
-            // a vertex wins over everything meeting at it, jambs included: it is the most specific thing
-            // there, exactly as it already outranked the legs. A leg drags perpendicular (OrthoEdgeHandle)
-            val point = HitTest.nearestFreePoint(doc, ev(), world, tolWorld())
-            // An opening's jamb (OP-21) is not an element, so it is picked on its own and then *competes by
-            // distance* with the curves. It has to: a jamb crosses its own carrier leg, so a rule of
-            // precedence would make one of the two unreachable near the crossing. Distance answers it the
-            // way the drawing reads — along the wall the leg is nearer, across it the jamb is — which is why
-            // the element searches below are capped at the jamb's distance rather than at the tolerance.
-            val jamb = if (point != null) null else HitTest.nearestJamb(doc, ev(), world, tolWorld())
-            val reach = jamb?.let { minOf(tolWorld(), HitTest.distanceToSegment(world, it.seg)) } ?: tolWorld()
-            val movable =
-                point
-                    ?: HitTest.nearestDraggableCurve(doc, ev(), world, reach)
-                    // last, so a dimension lying over the geometry it names never steals its grab
-                    ?: HitTest.nearestDraggableAnnotation(doc, ev(), world, reach)
+            // one search and one ranking: what this press grabs and what a repeat click cycles through are
+            // the same list, so the precedence is written down once (see [pickAt])
+            val pile = pickAt(world)
+            // Where the live cycle stands here, if this press continues it — the one fact both halves of the
+            // machine turn on: the *next* candidate is what a click takes, and the *standing* one is what a
+            // drag moves (**the selection primes the drag**, see below).
+            val standing = if (additive) null else standingIndex(screen, pile)
+            // a Shift+click is a toggle, not a step of any cycle, so it takes no part in one
+            pendingPile = if (additive) null else pile
+            pendingIndex = if (standing == null) 0 else (standing + 1) % pile.candidates.size
+            pendingApplied = false
+            pendingNote = ""
+            if (additive) resetCycle()
+            // **Selection primes the drag.** A press that continues the cycle drags what the cycle selected,
+            // overriding the ranking — which is what makes cycling worth having: step to the thing you want,
+            // then drag exactly it. A *placed group selected as a whole* is the same rule and predates it (the
+            // frame branch below), so it is left where it is rather than duplicated here.
+            //
+            // Predictability over convenience: when the primed selection cannot move, the press says why and
+            // moves **nothing** — falling through to a different target would move something the user did not
+            // point at. Clicking elsewhere, or Esc, gives the ranking back.
+            //
+            // Only the **primary** primes: a multi-selection has no single drag subject, and a bulk drag is a
+            // separate feature (OP-16's "no bulk move" — that is the frame's job).
+            val primed = standing?.let { pile.candidates[it] }
+            val primedElement =
+                when (primed) {
+                    is Candidate.One -> primed.element
+                    is Candidate.Whole -> primed.primary
+                    else -> null
+                }
+            val jamb = (primed as? Candidate.Opening)?.jamb ?: pile.grabJamb.takeIf { primed == null }
             // The jamb took the grab. It is 1-DOF along its leg, so the offset the grab holds is the *along*
             // component of the cursor — the perpendicular one is projected onto the jamb's own line, which is
             // what stops the opening from jumping when the grab lands beside the line rather than on it.
-            if (movable == null && jamb != null) {
+            if (jamb != null) {
                 // A jamb outranks even a *placed* group's frame (OP-16), which every other member drag moves
                 // when the group is selected as a whole. It has to, or an opening in a placed wall would be
                 // editable only after deselecting the group — the feature would work differently for the same
@@ -1381,17 +1542,24 @@ class Editor(
                 val anchor = onJambLine(jamb, world)
                 grabOffset = world - anchor
                 dragStart = anchor
-                statusHint = describeJamb(jamb)
+                pendingApplied = true
+                pendingNote = describeJamb(jamb)
+                // where in the pile this jamb stands: the first candidate on a fresh press, and the one the
+                // cycle is standing on when the press was primed by it
+                statusHint = cycleNote(pendingNote, pile, standing ?: 0)
                 onChange()
                 return
             }
+            val movable = pile.movable
             // an immovable element is still selectable, so its values can be read and the reason shown
-            val hit = movable ?: HitTest.nearestSelectable(doc, ev(), world, tolWorld())
+            val hit = pile.hit
             // a press on nothing starts a rubber band; what it covers is selected on release (OP-16)
             if (hit == null) {
                 marqueeFrom = world
                 marqueeTo = world
                 marqueeAdds = additive
+                pendingPile = null
+                resetCycle() // a press on empty space is nobody's repeat
                 onChange()
                 return
             }
@@ -1404,15 +1572,24 @@ class Editor(
             //   member of a group nobody selected must move that member, exactly as if it were ungrouped;
             //   and a member deliberately reached alone keeps moving alone, as before. Decided *here* and
             //   never re-decided, because a release cannot undo what the drag has already moved.
-            // - **the selection, at release** ([pointerUp]): a click runs the group/member cycle, a drag
-            //   leaves the member it moved selected. Both are click-vs-drag semantics, and only the
+            // - **the selection, at release** ([pointerUp]): a click applies the pick (cycling on a repeat), a
+            //   drag leaves the member it moved selected. Both are click-vs-drag semantics, and only the
             //   release knows which of the two the gesture was (CLICK_SLOP_PX).
             val placedGroup = if (additive) null else doc.placedGroupOf(hit)
             var note = ""
             when {
                 additive -> pendingToggle = hit
-                placedGroup != null -> pendingCycle = hit
-                else -> note = pickOnCanvas(hit)
+                // primed: what the press found is what the drag will move, so the press leaves it alone (the
+                // release still steps the cycle on, exactly as for a group's deferred pick)
+                primed != null -> {}
+                // deferred whole: the frame decision below must read the selection this press *found*
+                placedGroup != null -> {}
+                else -> {
+                    // the press selects the pile's **first** candidate — which is what it has always
+                    // selected; a repeat click steps past it at release, never here
+                    note = selectPick(pile.candidates.first())
+                    pendingApplied = true
+                }
             }
             // dragging the frame is one literal write, whatever the group contains, and the whole of it
             // follows rigidly — derived geometry included, since it is downstream (OP-16 step 2)
@@ -1423,6 +1600,26 @@ class Editor(
                 grabOffset = world - anchor
                 dragStart = anchor
                 statusHint = note
+                pendingNote = note
+                onChange()
+                return
+            }
+            // the primed subject, when the frame did not already take it: the cycled selection moves, or says
+            // why it cannot — and either way nothing else is grabbed instead
+            if (primedElement != null) {
+                if (!primedElement.hasFreeDof) {
+                    statusHint = explainImmovable(primedElement)
+                    pendingNote = statusHint
+                    onChange()
+                    return
+                }
+                dragTarget = primedElement
+                val anchor = grabAnchor(primedElement, world)
+                grabOffset = world - anchor
+                dragStart = anchor
+                dragRiders = doc.riderAnchors()
+                pendingNote = "Dragging ${elementLabel(primedElement)} — what is selected takes the grab"
+                statusHint = cycleNote(pendingNote, pile, standing ?: 0)
                 onChange()
                 return
             }
@@ -1449,6 +1646,11 @@ class Editor(
             } else {
                 statusHint = explainImmovable(hit)
             }
+            // …and what the press said is kept for the release: a first click must read exactly as it always
+            // did (the reason an immovable element cannot be dragged included), with only the pile's position
+            // appended when there is more than one thing here
+            pendingNote = statusHint
+            if (pendingApplied) statusHint = cycleNote(statusHint, pile, 0)
             onChange()
             return
         }
@@ -1684,13 +1886,25 @@ class Editor(
                 onChange()
                 true
             }
-            // with nothing pending, Escape is "select nothing" — the keyboard form of clicking empty space
-            key == "Escape" && !pathActive && selected.isNotEmpty() -> {
-                clearSelection()
-                statusHint = "Selection cleared"
+            // With nothing pending, Escape drops what a click would otherwise have to un-click: the active
+            // parameter, and the selection. The parameter belongs here because a pick that cannot be dropped
+            // shadows every *defaulted* scalar slot for the rest of the session (see [clickScalar]).
+            key == "Escape" && !pathActive && (selected.isNotEmpty() || activeScalar != null) -> {
+                val had = selected.isNotEmpty()
+                val dropped = clearActiveScalar()
+                if (had) clearSelection()
+                statusHint =
+                    when {
+                        had && dropped -> "Selection cleared, and $NO_ACTIVE_PARAMETER"
+                        had -> "Selection cleared"
+                        else -> NO_ACTIVE_PARAMETER
+                    }
                 onChange()
                 true
             }
+            // The keyboard twin of clicking the same spot again (OP-13: nothing is reachable one way and not
+            // the other). Only while a click's cycle is live — there is nothing to step otherwise.
+            key == "Tab" && cycleWorld != null -> advanceCycle()
             key == "Escape" || key == "Enter" -> {
                 finishPath()
                 true
@@ -1888,38 +2102,191 @@ class Editor(
         return "$what ${if (closed) "closed on" else "ends on"} ${el.id}$RUN_FINISHED"
     }
 
+    // ---- the one pick cycle (OP-16 / OP-13 / OP-21) ----
+
     /**
-     * A plain click's selection semantics, returning the note for the status bar.
+     * Everything a SELECT click at [world] could mean, **ranked by the precedence a press has always used**,
+     * with the two facts only the press can decide beside them (see [PickPile]).
      *
-     * A grouped element selects **its whole group** (OP-16), with the clicked element as primary — that
-     * is what a group is for. **Clicking it again reaches the member alone**, so its fields stay
-     * addressable and no degree of freedom becomes unreachable through grouping (OP-13); a further
-     * click goes back to the group. One mechanism, no modifier, and the status line says so — Alt was
-     * rejected here because it already means "place freely / keep flattened corners" during a gesture.
+     * The order, written down once instead of grown three times:
+     *
+     * 1. **every point first**, by precedence rather than by distance, and the reason is the user's: *a point
+     *    cannot dodge, a curve can be clicked elsewhere.* That holds however the point was born, so a derived
+     *    one — an intersection, a midpoint, a ratio point, a key point — outranks the curve it sits on just as
+     *    a free vertex does. Among the points the **draggable** ones come first, which is the grab rule read as
+     *    a ranking (a dead handle must not steal a grab from what drives it).
+     * 2. then the draggable **curves** (an ortho leg), then a draggable **annotation** — last of the three,
+     *    so a dimension lying over the geometry it names never steals its grab.
+     * 3. then an opening's **jamb** (OP-21), which competes with the curves *by distance* instead of by
+     *    precedence — the [reach] cap: along the wall the leg is nearer, across it the jamb is. That
+     *    remains the **ranking**; what cycling adds is that the loser is now reachable.
+     * 4. then everything else the pointer can address at all, nearest first, so nothing drawn is unreachable.
+     *
+     * A hit that belongs to a group contributes **two consecutive entries** — the whole group, then that
+     * member alone (OP-16: a group is what a click means first, and a member must stay reachable past it).
+     *
+     * **Selection rank and drag rank are not the same thing, deliberately.** This ranks what a *click*
+     * addresses; [PickPile.movable] is what a *drag* moves, and it keeps preferring a movable handle exactly
+     * as the press always has. So a derived point now takes the click while the curve under it still takes
+     * the drag, and a point with no freedom simply has no drag — which is the honest answer either way: a
+     * selection is for reading and deleting (OP-13's fields), a grab is for moving.
      */
-    private fun pickOnCanvas(hit: Element): String {
-        val group = doc.groupOf(hit)
-        if (group == null) {
-            select(listOf(hit), hit)
-            return ""
+    private fun pickAt(world: Vec2): PickPile {
+        val ev = ev()
+        val tol = tolWorld()
+        val all = HitTest.nearestAll(doc, ev, world, tol) { it.selectable }.map { it.first }
+        val points = all.filter { it.isPoint }.sortedBy { !it.draggable }
+        val draggablePoint = points.firstOrNull { it.draggable }
+        // An opening's jamb is not an element, so it is picked on its own and then *competes by distance* with
+        // the curves. It has to: a jamb crosses its own carrier leg, so a rule of precedence would make one of
+        // the two unreachable near the crossing — which is why the curve searches are capped at the jamb's
+        // distance rather than at the tolerance. A *draggable* point still wins the grab outright, so the cap
+        // does not apply when one is there — the ranking the press has always used, unchanged.
+        val jamb = HitTest.nearestJamb(doc, ev, world, tol)
+        val reach =
+            if (draggablePoint == null && jamb != null) minOf(tol, HitTest.distanceToSegment(world, jamb.seg)) else tol
+        val curves = HitTest.nearestAll(doc, ev, world, reach) { it.isCurve && it.hasFreeDof }.map { it.first }
+        val annotations = HitTest.nearestAll(doc, ev, world, reach) { it.annotation != null && it.hasFreeDof }.map { it.first }
+        val movable = draggablePoint ?: curves.firstOrNull() ?: annotations.firstOrNull()
+        val ranked = points + (curves + annotations).filter { el -> points.none { it === el } }
+        // everything else that can be addressed at all — an area, a solid's footprint hint, a curve the jamb's
+        // cap kept out of the grab. Immovable here means "selectable but not draggable", which is a reason to
+        // *say* something (see [explainImmovable]), not a reason to be unreachable.
+        val rest = all.filter { el -> ranked.none { it === el } }
+        val out = ArrayList<Candidate>()
+
+        fun offer(el: Element) {
+            doc.groupOf(el)?.let { out.add(Candidate.Whole(it, el)) }
+            out.add(Candidate.One(el))
         }
-        val members = doc.groupMembers(group)
-        // the *same* element clicked again, while its group is what is selected — so clicking a different
-        // member keeps addressing the group, as it did before frames existed
-        val reachedAlone = selection === hit && (selectedGroup === group || selected.size > 1)
-        if (reachedAlone) {
-            select(listOf(hit), hit)
-            val what = if (group.placed) " — dragging it moves it inside the frame" else ""
-            return "${hit.id} alone (of group ${group.name})$what — click again for the whole group"
-        }
-        select(members, hit)
-        selectedGroup = group
-        if (group.placed) {
-            return "Group ${group.name} is placed: dragging moves its frame (x / y / angle in the panel) — " +
-                "click ${hit.id} again to reach it alone"
-        }
-        return "Group ${group.name}: ${members.size} elements — click ${hit.id} again to reach it alone"
+        ranked.forEach { offer(it) }
+        if (jamb != null) out.add(Candidate.Opening(jamb))
+        rest.forEach { offer(it) }
+        // what the press addresses is what the first candidate names; what it *drags* may be something else
+        return PickPile(out, movable, if (movable == null) jamb else null, ranked.firstOrNull() ?: rest.firstOrNull())
     }
+
+    /**
+     * Where the live cycle **stands** in [pile] — the candidate the previous click selected — or null when
+     * this press does not continue it, which is the ordinary first click.
+     *
+     * A press continues the cycle when it lands within [REPEAT_CLICK_PX] of the click that owns it *and* that
+     * click's selection still stands: if anything else has selected in between (a marquee, a drag, the panel),
+     * the cursor is over a pile the cycle no longer describes, and starting over is the honest answer.
+     *
+     * This is the whole of the first-click invariant — a press with nothing standing selects and drags exactly
+     * what it always did — and it is also what makes cycling *useful*: the standing candidate is what the drag
+     * is primed with (see [pointerDown]).
+     */
+    private fun standingIndex(
+        screen: Vec2,
+        pile: PickPile,
+    ): Int? {
+        if (pile.candidates.isEmpty()) return null
+        val at = cycleAt ?: return null
+        if ((screen - at).length() > REPEAT_CLICK_PX) return null
+        if (cycleIndex !in pile.candidates.indices || !addresses(pile.candidates[cycleIndex])) return null
+        return cycleIndex
+    }
+
+    /** Whether the selection currently addresses [c] — how the cycle knows where it stands. */
+    private fun addresses(c: Candidate): Boolean =
+        when (c) {
+            is Candidate.Whole -> selectedGroup === c.group && selection === c.primary
+            is Candidate.One -> selectedGroup == null && selected.size == 1 && selection === c.element
+            // a Jamb is derived fresh from the drawing on every pass, so it is identified by what it *is*
+            is Candidate.Opening ->
+                selectedJamb?.let { it.interval === c.jamb.interval && it.atEnd == c.jamb.atEnd } ?: false
+        }
+
+    /**
+     * Select exactly what [c] names and return the note for the status bar.
+     *
+     * History-free by construction: each candidate is a complete answer, so this is the whole of "what a
+     * click selects" — the group/member reach and the jamb-vs-leg alternative are entries in one list rather
+     * than two remembered states (OP-16, OP-21).
+     */
+    private fun selectPick(c: Candidate): String =
+        when (c) {
+            is Candidate.Whole -> {
+                val members = doc.groupMembers(c.group)
+                select(members, c.primary)
+                selectedGroup = c.group
+                if (c.group.placed) {
+                    "Group ${c.group.name} is placed: dragging moves its frame (x / y / angle in the panel)"
+                } else {
+                    "Group ${c.group.name}: ${members.size} element${if (members.size == 1) "" else "s"}"
+                }
+            }
+            is Candidate.One -> {
+                select(listOf(c.element), c.element)
+                val g = doc.groupOf(c.element)
+                when {
+                    g == null -> ""
+                    g.placed -> "${c.element.id} alone (of group ${g.name}) — dragging it moves it inside the frame"
+                    else -> "${c.element.id} alone (of group ${g.name})"
+                }
+            }
+            is Candidate.Opening -> {
+                selectJamb(c.jamb)
+                describeJamb(c.jamb)
+            }
+        }
+
+    /**
+     * How a pick says where it stands in the pile it came from — `segment e12 (3 of 5 here — click again for
+     * the next)`. A lone candidate gets nothing appended, so the everyday click reads exactly as before.
+     */
+    private fun cycleNote(
+        base: String,
+        pile: PickPile,
+        i: Int,
+    ): String {
+        val n = pile.candidates.size
+        if (n <= 1) return base
+        val head = base.ifEmpty { pickLabel(pile.candidates[i]) }
+        return "$head (${i + 1} of $n here — click again for the next)"
+    }
+
+    /** What one candidate is called, for the cycle's own note. */
+    private fun pickLabel(c: Candidate): String =
+        when (c) {
+            is Candidate.Whole -> "group ${c.group.name}"
+            is Candidate.One -> elementLabel(c.element)
+            is Candidate.Opening -> "opening on leg ${c.jamb.interval.legIndex + 1} of ${c.jamb.path.footprint.id}"
+        }
+
+    /** Step the cycle on, from wherever the last click left it. */
+    private fun advanceCycle(): Boolean {
+        val world = cycleWorld ?: return false
+        val pile = pickAt(world)
+        if (pile.candidates.isEmpty()) return false
+        val i =
+            if (cycleIndex in pile.candidates.indices && addresses(pile.candidates[cycleIndex])) {
+                (cycleIndex + 1) % pile.candidates.size
+            } else {
+                0
+            }
+        statusHint = cycleNote(selectPick(pile.candidates[i]), pile, i)
+        cycleIndex = i
+        cycleCount = pile.candidates.size
+        onChange()
+        return true
+    }
+
+    /** Forget the live cycle: the next click is a first click. */
+    private fun resetCycle() {
+        cycleAt = null
+        cycleWorld = null
+        cycleIndex = 0
+        cycleCount = 0
+    }
+
+    /** How many things the last click found under the cursor — 0 when no cycle is live. */
+    val pickCycleSize: Int get() = if (cycleAt == null) 0 else cycleCount
+
+    /** Which of them it selected, counting from 1 — 0 when no cycle is live. */
+    val pickCyclePosition: Int get() = if (cycleAt == null) 0 else cycleIndex + 1
 
     /** Take everything the rubber band covers (OP-16); Shift adds it to what was already selected. */
     private fun finishMarquee(
@@ -2018,6 +2385,7 @@ class Editor(
                 movedSince(screen) -> finishMarquee(from, camera.screenToWorld(screen))
                 !marqueeAdds -> clearSelection()
             }
+            resetCycle() // neither a marquee nor a deselect is a step of any pick cycle
             downScreen = null
             onChange()
             return
@@ -2026,9 +2394,12 @@ class Editor(
         // the deferred click semantics below clear it
         val moved = movedSince(screen)
         val toggle = pendingToggle
-        val cycle = pendingCycle
+        val pile = pendingPile
+        // whether the press deferred its pick — a member of a placed group, whose frame decision had to read
+        // the selection the press *found* (OP-16)
+        val deferred = pile != null && !pendingApplied
         pendingToggle = null
-        pendingCycle = null
+        pendingPile = null
         val dragged = dragTarget
         val movedFrame = dragFrame
         val movedJamb = dragJamb
@@ -2055,17 +2426,31 @@ class Editor(
             statusHint = if (selected.isEmpty()) "Nothing selected" else "${selected.size} element${if (selected.size == 1) "" else "s"} selected"
             onChange() // a release otherwise repaints only when the drag changed the model
         }
-        // the deferred group/member cycle: a click on a member already reached alone goes back to the whole
-        // group, while the very same press that *moved* left the member selected and edited it
-        if (cycle != null && !moved) {
-            statusHint = pickOnCanvas(cycle)
-            onChange()
+        // The click half of the pick: this is where the cycle steps (and where a placed group's deferred pick
+        // is applied at all). A press that *moved* is a drag and takes none of it — the same discipline
+        // Shift's toggle uses, and the reason the group/member cycle was a release semantic to begin with.
+        if (pile != null && pile.candidates.isNotEmpty() && !moved) {
+            val i = pendingIndex.coerceIn(0, pile.candidates.size - 1)
+            // The press already selected the first candidate and said its own sentence, which may be more
+            // specific than any label here (why an element cannot be dragged, for one) — so a first click's
+            // note is kept and only the deferred pick and the cycle's steps produce a new one.
+            if (deferred || i != 0) {
+                statusHint = cycleNote(selectPick(pile.candidates[i]), pile, i)
+                onChange()
+            }
+            cycleAt = screen
+            cycleWorld = camera.screenToWorld(screen)
+            cycleIndex = i
+            cycleCount = pile.candidates.size
+        } else if (moved) {
+            // a drag is not a click, so it leaves no cycle behind: the next click starts from the top
+            resetCycle()
         }
-        // …and the drag half of that same decision (OP-16): a press that *moved* never reaches the group —
+        // …and the drag half of the deferred decision (OP-16): a press that *moved* never reaches the group —
         // its subject was the member's own handle (see [pointerDown]) — so what stays selected is the
         // element it moved, exactly as dragging ungrouped geometry leaves the dragged element selected. A
         // later weld or join may still replace this with what it produced; both run below.
-        if (cycle != null && moved && dragged != null) select(listOf(dragged), dragged)
+        if (deferred && moved && dragged != null) select(listOf(dragged), dragged)
         downScreen = null
         if (dragged != null) {
             val ortho = dragged.handle is OrthoCornerHandle

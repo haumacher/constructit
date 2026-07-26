@@ -146,14 +146,16 @@ group "g1" els=e6,e3
     fun theFixtureGroupPlacesAndMovesAsOneRigidFigure() {
         val ed = loaded()
         selectCircleAndSegment(ed)
+        val before = points(ed)
+        val r = radius(ed)
         val d = assertNotNull(ed.beginCreate(CreateMode.GROUP))
         d.name = "fig"
         assertTrue(ed.confirmCreate())
         val g = ed.doc.groups.single()
 
-        val before = points(ed)
-        val r = radius(ed)
-        assertTrue(ed.placeGroup(g), "got: ${ed.statusHint}")
+        // the dialog's "movable (with frame)" tick is on by default, so creating and placing are one
+        // operation and one undo step (OP-16)
+        assertTrue(g.placed, "got: ${ed.statusHint}")
         assertTrue(ed.statusHint.contains("re-anchored to their carrier"), "got: ${ed.statusHint}")
         assertEquals(before, points(ed), "placing moves nothing — it only changes how the figure is held")
         assertEquals(1, g.capturedRiders.size, "the rider is measured from its carrier's end now")
@@ -241,7 +243,7 @@ group "g1" els=e6,e3
         val d = assertNotNull(ed.beginCreate(CreateMode.GROUP))
         d.name = "fig"
         assertTrue(ed.confirmCreate())
-        assertTrue(ed.placeGroup(ed.doc.groups.single()), "got: ${ed.statusHint}")
+        assertTrue(ed.doc.groups.single().placed, "confirming gives the group its frame: ${ed.statusHint}")
         ed.clearSelection()
         return ed
     }
@@ -267,7 +269,7 @@ group "g1" els=e6,e3
         assertTrue(ed.confirmCreate())
         val g = ed.doc.groups.single()
         assertEquals(3, ed.doc.groupMembers(g).size, "the endpoints joined the segment")
-        assertTrue(ed.placeGroup(g), "got: ${ed.statusHint}")
+        assertTrue(g.placed, "and it is movable the moment it exists: ${ed.statusHint}")
         ed.selectGroup(g)
         ed.drag(ed.doc.frameValueOf(g)!!.origin, ed.doc.frameValueOf(g)!!.origin + Vec2(10.0, 10.0))
         assertClose(pos(el(ed, 1)).x, 10.0, 1e-9, "and it moves")
@@ -288,13 +290,13 @@ group "g1" els=e6,e3
         d.name = "half"
         assertTrue(ed.confirmCreate(), "the group is still made — the report is not a refusal")
         assertTrue(d.warnings.isNotEmpty(), "but it says what placement would refuse")
-        assertTrue(ed.statusHint.contains("cannot move independently"), "got: ${ed.statusHint}")
-        assertTrue(ed.statusHint.contains("shared with the drawing outside"), "got: ${ed.statusHint}")
-        assertTrue(ed.statusHint.contains(el(ed, 1).id), "naming what holds it: ${ed.statusHint}")
-        // …and placing it is still allowed — the group does own the rider's freedom — but the placement says,
-        // as it always did, which members the frame will not move (OP-16's boundary-attachment rule). The point
-        // of the creation-time report is exactly that this sentence used to arrive far too late.
-        assertTrue(ed.placeGroup(ed.doc.groups.single()), "got: ${ed.statusHint}")
+        assertTrue(d.warnings.any { it.contains("cannot move independently") }, "got: ${d.warnings}")
+        assertTrue(d.warnings.any { it.contains("shared with the drawing outside") }, "got: ${d.warnings}")
+        assertTrue(d.warnings.any { it.contains(el(ed, 1).id) }, "naming what holds it: ${d.warnings}")
+        // …and placing it is still allowed — the group does own the rider's freedom — so the frame tick placed
+        // it, and the placement says, as it always did, which members the frame will not move (OP-16's
+        // boundary-attachment rule). That sentence used to arrive far too late; now it arrives here.
+        assertTrue(ed.doc.groups.single().placed, "got: ${ed.statusHint}")
         assertTrue(ed.statusHint.contains("will not follow it"), "got: ${ed.statusHint}")
         assertTrue(ed.statusHint.contains(el(ed, 3).id), "the segment is one of them: ${ed.statusHint}")
     }
@@ -326,7 +328,7 @@ group "g1" els=e6,e3
         d.name = "bar"
         assertTrue(ed.confirmCreate())
         val g = ed.doc.groups.single()
-        assertTrue(ed.placeGroup(g), "got: ${ed.statusHint}")
+        assertTrue(g.placed, "got: ${ed.statusHint}")
         assertTrue(g.capturedRiders.isEmpty(), "a share of a span needs no re-anchoring")
         assertFalse(ed.statusHint.contains("will not follow"), "got: ${ed.statusHint}")
 
@@ -399,7 +401,7 @@ group "g1" els=e6,e3
         d.name = "arm"
         assertTrue(ed.confirmCreate())
         val g = ed.doc.groups.single()
-        assertTrue(ed.placeGroup(g), "got: ${ed.statusHint}")
+        assertTrue(g.placed, "got: ${ed.statusHint}")
 
         // the step states the rider's parameter and keeps the click it was placed by
         val line = DocumentFormat.save(ed.doc).lines().first { it.startsWith("tool ptonline") }
@@ -486,7 +488,7 @@ group "g1" els=e6,e3
             // the free point's restated position carries the last bit of the polar round trip Make absolute
             // performed (x = 50 mm at 53.13°), which is arithmetic and not a leak
             """
-constructit 1
+constructit 2
 point 0,0 -> e1
 point 30.000000000000004,40 -> e2
 tool makerel els=e2,e1 clicks=30,40;0,0

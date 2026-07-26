@@ -30,35 +30,10 @@ import kotlin.math.sin
  * itself, never to its infinite carrier.
  */
 object HitTest {
-    /** Draggable points only — the pick for a drag in SELECT mode. */
-    fun nearestFreePoint(
-        doc: Document,
-        ev: Evaluator,
-        world: Vec2,
-        tol: Double,
-    ): Element? = nearest(doc, ev, world, tol) { it.isPoint && it.draggable }
-
-    /**
-     * Nearest curve that is itself draggable — an ortho leg. Only consulted after
-     * [nearestFreePoint] misses, so a vertex always wins over the legs meeting at it.
-     */
-    fun nearestDraggableCurve(
-        doc: Document,
-        ev: Evaluator,
-        world: Vec2,
-        tol: Double,
-    ): Element? = nearest(doc, ev, world, tol) { it.isCurve && it.hasFreeDof }
-
-    /**
-     * Nearest annotation whose own DOF a drag can write — a dimension's offset (OP-13). Consulted after
-     * points and curves, so a dimension crossing the geometry it names never steals a grab from it.
-     */
-    fun nearestDraggableAnnotation(
-        doc: Document,
-        ev: Evaluator,
-        world: Vec2,
-        tol: Double,
-    ): Element? = nearest(doc, ev, world, tol) { it.annotation != null && it.hasFreeDof }
+    // The per-kind "nearest draggable point / curve / annotation" searches that used to live here are gone:
+    // a SELECT click now collects *all* of them and ranks them in one place (`Editor.pickAt`), so having three
+    // one-line filters here as well would be two statements of one precedence — and it was exactly such a
+    // duplicate that let a derived point be unreachable under its own curve.
 
     /**
      * The **jamb** of a thick path's opening nearest [world], within [tol] (OP-21) — the pick that makes an
@@ -95,14 +70,6 @@ object HitTest {
         }
         return best
     }
-
-    /** Nearest element a pointer can address at all, movable or not — for selecting and explaining. */
-    fun nearestSelectable(
-        doc: Document,
-        ev: Evaluator,
-        world: Vec2,
-        tol: Double,
-    ): Element? = nearest(doc, ev, world, tol) { it.selectable }
 
     /** Nearest point-like element (free, derived, or on-curve), for snapping/reuse. */
     fun nearestAnyPoint(
@@ -146,6 +113,12 @@ object HitTest {
         when (val v = ev.valueOf(el.ref)) {
             is PointValue -> (v.p - world).length()
             is LineValue -> abs((world - v.line.origin).cross(v.line.dir))
+            // A ray is a segment clamped on **one** side: perpendicular distance where the projection lands
+            // on the ray, distance to the origin behind it. Missing this case made a ray unpickable
+            // *altogether* — it drew, and a marquee took it ([meetsRect] has the kind), but no click could
+            // reach it, so it could not select, could not cycle, and could not fill a LINE slot either
+            // (a reported defect: Perpendicular refused a ray). One distance rule, one place to add a kind.
+            is RayValue -> distToRay(world, v.ray.origin, v.ray.dir)
             is CircleValue -> abs((world - v.circle.center).length() - v.circle.radius)
             is SegmentValue -> distToSegment(world, v.seg.a, v.seg.b)
             is ArcValue -> distToArc(world, v.arc)
@@ -164,6 +137,11 @@ object HitTest {
                 v.solid.feature.footprint
                     .flatMap { r -> r.outer.elements + r.holes.flatMap { it.elements } }
                     .minOfOrNull { distToPiece(world, it) }
+            // Everything else has no geometry *in this space* and is therefore not pickable, deliberately —
+            // the kinds here and the kinds `SceneRenderer` draws must otherwise agree, since a drawn thing
+            // that cannot be picked is the defect a missing ray case was. The one drawn kind left out is a
+            // **PointSetValue**: an ordered solution set is scaffolding for the `Select` beside it (OP-1), and
+            // it is that selected point — an element of its own — that a click is meant to reach.
             else -> null
         }
 
@@ -222,13 +200,6 @@ object HitTest {
         tol: Double,
         filter: (Element) -> Boolean,
     ): Element? = nearestAll(doc, ev, world, tol, filter).firstOrNull()?.first
-
-    fun nearestCurve(
-        doc: Document,
-        ev: Evaluator,
-        world: Vec2,
-        tol: Double,
-    ): Element? = nearest(doc, ev, world, tol) { it.isCurve }
 
     // ---- marquee: pick everything a rectangle meets (OP-16) ----
 
@@ -408,6 +379,18 @@ object HitTest {
             is ProfileElement.BezierE ->
                 GeomMath.tessellateBezier(e.bezier).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
         }
+
+    /** Distance to a ray: [distToSegment]'s clamp, on the origin side only — the far side runs on. */
+    private fun distToRay(
+        p: Vec2,
+        origin: Vec2,
+        dir: Vec2,
+    ): Double {
+        if (dir.length() < Vec2.EPS) return (p - origin).length()
+        val d = dir.normalized()
+        val t = (p - origin).dot(d)
+        return if (t <= 0.0) (p - origin).length() else (p - (origin + d * t)).length()
+    }
 
     private fun distToSegment(
         p: Vec2,

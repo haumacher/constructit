@@ -58,7 +58,8 @@ class GroupFreedomProbeTest {
         d.name = "fig"
         assertTrue(ed.confirmCreate(), "the closure-ticked group creates")
         val g = ed.doc.groups.last()
-        assertTrue(ed.placeGroup(g), "and places: ${ed.statusHint}")
+        // the dialog's frame tick is on by default, so confirming placed it too (OP-16)
+        assertTrue(g.placed, "and places: ${ed.statusHint}")
         ed.setTool(Tools.SELECT)
         ed.click(Vec2(-60.0, 0.0))
         var angleIdx = ed.selectionFields().indexOfFirst { it.label == "angle" }
@@ -105,7 +106,7 @@ class GroupFreedomProbeTest {
         val d = assertNotNull(ed.beginCreate(CreateMode.GROUP))
         d.name = "r"
         assertTrue(ed.confirmCreate())
-        assertTrue(ed.placeGroup(ed.doc.groups.last()), "got: ${ed.statusHint}")
+        assertTrue(ed.doc.groups.last().placed, "confirming a group gives it a frame: ${ed.statusHint}")
         ed.setTool(Tools.SELECT)
         ed.click(Vec2(0.0, 0.0))
         // the marquee left this point selected, so the click-cycle reaches the *member alone* first; one more

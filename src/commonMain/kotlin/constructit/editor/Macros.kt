@@ -140,9 +140,32 @@ class CreateDialog(
     val title: String get() = if (mode == CreateMode.TOOL) "Make a tool" else "Group"
 
     /**
-     * The dialog's own help line. Naming the default is the point: a group is a plain named set unless
-     * something is ticked, while a tool starts with everything free ticked, because a tool with no
-     * inputs is a copy and not a function.
+     * **Give the group a frame** (OP-16 step 2), so confirming places it in the same breath — ticked by
+     * default, because a group is nearly always a *part* and a part is something you move. Creating and
+     * placing then commit as **one** checkpoint, so one undo removes both: they are one thing the user did.
+     *
+     * Unticking is first-class rather than a fallback, and [flatMeaning] says why: a flat group is the natural
+     * **array original**, since the copies an array makes of it derive frame-free.
+     *
+     * Ignored in [CreateMode.TOOL] — a macro's placement is its anchor input (OP-6), not a frame.
+     */
+    var framed: Boolean = mode == CreateMode.GROUP
+
+    /** The tick's label. */
+    val framedLabel: String get() = "movable (with frame)"
+
+    /** What ticking it makes — an intent, not a success. */
+    val framedMeaning: String get() =
+        "a movable part: it gets a frame, so the whole of it moves as one — drag any member, or type x / y / angle"
+
+    /** What leaving it unticked makes — the other intent, and the one a user found the use for. */
+    val flatMeaning: String get() =
+        "a named set: no frame, e.g. an array original — the copies an array makes of it derive frame-free"
+
+    /**
+     * The dialog's own help line. Naming the default is the point: a group takes the freedom it is built on
+     * and becomes movable, while a tool starts with everything free ticked, because a tool with no inputs is
+     * a copy and not a function.
      */
     val help: String get() =
         when {
@@ -150,11 +173,13 @@ class CreateDialog(
             mode == CreateMode.TOOL ->
                 "Ticked sources become the tool's inputs (clicked, or taken from the panel). " +
                     "The first point places the instance; unticked ones are captured, shared by every instance."
-            candidates.isEmpty() -> "A named set of the ${members.size} selected element(s)."
+            candidates.isEmpty() ->
+                "A group of the ${members.size} selected element(s). Ticked \"$framedLabel\": $framedMeaning. " +
+                    "Unticked: $flatMeaning."
             else ->
-                "A named set of the ${members.size} selected element(s), plus the ticked degrees of freedom it " +
-                    "is built on — those are what let the group be placed and moved as one. Untick one to leave " +
-                    "it outside, and the group will not move independently."
+                "A group of the ${members.size} selected element(s), plus the ticked degrees of freedom it is " +
+                    "built on — those are what the frame moves. Untick one to leave it outside, and the group " +
+                    "will not move independently. Ticked \"$framedLabel\": $framedMeaning. Unticked: $flatMeaning."
         }
 
     /**

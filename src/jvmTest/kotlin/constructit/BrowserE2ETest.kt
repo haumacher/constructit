@@ -126,12 +126,17 @@ class BrowserE2ETest {
             page.mouse().down()
             page.mouse().move(box.x + box.width * 0.95, box.y + box.height * 0.05)
             page.mouse().up()
-            page.click("#g-add") // opens the shared create dialog (OP-16), defaulting to a plain group
+            page.click("#g-add") // opens the shared create dialog (OP-16)
             page.fill("#cd-name", "shell")
+            // …whose frame tick is **on** by default. Untick it here: what this flow goes on to do is make a
+            // *tool* out of the same geometry, and a placed group's members cannot be one (OP-6). That is the
+            // flat group's other purpose, so unticking is the ordinary route, not a workaround.
+            assertTrue(page.querySelector("#cd-framed").isChecked(), "the frame tick defaults to on (OP-16)")
+            page.click("#cd-framed")
             page.click("#cd-ok")
             assertTrue(page.querySelectorAll("#groups-list .grow").size == 1, "the group should appear in the panel")
             val note = page.querySelector("#status").textContent()
-            assertTrue(note == "Grouped $itemsBuilt elements as shell", "got: $note")
+            assertTrue(note == "Grouped $itemsBuilt elements as shell — a named set, with no frame", "got: $note")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/04-grouped.png")))
 
             // Visibility is a **recorded step** now (OP-18's reversal), and the shell's two routes into it
@@ -558,6 +563,24 @@ class BrowserE2ETest {
                 "one undo puts the nudged value back, and the rename before it stands",
             )
 
+            // ---- a parameter pick can be switched off, from the row that made it ----
+            //
+            // The DOM half of the deselect: the row is one click target for both meanings. Clicked away from
+            // its own inputs — those are for typing, and focusing one *picks* the parameter rather than
+            // toggling it, which is a distinction only a real browser can vouch for.
+            val prow = page.querySelector("#params-list input.pname[value='wall-t']").getAttribute("data-sid")
+            page.click("#params-list .prow[data-sid='$prow'] .punit")
+            assertTrue(
+                page.querySelector("#params-list .prow[data-sid='$prow']").getAttribute("class").contains("active"),
+                "the row it was clicked on is the active parameter",
+            )
+            page.click("#params-list .prow[data-sid='$prow'] .punit")
+            assertTrue(status().contains("no parameter active"), "clicking it again switches the pick off; got: ${status()}")
+            assertFalse(
+                page.querySelector("#params-list .prow[data-sid='$prow']").getAttribute("class").contains("active"),
+                "and the row stops being highlighted",
+            )
+
             // ---- the whole storey under one turned frame (OP-16's ortho-path bonus) ----
             //
             // Grouping a wall used to be as far as it went ("it owns no free point"); now the frame carries
@@ -569,8 +592,7 @@ class BrowserE2ETest {
             page.mouse().up()
             page.click("#g-add")
             page.fill("#cd-name", "storey")
-            page.click("#cd-ok")
-            page.click("#groups-list .grow .gplace") // ⌖ places it: one frame for the lot
+            page.click("#cd-ok") // the frame tick is on, so this creates *and* places: one frame for the lot
             assertTrue(status().contains("path"), "the frame reports the captured path; got: ${status()}")
             val frameFields = page.querySelectorAll("#inspector .flabel").map { it.textContent() }
             assertTrue(frameFields == listOf("x", "y", "angle"), "the placed group addresses its frame; got $frameFields")
