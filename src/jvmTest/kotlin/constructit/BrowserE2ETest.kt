@@ -3,6 +3,7 @@ package constructit
 import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Page
 import com.microsoft.playwright.Playwright
+import constructit.editor.Tools
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.io.File
 import java.nio.file.Paths
@@ -710,7 +711,9 @@ class BrowserE2ETest {
             val rx2 = box.x + box.width * 0.70
             val ry1 = box.y + box.height * 0.35
             val ry2 = box.y + box.height * 0.60
-            page.click("#tool-rect")
+            // the rectangle draws a closed ortho path now (GitHub issue #4), and a tool's button id is its
+            // tool id — so the palette selector moved with it, while the *file's* `tool rect` did not
+            page.click("#tool-${Tools.RECTANGLE}")
             page.mouse().click(rx1, ry1)
             page.mouse().click(rx2, ry2)
             page.fill("#p-name", "thickness")

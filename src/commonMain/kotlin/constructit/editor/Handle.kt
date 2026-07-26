@@ -387,7 +387,10 @@ fun orthoCoordField(
         // typing must reach exactly as far as dragging does, or the two stop being one operation (OP-13)
         if (master != null) master.value = ScalarValue(Quantity.mm(q.mm)) else doc?.junctionOf(node)?.place?.invoke(axis, q.mm)
     },
-    writableWhen = { writableMaster(node) != null || doc?.junctionOf(node) != null },
+    // …and it must **refuse** exactly as far: a junction riding a host that is axis-aligned by construction
+    // has no say over the other coordinate, so offering that coordinate as writable produced a field whose
+    // write did nothing at all (OP-20, GitHub issue #4). [Junction.placeable] is that question.
+    writableWhen = { writableMaster(node) != null || doc?.junctionOf(node)?.placeable?.invoke(axis) == true },
 )
 
 /** A field over one component of a point-valued source node: [axis] 0 = x, 1 = y. */
@@ -529,8 +532,21 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode, private va
     /** This vertex's own coordinate node — the one its incoming leg runs along. */
     val ownNode: SourceNode get() = if (ownCoord == 0) xNode else yNode
 
-    /** The junction owning whichever of this corner's coordinates is driven — see [Junction]. */
-    private val junction: Junction? get() = doc?.let { it.junctionOf(xNode) ?: it.junctionOf(yNode) }
+    /**
+     * The junction owning this corner's [axis] coordinate (0 = x, 1 = y), if that coordinate is driven by
+     * one — see [Junction].
+     *
+     * **Per coordinate, because a corner can meet two junctions.** The middle run of a T-web that turns
+     * once ends on a different wall at each end, so after both attaches its shared x belongs to the junction
+     * on one wall and its shared y to the junction on the other; the corner between the two legs is driven by
+     * both. Collapsing them into one "the junction of this corner" made the drag hand the whole cursor to
+     * whichever of the two the x lookup happened to find, and the other axis was silently dropped — the
+     * corner then moved on one axis only and returned to where it started (GitHub issue #4).
+     */
+    private fun junctionAt(axis: Int): Junction? = doc?.junctionOf(if (axis == 0) xNode else yNode)
+
+    /** Some junction this corner meets — for the questions that only ask whether *any* freedom is reachable. */
+    private val junction: Junction? get() = junctionAt(0) ?: junctionAt(1)
 
     override val dragNodes: List<SourceNode> get() = listOfNotNull(writableMaster(xNode), writableMaster(yNode))
 
@@ -548,15 +564,20 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode, private va
         mx?.value = ScalarValue(Quantity.mm(at.x))
         my?.value = ScalarValue(Quantity.mm(at.y))
         // A coordinate this corner does not own belongs to the junction it meets at, so hand the gesture
-        // there rather than dropping it (OP-20) — but **only that coordinate**. Handing over the whole
-        // cursor made the junction jump to the pointer, so dragging an outer corner along its own arm
-        // dragged the shared centre sideways with it and collapsed the figure.
-        val j = junction ?: return
-        when {
-            mx == null && my == null -> j.handle?.drag(world, ev) // owns nothing: follow as closely as it can
-            mx == null -> j.place(0, world.x)
-            my == null -> j.place(1, world.y)
+        // there rather than dropping it (OP-20) — but **only that coordinate, and to that coordinate's own
+        // junction**. Handing over the whole cursor made the junction jump to the pointer, so dragging an
+        // outer corner along its own arm dragged the shared centre sideways with it and collapsed the figure;
+        // handing both coordinates to *one* of two junctions lost the other axis entirely (issue #4).
+        val jx = if (mx == null) junctionAt(0) else null
+        val jy = if (my == null) junctionAt(1) else null
+        if (jx != null && jx === jy) {
+            // one junction owns both coordinates (a weld onto its point): give it the whole cursor, so it
+            // follows as closely as its curve allows — a projection, which no pair of per-axis places is
+            jx.handle?.drag(world, ev)
+            return
         }
+        jx?.place?.invoke(0, world.x)
+        jy?.place?.invoke(1, world.y)
     }
 
     override fun fields(): List<HandleField> {

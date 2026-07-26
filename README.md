@@ -37,10 +37,10 @@ first-class goal and the current implementation focus.
   loading replays them (which is also the undo substrate). The drawing's **name** is a field in the topbar,
   not something stored in the file: where the browser offers it, the first Save asks for a file and every
   later Save writes back to that same one, with *Save as…* for a new one and a plain download everywhere else.
-- **Shapes by construction** — a rectangle's other two corners *share* the clicked corners'
-  coordinates and a polygon's vertices are rotations of one, so they cannot stop being rectangular or
-  regular however you drag them; an array copy is a transform node over the original, so the copies
-  follow it live.
+- **Shapes by construction** — a rectangle is two clicks that draw a closed rectilinear path, so its
+  sides stay axis-parallel however you drag them *and* each side's length is a number you can type; a
+  polygon's vertices are rotations of one, so it cannot stop being regular; an array copy is a transform
+  node over the original, so the copies follow it live.
 - **A shape library that is just constructions** — rounded rectangle, bolt circle, hole pattern and a
   **parametric spur gear** (module, tooth count, pressure angle, bore) live in the same DSL a user's own
   macro does. The gear's tooth flank is a *sampled* involute — deterministic by fixed sampling, and within
@@ -149,7 +149,8 @@ from the edge. That is what makes the plainest mechanical feature there is, a ho
 matter of four clicks; the cut across the part's own axis is the general engine's, and the file records
 which space each step was drawn in. Features **chain**: each cut takes the part as it now stands, so a
 second bore on a second face lands in the part with the first bore in it rather than beside it, and the step
-records which solid it cut so a reload rebuilds the same chain.
+records which solid it cut so a reload rebuilds the same chain. The elements panel follows the view: it lists
+the active space's 2D geometry plus the solids, which belong to no space and are shown in the 3D view.
 
 Mesh export is next. See [`DESIGN.md`](DESIGN.md) for the full design record and open questions.
 

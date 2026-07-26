@@ -112,6 +112,17 @@ class Picks(
      * scored against moves with the legs.
      */
     val signs: List<Int> = emptyList(),
+    /**
+     * What each click **landed on**, in slot order — the snap the editor resolved there, or null where the
+     * click found nothing (and for every replayed step, which has no cursor to snap).
+     *
+     * A tool whose build connects to existing geometry reads it and calls [Document.linkPathEnd], the one
+     * helper every joining route already goes through: an ortho-path click, the drag magnet's release, and the
+     * rectangle's two corners. Nothing about it is recorded here, because a connection is recorded by *its own*
+     * step (`weldortho` / `attachortho`, OP-18) — so replay rebuilds the links without ever re-snapping, which
+     * is the same discipline [signs] follows for a discrete choice.
+     */
+    val landings: List<SnapResult?> = emptyList(),
 )
 
 /**
@@ -169,6 +180,19 @@ class ToolDef(
      * is: it is a promise about how [build] indexes its picks.
      */
     val facePartOperand: Boolean = false,
+    /**
+     * Whether [build] **records its own steps** instead of being wrapped in one `tool` step (OP-18).
+     *
+     * The rectangle needs it: what two clicks produce is a closed ortho path, and a path's degrees of freedom
+     * are its corner positions — which the `orthostart`/`orthovertex`/`orthoclose` steps *restate* on every
+     * save. A `tool` step restates only the clicks that started it, so every later drag of a corner or a leg
+     * would be lost on reload. Recording the steps the ortho tool would have recorded also means the result
+     * is not a special kind of path: the file cannot tell the two gestures apart, and needs no new step kind.
+     *
+     * One checkpoint still covers the whole gesture ([Editor.maybeCompleteTool] takes it), exactly as a break
+     * that emits several steps does — one gesture, one undo.
+     */
+    val recordsSteps: Boolean = false,
     val build: (Document, Picks, List<ScalarRef>) -> Unit,
 ) {
     /**
@@ -240,7 +264,20 @@ object Tools {
     const val ARC_CS = "arccs"
     const val CONCENTRIC = "concentric"
     const val BEZIER = "bezier"
-    const val RECTANGLE = "rect"
+
+    /**
+     * The rectangle tool: two diagonally opposite clicks, and what comes out is a **closed ortho path**
+     * (GitHub issue #4). Its own id, because [RECTANGLE_V1] still has to mean what it always meant.
+     */
+    const val RECTANGLE = "rectpath"
+
+    /**
+     * The rectangle as it was built until now: four segments over the two clicked points and two derived
+     * corners. **Replay only** — never offered in the palette, and kept because a stored step's meaning is
+     * frozen (OP-18): every file written before this carries `tool rect`, and the loader checks that the step
+     * creates exactly the six elements the script declares.
+     */
+    const val RECTANGLE_V1 = "rect"
     const val ROUNDED_RECT = "roundrect"
     const val POLYGON = "polygon"
 
@@ -354,7 +391,9 @@ object Tools {
             ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click a circle or arc, then click inside or outside for the concentric circle.") { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at) },
             // rectangular *by construction* — the two other corners share the clicked corners' coordinates,
             // so no gesture and no parameter edit can shear it (see [Document.rectangle])
-            ToolDef(RECTANGLE, "Rectangle", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), shortcut = 'R', help = "Click two diagonally opposite corners; the other two follow them, so it stays a rectangle however you drag it.") { d, p, _ -> d.rectangle(p.points[0], p.points[1]) },
+            // two SIDE slots, because the corners this tool wants are the path's own vertices: a POINT slot
+            // would place two free points beside them that nothing reads (see [Document.orthoRectangle])
+            ToolDef(RECTANGLE, "Rectangle", ToolCategory.CURVES, listOf(SlotKind.SIDE, SlotKind.SIDE), shortcut = 'R', recordsSteps = true, help = "Click two diagonally opposite corners. The result is a closed ortho path: drag a corner or a whole side, type either side's length, and thicken it into walls. A corner clicked on existing geometry joins it, exactly as an ortho-path click does.") { d, p, _ -> d.orthoRectangle(p.clicks[0], p.clicks[1], p.landings.getOrNull(0), p.landings.getOrNull(1)) },
             ToolDef(ROUNDED_RECT, "Rounded rectangle", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(len("radius")), help = "Type a corner radius (or pick a parameter in the panel), then click two diagonally opposite corners; centre and size follow those two points.") { d, p, s -> d.roundedRectangle(p.points[0], p.points[1], s[0]) },
             ToolDef(POLYGON, "Regular polygon", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), minCount = 3, help = "Set the number of sides, then click the centre and one vertex; the other vertices are that one rotated about the centre.") { d, p, _ -> d.regularPolygon(p.points[0], p.points[1], p.count) },
             // ----- Solids: the 2D->3D seam (OP-17). The sketch plane is the world XY plane in this
@@ -431,10 +470,22 @@ object Tools {
         )
 
     /**
-     * The *built-in* tool of that id. Call [Document.toolDef] instead wherever a document is at hand: a
-     * user-defined macro is a tool too (OP-6), and only the document knows its own macros.
+     * Tools that exist **only to replay older files** (OP-18): a build kept reachable because a step already
+     * written down means what it meant, while the gesture that used to produce it has moved on. Resolved by
+     * [byId] and so by [Document.toolDef], but deliberately *not* part of [all] — the palette shows [all],
+     * so nothing here can be armed, and no new file can name one.
      */
-    fun byId(id: String): ToolDef? = all.firstOrNull { it.id == id }
+    val legacy: List<ToolDef> =
+        listOf(
+            ToolDef(RECTANGLE_V1, "Rectangle (as built before)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Four segments over two clicked corners and two derived ones — replaced by the ortho-path rectangle, and kept so older files replay.") { d, p, _ -> d.rectangle(p.points[0], p.points[1]) },
+        )
+
+    /**
+     * The *built-in* tool of that id, including the replay-only [legacy] ones. Call [Document.toolDef]
+     * instead wherever a document is at hand: a user-defined macro is a tool too (OP-6), and only the
+     * document knows its own macros.
+     */
+    fun byId(id: String): ToolDef? = all.firstOrNull { it.id == id } ?: legacy.firstOrNull { it.id == id }
 
     /**
      * The tool [c] arms, case-insensitively, or null. Only built-in tools have keys: a macro's name is

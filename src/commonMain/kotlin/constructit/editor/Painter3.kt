@@ -2,6 +2,7 @@ package constructit.editor
 
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import kotlin.math.min
 
 /**
  * A **painter's-algorithm projector**: the 3D scene drawn through the ordinary [DrawTarget] seam.
@@ -20,10 +21,22 @@ import constructit.geom.Vec3
  *   silhouette and halves the work.
  * - **One headlight.** Diffuse shading from a light at the eye, plus an ambient floor, which is all it
  *   takes to read a shape. No specular, no shadows: this is a preview of a *sink* (OP-9).
+ * - **Feature edges over the faces.** One headlight cannot separate two coplanar faces (GitHub issue #3),
+ *   so each solid's [Edge3] creases are drawn as lines in a darker shade of its colour.
  */
 object Painter3 {
     /** How much of a face's colour survives where it faces fully away from the light. */
     const val AMBIENT = 0.35
+
+    /**
+     * How far toward the viewer a feature edge is nudged in the depth sort, as a fraction of its depth.
+     *
+     * Tiny on purpose. The real work is done by *which* depth an edge is sorted at — the nearest of its
+     * midpoint and its own two faces' centroids, so it can never sort behind a face it lies on — and ties
+     * would already fall the right way, because edges are added to the list after the faces and the sort is
+     * stable. The bias makes that independent of insertion order instead of relying on it.
+     */
+    const val EDGE_DEPTH_BIAS = 0.001
 
     /**
      * A triangle is stroked in its own fill colour so the seams between neighbours close up. Without
@@ -32,6 +45,8 @@ object Painter3 {
     private const val FACE_STROKE_PX = 1.0
 
     private const val LINE_PX = 1.0
+
+    private const val EDGE_PX = 1.0
 
     /** One thing to paint, with the depth it is sorted by. */
     private class Item(val depth: Double, val draw: (DrawTarget) -> Unit)
@@ -77,6 +92,22 @@ object Painter3 {
                 val style = Style(shade, FACE_STROKE_PX, fill = shade)
                 val poly = listOf(pa, pb, pc)
                 items.add(Item(cam.viewDepth(centroid)) { it.polygon(poly, style) })
+            }
+        }
+
+        // Creases last, so that with equal depths they land on top; the depth they are sorted at is the
+        // nearest of the edge itself and the two faces that make it, which is what keeps an edge in front of
+        // its own face without letting it jump in front of an unrelated one nearer the eye.
+        for (solid in scene.solids) {
+            val style = Style(solid.edgeColor, EDGE_PX)
+            for (e in solid.edges) {
+                val pa = cam.projectWith(vp, e.a, wPx, hPx) ?: continue
+                val pb = cam.projectWith(vp, e.b, wPx, hPx) ?: continue
+                val mid = cam.viewDepth((e.a + e.b) * 0.5)
+                val depth = min(mid, min(cam.viewDepth(e.faceA), cam.viewDepth(e.faceB)))
+                if (depth <= 0.0) continue
+                val poly = listOf(pa, pb)
+                items.add(Item(depth * (1.0 - EDGE_DEPTH_BIAS)) { it.polyline(poly, style) })
             }
         }
 

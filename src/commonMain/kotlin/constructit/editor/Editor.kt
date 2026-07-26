@@ -542,27 +542,6 @@ class Editor(
     }
 
     /**
-     * Connect a just-placed path vertex to whatever the snap found: weld onto a point (materializing
-     * an intersection first), or attach onto a curve. These are the very operations the drag magnet
-     * performs, so a connection made *while drawing* is the same construction as one made afterwards.
-     */
-    private fun linkPathVertex(
-        vertex: PointRef,
-        s: SnapResult,
-    ): Boolean {
-        val el = doc.elementFor(vertex) ?: return false
-        return when (s.kind) {
-            SnapKind.POINT -> doc.weldOrthoEndpointToPoint(el, s.target!!)
-            SnapKind.INTERSECTION -> {
-                val ip = doc.intersectNear(s.target!!, s.other!!, s.pos) ?: return false
-                doc.elementFor(ip)?.let { doc.weldOrthoEndpointToPoint(el, it) } ?: false
-            }
-            SnapKind.ON_CURVE -> doc.attachOrthoEndpointToCurve(el, s.target!!)
-            else -> false
-        }
-    }
-
-    /**
      * Why the connection a path click asked for was refused, as a sentence. The document owns the reason
      * ([Document.connectRefusal]) so the same words serve the drag magnet, a release and this click; the
      * fallback covers a refusal the predicate cannot foresee (a geometric one, such as a leg parallel to
@@ -658,6 +637,12 @@ class Editor(
     private val pickedPoints = ArrayList<PointRef>()
     private val pickedElements = ArrayList<Element>()
     private val pickedClicks = ArrayList<Vec2>()
+
+    /**
+     * What each click landed *on*, in slot order — see [Picks.landings]. Resolved at click time because that
+     * is when the cursor exists; a tool that does not join simply never reads it.
+     */
+    private val pickedLandings = ArrayList<SnapResult?>()
     private var filledSlots = 0
 
     /**
@@ -824,6 +809,7 @@ class Editor(
         pickedPoints.clear()
         pickedElements.clear()
         pickedClicks.clear()
+        pickedLandings.clear()
         filledSlots = 0
         pickedGroup = null
         pickRefusal = null
@@ -1209,7 +1195,10 @@ class Editor(
         resetCycle() // the tree picked this, not a click on the canvas
         val space = doc.spaceOf(el)
         statusHint =
-            if (space.name == doc.activeSpace.name) {
+            // …and "another space" is asked as the panel asks it (OP-17, issue #2): a solid is listed in every
+            // space because it is in none, so telling the user to switch spaces to see one would be wrong —
+            // the 3D viewport is already showing it
+            if (doc.listedIn(el)) {
                 "${selectionLabel()} selected"
             } else {
                 "${selectionLabel()} selected — it is drawn in ${space.name}, so switch the space to see it"
@@ -1786,7 +1775,7 @@ class Editor(
                 if (toolId == Tools.WALL) pathThickness = activeScalar?.ref
                 // starting *on* something should mean starting *at* it — link, so the path follows that
                 // geometry instead of merely beginning at its coordinates
-                val linked = s.linked && linkPathVertex(started.vertices.first().ref, s)
+                val linked = s.linked && doc.linkPathEnd(started.vertices.first().ref, s)
                 // a placed path is not extended in place (OP-16): its coordinates are its group's local
                 // ones, so this click starts a new run joined to it — said out loud, since the same click
                 // continues an unplaced path
@@ -1826,7 +1815,7 @@ class Editor(
             // reaching other geometry ends the run: connect this end and finish, the open analogue of
             // closing a loop by clicking the start
             if (v != null && s.linked) {
-                if (linkPathVertex(v.ref, s)) {
+                if (doc.linkPathEnd(v.ref, s)) {
                     snapHint = null
                     finishPath() // which marks the terminus and says the run is over — see [markTerminal]
                     // the same sentence, naming what was reached rather than the vertex that reached it
@@ -2917,6 +2906,10 @@ class Editor(
         if (slot != null) {
             filledSlots++
             pickedClicks.add(world)
+            // …and what this click landed on, for a build that joins to it (see [Picks.landings]). Recorded
+            // beside the click rather than *instead* of it: what a click position means is the tool's business
+            // (a side, a quadrant, a sector), and only a tool that joins reads the landing.
+            pickedLandings.add(snap(world).takeIf { it.linked })
         }
 
         if (tool.repeating) {
@@ -2993,12 +2986,19 @@ class Editor(
                 where,
                 pickedClicks.toList(),
                 count = toolCount(tool),
+                landings = pickedLandings.toList(),
             )
         // read before [resetPicks] drops it: a group operand is worth reporting, because the one thing the
         // canvas cannot show is *how much* the tool just took (OP-16)
         val fedGroup = pickedGroup
         val members = picks.elements.size
-        doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+        // a tool that records its own steps is *not* wrapped in a `tool` step (OP-18): what it builds has
+        // degrees of freedom of its own that the steps it emits restate — see [ToolDef.recordsSteps]
+        if (tool.recordsSteps) {
+            tool.build(doc, picks, scalars.map { it.ref })
+        } else {
+            doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+        }
         checkpoint() // the tool application — earlier slot clicks were only halves of it
         resetPicks()
         // A tool that only *rewires* changes nothing the canvas can show (OP-4 case b: a point made relative

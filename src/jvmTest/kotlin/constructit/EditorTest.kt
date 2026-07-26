@@ -12,6 +12,7 @@ import constructit.dsl.point
 import constructit.dsl.scalar
 import constructit.dsl.segment
 import constructit.editor.Editor
+import constructit.editor.Element
 import constructit.editor.ElementKind
 import constructit.editor.PointerButton
 import constructit.editor.SvgDrawTarget
@@ -1897,29 +1898,60 @@ class EditorTest {
         assertClose(p(0).x, 0.0)
     }
 
+    /**
+     * **A driven coordinate is not read-only — as far as the junction can reach, and no further** (OP-13,
+     * OP-20). Both halves matter, and the second one was missing: a field the panel offered whose write did
+     * nothing at all is the typed twin of a drag that does nothing (GitHub issue #4).
+     *
+     * On a **slanted** host the junction's slide changes both world coordinates, so both are settable and it
+     * solves for its own parameter. On a host that runs along one axis it owns *that* coordinate and the host
+     * determines the other outright, so the other one reads and cannot be written — and says so by being
+     * greyed out, exactly as the drag along that axis moves nothing.
+     */
     @Test
     fun anAttachedCoordinateIsDrivenYetStillSettableThroughItsJunction() {
-        val ed = Editor()
-        ed.setTool(Tools.LINE)
-        ed.click(Vec2(30.0, -50.0))
-        ed.click(Vec2(30.0, 50.0)) // vertical line x=30
-        ed.setTool(Tools.ORTHO_PATH)
-        ed.click(Vec2(0.0, 0.0))
-        ed.click(Vec2(20.0, 2.0)) // a horizontal leg ending short of the line
-        ed.finishPath()
-        val v2 = ed.doc.elementFor(ed.doc.orthoPaths.single().vertices[1].ref)!!
+        fun attachedTo(
+            from: Vec2,
+            to: Vec2,
+        ): Pair<Editor, Element> {
+            val ed = Editor()
+            ed.setTool(Tools.LINE)
+            ed.click(from)
+            ed.click(to)
+            ed.setTool(Tools.ORTHO_PATH)
+            ed.click(Vec2(0.0, 0.0))
+            ed.click(Vec2(20.0, 2.0)) // a horizontal leg ending short of the line
+            ed.finishPath()
+            val v2 = ed.doc.elementFor(ed.doc.orthoPaths.single().vertices[1].ref)!!
+            ed.setTool(Tools.SELECT)
+            ed.pointerDown(ed.camera.worldToScreen(Vec2(20.0, 0.0)))
+            ed.pointerMove(ed.camera.worldToScreen(Vec2(30.0, 0.0)))
+            ed.pointerUp(ed.camera.worldToScreen(Vec2(30.0, 0.0))) // drag it onto the line -> attach
+            return ed to v2
+        }
 
-        ed.setTool(Tools.SELECT)
-        ed.pointerDown(ed.camera.worldToScreen(Vec2(20.0, 0.0)))
-        ed.pointerMove(ed.camera.worldToScreen(Vec2(30.0, 0.0)))
-        ed.pointerUp(ed.camera.worldToScreen(Vec2(30.0, 0.0))) // drag it onto the line -> attach
+        // a slanted host: the junction reaches both coordinates, and typing one solves for its parameter
+        val (slanted, w) = attachedTo(Vec2(20.0, -50.0), Vec2(40.0, 50.0))
+        val wh = w.handle as constructit.editor.OrthoCornerHandle
+        assertEquals(null, constructit.editor.writableMaster(wh.xNode), "x is derived, not owned")
+        assertTrue(slanted.doc.junctionOf(wh.xNode) != null, "it is owned by the junction it meets at")
+        val wx = w.handle!!.fields().first { it.label == "x" }
+        assertTrue(wx.writable, "a driven coordinate the junction can reach is not read-only")
+        wx.write(32.0.mm)
+        assertClose(Evaluator().point(w.ref as constructit.dsl.PointRef).x, 32.0, msg = "and the write lands exactly")
 
+        // a vertical host: it fixes x at 30, so x reads and cannot be written — the honest answer
+        val (vertical, v2) = attachedTo(Vec2(30.0, -50.0), Vec2(30.0, 50.0))
         val h = v2.handle as constructit.editor.OrthoCornerHandle
-        val x = v2.handle!!.fields().first { it.label == "x" }
         assertEquals(null, constructit.editor.writableMaster(h.xNode), "x is derived, not owned")
-        assertTrue(ed.doc.junctionOf(h.xNode) != null, "it is owned by the junction it meets at")
-        // and therefore still settable: driven is not the same as read-only (OP-13/OP-20)
-        assertTrue(x.writable)
+        assertTrue(vertical.doc.junctionOf(h.xNode) != null, "it is owned by the junction it meets at")
+        val x = v2.handle!!.fields().first { it.label == "x" }
+        assertFalse(x.writable, "the host determines x, so no value can move it — and the panel must say so")
+        // …while y, the coordinate that junction *does* own, is driven and still settable
+        val y = v2.handle!!.fields().first { it.label == "y" }
+        assertTrue(y.writable, "the junction owns y along this host")
+        y.write(17.0.mm)
+        assertClose(Evaluator().point(v2.ref as constructit.dsl.PointRef).y, 17.0)
         assertClose(Evaluator().point(v2.ref as constructit.dsl.PointRef).x, 30.0)
     }
 

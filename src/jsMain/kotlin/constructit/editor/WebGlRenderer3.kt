@@ -20,8 +20,8 @@ import org.w3c.dom.HTMLCanvasElement
  * extension, no smoothing groups and no vertex-normal averaging that would round off a machined edge —
  * a solid's facets are what it *is* (OP-9: the mesh is the sink, shown as it will be printed).
  *
- * Lines (grid and axes) go through the same program with a flag that skips the lighting, so there is one
- * program and one buffer discipline for the whole view.
+ * Lines (grid, axes, and each solid's feature edges) go through the same program with a flag that skips the
+ * lighting, so there is one program and one buffer discipline for the whole view.
  */
 class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
     /**
@@ -123,6 +123,23 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
             }
         }
         triVertexCount = pos.size / 3
+        // Feature edges (GitHub issue #3) ride the *same* line section as the furniture: they are unlit lines
+        // in a colour of their own, which is exactly what the grid already is, so one more draw call would buy
+        // nothing. Their normal is never read (uLit = 0), so any unit vector will do.
+        for (solid in scene.solids) {
+            val rgb = rgbOf(solid.edgeColor)
+            for (e in solid.edges) {
+                for (p in listOf(e.a, e.b)) {
+                    pos.add(p.x.toFloat())
+                    pos.add(p.y.toFloat())
+                    pos.add(p.z.toFloat())
+                    norm.add(0f)
+                    norm.add(0f)
+                    norm.add(1f)
+                    col.addAll(rgb)
+                }
+            }
+        }
         for (line in scene.lines) {
             val rgb = rgbOf(line.color)
             for (p in listOf(line.a, line.b)) {
@@ -171,7 +188,17 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
         attrib(gl, aColor, colorBuffer)
         if (triVertexCount > 0) {
             gl.uniform1f(uLit, 1.0f)
+            // A feature edge lies exactly *on* the two faces that make it, so it z-fights them and comes out
+            // stitched. The fix is depth bias, and the choice here is to offset the **faces away** from the
+            // eye rather than the lines toward it: GL ES 2.0 has `POLYGON_OFFSET_FILL` only — there is no
+            // `POLYGON_OFFSET_LINE` to enable — and pushing the fill back one depth-slope unit is the one
+            // hardware-exact way to say "the coincident line wins". Doing it in the shader instead (scaling
+            // `gl_Position.z`) would be a second projection pipeline and break the rule that the GPU
+            // multiplies nothing the painter's projector does not (OP-12).
+            gl.enable(WebGLRenderingContext.POLYGON_OFFSET_FILL)
+            gl.polygonOffset(1.0f, 1.0f)
             gl.drawArrays(WebGLRenderingContext.TRIANGLES, 0, triVertexCount)
+            gl.disable(WebGLRenderingContext.POLYGON_OFFSET_FILL)
         }
         if (lineVertexCount > 0) {
             gl.uniform1f(uLit, 0.0f)

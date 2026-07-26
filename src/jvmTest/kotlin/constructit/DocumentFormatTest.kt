@@ -277,10 +277,14 @@ class DocumentFormatTest {
         val path = reloaded.orthoPaths.single()
         val start = reloaded.elements.first { it.ref === path.vertices[0].ref }
         // the connection survives as a junction owning the shared freedom, so both coordinates are
-        // derived from it — and both remain settable through it (OP-20)
+        // derived from it — and the one it owns remains settable through it (OP-20)
         val h = start.handle as constructit.editor.OrthoCornerHandle
         assertTrue(reloaded.junctionOf(h.xNode) != null, "reloaded as a junction, not a coincidence")
-        assertTrue(start.handle!!.fields().filter { it.label in setOf("x", "y") }.all { it.writable })
+        assertTrue(reloaded.junctionOf(h.yNode) != null, "both coordinates come from it")
+        // …and the junction owns exactly what its host leaves free: this host is vertical, so y is settable
+        // through it while x is the host's and reads read-only (OP-13/OP-20, GitHub issue #4)
+        val coords = start.handle!!.fields().filter { it.label in setOf("x", "y") }.associate { it.label to it.writable }
+        assertEquals(mapOf("x" to false, "y" to true), coords, "a driven coordinate is settable only where the junction reaches")
 
         // and moving the segment still carries the path with it
         val ed2 = Editor(reloaded)

@@ -652,7 +652,7 @@ private fun setupApp() {
     // under a solid's footprint hint (they occupy exactly the same place; see Editor.selectElement)
     (document.getElementById("tree") as HTMLElement).addEventListener("click", {
         val row = (it.target as? HTMLElement)?.closest(".item") ?: return@addEventListener
-        val el = editor.doc.elements.firstOrNull { e -> e.id == row.getAttribute("data-eid") } ?: return@addEventListener
+        val el = editor.doc.listedElements().firstOrNull { e -> e.id == row.getAttribute("data-eid") } ?: return@addEventListener
         editor.selectElement(el)
     })
 
@@ -907,10 +907,12 @@ private fun renderPanel(
     // element tree
     val tree = document.getElementById("tree") as HTMLElement
     tree.innerHTML =
-        editor.doc.elements.joinToString("") {
+        // the *active space's* elements plus the solids, which live in none — the rule is
+        // [Document.listedIn]'s, so the shell only renders it (OP-17, GitHub issue #2)
+        editor.doc.listedElements().joinToString("") {
             val active = if (editor.isSelected(it)) " active" else ""
-            // the tree lists the whole document, so a row the canvas is not drawing says where it lives
-            // (OP-17): one canvas shows one sketch space
+            // a listed row the canvas is not drawing says where it lives (OP-17): that is a solid, shown in
+            // the 3D viewport rather than in this space's plan
             val where = if (it.space == editor.activeSpace.name) "" else " · ${it.space}"
             // `data-eid` stays the internal id — it is how a click finds the element again — while what the
             // row *shows* is the drawing's one name for it, the file's (OP-18, [Document.nameOf])

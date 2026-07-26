@@ -198,19 +198,25 @@ tool segment pts=e3,e2 -> e5
     }
 
     /**
-     * A segment the drawing *derives* — a rectangle's side — has no two points of its own to hang halves on,
-     * so the break materializes its **key points** and keeps the original as their source, hidden.
+     * A segment the drawing *derives* — a **mirrored** segment — has no two points of its own to hang halves
+     * on, so the break materializes its **key points** and keeps the original as their source, hidden.
      */
     @Test
     fun aDerivedSegmentBreaksOverItsKeyPointsAndKeepsTheOriginal() {
         val ed = Editor()
         ed.setTool(Tools.POINT)
-        ed.click(Vec2(0.0, 0.0))
-        ed.click(Vec2(80.0, 40.0))
-        ed.setTool(Tools.RECTANGLE)
-        ed.click(Vec2(0.0, 0.0))
-        ed.click(Vec2(80.0, 40.0))
-        val side = ed.doc.elements.first { it.kind == ElementKind.SEGMENT }
+        ed.click(Vec2(-80.0, 0.0))
+        ed.click(Vec2(-20.0, 40.0))
+        ed.setTool(Tools.SEGMENT)
+        ed.click(Vec2(-80.0, 0.0))
+        ed.click(Vec2(-20.0, 40.0))
+        ed.setTool(Tools.LINE)
+        ed.click(Vec2(0.0, -50.0))
+        ed.click(Vec2(0.0, 50.0)) // the mirror axis: x = 0
+        ed.setTool(Tools.MIRROR)
+        ed.click(Vec2(-50.0, 20.0)) // the segment
+        ed.click(Vec2(0.0, 20.0)) // the axis
+        val side = ed.doc.elements.last { it.kind == ElementKind.SEGMENT }
         val was = seg(side)
 
         ed.breakAt((was.a + was.b) * 0.5)
@@ -218,6 +224,7 @@ tool segment pts=e3,e2 -> e5
         assertFalse(side.visible)
         assertTrue(DocumentFormat.save(ed.doc).contains("tool keypoints"), DocumentFormat.save(ed.doc))
         val halves = ed.doc.elements.filter { it.kind == ElementKind.SEGMENT && it.visible }.takeLast(2)
+        assertEquals(2, halves.size)
         assertClose((seg(halves[0]).a - was.a).length(), 0.0, 1e-9)
         assertClose((seg(halves[1]).b - was.b).length(), 0.0, 1e-9)
         assertClose((seg(halves[0]).b - seg(halves[1]).a).length(), 0.0, 1e-9)

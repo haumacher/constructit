@@ -484,6 +484,20 @@ class Junction(val point: PointRef, val handle: Handle?, val curve: Element?) {
      * dragging it (OP-13), with no solver anywhere.
      */
     var place: (axis: Int, value: Double) -> Boolean = { _, _ -> false }
+
+    /**
+     * Whether [place] can reach coordinate [axis] **at all** — a structural question about the host, asked
+     * before any value exists, so a panel field can say up front whether it is derived.
+     *
+     * A junction on a host that is axis-aligned *by construction* owns exactly one world coordinate; the
+     * other one is the host's and no value can move it. Typing and dragging are one operation (OP-13), so
+     * they have to **refuse together**: without this the panel offered a `y` on a junction riding a
+     * horizontal wall, and writing it did nothing at all (GitHub issue #4).
+     *
+     * A value that is merely out of reach — an x beyond a circle's diameter — is still a [place] refusal;
+     * this asks only whether the axis is one the junction has any say over.
+     */
+    var placeable: (axis: Int) -> Boolean = { _ -> false }
 }
 
 /**
@@ -725,6 +739,33 @@ class Document {
         el: Element,
         tip: Element? = facePartTip(),
     ): Boolean = el.space == activeSpace.name || (tip != null && el === tip)
+
+    /**
+     * Whether the **elements panel** lists [el] while this space is active (OP-17, GitHub issue #2).
+     *
+     * The rule, in one line: *an element belongs to one sketch space, except a solid, which belongs to none.*
+     *
+     * - drawn **in the active space** — every 2D element, scaffolding and result alike, including the outlines
+     *   and areas that define a feature. One canvas shows one space, so this is what the drawing on screen is
+     *   made of;
+     * - a **solid**, always. A solid is not 2D: it has no position in any space's coordinates and it is shown
+     *   in the 3D viewport, which is the same view whichever sketch space is active. Filtering solids by the
+     *   space they happen to have been extruded in would hide the part exactly where the next feature is being
+     *   drawn — and a boolean's operand on a face has to be reachable there (see [facePartTip]).
+     *
+     * The panel used to list the union of every space, which the reporter said "will get messy fast": a face
+     * sketch showed the whole plan, and the row's `· space` suffix was the only thing distinguishing what the
+     * canvas was drawing from what it was not. That suffix now only ever appears on a solid.
+     */
+    fun listedIn(el: Element): Boolean = el.space == activeSpace.name || el.kind == ElementKind.SOLID
+
+    /**
+     * The elements the panel lists for the active space — [listedIn], in document order.
+     *
+     * A query rather than a filter the shell applies: which elements a space owns is the document's rule, and
+     * the browser shell renders whatever this returns (the same discipline as [Editor.selectionFields]).
+     */
+    fun listedElements(): List<Element> = elements.filter { listedIn(it) }
 
     /**
      * The **tip** of the part the active face space is a face of: the most recent visible solid made *of*
@@ -3037,6 +3078,8 @@ class Document {
         val line: LineRef? = null,
         val circle: CircleRef? = null,
         val axis: Int? = null,
+        /** Which axes [place] has any say over at all — see [Junction.placeable]. */
+        val placeable: (axis: Int) -> Boolean,
         val place: (axis: Int, value: Double) -> Boolean,
     )
 
@@ -3118,7 +3161,16 @@ class Document {
                 val cNode = SourceNode(nextId(prefix + "c"), ScalarValue(Quantity.mm(if (axis == 0) at.x else at.y)))
                 val point = cx.select(cx.intersectLL(axisLineAt(Ref<ScalarValue>(cNode), axis), lr), 1)
                 if (ev.eval(point.node) is EvalResult.Ok) {
-                    return Rider(point, OnAxisHandle(cNode, axis), cNode, RiderForm.AXIS_COORD, line = lr, axis = axis) { a, value ->
+                    return Rider(
+                        point,
+                        OnAxisHandle(cNode, axis),
+                        cNode,
+                        RiderForm.AXIS_COORD,
+                        line = lr,
+                        axis = axis,
+                        // the host determines the other coordinate outright, so this rider has no say over it
+                        placeable = { a -> a == axis },
+                    ) { a, value ->
                         // the host fixes the other coordinate, so this one is all there is to place — exactly
                         if (a != axis) {
                             false
@@ -3133,7 +3185,20 @@ class Document {
             val tNode = SourceNode(nextId(prefix + "t"), ScalarValue(Quantity.mm(at.dot(l.line.dir))))
             val along = alongLine(lr, Ref<ScalarValue>(tNode))
             noteCarrierRider(along, lr, tNode)
-            return Rider(along, OnLineHandle(lr, tNode), tNode, RiderForm.ALONG_LINE, line = lr) { a, value ->
+            return Rider(
+                along,
+                OnLineHandle(lr, tNode),
+                tNode,
+                RiderForm.ALONG_LINE,
+                line = lr,
+                // a slanted line moves in both coordinates as its parameter runs, so both are reachable; a
+                // line that happens to run along one axis has no say over the other, exactly as above
+                placeable = { a ->
+                    val line = ((Evaluator().eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line
+                    val d = if (a == 0) line?.dir?.x else line?.dir?.y
+                    d != null && abs(d) >= Vec2.EPS
+                },
+            ) { a, value ->
                 // a line is affine in its parameter: t = (value - anchor) / dir, exactly
                 val line = ((Evaluator().eval(lr.node) as? EvalResult.Ok)?.value as? LineValue)?.line
                 val d = if (a == 0) line?.dir?.x else line?.dir?.y
@@ -3159,6 +3224,8 @@ class Document {
                 aNode,
                 RiderForm.CIRCLE_ANGLE,
                 circle = cr,
+                // a circle sweeps both coordinates; a value beyond its diameter is a *value* refusal below
+                placeable = { true },
             ) { axis, value ->
                 // a circle has two angles per coordinate; keep the one nearer where it already sits
                 val circle = ((Evaluator().eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue)?.circle
@@ -3479,17 +3546,21 @@ class Document {
                 return "both of ${nameOf(el)}'s coordinates are already driven, so it has no freedom left to give"
             }
             if (free.size < 2 && target.isPoint) {
-                val axis = if (writableMaster(corner.xNode) == null) "x" else "y"
-                return "${nameOf(el)}'s $axis is already held by ${heldBy(corner)}, and welding onto a point pins both — " +
+                val driven = if (writableMaster(corner.xNode) == null) 0 else 1
+                val axis = if (driven == 0) "x" else "y"
+                return "${nameOf(el)}'s $axis is already held by ${heldBy(corner, driven)}, and welding onto a point pins both — " +
                     "reach the leg through that point instead, which needs only the one coordinate"
             }
         }
         return null
     }
 
-    /** What already drives one of [corner]'s coordinates, named for a refusal message. */
-    private fun heldBy(corner: OrthoCornerHandle): String {
-        val j = junctionOf(corner.xNode) ?: junctionOf(corner.yNode)
+    /** What already drives [corner]'s [axis] coordinate (0 = x, 1 = y), named for a refusal message. */
+    private fun heldBy(
+        corner: OrthoCornerHandle,
+        axis: Int,
+    ): String {
+        val j = junctionOf(if (axis == 0) corner.xNode else corner.yNode)
         return j?.curve?.let { "the junction on ${nameOf(it)}" } ?: "another connection"
     }
 
@@ -3520,6 +3591,7 @@ class Document {
         val rider = riderOn(curve, p, "j") ?: return null
         val junction = Junction(rider.point, rider.handle, curve)
         junction.place = rider.place
+        junction.placeable = rider.placeable
         junctions.add(junction)
         return junction
     }
@@ -3536,15 +3608,34 @@ class Document {
     private fun bindCornerToJunction(
         corner: OrthoCornerHandle,
         junction: Junction,
+    ): Boolean = bindCornerToMeeting(corner, junction.point, junction, junction)
+
+    /**
+     * Bind both of [corner]'s coordinates (via their masters) to [point], registering each with the junction
+     * that owns *that* coordinate — [xJunction] for x, [yJunction] for y, either of which may be null when the
+     * coordinate is determined by construction and no freedom answers for it.
+     *
+     * One junction owning both is the ordinary meeting, and then [point] is that junction's own point: the
+     * flat one-hop reach OP-20 asks for. The two differ when the target's coordinates come from **two
+     * different places** — the corner between the legs of a T-web's middle run, which meets one wall at each
+     * end (GitHub issue #4) — and then no single junction *is* the meeting point, so the meeting point is the
+     * target's own vertex and each coordinate follows whatever drives it there. Binding both to one of the two
+     * junctions instead put the arriving run at that junction's position rather than at the point clicked.
+     */
+    private fun bindCornerToMeeting(
+        corner: OrthoCornerHandle,
+        point: PointRef,
+        xJunction: Junction?,
+        yJunction: Junction?,
     ): Boolean {
         if (pathFrameOf(corner) != null) return false
         val mx = writableMaster(corner.xNode) ?: return false
         val my = writableMaster(corner.yNode) ?: return false
         // the definitive cycle test, against the freedom that will actually drive the corner: a weld onto
         // an *existing* junction binds to that junction's point, which need not be the point clicked
-        if (dependsOn(junction.point.node, mx, HashSet()) || dependsOn(junction.point.node, my, HashSet())) return false
-        driveByJunction(mx, junction, junction.point, 0)
-        if (my !== mx) driveByJunction(my, junction, junction.point, 1)
+        if (dependsOn(point.node, mx, HashSet()) || dependsOn(point.node, my, HashSet())) return false
+        driveByJunction(mx, xJunction, point, 0)
+        if (my !== mx) driveByJunction(my, yJunction, point, 1)
         corner.isEndpoint = false
         return true
     }
@@ -3567,20 +3658,54 @@ class Document {
         val corner = orthoEndpoint(el) ?: return false
         val tref = target.ref as? PointRef ?: return false
         if (!target.isPoint || target === el || joinWouldCycle(el, tref.node)) return false
-        val existing = (target.handle as? OrthoCornerHandle)?.let { junctionOf(it.xNode) ?: junctionOf(it.yNode) }
+        val tc = target.handle as? OrthoCornerHandle
+        val tx = tc?.let { junctionOf(it.xNode) }
+        val ty = tc?.let { junctionOf(it.yNode) }
+        // The target's two coordinates may be driven from two *different* places — a corner of a T-web's
+        // middle run meets one wall at each end, and a second end with one coordinate left is a determined
+        // meeting owned by nobody (issue #4). No single junction is the meeting point then, so bind to the
+        // target's own vertex and let each coordinate follow whatever drives it there.
+        if (tx !== ty) return bindCornerToMeeting(corner, tref, tx, ty)
         // a target with no handle of its own — a derived point such as an intersection — makes a junction
         // that owns nothing: the meeting point is then fixed by construction, and honestly immovable
         val junction =
-            existing ?: Junction(tref, target.handle, null).also {
+            tx ?: Junction(tref, target.handle, null).also {
                 it.place = { axis, value ->
                     // a plain point owns its coordinates outright, so placing one is just a write
                     val field = it.handle?.fields()?.getOrNull(axis)
                     field?.write(Quantity.mm(value))
                     field?.writable == true
                 }
+                it.placeable = { axis -> it.handle?.fields()?.getOrNull(axis)?.writable == true }
                 junctions.add(it)
             }
         return bindCornerToJunction(corner, junction)
+    }
+
+    /**
+     * Connect an ortho path end [vertex] to whatever a click's snap [s] found: weld onto a point
+     * (materializing an intersection first), or attach onto a curve. False when the snap found nothing to
+     * join, or when the connection was refused ([connectRefusal] says why).
+     *
+     * **One helper for every route that joins while placing.** A path click uses it, and so does the rectangle
+     * tool's pair of corners (GitHub issue #4) — which is what makes "the rectangle snaps like the ortho path"
+     * a fact rather than a second implementation. The drag magnet's release performs the same two operations
+     * from the other side, so a connection is the same construction however it was made.
+     */
+    fun linkPathEnd(
+        vertex: PointRef,
+        s: SnapResult,
+    ): Boolean {
+        val el = elementFor(vertex) ?: return false
+        return when (s.kind) {
+            SnapKind.POINT -> weldOrthoEndpointToPoint(el, s.target!!)
+            SnapKind.INTERSECTION -> {
+                val ip = intersectNear(s.target!!, s.other!!, s.pos) ?: return false
+                elementFor(ip)?.let { weldOrthoEndpointToPoint(el, it) } ?: false
+            }
+            SnapKind.ON_CURVE -> attachOrthoEndpointToCurve(el, s.target!!)
+            else -> false
+        }
     }
 
     fun remove(el: Element) {
@@ -3678,7 +3803,7 @@ class Document {
         noteCarrierRider(along, lineRef, tNode)
         return addRider(
             line,
-            Rider(along, OnLineHandle(lineRef, tNode), tNode, RiderForm.ALONG_LINE, line = lineRef) { _, _ -> false },
+            Rider(along, OnLineHandle(lineRef, tNode), tNode, RiderForm.ALONG_LINE, line = lineRef, placeable = { false }) { _, _ -> false },
             dof,
         )
     }
@@ -3804,7 +3929,7 @@ class Document {
         val point = cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode))
         return addRider(
             circle,
-            Rider(point, OnCircleHandle(circleRef, aNode), aNode, RiderForm.CIRCLE_ANGLE, circle = circleRef) { _, _ -> false },
+            Rider(point, OnCircleHandle(circleRef, aNode), aNode, RiderForm.CIRCLE_ANGLE, circle = circleRef, placeable = { false }) { _, _ -> false },
             dof,
         )
     }
@@ -3983,14 +4108,18 @@ class Document {
         return null
     }
 
+    /**
+     * Make [node] follow coordinate [axis] of [driver], and record which [junction] answers for it — null when
+     * that coordinate is determined by construction, so nothing can be asked to place it (see [Junction]).
+     */
     private fun driveByJunction(
         node: SourceNode,
-        junction: Junction,
+        junction: Junction?,
         driver: Ref<PointValue>,
         axis: Int,
     ) {
         node.boundTo = (if (axis == 0) cx.measureX(driver) else cx.measureY(driver)).node
-        junctionByNode[node.id] = junction
+        if (junction != null) junctionByNode[node.id] = junction
     }
 
     private fun scalarSource(value: Double): SourceNode = SourceNode(nextId("oc"), ScalarValue(value.mm))
@@ -5400,11 +5529,16 @@ class Document {
      * - a **closed curve** is a boundary by itself (a circle) — and before this, a circle could not become
      *   an area *at all*: the Outline tool needs at least two pieces, so a plain cylindrical hole was
      *   unreachable through the tools;
-     * - a **closed chain one step built** (a rectangle, a rounded rectangle, a polygon) is a boundary in
+     * - a **closed chain one step built** (a rounded rectangle, a polygon) is a boundary in
      *   the order that step created it. The order is the *construction's*, not something detected from the
      *   picture: OP-14 rejects seed-point region finding precisely because the loop's identity would be
      *   discovered, and here it is read off the step that built the pieces, so the same step always yields
      *   the same loop. What is checked (below) is only whether that chain currently closes.
+     * - a **leg of a closed ortho path** yields that path's legs, in path order. The same rule, reached
+     *   through a different record: a path *is* a retained ordered chain and it *knows* it is closed, so the
+     *   loop's identity is read off the construction here too — nothing is discovered. It arrived with the
+     *   rectangle tool (which now draws a closed path, GitHub issue #4) and generalises: any closed ortho
+     *   path can be extruded without first tracing an outline over it.
      *
      * Deliberately **not** extended to "curves that happen to touch": that is region detection, and a
      * drawing where two constructions cross would then acquire areas the user never built.
@@ -5412,6 +5546,7 @@ class Document {
     fun boundaryPiecesOf(el: Element): List<Element>? {
         if (el.kind == ElementKind.CIRCLE) return listOf(el)
         if (!el.isCurve) return null
+        legOf(el)?.let { (path, _) -> if (path.closed) return path.legs.toList() }
         val step = creatingStep(el) ?: return null
         val pieces = step.creates.filter { c -> c.isCurve && elements.any { it === c } }
         if (pieces.size < 2 || pieces.none { it === el }) return null
@@ -6420,6 +6555,52 @@ class Document {
     // ---- shapes: several elements built round shared nodes, so the *shape* is invariant ----
 
     /**
+     * A rectangle as a **closed ortho path**: `orthostart` at [a], three `orthovertex` steps round the
+     * corners, `orthoclose` — the very steps the ortho-path tool records, emitted by two clicks instead of
+     * five (GitHub issue #4).
+     *
+     * The point is that the result is *not a rectangle kind*. It is an ordinary path, so everything the path
+     * machinery already offers arrives with it and none of it had to be written twice: every corner drags
+     * (OP-20), every **leg** drags across itself, either side's length is a numeric field of its leg (OP-13),
+     * a leg breaks and joins (OP-19), a run attaches to it, and it thickens into walls with jamb-ready
+     * openings (OP-21). The old build — four segments over two clicked corners and two derived ones — was
+     * rectangular by construction too, but its corners had one *coordinate* of freedom each in the drag's eyes,
+     * which is what the report meant by "almost non-editable": pulling a corner moved it on one axis only.
+     *
+     * Null for a degenerate pair (a click that shares a coordinate with the first): there is no rectangle
+     * there, and half of one is worse than none.
+     */
+    fun orthoRectangle(
+        a: Vec2,
+        c: Vec2,
+        /** What the first click landed on, to join that corner to (see [linkPathEnd]); null for a plain click. */
+        landingA: SnapResult? = null,
+        /** The same for the second click — the diagonally opposite corner. */
+        landingC: SnapResult? = null,
+    ): OrthoPath? {
+        // a click that landed on geometry *means* that geometry's position, exactly as a path click does
+        val a = landingA?.takeIf { it.linked }?.pos ?: a
+        val c = landingC?.takeIf { it.linked }?.pos ?: c
+        if (abs(c.x - a.x) < Vec2.EPS || abs(c.y - a.y) < Vec2.EPS) return null
+        val path = startOrthoPath(a)
+        // A corner clicked *on* something starts *at* it, exactly as an ortho path's own click does, so the
+        // rectangle follows that geometry instead of merely beginning at its coordinates. Each link is made
+        // **while its corner is still the run's loose end** — that is the one thing a connection asks for
+        // ([orthoEndpoint]), and it is also what makes this identical to drawing the path by hand: click,
+        // join, carry on. Only the two *clicked* corners can join; the other two are the pair the clicks
+        // imply, and no cursor was ever there to mean anything by.
+        landingA?.takeIf { it.linked }?.let { linkPathEnd(path.vertices[0].ref, it) }
+        // the corners in draw order, alternating axis, so no step continues the previous leg (which would
+        // extend it instead of turning — see [addOrthoVertexNow])
+        addOrthoVertex(path, Vec2(c.x, a.y))
+        addOrthoVertex(path, c)
+        landingC?.takeIf { it.linked }?.let { linkPathEnd(path.vertices[2].ref, it) }
+        addOrthoVertex(path, Vec2(a.x, c.y))
+        closeOrthoPath(path)
+        return path
+    }
+
+    /**
      * A rectangle from two diagonally opposite corners — rectangular **by construction**.
      *
      * The other two corners are not points of their own: each takes one coordinate from each clicked
@@ -6429,6 +6610,9 @@ class Document {
      * axis-aligned without anything being asserted (OP-5).
      *
      * Both clicked corners keep their handles, so a corner is editable by drag *and* by number (OP-13).
+     *
+     * **Superseded by [orthoRectangle] and kept for replay only** (`Tools.RECTANGLE_V1`): a stored step means
+     * what it meant when it was written (OP-18).
      */
     fun rectangle(
         a: PointRef,

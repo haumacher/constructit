@@ -291,6 +291,44 @@ WebGlRenderer3 (jsMain) — one program: position+normal+colour, uniform MVP, he
   No derivative extension, no vertex-normal averaging that would round off a machined edge — a solid's
   facets are what it *is* (OP-9: the mesh is the sink, shown as it will be printed). Both renderers use
   the same shading law (headlight diffuse + a 0.35 ambient floor).
+- **Feature edges — a contour is topology, not lighting** (GitHub issue #3). One headlight gives two
+  coplanar faces the same normal and therefore the same colour, so the floor of a 5 mm pocket shaded
+  *exactly* like the surface it was cut into and the pocket's contour disappeared from every view that
+  showed its floor. No lighting model repairs that — the two faces really do face the same way — because
+  the missing information is topological. So each solid's mesh is walked for **creases**: undirected edges
+  whose two triangles' normals diverge by more than `Scene3.CREASE_ANGLE_RAD`, drawn as lines in a darker
+  shade of the solid's own colour by *both* back ends out of the one extraction in `Scene3`. Read off the
+  mesh per repaint like the rest of the scene, so there is no cache that can disagree with the model.
+  - **The threshold is set by what must *not* be drawn.** A tessellated cylinder, bore or fillet is a fan
+    of facets whose neighbours differ by the chord step `2·acos(1 − tol/r)` at `TESS_TOL_MM` = 0.02 mm, so
+    a threshold under that step draws the tessellation and turns every curved wall into a barrel of lines.
+    Inverted, a threshold `t` is quiet for every radius above `tol / (1 − cos(t/2))`: **30°** clears
+    everything above ≈0.59 mm (a 1 mm fillet steps 22.5°, a 5 mm one 10.0°, a 10 mm bore 7.2°), where 20°
+    would already speckle a 1 mm fillet — an everyday feature size. What 30° gives up is a crease shallower
+    than a 150° dihedral, and *there the two faces already shade differently*, which is the case shading
+    handles by itself. Threshold and shading between them cover exactly the range each is good at, and
+    `CreaseEdgeTest` pins both directions with the margin stated numerically.
+  - **A tangency seam is not a crease.** Where a fillet runs into the flat it is tangent to, the normals
+    differ by half a tessellation step — below any usable threshold — so nothing is drawn there. That is not
+    a lucky consequence but the same rule as the barrel, and it is what makes a filleted part read as round
+    instead of as a stack of strips.
+  - **Depth bias, once per back end, stated.** An edge lies exactly *on* the two faces that make it. The
+    painter's projector has no depth buffer, so an edge is sorted at the nearest of its own midpoint and its
+    two faces' centroids (plus a 0.1 % nudge toward the eye) — near enough to beat the face it lies on,
+    local enough that it cannot jump in front of an unrelated one. The GPU has a real depth test, and GL ES
+    2.0 offers `POLYGON_OFFSET_FILL` but no `POLYGON_OFFSET_LINE`, so the *faces* are offset one depth-slope
+    unit away from the eye while the lines are drawn plain. Biasing in the shader instead would have been a
+    second projection pipeline, which is the one thing this view does not have (OP-12). One consequence
+    visible in the golden and *only* there: a crease can be nibbled into dashes where an unrelated large facet
+    (a triangulation fan across a cap) has a nearer centroid than the edge — the same centroid-sort
+    imprecision this projector already documents for concave solids, not a property of the edges. The GPU
+    draws them solid, which is what a depth buffer is for.
+  - **Cut, deliberately: the silhouette.** Where a *curved* surface turns away from the eye there is no
+    crease to find — a cylinder's outline against the background is still only a shading gradient, and a
+    sphere would have no feature edges at all. A silhouette edge is view-dependent (recomputed per orbit,
+    not per document change), which is a different kind of thing from a crease and needs its own place in
+    the pipeline. The reported defect is about faces that shade identically and creases answer it; the
+    silhouette is recorded here as the next honest increment.
 - **The repaint "version counter" is `Editor.onChange`.** GPU buffers are rebuilt exactly when the
   editor reports a document change; an orbit never goes through the editor, so it only re-issues the
   draw call with a new matrix. No dirty flag on the document was needed.
@@ -538,10 +576,11 @@ recompute, undo and reload all rest on.
 **Shapes by construction.** The new tools add no ops and no geometry code — they compose what was there,
 which is the test of whether the algebra is closed:
 
-- *Rectangle* clicks two diagonal corners and derives the other two as `pointXY(x(a), y(c))` and
-  `pointXY(x(c), y(a))`. It is rectangular **by construction** — dragging or typing either clicked corner
-  reshapes the whole figure, and no gesture can shear it, because the shear is not expressible. Same trick
-  as an ortho leg, one dimension up.
+- *Rectangle* clicked two diagonal corners and derived the other two as `pointXY(x(a), y(c))` and
+  `pointXY(x(c), y(a))` — rectangular **by construction**, since the shear was not expressible. **Superseded
+  (GitHub #4):** the same two clicks now draw a **closed ortho path**, whose legs are axis-aligned by the same
+  trick one dimension down and which brings every path affordance with it (leg drags, typed side lengths,
+  break/join, walls). The old build survives for replay only — see the ortho path's slice-1 note. `Tools.legacy`.
 - *Rounded rectangle* is the existing `roundedRect` macro (OP-6) with its centre = the clicks' midpoint
   and width/height = their coordinate spans, so the two clicks keep driving it; the radius is an ordinary
   parameter, so editing it re-rounds live with no node replaced.
@@ -1044,6 +1083,65 @@ The file format needed **nothing**: a step restates the *position* its creation 
 steps re-derive their parameter on replay, so old files come back with absolute anchoring simply by being
 loaded (OP-18's "replay reconstructs" earning its keep again).
 
+#### A corner may meet **two** junctions, one per coordinate (as built, on GitHub #4)
+
+Reported on a T-web — a closed rectangle, one branch turning once between the left wall and the bottom wall,
+one straight run between the top wall and the bottom wall: the corner where the turning branch bends *"cannot
+move freely (only one direction) and snaps back to its original location"*, and so did other corners.
+
+**The junction model was right; the handle could only hold one of them.** That branch attaches at both ends,
+and the two ends land on walls of *different* orientation, so after both attaches:
+
+- the junction on the (vertical) left wall owns the branch's **y** — and, through the binding that keeps the
+  horizontal leg horizontal, the y of both of that leg's ends;
+- the second end arrives with **two** free coordinates (its own y, and the x it shares with the bend), so it is
+  an ordinary junction too, and the one on the (horizontal) bottom wall owns the branch's **x**;
+- the bend between the two legs is therefore driven by **two junctions, one per coordinate** — and
+  `OrthoCornerHandle` held a single `junction`, `junctionOf(x) ?: junctionOf(y)`. With both coordinates driven
+  the drag took the *whole cursor* branch and handed it to whichever junction the x lookup found first, so the
+  y half of the gesture was dropped: the corner tracked the cursor's x, ignored its y, and returned to where it
+  started as soon as the x did. Two degrees of freedom, one of them reachable.
+
+Per-axis delegation is the fix, and it is the same sentence OP-20 already made about *which* coordinate is
+delegated, now applied to *whose* junction: `jx.place(0, …)` and `jy.place(1, …)`, each to the junction that
+owns that axis. The whole-cursor branch survives for the one case it was written for — **one** junction owning
+both coordinates, a weld onto its point — where a projection is genuinely better than a pair of per-axis
+places. That the count was never wrong is worth stating twice: this was attribution again, and the editor
+exposes attribution.
+
+Three things the diagnosis is worth recording for:
+
+- **What it was not.** Rider compensation was not involved and could not have been —
+  `Document.riderAnchors()` is *empty* on this drawing, since every host is an axis-aligned leg and such riders
+  are never registered (see the note above). Nor was it the pick pile or selection priming: the status line
+  named the right corner throughout. "Snaps back" reads like a gesture writing a node and something re-solving
+  it, and it was not that; it was half a gesture never being written at all.
+- **The panel is what gave it away.** *Typing* the bend's y worked while dragging it did nothing — because a
+  coordinate field asks `junctionOf` **per coordinate** and the drag did not. Whenever typing and dragging
+  disagree, one of them has the answer (OP-13 is not only a promise to the user; it is a diagnostic).
+- **And typing was over-promising in the other direction.** `orthoCoordField` offered *any* driven coordinate
+  as writable, so a junction riding a horizontal wall advertised a `y` whose write did nothing at all. A driven
+  coordinate is not read-only **as far as the junction can reach, and no further**: a junction on a host that is
+  axis-aligned by construction owns exactly one world coordinate, and the host determines the other outright.
+  `Junction.placeable(axis)` is that question — structural, asked before a value exists — so the field greys out
+  exactly where the drag along that axis moves nothing. A value merely *out of reach* (an x beyond a circle's
+  diameter) is still a `place` refusal, which is a different thing and stays one.
+
+One more defect fell out of the same assumption, on the same drawing: **welding onto such a corner** bound both
+of the arriving corner's coordinates to *one* of the two junctions' points — a point that is not where the
+corner clicked is. `bindCornerToMeeting` now takes the driving point and a junction **per axis**: one junction
+owning both keeps the flat one-hop reach through its own point, and where the target's coordinates come from
+two different places (two junctions, or a junction and a *determined* meeting) the meeting point is the
+target's own vertex and each coordinate follows whatever drives it there. Before this, welding a run onto the
+straight run's lower end — whose x is a junction's and whose y is a determined meeting — landed it at the *top*
+wall.
+
+Pinned by `OrthoWebFreedomTest`: the reported file verbatim, then every corner and every leg dragged on each
+axis separately from a freshly loaded fixture, asserting the axes that move and the axes that must not, plus
+the panel's writable coordinates agreeing with them element by element. Reverting the delegation fails exactly
+the two tests about the bend and leaves the rest green, which is what makes it a regression test rather than a
+snapshot.
+
 ### A gesture compensates the riders of the host it turns (as built)
 
 The recorded limit came back as a report: on the drawing above's diagonal cousin — a segment with two riders
@@ -1227,7 +1325,7 @@ Three consequences worth stating, because each is a *property* rather than a cas
   takes the hidden route, and the status says so in those words rather than pretending a choice was made. The
   alternative (rebuilding the carrier from the picks of whichever tool drew the arc) would put per-tool
   knowledge into the break, which is exactly what the data-driven registry exists to avoid.
-- **A curve the drawing *derives* still breaks**, over its **key points**: a rectangle's side, a mirrored
+- **A curve the drawing *derives* still breaks**, over its **key points**: a mirrored
   segment or a spline a macro built has no picks of its own, so the break materializes `keypoints` on it (for
   which `extractPoints` gained the Bézier case — all four controls, through the new `bezierControl(i)`
   accessor) and keeps the original as their source, hidden. So no kind is half-supported; what varies is only
@@ -2729,6 +2827,29 @@ immediately — the user's back-side drill, end to end, by clicking. `FaceSketch
   A solid's footprint hint is drawn **in the space its sketch was drawn in**, which discharges the caveat
   the earlier slice recorded: a drill sketched on a face shows its circle in the face view, where it
   belongs, instead of being projected into a plan it has no honest projection into.
+- **What the elements panel lists: the active space, plus the solids** (as built, on GitHub #2). Reported as
+  *"the elements list contains the union of all elements of all sketches — the defining sketch is shown, but
+  this will get messy fast. I think it is sufficient to only show elements that are defined on the current
+  sketch: the 2D elements, and the 3D-defining outlines and resulting extrusions."* The rule, one line and its
+  reason: **an element belongs to one sketch space, except a solid, which belongs to none** —
+  `Document.listedIn` / `listedElements`.
+  - The **2D** half needs no case analysis: an outline, an area, a construction line and a dimension all live
+    in the space they were drawn in, so "the outlines that define a feature" arrive with everything else drawn
+    there. One canvas shows one space, so what the panel lists is what the drawing on screen is made of.
+  - A **solid** has no position in any space's coordinates and is shown in the 3D viewport, the same view
+    whichever sketch space is active — so it is listed everywhere. Filtering solids by the space they happened
+    to be extruded in would hide the part exactly where the next feature is being drawn, and a boolean's
+    operand on a face has to be reachable there (`facePartTip`). That also collapses the `· space` suffix a
+    row used to carry from "most rows, in every view" to "only a solid, and it means: look in 3D".
+  - Deliberately *not* `addressableIn`, which is picking's question and admits only the part **tip**: what is
+    listed is not the same as what a click can hit, and the panel exists precisely to reach an element a click
+    cannot. Nor is the filter a lock — `Editor.selectElement` still selects anything, and now asks
+    `listedIn` rather than "same space" before telling the user to switch spaces, since a solid needs no space
+    to be seen in.
+  - The query is the **document's**, and the browser shell renders whatever it returns: which elements a space
+    owns is a fact about the model, not about the DOM. `ElementListSpaceTest` pins the partition — the lists of
+    all spaces cover the document, each 2D element appearing in exactly one and each solid in every one — plus
+    selection per space.
 - **Features from a face space: one rule.** The *Extrude* and *Revolve* tools sketch on
   `Document.activePlane()` — the active space's plane, which for the plan is the world XY plane exactly as
   before. So no tool grew an argument, and "sketch on a face" is a *space* decision rather than a per-tool
@@ -4249,6 +4370,80 @@ Three broad families (see OP-9 decision above):
   without mirroring `v`, and files exist). The reported file is the regression: its wart now stands where it was
   drawn. **31 new tests** (`RiderDetachTest`, `NameAuthorityTest`, `SpaceStampingTest`, `FaceExtrudeOutwardTest`,
   `LoadNoteTest`, plus the boss on a face in `FaceSketchTest`), 785 green, browser E2E green.
+- **GitHub #3 — the contour of a pocket, which shading could never have drawn.** The report was about
+  lighting ("all surfaces with the same angle seem to be equally light") and the fix is not in the lighting: a
+  pocket's floor and the face it was cut into *are* parallel, so any headlight, any ambient term, any number
+  of lights gives them the same colour. The contour that vanished is a fact about the mesh's **topology**, not
+  about its illumination. **Feature edges** put it back — one extraction (`Scene3.creaseEdges`) that both back
+  ends read, drawn in a darker shade of the solid's own colour — and four things are worth recording.
+  (1) The whole design is the **threshold**, and it is fixed from the *negative* side: the tessellation of a
+  curved surface must stay invisible, which sets a floor of `2·acos(1 − tol/r)`. 30° keeps every radius above
+  ≈0.6 mm quiet where 20° would already speckle a 1 mm fillet; what 30° forgoes — creases shallower than a
+  150° dihedral — is exactly the range where shading works on its own. Creases and shading are complementary,
+  not redundant, and `CreaseEdgeTest` asserts the margin numerically so the constant cannot be lowered by
+  accident. (2) The **painter's projector needed the two adjacent centroids**, not a magic epsilon: with no
+  depth buffer, "an edge sorts at least as near as the nearer of its own two faces" is a statement that can be
+  made exactly, whereas a constant nudge is a guess that fails on a coarse mesh (a box's triangles are 40 mm
+  across). The GPU says the same thing in its own vocabulary — `POLYGON_OFFSET_FILL` on the *faces*, because
+  GL ES 2.0 has no line offset. (3) The **silhouette is cut, and named**: a curved surface turning away from
+  the eye has no crease to find, and a silhouette edge is view-dependent (per orbit, not per document change),
+  which is a different kind of thing. (4) The extraction's first version compared every face **with itself**
+  (the second triangle of an edge overwrote the first), so a box came out with zero edges instead of twelve —
+  found on the first run because the test that says "twelve" was written before the code worked. **7 new
+  tests** (`CreaseEdgeTest`: the box, the cylinder's rims without its wall seams, the clean-radius formula, a
+  fillet's tangency seams, determinism, the empty mesh, and the issue's own file — whose floor-vs-face shade
+  equality is asserted first, so the regression is the *symptom*), plus the regenerated `scene3` golden.
+- **GitHub #4 and #2 — "the rectangle is non-editable" and "all elements shown on every sketch", plus the
+  regression the first report carried in with it.** Three items, and the shape worth recording is that the
+  second of them was already the *answer* to the first.
+  (1) **The regression: a corner may meet two junctions, one per coordinate.** The report was *"oh-my-god the
+  ortho-path editing also broke again"* with a file attached — a T-web whose middle branch turns once between
+  the left wall and the bottom wall. Reproduced headlessly first, by dragging every corner and every leg of the
+  fixture on each axis and printing what moved, which turned a vague "snaps back" into a table: eight of nine
+  corners behaved, and the ninth — the bend — moved on x and refused y. **The junction model was right; the
+  handle could hold only one junction.** That branch's y belongs to the junction on the vertical left wall and
+  its x to the junction on the horizontal bottom wall, so the bend is driven by two of them, and
+  `OrthoCornerHandle`'s single `junction` (`junctionOf(x) ?: junctionOf(y)`) handed the *whole cursor* to
+  whichever the x lookup found first. Half the gesture was never written, which is what "moves only in one
+  direction and snaps back" looks like from outside. Three things about the diagnosis: rider compensation was
+  **not** involved and provably could not be (`riderAnchors()` is empty on this drawing — every host is
+  axis-aligned, so nothing is registered), nor were the pick pile or selection priming; **the panel is what
+  gave it away**, because typing the same y worked and a coordinate field asks `junctionOf` per coordinate;
+  and typing was over-promising in the *other* direction, offering a `y` on a junction riding a horizontal wall
+  whose write did nothing at all — so `Junction.placeable(axis)` now makes typing refuse exactly as far as
+  dragging does, which cost two existing tests their assertion and gained them a truer one. A fourth defect
+  fell out of the same assumption: welding onto such a corner bound both coordinates to *one* of the two
+  junctions' points, landing the arriving run somewhere the user never clicked.
+  (2) **The rectangle: the user proposed the fix, and it was to stop having a rectangle.** *"Maybe a better
+  approach is to produce the same result as the ortho-path tool would create but more easily by just setting two
+  points."* Two clicks now emit `orthostart`, three `orthovertex` and `orthoclose`, so what comes out is not a
+  rectangle *kind* — and every editing affordance the report asked for (drag a side, type the width and height)
+  and several it did not (break a leg, attach a run, thicken to walls with openings) arrive without a line of
+  code each. The load-bearing decision is **why it records steps rather than a `tool` step**: a path's degrees
+  of freedom are its corner positions, which the ortho steps restate on every save, whereas a `tool` step
+  restates only the clicks — so a `tool rect` rectangle would have lost every later drag on reload. The format
+  needed **nothing**. The old build stays reachable for replay alone (`Tools.legacy`, still the id `rect`),
+  because a stored step means what it meant when it was written; that is OP-18's frozen-literal doctrine
+  applied to a *step kind* for the first time.
+  (3) **The elements panel filters by space, and the rule is a partition.** *"Only show elements that are
+  defined on the current sketch — the 2D elements, and the 3D-defining outlines and resulting extrusions."*
+  Stated as a rule rather than a list of kinds: **an element belongs to one sketch space, except a solid, which
+  belongs to none.** The 2D half needs no case analysis (an outline lives where it was drawn), and the solid
+  half is not an exception but the same statement — a solid has no coordinates in any space and is shown in the
+  3D viewport, so it is listed in every space. Asserted as a partition: the lists of all spaces cover the
+  document, each 2D element appearing in exactly one and each solid in every one. Deliberately *not*
+  `addressableIn`: what is listed is not what a click can hit, since the panel exists to reach what a click
+  cannot.
+  Two smaller findings paid for themselves. **`Document.linkPathEnd`** is now the one helper every joining
+  route goes through (the path click, the drag magnet's release, and the rectangle's two corners) — and the
+  rectangle's corners must be linked *while each is still the run's loose end*, which is both the constraint
+  `orthoEndpoint` states and the order a hand-drawn path naturally has. **A closed ortho path bounds an area**,
+  which the rectangle needed and every closed path now gets: the loop's identity is still read off the
+  construction (a path *is* a retained ordered chain that knows it is closed), so OP-14's refusal of seed-point
+  region finding is untouched. **35 new tests** (`OrthoWebFreedomTest`, `RectanglePathTest`,
+  `ElementListSpaceTest`, plus two on the rectangle in `ToolCompletionsTest`), 820 green, browser E2E green.
+  Reverting the per-axis delegation fails exactly the two tests about the bend and leaves the rest green, which
+  is what makes the fixture a regression test rather than a snapshot.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -4581,6 +4776,42 @@ Then 3D walls = extrude + boolean.
     the leg into that corner *already aligned* plus the closing leg, rather than a band reaching for the
     start that promises a different shape. The drawing no longer appears to jump on close.
   - Rubber-band preview; Esc / double-click / click-start to finish.
+  - **The rectangle tool draws one** (as built, on GitHub #4). Reported as *"the rectangle produced by the
+    rectangle tool is almost non-editable — when dragging its free points, they move only along one axis"*,
+    with the user's own proposal attached: *"produce the same result as the ortho-path tool would create but
+    more easily by just setting two points. This would also allow setting the width and height precisely."*
+    Two diagonal clicks now emit `orthostart`, three `orthovertex` and `orthoclose` — literally the steps the
+    ortho tool records — so the result **is not a rectangle kind**. Everything the path machinery offers
+    arrives with it and none of it was written twice: every corner drags on both axes (OP-20), every *side*
+    drags across itself, either side's length is a numeric field of its leg (OP-13), a leg breaks and joins
+    (OP-19), a run attaches to it, and it thickens into walls with jamb-ready openings (OP-21). The old build
+    was rectangular by construction too — but its two clicked corners were free *points* and the other two
+    derived one coordinate from each, so what a drag of a corner could reach was one axis at a time, which is
+    exactly what the report said.
+    - **Replay is the reason it records steps rather than a `tool` step.** A path's degrees of freedom are its
+      corner positions, and the `orthostart`/`orthovertex` steps *restate* them on every save; a `tool` step
+      restates only the clicks that started it, so every later drag of a corner or a side would be lost on
+      reload. `ToolDef.recordsSteps` says a build emits its own steps and is therefore not wrapped
+      ([Editor.maybeCompleteTool]); one checkpoint still covers the whole gesture, as it does for a break that
+      emits several steps. The **file format needed nothing** — no new kind, and no way to tell the two
+      gestures apart.
+    - **The old build stays reachable, for replay only.** A stored step means what it meant when it was
+      written (OP-18), and every existing file carries `tool rect` — whose element count the loader checks. So
+      `Tools.RECTANGLE_V1` keeps the id `rect` and `Document.rectangle`, resolved by `Tools.byId` through a
+      `Tools.legacy` list that is deliberately *not* part of `Tools.all`: nothing in the palette can arm it and
+      no new file can name it. The live tool took a new id (`rectpath`), which is the one place the change is
+      visible outside the drawing — a tool's button id is its tool id, so the browser E2E's selector moved.
+    - **Two clicks that land on geometry join it**, exactly as an ortho-path click does — and each link is made
+      *while its corner is still the run's loose end*, which is the one thing a connection asks for. That is how
+      a rectangle can still be driven by a measured point (the papercraft-net flow in `SolidMeasureToolTest`).
+      `Document.linkPathEnd` is now the single helper every joining route goes through — the path click, the
+      drag magnet's release, and these two corners — and `Picks.landings` carries what each click landed on,
+      resolved at click time and recorded by nothing, because a connection is recorded by its own step.
+    - **A closed ortho path bounds an area** (`Document.boundaryPiecesOf`), so the rectangle still extrudes with
+      one pick. The same rule as "a closed chain one step built", read off a different record: a path *is* a
+      retained ordered chain and it *knows* it is closed, so the loop's identity still comes from the
+      construction and nothing is discovered (OP-14 still rejects seed-point region finding). It generalises
+      for free — any closed ortho path now extrudes without first tracing an outline over it.
 - **Slice 2 — thick paths** (`Tools.WALL`, `Document.buildThickPath`): carrier + thickness +
   justification → **one** `Region` node (offset faces, `intersectLL` mitre corners, end caps), retained
   as a `ThickPath` and displayed as a single `AREA` element. Nothing is regenerated; the wall corners
@@ -4686,7 +4917,9 @@ direction argument on the feature.
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
 convention (fillet note), drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), Manifold
-face-ID provenance and 3D picking and the mesh-only footprint (OP-9/OP-17 notes), MeshGL64, and — new from
+face-ID provenance and 3D picking and the mesh-only footprint (OP-9/OP-17 notes), MeshGL64,
+**silhouette edges in the 3D view** (the view-dependent half of the feature-edge work — see the viewport
+note's crease bullet, GitHub #3), and — new from
 session 11 — **angles under a turned frame**: bind a polar offset's bearing and an on-circle angle onto
 `frameAngle(frame) + local` so they turn with a placed group (needs a frame-angle accessor and a decision
 about which space the panel's number is in), plus imposing the along-line rider form at capture time so a

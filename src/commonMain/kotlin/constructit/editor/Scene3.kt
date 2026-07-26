@@ -6,6 +6,8 @@ import constructit.dsl.valueOf
 import constructit.geom.Geom3
 import constructit.geom.Mesh3
 import constructit.geom.Vec3
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.log10
 import kotlin.math.max
@@ -13,17 +15,47 @@ import kotlin.math.min
 import kotlin.math.pow
 
 /**
- * One solid as the 3D view sees it: the element it belongs to, the mesh to draw, and the colour it is
- * *always* drawn in.
+ * One solid as the 3D view sees it: the element it belongs to, the mesh to draw, the colour it is
+ * *always* drawn in, and the [Edge3] creases that make its shape read.
  *
  * The mesh is taken straight out of the [SolidValue] — the 3D view is a **consumer of the sink**
  * (OP-9), not a second geometry pipeline: nothing here re-derives, re-tessellates or repairs anything,
- * so what is on screen is exactly what an STL export would contain.
+ * so what is on screen is exactly what an STL export would contain. The edges are no exception: they are
+ * *read off* that same mesh, not constructed beside it.
  */
-class SolidItem(val elementId: String, val mesh: Mesh3, val color: String)
+class SolidItem(
+    val elementId: String,
+    val mesh: Mesh3,
+    val color: String,
+    val edges: List<Edge3> = Scene3.creaseEdges(mesh),
+) {
+    /**
+     * The colour of this solid's feature edges: its own colour, darkened. Same hue, so a line still reads
+     * as belonging to *this* part, and one authority both back ends ask, so an edge cannot come out a
+     * different colour on the GPU than in a golden.
+     */
+    val edgeColor: String get() = Painter3.shade(color, Scene3.EDGE_SHADE)
+}
 
 /** A world-space line of the view's furniture: the ground grid and the three axes. */
 class Line3(val a: Vec3, val b: Vec3, val color: String)
+
+/**
+ * A **feature edge**: an undirected mesh edge from [a] to [b] whose two triangles meet at a real crease
+ * (their normals differ by more than [Scene3.CREASE_ANGLE_RAD]).
+ *
+ * Why the view needs these at all (GitHub issue #3): with one headlight and flat shading, two coplanar
+ * faces get the same normal and therefore the *same* colour — so the floor of a 5 mm pocket shades exactly
+ * like the surface it was cut into and the pocket's contour disappears. No lighting model fixes that; the
+ * information is topological, not photometric. Drawing the crease *is* the fix, and it is honest about the
+ * mesh being the sink (OP-9): a crease is a property of the triangles, found by walking them.
+ *
+ * [faceA] and [faceB] are the centroids of the two triangles that share the edge. They are here for the
+ * painter's projector, which has no depth buffer and sorts by centroid depth: an edge must sort at least
+ * as near as the nearer of *its own* two faces, or the face it lies on paints over it. The GPU path
+ * ignores them — it has a real depth test.
+ */
+class Edge3(val a: Vec3, val b: Vec3, val faceA: Vec3, val faceB: Vec3)
 
 /**
  * Everything the 3D view draws, extracted from a [Document] in one pass: the visible solids, plus the
@@ -56,6 +88,121 @@ class Scene3(val solids: List<SolidItem>, val lines: List<Line3>) {
 
         /** Half-extent of the ground grid, in cells either side of the origin. */
         const val GRID_HALF = 10
+
+        /** How much of a solid's colour its feature edges keep — dark enough to read on a fully lit face. */
+        const val EDGE_SHADE = 0.55
+
+        /**
+         * How far two neighbouring triangles' normals must diverge before the edge between them counts as a
+         * **crease** and is drawn: 30°, i.e. every dihedral sharper than 150°.
+         *
+         * The number is set by what must *not* be drawn, not by what must. A tessellated cylinder, fillet or
+         * arc is a fan of facets whose neighbours differ by exactly the chord step
+         * `2·acos(1 − tol/r)` (`GeomMath.TESS_TOL_MM` = 0.02 mm), so a threshold below that step turns every
+         * curved surface into a barrel of lines — the tessellation made visible, which is precisely the thing
+         * flat shading is supposed to keep quiet about. Inverting the chord formula, a threshold of `t` stays
+         * clean for every radius above `tol / (1 − cos(t/2))` — a bound, because the chord *count* is rounded
+         * up, so the step a mesh actually has is a little smaller than the formula's:
+         *
+         * | threshold | clean above | 1 mm fillet (22.5°) | 5 mm fillet (10.0°) | 10 mm bore (7.2°) |
+         * |-----------|-------------|---------------------|---------------------|-------------------|
+         * | 20°       | r > 1.32 mm | **drawn** (clutter) | 2.0x margin         | 2.8x margin       |
+         * | 30°       | r > 0.59 mm | 1.3x margin         | 3.0x margin         | 4.2x margin       |
+         *
+         * 20° would speckle a 1–2 mm fillet, which is an everyday feature size; 30° only reaches radii under
+         * about 0.6 mm (a sub-millimetre bore), where the facets are a few pixels apart anyway. What 30°
+         * gives up is a crease shallower than 150° — and there the two faces already *do* shade differently,
+         * which is the case shading handles by itself. Threshold and shading therefore cover between them
+         * exactly the range each is good at.
+         */
+        const val CREASE_ANGLE_RAD = 30.0 * PI / 180.0
+
+        /**
+         * The **feature edges** of [mesh]: every undirected edge whose two triangles' outward normals differ
+         * by more than [thresholdRad].
+         *
+         * Deterministic by construction: normals and centroids come from the triangles in emission order, and
+         * the output follows the order in which the edges are *first met* while walking those triangles — a
+         * hash map is used for lookup only, never iterated (the same rule [Mesh3] itself obeys).
+         *
+         * Edges with a number of adjacent triangles other than two contribute nothing. A solid's mesh is a
+         * closed 2-manifold (OP-2, asserted by `assertManifold` on every solid in the suite), so that case is
+         * not a shape being missed — it is a mesh that is already broken, and inventing lines along its holes
+         * would only dress up the defect.
+         *
+         * Cost is one pass over the triangles per repaint, like everything else in the scene — no cache, so
+         * nothing here can disagree with the model after an edit. Measured on this suite's meshes it is
+         * microseconds against the millisecond the boolean itself takes; if a revolve-sized mesh ever makes it
+         * matter, the answer is the queued *incremental recompute* (a value cache keyed by source-node
+         * versions, which would carry the whole scene) rather than a private cache in the renderer.
+         */
+        fun creaseEdges(
+            mesh: Mesh3,
+            thresholdRad: Double = CREASE_ANGLE_RAD,
+        ): List<Edge3> {
+            val tris = mesh.triangles
+            if (tris.isEmpty()) return emptyList()
+            val v = mesh.vertices
+            val normals = arrayOfNulls<Vec3>(tris.size)
+            val centroids = arrayOfNulls<Vec3>(tris.size)
+            for ((i, t) in tris.withIndex()) {
+                val a = v[t.a]
+                val b = v[t.b]
+                val c = v[t.c]
+                val n = (b - a).cross(c - a)
+                if (n.length() <= Vec3.EPS) continue // degenerate sliver: it has no normal to compare
+                normals[i] = n.normalized()
+                centroids[i] = (a + b + c) * (1.0 / 3.0)
+            }
+            val order = ArrayList<Long>(tris.size * 3 / 2)
+            val first = HashMap<Long, Int>(tris.size * 3)
+            val second = HashMap<Long, Int>(tris.size * 3)
+
+            fun meet(
+                tri: Int,
+                p: Int,
+                q: Int,
+            ) {
+                val key = edgeKey(p, q)
+                if (!first.containsKey(key)) {
+                    first[key] = tri
+                    order.add(key)
+                } else if (!second.containsKey(key)) {
+                    second[key] = tri
+                } else {
+                    // a third face on one edge: not a manifold, so there is no dihedral angle to speak of
+                    second[key] = -1
+                }
+            }
+            for ((i, t) in tris.withIndex()) {
+                if (normals[i] == null) continue
+                meet(i, t.a, t.b)
+                meet(i, t.b, t.c)
+                meet(i, t.c, t.a)
+            }
+            val cosLimit = cos(thresholdRad)
+            val out = ArrayList<Edge3>()
+            for (key in order) {
+                val i = first[key] ?: continue
+                val j = second[key] ?: continue
+                if (j < 0) continue
+                val na = normals[i] ?: continue
+                val nb = normals[j] ?: continue
+                if (na.dot(nb) >= cosLimit) continue
+                out.add(Edge3(v[(key ushr 32).toInt()], v[(key and 0xffffffffL).toInt()], centroids[i]!!, centroids[j]!!))
+            }
+            return out
+        }
+
+        /** One key per *undirected* edge: the two vertex indices, smaller first, packed into a long. */
+        private fun edgeKey(
+            i: Int,
+            j: Int,
+        ): Long {
+            val lo = min(i, j)
+            val hi = max(i, j)
+            return (lo.toLong() shl 32) or hi.toLong()
+        }
 
         fun colorFor(elementId: String): String {
             val n = elementId.dropWhile { !it.isDigit() }.toIntOrNull() ?: 0

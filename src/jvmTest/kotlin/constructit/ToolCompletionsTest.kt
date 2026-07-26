@@ -100,9 +100,14 @@ class ToolCompletionsTest {
         ed.click(Vec2(40.0, 20.0))
 
         assertEquals(4, ed.doc.elements.count { it.kind == ElementKind.SEGMENT }, "four sides")
-        // two clicked corners are free points; the other two are derived from their coordinates
-        assertEquals(2, ed.doc.freePoints.size)
-        assertEquals(2, ed.doc.elements.count { it.kind == ElementKind.DERIVED_POINT })
+        // two clicks, and what they produce is a **closed ortho path** (GitHub issue #4): four corners of its
+        // own, no free points beside them, and the axis-aligned legs are what keep it a rectangle
+        val path = ed.doc.orthoPaths.single()
+        assertTrue(path.closed, "the path is closed")
+        assertEquals(4, path.vertices.size, "four corners")
+        assertEquals(4, path.legs.size, "four legs")
+        assertEquals(0, ed.doc.freePoints.size, "a path's corners are its own, so no free points are left over")
+        assertEquals(0, ed.doc.elements.count { it.kind == ElementKind.DERIVED_POINT })
         assertCorners(ed.doc, listOf(Vec2(0.0, 0.0), Vec2(40.0, 0.0), Vec2(40.0, 20.0), Vec2(0.0, 20.0)))
 
         // drag one diagonal corner: the two derived corners must follow it, on one coordinate each
@@ -119,6 +124,48 @@ class ToolCompletionsTest {
             val vertical = abs(s.a.x - s.b.x) < 1e-9
             assertTrue(horizontal || vertical, "side $s is neither horizontal nor vertical")
         }
+    }
+
+    /**
+     * The whole reason the rectangle is a path now (GitHub issue #4): a **side** drags across itself, and
+     * either side's length is a number one can type. Both come from the path machinery unchanged — this test
+     * only asserts that the rectangle reaches it.
+     */
+    @Test
+    fun aRectanglesSidesDragAndItsWidthAndHeightAreTyped() {
+        val ed = Editor()
+        ed.setTool(Tools.RECTANGLE)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(40.0, 20.0))
+
+        // drag the top side down: only that side moves, and the rectangle is still a rectangle
+        ed.drag(Vec2(20.0, 20.0), Vec2(20.0, 14.0))
+        assertCorners(ed.doc, listOf(Vec2(0.0, 0.0), Vec2(40.0, 0.0), Vec2(40.0, 14.0), Vec2(0.0, 14.0)))
+
+        // and type the two lengths, each on its own leg — the width on a horizontal side, the height on a
+        // vertical one, which is exactly what "set the width and height precisely" asked for
+        ed.selectAt(Vec2(20.0, 0.0))
+        val width = ed.selectionFields().indexOfFirst { it.label == "length (move end)" }
+        assertTrue(width >= 0, "a leg reports its length; got ${ed.selectionFields().map { it.label }}")
+        assertTrue(ed.writeSelectionField(width, 55.0))
+        // the *right* side, drawn upward, so its "move end" end is the top one
+        ed.selectAt(Vec2(55.0, 7.0))
+        val height = ed.selectionFields().indexOfFirst { it.label == "length (move end)" }
+        assertTrue(height >= 0)
+        assertTrue(ed.writeSelectionField(height, 25.0))
+        assertCorners(ed.doc, listOf(Vec2(0.0, 0.0), Vec2(55.0, 0.0), Vec2(55.0, 25.0), Vec2(0.0, 25.0)))
+    }
+
+    /** A rectangle bounds an area, so it extrudes with one pick exactly as it always did (OP-14/OP-17). */
+    @Test
+    fun aRectangleStillBoundsAnAreaForTheSeam() {
+        val ed = Editor()
+        ed.setTool(Tools.RECTANGLE)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(40.0, 20.0))
+        val side = ed.doc.orthoPaths.single().legs.first()
+        assertEquals(4, ed.doc.boundaryPiecesOf(side)?.size, "the closed path's legs are its boundary")
+        assertTrue(ed.doc.areaPickFilter(Evaluator())(side), "and an area slot takes it")
     }
 
     @Test
