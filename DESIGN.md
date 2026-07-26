@@ -2388,6 +2388,15 @@ Three broad families (see OP-9 decision above):
   away the ability to begin a mixed boundary on a shape's side), repeat-last-tool (a tool stays armed, so it
   buys nothing), and a shape tool auto-emitting a result outline (OP-14 wants the output set explicit).
   457 tests green (16 new), and the architect workflow now runs by keyboard in real Chrome.
+- **End of session 3.** Thirteen work packages, each reviewed against a probe test its implementer never
+  saw — a discipline that caught four real defects the suites had missed: node-id aliasing under repeated
+  name hints, an ear-clip diagonal passing through a corner, a gear accepting a bore its area check could
+  not see, and a typed parameter stranding itself outside its tool's undo step. What ships: the editing
+  baseline (undo/redo, step-unit delete, multi-select, groups, frames), the generic thick path (OP-21),
+  dimensions, arrays and shapes-by-construction, the whole 2D↔3D seam both ways (OP-17) with exact
+  prismatic booleans (OP-22) and a WebGL view, user-recorded macro tools with live propagation (OP-6),
+  the four persona showcases as worked specs, and click budgets asserted as tests (130 → 95 actions over
+  the four flagship workflows). 459 jvm tests green; every feature also verified in real Chrome.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
