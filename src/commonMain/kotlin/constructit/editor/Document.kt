@@ -559,6 +559,127 @@ class Jamb(
     fun handle(doc: Document): JambHandle = JambHandle(doc, path, interval, atEnd)
 }
 
+/** Whether a pattern's members close a ring or run out as a row — see [Pattern] (OP-23). */
+enum class PatternKind { CIRCULAR, LINEAR }
+
+/**
+ * One **orbit** of a pattern: the members one gesture produced, indexed by position (OP-23).
+ *
+ * The pattern's own ring is orbit 0 (the reference point and its copies); every replicated gesture adds
+ * one orbit per element it builds per copy, which is what makes the orbit *grow* — geometry built on
+ * replicated geometry is replicated too, because its outputs are members at their index in turn.
+ */
+class PatternOrbit internal constructor(
+    val pattern: Pattern,
+    val members: List<Element>,
+) {
+    val size: Int get() = members.size
+}
+
+/**
+ * How a replicated gesture finds its pick again in every copy (OP-23): either the member of [orbit] at
+ * index `offset + j`, or the one [fixed] element that is **invariant** under the pattern's transform and
+ * therefore the same in every copy.
+ */
+class OrbitPick internal constructor(
+    val orbit: PatternOrbit?,
+    val offset: Int,
+    val fixed: Element?,
+)
+
+/**
+ * One **replicated gesture** (OP-23): the rule by which a tool application was stamped round a pattern.
+ *
+ * It is not a copy of geometry — it is the gesture itself, recorded as picks-by-index plus the clicks that
+ * scored its choices, so re-running it at another count is re-running the same rule. [outputs] are the
+ * orbits it produced, one per element each copy built.
+ */
+class OrbitGesture internal constructor(
+    val pattern: Pattern,
+    val toolId: String,
+    val points: List<OrbitPick>,
+    val elements: List<OrbitPick>,
+    /** One per slot of the tool: that click, carried back to the cell of member index 0. */
+    val cells: List<Vec2>,
+    /** One per slot: which member index the click of that slot belongs to in the base copy. */
+    val cellOffsets: List<Int>,
+    val scalars: List<ScalarEntry>,
+    /** The discrete choices scored **once**, at the click that made the gesture (OP-1, OP-18). */
+    val signs: List<Int>,
+    val count: Int,
+    /**
+     * Whether this gesture's first operand is **the part of the face space, re-resolved per copy** — which is
+     * what makes a subtractive orbit a *chain*: copy *k* cuts the tip left by copy *k*-1 (OP-17's
+     * sequential-feature rule, applied once per index). Declared by the tool ([ToolDef.facePartOperand]) and
+     * recorded as `part=tip`, because the base of copy *k* is a different body for every *k* and for every
+     * count — so there is no name to bake in.
+     */
+    val chainsPart: Boolean = false,
+) {
+    val outputs = ArrayList<PatternOrbit>()
+
+    /** The `orbit` step that records this gesture — what a re-stamp replays at another count. */
+    var step: Step? = null
+        internal set
+
+    /** Every pick that rides an orbit — the ones an index shift moves. */
+    val riding: List<OrbitPick> get() = (points + elements).filter { it.orbit != null }
+
+    /** What this gesture is called in a refusal: the tool it applied. */
+    val label: String get() = toolId
+}
+
+/**
+ * A **pattern**: a rule (a reference member, what it is repeated about, and a count) plus the list of
+ * gestures that ride it (OP-23).
+ *
+ * The pattern owns no copied geometry of its own beyond its ring: what a replicated gesture builds is
+ * built **on the shared members**, so adjacent copies genuinely share nodes and no seam exists to mend.
+ */
+class Pattern internal constructor(
+    val id: String,
+    var name: String,
+    val kind: PatternKind,
+    /** Member 0 — the point that was clicked as the reference, kept by every count. */
+    val reference: Element,
+    /** The centre (circular) or the far end of the step vector (linear). */
+    val about: Element,
+    val count: Int,
+) {
+    val orbits = ArrayList<PatternOrbit>()
+    val gestures = ArrayList<OrbitGesture>()
+
+    /** The step that declared this pattern — its `count=` is what a re-stamp rewrites. */
+    var step: Step? = null
+        internal set
+
+    /** Orbit 0: the reference point and its count-1 copies. */
+    val ring: PatternOrbit get() = orbits[0]
+
+    /** Whether index arithmetic wraps: a full turn closes, a row does not. */
+    val wraps: Boolean get() = kind == PatternKind.CIRCULAR
+
+    /**
+     * The elements a replicated gesture may use **besides** members: those the pattern's transform leaves
+     * where they are. A rotation has exactly one fixed point, its centre; a translation has none — so a
+     * linear pattern's gestures may only touch members and shared scalars.
+     */
+    val invariants: List<Element> get() = if (kind == PatternKind.CIRCULAR) listOf(about) else emptyList()
+}
+
+/**
+ * What replicating a gesture over a pattern would do — or why it will not happen (OP-23).
+ *
+ * A refusal is not a failure of the gesture: the tool still applies once, as an ordinary step. What the
+ * user must be told is that it did *not* fan out, and which input kept it from doing so.
+ */
+class Replication internal constructor(
+    val pattern: Pattern,
+    val gesture: OrbitGesture?,
+    val copies: Int,
+    val refusal: String?,
+)
+
 /**
  * A retained construction document: owns the [Construction] DAG plus display metadata, and
  * exposes enumeration (rendering/hit-testing/panels) and mutation (tools). Every op is wrapped
@@ -635,6 +756,12 @@ class Document {
         kind: String,
         vararg args: Arg,
         skipIfEmpty: Boolean = false,
+        /**
+         * Arguments only the finished body can state — a replicated gesture's `signs=`, which are scored by
+         * the first copy it builds and then handed to the others verbatim (OP-1: scoring happens once). Invoked
+         * exactly when the step is kept, so a skipped step evaluates nothing.
+         */
+        argsAfter: (() -> List<Arg>)? = null,
         body: () -> T,
     ): T {
         if (recordDepth > 0) return body()
@@ -653,7 +780,7 @@ class Document {
             // a tool whose build had no effect is not part of the construction — where "effect" counts an
             // in-place rewiring too, since a tool may bind rather than build (see [edits])
             if (skipIfEmpty && created.isEmpty() && scalars.size == scalarsBefore && edits == editsBefore) return result
-            val step = Step(kind, args.toList())
+            val step = Step(kind, args.toList() + (argsAfter?.invoke() ?: emptyList()))
             step.creates.addAll(created)
             step.createsScalars.addAll(scalars.subList(scalarsBefore, scalars.size))
             noteSpace(kind)
@@ -1035,6 +1162,10 @@ class Document {
             when (a) {
                 is Arg.El -> out.add(a.el)
                 is Arg.Els -> out.addAll(a.els)
+                // a replicated gesture's picks (OP-23): the orbit's member 0, so the cascade reaches the
+                // gesture through the very element that names its rule
+                is Arg.Member -> out.add(a.el)
+                is Arg.Refs -> a.items.forEach { walk(it) }
                 is Arg.Keyed -> walk(a.value)
                 else -> {}
             }
@@ -1051,6 +1182,7 @@ class Document {
             when (a) {
                 is Arg.Sc -> out.add(a.entry)
                 is Arg.Scs -> out.addAll(a.entries)
+                is Arg.Refs -> a.items.forEach { walk(it) }
                 is Arg.Keyed -> walk(a.value)
                 else -> {}
             }
@@ -1104,6 +1236,9 @@ class Document {
         // drawn in it goes with it — and unlike a group's membership that is not a matter of degree, since
         // the space's own coordinates are what those elements' literals mean
         val droppedSpaces = HashSet<String>()
+        // a pattern whose ring is gone (OP-23): every gesture that rides it names it, and none of them can
+        // replay without the rule — so they go with it, exactly as a macro's instances go with its definition
+        val droppedPatterns = HashSet<String>()
 
         fun labelOfStep(step: Step): String? = step.args.filterIsInstance<Arg.Label>().firstOrNull()?.s
 
@@ -1114,6 +1249,7 @@ class Document {
             dropped.add(step)
             droppedEls.addAll(step.creates)
             droppedScalars.addAll(step.createsScalars)
+            if (step.kind == "pattern") labelOfStep(step)?.let { droppedPatterns.add(it) }
             // a thick path can go without taking its carrier path down with it — the dependency runs the
             // other way. Every other step belonging to a path's chain takes that chain's future with it.
             if (step.kind != "wall") chain?.dropped = true
@@ -1159,6 +1295,12 @@ class Document {
                 if (labelOfStep(step) in droppedGroups) drop(step, chain)
                 continue
             }
+            // a replicated gesture cannot outlive its pattern's rule (OP-23), and it follows its picks
+            // through the ordinary reference rule otherwise
+            if (step.kind == "orbit" && labelOfStep(step) in droppedPatterns) {
+                drop(step, chain)
+                continue
+            }
             // a visibility step *names* elements without being built from them, exactly as a group does
             // (OP-18's reversal — see [setElementsVisible]): it survives losing some of them, with the
             // survivors written by [DocumentFormat], and goes only once none are left to hide or show
@@ -1188,6 +1330,8 @@ class Document {
             // a definition is all-or-nothing: losing one of its elements changes how many elements an
             // instance creates, which replay checks (OP-18), so the whole declaration goes
             if (depends && step.kind == "macrodef") labelOfStep(step)?.let { droppedMacros.add(it) }
+            // ...and so is a pattern: its ring's member count is what every gesture riding it indexes into
+            if (depends && step.kind == "pattern") labelOfStep(step)?.let { droppedPatterns.add(it) }
         }
         return dropped
     }
@@ -2993,6 +3137,16 @@ class Document {
      * Empty for every step that scores nothing, which is why the writer needs no per-tool case.
      */
     internal fun storedSigns(step: Step): List<Int> = step.creates.flatMap { scoredSigns[it.id] ?: emptyList() }
+
+    /** The same, for a set of elements — one **copy** of a replicated gesture (OP-23). */
+    private fun storedSigns(els: List<Element>): List<Int> = els.flatMap { scoredSigns[it.id] ?: emptyList() }
+
+    /**
+     * The panel entries behind [refs] — what a build that **records its own steps** needs in order to write
+     * its own `scalar=` argument (OP-18), since [ToolDef.build] is handed refs and a step names entries.
+     */
+    private fun entriesOf(refs: List<ScalarRef>): List<ScalarEntry> =
+        refs.mapNotNull { r -> scalars.firstOrNull { it.ref.node === r.node } }
 
     // ---- riding a curve: one DOF along a host, absolute wherever the host offers one (OP-20) ----
 
@@ -6740,6 +6894,517 @@ class Document {
             val angle = cx.const((360.0 * k / count).deg)
             geoms.map { geom -> addLike(cx.rotate(geom.ref as Ref<Value>, center, angle), geom) }
         }
+    }
+
+    // ---- patterns as orbits (OP-23): a pattern is a rule, and every later gesture rides it ----
+
+    private val patternList = ArrayList<Pattern>()
+    private var patternCounter = 0
+
+    /** Every pattern still standing — one whose reference member is gone is gone with it. */
+    val patterns: List<Pattern> get() = patternList.filter { p -> elements.any { it === p.reference } }
+
+    private fun uniquePatternName(): String {
+        var i = patternCounter + 1
+        while (patternList.any { it.name == "P$i" }) i++
+        patternCounter = i
+        return "P$i"
+    }
+
+    /** The pattern [name] declares, or null — the `orbit` step's one reference to its rule. */
+    fun patternNamed(name: String): Pattern? = patterns.firstOrNull { it.name == name }
+
+    /** Which orbit [el] is a member of, and at which index — null when it is outside every pattern. */
+    fun memberSlot(el: Element): Pair<PatternOrbit, Int>? {
+        for (p in patterns) {
+            for (o in p.orbits) {
+                val i = o.members.indexOfFirst { it === el }
+                if (i >= 0) return o to i
+            }
+        }
+        return null
+    }
+
+    /** The pattern [el] belongs to as a member, or null. */
+    fun patternOf(el: Element): Pattern? = memberSlot(el)?.first?.pattern
+
+    /**
+     * Where a position of cell 0 lands in cell [k] — the pattern's **own transform**, and the only thing a
+     * replicated gesture transforms at all.
+     *
+     * Geometry is never transformed: a copy is built on the shared members, which is what makes adjacent
+     * copies share nodes. A *click* is transformed because a click states a choice ("this quadrant"), and the
+     * corresponding choice in another cell is that same click carried round. Negative [k] carries it back,
+     * which is how a click is stored cell-locally in the first place.
+     */
+    fun patternCell(
+        p: Pattern,
+        k: Int,
+        at: Vec2,
+        ev: Evaluator = Evaluator(),
+    ): Vec2 {
+        val origin = pointOf(p.reference.ref.node, ev) ?: return at
+        val about = pointOf(p.about.ref.node, ev) ?: return at
+        return when (p.kind) {
+            PatternKind.CIRCULAR -> {
+                val a = 2.0 * PI * k / p.count
+                val d = at - about
+                about + Vec2(d.x * cos(a) - d.y * sin(a), d.x * sin(a) + d.y * cos(a))
+            }
+            PatternKind.LINEAR -> at + (about - origin) * k.toDouble()
+        }
+    }
+
+    /**
+     * A pattern: [reference] repeated [count] times about [about] — the ring (or row) as a live object.
+     *
+     * The members are the ordinary transform nodes the arrays already build (`rotate`, `translateGeom`), so
+     * this adds no geometry op: what is new is that the document **remembers the rule**, which is what lets
+     * every later gesture ride it and what a count change re-stamps. The step nodes of a row are created once
+     * and shared by every member, so one drag of the vector re-spaces the whole row (OP-5).
+     */
+    fun createPattern(
+        kind: PatternKind,
+        reference: PointRef,
+        about: PointRef,
+        count: Int,
+        /** The name the file gives it — replay must keep it, since the `orbit` steps refer to it. */
+        named: String? = null,
+    ): Pattern? {
+        val refEl = elementFor(reference) ?: return null
+        val aboutEl = elementFor(about) ?: return null
+        if (count < 2) {
+            note = "a pattern needs at least 2 instances"
+            return null
+        }
+        if (refEl === aboutEl) {
+            note = "a pattern needs two different points"
+            return null
+        }
+        val name = named ?: uniquePatternName()
+        return recording(
+            "pattern",
+            Arg.Label(name),
+            Arg.Text(kind.name.lowercase()),
+            Arg.Keyed("ref", Arg.El(refEl)),
+            Arg.Keyed(if (kind == PatternKind.CIRCULAR) "centre" else "to", Arg.El(aboutEl)),
+            Arg.Keyed("count", Arg.Text(count.toString())),
+        ) {
+            val p = Pattern(nextId("pat"), name, kind, refEl, aboutEl, count)
+            val members = ArrayList<Element>(count)
+            members.add(refEl)
+            val dx = if (kind == PatternKind.LINEAR) cx.sub(cx.measureX(about), cx.measureX(reference)) else null
+            val dy = if (kind == PatternKind.LINEAR) cx.sub(cx.measureY(about), cx.measureY(reference)) else null
+            for (k in 1 until count) {
+                val ref =
+                    when (kind) {
+                        PatternKind.CIRCULAR -> cx.rotate(reference, about, cx.const((360.0 * k / count).deg))
+                        PatternKind.LINEAR -> cx.translateGeom(reference, cx.scale(dx!!, k.toDouble()), cx.scale(dy!!, k.toDouble()))
+                    }
+                addDerived(ref)
+                members.add(elements.last())
+            }
+            p.orbits.add(PatternOrbit(p, members))
+            patternList.add(p)
+            note = "Pattern ${p.name}: $count instances — anything built on its members now repeats round it"
+            p
+        }.also { p -> p.step = journal.lastOrNull()?.takeIf { it.kind == "pattern" } }
+    }
+
+    /**
+     * Whether [tool] fanning over a pattern is even on the table, and if so how — **the replication trigger**
+     * (OP-23).
+     *
+     * The rule: a gesture replicates when one of its picks is a pattern member and every other pick is
+     * either a member of the same pattern or *invariant* under its transform. Scalars need no test at all —
+     * a tool takes the very same parameter node into every copy, so equality is by reference (OP-5).
+     *
+     * Returns null when no pick touches a pattern (the overwhelming majority of gestures), a refusal when
+     * one does but another input is outside, and a plan otherwise.
+     */
+    fun replicationOf(
+        tool: ToolDef,
+        picks: Picks,
+    ): Replication? {
+        if (!tool.replicates || tool.repeating || tool.slots.isEmpty()) return null
+        // which pick fills each slot, in slot order — the tool's own declaration is the mapping
+        val pointEls = picks.points.map { elementFor(it) }
+        val slotEl = ArrayList<Element?>()
+        var pi = 0
+        // a face-part tool's *first* element is not a pick at all: it is the part the editor resolved for it
+        // (OP-17). It is skipped here and re-resolved per copy, which is exactly the chain — see
+        // [OrbitGesture.chainsPart].
+        var ei = if (tool.facePartOperand) 1 else 0
+        for (slot in tool.slots) {
+            when (slot) {
+                SlotKind.PLACE_POINT, SlotKind.POINT -> slotEl.add(pointEls.getOrNull(pi++))
+                SlotKind.SIDE -> slotEl.add(null)
+                else -> slotEl.add(picks.elements.getOrNull(ei++))
+            }
+        }
+        if (pi != picks.points.size || ei != picks.elements.size) return null // a fan, or a part operand
+        val found = slotEl.mapIndexed { i, el -> i to el?.let { memberSlot(it) } }
+        val p = found.firstNotNullOfOrNull { it.second }?.first?.pattern ?: return null
+        // the picks, resolved against that one pattern
+        val indexOf = HashMap<Int, Int>() // slot -> member index
+        for ((i, slot) in found) {
+            val el = slotEl[i] ?: continue
+            if (slot != null && slot.first.pattern !== p) {
+                return Replication(p, null, 0, "not replicated: ${nameOf(el)} belongs to pattern ${slot.first.pattern.name}")
+            }
+            if (slot != null) {
+                indexOf[i] = slot.second
+            } else if (p.invariants.none { it === el } && el.kind != ElementKind.SOLID) {
+                return Replication(p, null, 0, "not replicated: ${nameOf(el)} is outside the pattern")
+            }
+            // ...a **solid** being the one admitted exception, because it is the body a feature is applied
+            // *to* rather than a geometric input that must travel with the copy. Whether the same body in
+            // every copy means a chain or a fan is the tool's own declaration: a face-part tool re-resolves
+            // the tip per copy (a chain of pockets), while *Extrude on face* raises one boss per member off
+            // the one base (a fan of independent solids). See the orbit-rule table in DESIGN.md.
+        }
+        // the base copy is the gesture shifted down to the lowest index it touches, so offsets are >= 0 and
+        // the recorded rule says nothing about *which* copy the user happened to click
+        val anchor = indexOf.values.min()
+        val cells = ArrayList<Vec2>()
+        val cellOffsets = ArrayList<Int>()
+        val ev = Evaluator()
+        for (i in tool.slots.indices) {
+            val click = picks.clicks.getOrNull(i) ?: Vec2(0.0, 0.0)
+            val at = indexOf[i] ?: anchor
+            cells.add(patternCell(p, -at, click, ev))
+            cellOffsets.add(at - anchor)
+        }
+        val pointPicks = ArrayList<OrbitPick>()
+        val elementPicks = ArrayList<OrbitPick>()
+        for ((i, slot) in tool.slots.withIndex()) {
+            val el = slotEl[i]
+            val orbit = found[i].second?.first
+            val pick =
+                when {
+                    orbit != null -> OrbitPick(orbit, indexOf.getValue(i) - anchor, null)
+                    el != null -> OrbitPick(null, 0, el)
+                    else -> null
+                }
+            when (slot) {
+                SlotKind.PLACE_POINT, SlotKind.POINT -> pointPicks.add(pick ?: return null)
+                SlotKind.SIDE -> {}
+                else -> elementPicks.add(pick ?: return null)
+            }
+        }
+        val gesture =
+            OrbitGesture(
+                p, tool.id, pointPicks, elementPicks, cells, cellOffsets, emptyList(), picks.signs, picks.count,
+                chainsPart = tool.facePartOperand,
+            )
+        val copies = copiesFor(gesture, p.count) ?: return Replication(p, null, 0, "not replicated: the pattern has no room for it")
+        if (copies < 2) return Replication(p, null, 0, "not replicated: the pattern has no room for a second copy of it")
+        return Replication(p, gesture, copies, null)
+    }
+
+    /**
+     * How many copies [g] gets, with the ring [count] members long and [sizes] overriding the orbit lengths a
+     * re-stamp will change.
+     *
+     * A ring wraps, so every member is the start of a copy and there are exactly as many copies as members.
+     * A row does not: a gesture spanning m+1 neighbours makes n-m copies, which is why a row of holes drawn
+     * between neighbours gives one fewer segment than there are holes.
+     */
+    private fun copiesFor(
+        g: OrbitGesture,
+        count: Int,
+        sizes: Map<PatternOrbit, Int> = emptyMap(),
+    ): Int? {
+        val riding = g.riding
+        if (riding.isEmpty()) return null
+        if (g.pattern.wraps) return count
+        return riding.minOf { (sizes[it.orbit] ?: it.orbit!!.size) - it.offset }
+    }
+
+    /**
+     * Run [tool] once **per copy** and record the whole fan as one `orbit` step (OP-23).
+     *
+     * Edit-time bookkeeping, in the outline-follow's sense (OP-18): the machine saves the clicks, the file
+     * stores the rule the clicks stated. Every copy is an ordinary application of the same `ToolDef.build`
+     * over shared members, so nothing here knows what the tool does — and because the copies are built *on*
+     * the members rather than transformed off copy 0, adjacent copies share their nodes outright.
+     *
+     * One step, so one checkpoint and one undo removes the whole orbit; and one scoring, since the first copy
+     * scores its choices from its own clicks and the rest are handed the result verbatim (OP-1).
+     */
+    fun buildOrbit(
+        plan: Replication,
+        tool: ToolDef,
+        scalars: List<ScalarEntry>,
+    ): OrbitGesture? {
+        val g0 = plan.gesture ?: return null
+        val p = plan.pattern
+        val g =
+            OrbitGesture(
+                p, g0.toolId, g0.points, g0.elements, g0.cells, g0.cellOffsets, scalars, g0.signs, g0.count,
+                chainsPart = g0.chainsPart,
+            )
+        var scored: List<Int> = g0.signs
+        val perCopy = ArrayList<List<Element>>()
+        val journalBefore = journal.size
+        recording(
+            "orbit",
+            *orbitArgs(g),
+            skipIfEmpty = true,
+            argsAfter = { if (scored.isEmpty()) emptyList() else listOf(Arg.Keyed("signs", Arg.Text(scored.joinToString(";")))) },
+        ) {
+            for (j in 0 until plan.copies) {
+                val before = elements.toHashSet()
+                // a fresh pass per copy: a chained gesture resolves its base against what the copy before it
+                // just built, so this loop is the one place a cached pass would be looking at the wrong document
+                val copyPicks = picksFor(g, j, scored, Evaluator()) ?: break
+                tool.build(this, copyPicks, scalars.map { it.ref })
+                val made = elements.filter { it !in before }
+                // the first copy scores its choices from its own clicks; every other copy is handed the
+                // result, and the step writes it down — so a reload never scores again (OP-1)
+                if (j == 0 && scored.isEmpty()) scored = storedSigns(made)
+                perCopy.add(made)
+            }
+        }
+        // nothing recorded means the gesture built nothing at all: the caller falls back to applying it once
+        if (journal.size == journalBefore) return null
+        g.step = journal.lastOrNull()
+        registerOrbits(g, perCopy)
+        p.gestures.add(g)
+        return g
+    }
+
+    /** The `orbit` step's arguments — the gesture's rule, with the member picks written as `e2@1`. */
+    private fun orbitArgs(g: OrbitGesture): Array<Arg> {
+        fun ref(pick: OrbitPick): Arg = pick.fixed?.let { Arg.El(it) } ?: Arg.Member(pick.orbit!!.members[0], pick.offset)
+        return listOfNotNull(
+            Arg.Label(g.pattern.name),
+            Arg.Text(g.toolId),
+            Arg.Keyed("pts", Arg.Refs(g.points.map { ref(it) })).takeIf { g.points.isNotEmpty() },
+            Arg.Keyed("els", Arg.Refs(g.elements.map { ref(it) })).takeIf { g.elements.isNotEmpty() },
+            // the chained base, said rather than named: copy k's base body is a different element for every k
+            // *and* for every count, so a baked list of names could not survive a re-stamp — what is stable is
+            // the rule that produced it (see [OrbitGesture.chainsPart])
+            Arg.Keyed("part", Arg.Text("tip")).takeIf { g.chainsPart },
+            Arg.Keyed("cells", Arg.Positions(g.cells)).takeIf { g.cells.isNotEmpty() },
+            Arg.Keyed("scalar", Arg.Scs(g.scalars)).takeIf { g.scalars.isNotEmpty() },
+            Arg.Keyed("count", Arg.Text(g.count.toString())).takeIf { g.count > 0 },
+        ).toTypedArray()
+    }
+
+    /** The picks copy [j] of [g] applies to: members shifted by j, clicks carried into cell `offset + j`. */
+    private fun picksFor(
+        g: OrbitGesture,
+        j: Int,
+        signs: List<Int>,
+        ev: Evaluator,
+    ): Picks? {
+        val p = g.pattern
+
+        fun at(pick: OrbitPick): Element? {
+            val o = pick.orbit ?: return pick.fixed
+            val i = if (p.wraps) (pick.offset + j) % o.size else pick.offset + j
+            return o.members.getOrNull(i)
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val points = g.points.map { (at(it) ?: return null).ref as? PointRef ?: return null }
+        // the chain (OP-17's sequential-feature rule, per index): copy k's base is the tip *now*, which after
+        // copy k-1 is copy k-1's own result — so one Cut on one member becomes a bolt circle of pockets in one
+        // body, and not four features that each fork back onto the plate
+        val part = if (g.chainsPart) listOfNotNull(facePartTip(ev)) else emptyList()
+        val els = part + g.elements.map { at(it) ?: return null }
+        val clicks =
+            g.cells.mapIndexed { i, c ->
+                val k = g.cellOffsets.getOrElse(i) { 0 } + j
+                patternCell(p, if (p.wraps) k % p.count else k, c, ev)
+            }
+        return Picks(points, els, clicks.lastOrNull() ?: Vec2(0.0, 0.0), clicks, count = g.count, signs = signs)
+    }
+
+    /**
+     * Turn what the copies built into orbits: element *s* of every copy is one orbit, indexed by copy — so
+     * the outputs of a replicated gesture are members at their own index and the orbit **grows**.
+     *
+     * A copy that built a different number of elements than its siblings is refused as a member set rather
+     * than half-registered: the structure of a step is fixed at build (OP-5), so an uneven fan means the
+     * geometry gave out somewhere, and saying so is more use than a ragged pattern.
+     */
+    private fun registerOrbits(
+        g: OrbitGesture,
+        perCopy: List<List<Element>>,
+    ) {
+        val k = perCopy.firstOrNull()?.size ?: return
+        if (k == 0) return
+        if (perCopy.any { it.size != k } || perCopy.size < 2) {
+            note = "Pattern ${g.pattern.name}: ${g.label} did not build the same geometry at every index, so its results are not pattern members"
+            return
+        }
+        for (s in 0 until k) {
+            val o = PatternOrbit(g.pattern, perCopy.map { it[s] })
+            g.pattern.orbits.add(o)
+            g.outputs.add(o)
+        }
+    }
+
+    /**
+     * Replay a recorded `orbit` step: the same fan, from the rule the file states (OP-23).
+     *
+     * Nothing is discovered here — the offsets, the cell-local clicks, the scalars and the scored signs all
+     * come from the step, and the only thing recomputed is where a cell-local click lands, which follows the
+     * pattern's *current* shape and is exactly what makes a re-stamped count come out right.
+     */
+    internal fun replayOrbit(
+        p: Pattern,
+        tool: ToolDef,
+        points: List<Pair<Element, Int?>>,
+        els: List<Pair<Element, Int?>>,
+        cells: List<Vec2>,
+        scalars: List<ScalarEntry>,
+        signs: List<Int>,
+        count: Int,
+        chainsPart: Boolean,
+    ): OrbitGesture? {
+        fun pick(spec: Pair<Element, Int?>): OrbitPick? {
+            val off = spec.second ?: return OrbitPick(null, 0, spec.first)
+            val o = memberSlot(spec.first)?.first ?: return null
+            return OrbitPick(o, off, null)
+        }
+
+        val pointPicks = points.map { pick(it) ?: return null }
+        val elPicks = els.map { pick(it) ?: return null }
+        // the click cells, derived from the tool's slots exactly as the recording derived them
+        val offsets = ArrayList<Int>()
+        var pi = 0
+        var ei = 0
+        for (slot in tool.slots) {
+            val pick =
+                when (slot) {
+                    SlotKind.PLACE_POINT, SlotKind.POINT -> pointPicks.getOrNull(pi++)
+                    SlotKind.SIDE -> null
+                    else -> elPicks.getOrNull(ei++)
+                }
+            offsets.add(pick?.takeIf { it.orbit != null }?.offset ?: 0)
+        }
+        val g = OrbitGesture(p, tool.id, pointPicks, elPicks, cells, offsets, scalars, signs, count, chainsPart)
+        val copies = copiesFor(g, p.count) ?: return null
+        val plan = Replication(p, g, copies, null)
+        return buildOrbit(plan, tool, scalars)
+    }
+
+    /**
+     * Why [p] cannot be re-stamped at [n], or null when it can (OP-23).
+     *
+     * The one thing mod-n arithmetic cannot absorb: a gesture that spans **more neighbours than the new count
+     * has members**. "Member 0 to member 4" is a pair at six; at three it is not a pair at all, and folding it
+     * to (0, 1) would silently make a different drawing. So it is refused, by name.
+     */
+    fun restampRefusal(
+        p: Pattern,
+        n: Int,
+    ): String? {
+        if (n < 2) return "a pattern needs at least 2 instances"
+        if (n == p.count) return "pattern ${p.name} already has $n instances"
+        val sizes = HashMap<PatternOrbit, Int>()
+        sizes[p.ring] = n
+        for (g in p.gestures) {
+            val over = g.riding.firstOrNull { (sizes[it.orbit] ?: 0) <= it.offset }
+            if (over != null) {
+                return "can't re-stamp pattern ${p.name} at $n: its ${g.label} spans ${over.offset + 1} members " +
+                    "of a ${sizes[over.orbit] ?: 0}-member orbit — use the tool again instead"
+            }
+            val copies = copiesFor(g, n, sizes) ?: return "can't re-stamp pattern ${p.name}: its ${g.label} rides nothing"
+            if (copies < 2) return "can't re-stamp pattern ${p.name} at $n: its ${g.label} would have no second copy"
+            for (o in g.outputs) sizes[o] = copies
+        }
+        return null
+    }
+
+    /**
+     * **Re-trace a closed boundary** from two pieces — the Outline tool's follow, re-run as bookkeeping when
+     * a re-stamp changes how many pieces the loop has (OP-14, OP-23).
+     *
+     * Deliberately the same two sources of truth the interactive follow consults ([continuationsFrom],
+     * [handoverPosition]) and deliberately *not* used on load: the file keeps the full ordered boundary, so a
+     * reload discovers nothing. What a re-stamp does is an **edit**, and an edit may follow.
+     */
+    fun followedLoop(
+        a: Element,
+        b: Element,
+        ev: Evaluator = Evaluator(),
+    ): Pair<List<Element>, List<Vec2>>? {
+        var entered = handoverPosition(a, b, ev) ?: return null
+        val chain = arrayListOf(a, b)
+        var budget = elements.size + 1
+        var closed = false
+        while (budget-- > 0) {
+            val next = continuationsFrom(chain.last(), entered, ev).singleOrNull() ?: return null
+            if (next.piece === a) {
+                closed = chain.size >= 3
+                break
+            }
+            if (chain.any { it === next.piece }) return null
+            chain.add(next.piece)
+            entered = next.at
+        }
+        if (!closed) return null
+        val n = chain.size
+        val clicks =
+            (0 until n).map { i ->
+                val enter = handoverPosition(chain[(i - 1 + n) % n], chain[i], ev) ?: return null
+                val exit = handoverPosition(chain[i], chain[(i + 1) % n], ev) ?: return null
+                pointBetweenOn(chain[i], enter, exit, ev) ?: enter
+            }
+        return chain to clicks
+    }
+
+    /**
+     * A regular polygon, optionally with its corners rounded in the same gesture (OP-23).
+     *
+     * With no radius this is the polygon it always was, recorded as the same `tool polygon` step — the count
+     * is structural and the vertices are rotations of the clicked one. With a radius it is the pattern
+     * composition written out: a circular pattern of the vertex, one segment between neighbouring members
+     * (which fans to every side) and one fillet on a corner (which fans to every corner). So the everyday
+     * shortcut and the general mechanism are the *same* construction, and the file says which one it is.
+     */
+    fun regularPolygonGesture(
+        picks: Picks,
+        scalarRefs: List<ScalarRef>,
+    ) {
+        val centre = picks.points.getOrNull(0) ?: return
+        val vertex = picks.points.getOrNull(1) ?: return
+        val radius = scalarRefs.firstOrNull()
+        val scalars = entriesOf(scalarRefs)
+        val count = picks.count
+        val r = radius?.let { ((Evaluator().eval(it.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm ?: 0.0 } ?: 0.0
+        if (radius == null || r <= 0.0) {
+            recordingTool(Tools.POLYGON, picks, scalars) { regularPolygon(centre, vertex, count) }
+            return
+        }
+        val p = createPattern(PatternKind.CIRCULAR, vertex, centre, count) ?: return
+        val ev = Evaluator()
+        val pos = { el: Element -> pointOf(el.ref.node, ev) ?: Vec2(0.0, 0.0) }
+        val v0 = pos(p.ring.members[0])
+        val v1 = pos(p.ring.members[1])
+        val v2 = pos(p.ring.members[2 % p.ring.size])
+        // one side, between neighbouring members: the orbit gives the other count-1
+        val side =
+            replicationOf(
+                Tools.byId(Tools.SEGMENT)!!,
+                Picks(listOf(p.ring.members[0].ref as PointRef, p.ring.members[1].ref as PointRef), emptyList(), v1, listOf(v0, v1)),
+            )
+        val sides = side?.gesture?.let { buildOrbit(side, Tools.byId(Tools.SEGMENT)!!, emptyList()) } ?: return
+        val e0 = sides.outputs[0].members[0]
+        val e1 = sides.outputs[0].members[1]
+        // one rounding, on the corner those two sides make: the orbit rounds every corner
+        val fillet = Tools.byId(Tools.FILLET)!!
+        val plan =
+            replicationOf(
+                fillet,
+                Picks(emptyList(), listOf(e0, e1), v1, listOf(v0 + (v1 - v0) * 0.9, v1 + (v2 - v1) * 0.1)),
+            ) ?: return
+        buildOrbit(plan, fillet, scalars)
+        note = "Rounded polygon: ${p.name}, $count sides and $count roundings — retype the radius to re-round, or re-stamp the count"
     }
 
     /** Both external (or internal) common tangents of two circles. */

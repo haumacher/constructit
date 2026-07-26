@@ -193,6 +193,17 @@ class ToolDef(
      * that emits several steps does — one gesture, one undo.
      */
     val recordsSteps: Boolean = false,
+    /**
+     * Whether this tool's application is **replicated round a pattern** when its picks touch one (OP-23).
+     *
+     * Declared **true by default**, which is the opposite of every other opt-in here and deliberately so: the
+     * rule of OP-23 is that *any* operation whose inputs touch pattern members fans out, and a table where
+     * each tool had to remember to say so would be a rule with exceptions instead. So the exceptions are
+     * where they belong — a handful of `false`s below, each with its reason. Two of them are structural and
+     * enforced by [Document.replicationOf] rather than declared: a [repeating] tool already collects the whole
+     * ring in one gesture, and a tool with no [slots] cannot touch a member.
+     */
+    val replicates: Boolean = true,
     val build: (Document, Picks, List<ScalarRef>) -> Unit,
 ) {
     /**
@@ -226,6 +237,12 @@ object Tools {
         name: String,
         default: Double,
     ) = ScalarSlot(name, Dimension.NONE, Quantity.number(default))
+
+    /** A length slot the tool can do without: [mm] is what it means with nothing typed (0 = "don't"). */
+    private fun len(
+        name: String,
+        mm: Double,
+    ) = ScalarSlot(name, Dimension.LENGTH, Quantity.mm(mm))
 
     // Points
     const val POINT = "point"
@@ -326,6 +343,11 @@ object Tools {
     const val ARRAY_LINEAR = "arraylinear"
     const val ARRAY_CIRCULAR = "arraycircular"
 
+    // patterns as orbits (OP-23): not arrays — a pattern is a *rule* later gestures ride, and its members
+    // are shared points that adjacent copies are built on
+    const val PATTERN_CIRCULAR = "patterncircular"
+    const val PATTERN_LINEAR = "patternlinear"
+
     // Measure
     const val DISTANCE = "mdist"
     const val ANGLE = "mangle"
@@ -351,7 +373,9 @@ object Tools {
     val all: List<ToolDef> =
         listOf(
             // ----- Points -----
-            ToolDef(POINT, "Point", ToolCategory.POINTS, listOf(SlotKind.PLACE_POINT), shortcut = 'P', help = "Click empty space to place a free point.") { _, _, _ -> },
+            // `replicates = false`: a point placed *on* a member already is that member, so there is nothing
+            // for an orbit to fan (OP-23)
+            ToolDef(POINT, "Point", ToolCategory.POINTS, listOf(SlotKind.PLACE_POINT), shortcut = 'P', replicates = false, help = "Click empty space to place a free point.") { _, _, _ -> },
             // the factor is a *defaulted* scalar slot (0.5 = the midpoint), so the gesture is unchanged and
             // typing a number first turns the same two clicks into a ratio point (OP-13)
             ToolDef(MIDPOINT, "Midpoint / ratio point", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(num("factor", 0.5)), help = "Click two points to place their midpoint — or type a factor first (0.3 = three tenths of the way, 1.5 = beyond the second point) and drag it along afterwards.") { d, p, s -> d.midpoint(p.points[0], p.points[1], s.firstOrNull()) },
@@ -360,19 +384,19 @@ object Tools {
             // the rider's position along its host is **state** (dragged, typed, compensated, or re-anchored by a
             // placement), so it rides `dofs=` exactly as the `pointoncurve` step's does — the click stays the
             // *choice* it always was (which curve, which side). See [DocumentFormat.restate].
-            ToolDef(POINT_ON_CIRCLE, "Point on circle", ToolCategory.POINTS, listOf(SlotKind.CIRCLE), help = "Click a circle or arc to add a point on it; drag it around the circle in Select mode (on an arc it rides the whole circle).") { d, p, _ -> d.pointOnCircle(p.elements[0], p.at, p.dofs.firstOrNull()) },
-            ToolDef(POINT_ON_LINE, "Point on line", ToolCategory.POINTS, listOf(SlotKind.LINE), help = "Click a line to add a point on it; drag it along the line in Select mode.") { d, p, _ -> d.pointOnLine(p.elements[0], p.at, p.dofs.firstOrNull()) },
+            ToolDef(POINT_ON_CIRCLE, "Point on circle", ToolCategory.POINTS, listOf(SlotKind.CIRCLE), replicates = false, help = "Click a circle or arc to add a point on it; drag it around the circle in Select mode (on an arc it rides the whole circle).") { d, p, _ -> d.pointOnCircle(p.elements[0], p.at, p.dofs.firstOrNull()) },
+            ToolDef(POINT_ON_LINE, "Point on line", ToolCategory.POINTS, listOf(SlotKind.LINE), replicates = false, help = "Click a line to add a point on it; drag it along the line in Select mode.") { d, p, _ -> d.pointOnLine(p.elements[0], p.at, p.dofs.firstOrNull()) },
             ToolDef(POINT_AT_DIST, "Point at distance", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click the reference point, then click the line on the side you want.") { d, p, s -> d.pointAlongLine(p.elements[0], p.points[0], s[0], p.at) },
             // no slots at all: its inputs are both scalars, so it is complete as soon as the panel has
             // supplied x and y and a click merely says "now"
             ToolDef(POINT_XY, "Point (x, y)", ToolCategory.POINTS, emptyList(), scalars = listOf(len("x"), len("y")), help = "Type x, then y (or pick two parameters in the panel), then click anywhere: the point follows both, so editing either moves it.") { d, _, s -> d.pointFromCoordinates(s[0], s[1]) },
             ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTRIC), help = "Click a circle or arc to add its centre point.") { d, p, _ -> d.centerOf(p.elements[0]) },
             ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.CURVE), help = "Click a curve to add its defining points (endpoints, centre) — even on mirrored/derived geometry.") { d, p, _ -> d.extractPoints(p.elements[0]) },
-            ToolDef(JOIN, "Join points", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), help = "Click the point to keep, then a free point to weld onto it (they become one).") { d, p, _ -> d.weld(p.elements[1], p.elements[0]) },
+            ToolDef(JOIN, "Join points", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), replicates = false, help = "Click the point to keep, then a free point to weld onto it (they become one).") { d, p, _ -> d.weld(p.elements[1], p.elements[0]) },
             // the offset is the tool's own DOF, restated on save through `dofs=` exactly as a dimension's
             // placement is (OP-13/OP-18), so a dragged or typed distance comes back
-            ToolDef(MAKE_RELATIVE, "Make relative", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), help = "Click a free point, then the point it should follow: it keeps its distance and angle to that anchor, so moving the anchor takes it along. Drag it (or type distance / angle) to change the offset; Make absolute undoes it.") { d, p, _ -> d.makeRelative(p.elements[0], p.elements[1], p.dofs) },
-            ToolDef(MAKE_ABSOLUTE, "Make absolute", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), help = "Click a point that follows something — relative to an anchor, welded, or riding a curve — to give it its own coordinates again, where it now stands.") { d, p, _ -> d.makeAbsolute(p.elements[0], p.dofs) },
+            ToolDef(MAKE_RELATIVE, "Make relative", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), replicates = false, help = "Click a free point, then the point it should follow: it keeps its distance and angle to that anchor, so moving the anchor takes it along. Drag it (or type distance / angle) to change the offset; Make absolute undoes it.") { d, p, _ -> d.makeRelative(p.elements[0], p.elements[1], p.dofs) },
+            ToolDef(MAKE_ABSOLUTE, "Make absolute", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), replicates = false, help = "Click a point that follows something — relative to an anchor, welded, or riding a curve — to give it its own coordinates again, where it now stands.") { d, p, _ -> d.makeAbsolute(p.elements[0], p.dofs) },
             // ----- Curves -----
             ToolDef(LINE, "Line", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to draw an infinite line.") { d, p, _ -> d.line(p.points[0], p.points[1]) },
             ToolDef(SEGMENT, "Segment", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), shortcut = 'L', help = "Click two points to draw a segment.") { d, p, _ -> d.segment(p.points[0], p.points[1]) },
@@ -395,7 +419,12 @@ object Tools {
             // would place two free points beside them that nothing reads (see [Document.orthoRectangle])
             ToolDef(RECTANGLE, "Rectangle", ToolCategory.CURVES, listOf(SlotKind.SIDE, SlotKind.SIDE), shortcut = 'R', recordsSteps = true, help = "Click two diagonally opposite corners. The result is a closed ortho path: drag a corner or a whole side, type either side's length, and thicken it into walls. A corner clicked on existing geometry joins it, exactly as an ortho-path click does.") { d, p, _ -> d.orthoRectangle(p.clicks[0], p.clicks[1], p.landings.getOrNull(0), p.landings.getOrNull(1)) },
             ToolDef(ROUNDED_RECT, "Rounded rectangle", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(len("radius")), help = "Type a corner radius (or pick a parameter in the panel), then click two diagonally opposite corners; centre and size follow those two points.") { d, p, s -> d.roundedRectangle(p.points[0], p.points[1], s[0]) },
-            ToolDef(POLYGON, "Regular polygon", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), minCount = 3, help = "Set the number of sides, then click the centre and one vertex; the other vertices are that one rotated about the centre.") { d, p, _ -> d.regularPolygon(p.points[0], p.points[1], p.count) },
+            // the corner radius is a **defaulted** length slot (0 = don't round), and a non-zero one turns the
+            // same two clicks into OP-23's composition — a circular pattern of the vertex, one replicated side
+            // and one replicated fillet. So the everyday shortcut and the general mechanism are one
+            // construction, and the tool records the steps that say which (see [Document.regularPolygonGesture]).
+            // It does not itself replicate: what it builds *is* a pattern.
+            ToolDef(POLYGON, "Regular polygon", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(len("corner radius", 0.0)), minCount = 3, recordsSteps = true, replicates = false, help = "Set the number of sides, then click the centre and one vertex; the other vertices are that one rotated about the centre. Type a corner radius first to get a rounded polygon — a live pattern whose count you can re-stamp.") { d, p, s -> d.regularPolygonGesture(p, s) },
             // ----- Solids: the 2D->3D seam (OP-17). The sketch plane is the world XY plane in this
             // slice; the depth/angle is a panel parameter, which is where the feature's DOF is edited
             // (OP-13) since the 3D view has no picking yet.
@@ -414,6 +443,8 @@ object Tools {
             ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.SOLIDS, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that side face, where u runs along the edge from its start and v runs down from the top. Cut there drills into the material; Extrude builds a boss out of it.") { _, _, _ -> },
             // `facePartOperand` makes elements[0] the part being cut — the *tip* of its boolean chain as it
             // stands, resolved by the editor and recorded in the step, so cuts chain instead of forking
+            // it **does** replicate, and as a *chain*: the part operand is re-resolved per copy, so a Cut on one
+            // member of a face-space pattern becomes a bolt circle of pockets in one body (OP-23)
             ToolDef(CUT, "Cut", ToolCategory.SOLIDS, listOf(SlotKind.AREA), scalars = listOf(len("depth")), facePartOperand = true, help = "In a face view: type a depth (or pick a parameter in the panel), then click an area — it is extruded into the material and subtracted from the part this face belongs to (a drilled hole, a pocket, a slot).") { d, p, s -> d.cutOnFace(p.elements[0], p.elements[1], s[0]) },
             // ----- Booleans (OP-22): exact for solids extruded along the same axis. Two solid picks and
             // nothing else — the slab algebra is the op node's job, so these are data like every other tool.
@@ -447,26 +478,34 @@ object Tools {
             // count is structural, so a different count is a different construction, not an edited value.
             // Their geometry slot takes a **whole group** as one operand (`groupOperand`, OP-16), which is
             // why both build from the whole of `p.elements`: one element is the list of one.
-            ToolDef(ARRAY_LINEAR, "Linear array", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT, SlotKind.POINT), minCount = 2, groupOperand = true, help = "Set the number of instances, then click the geometry and two points giving the step vector; every copy follows both. With a whole group selected, clicking any member arrays the whole group.") { d, p, _ -> d.linearArray(p.elements, p.points[0], p.points[1], p.count) },
-            ToolDef(ARRAY_CIRCULAR, "Circular array", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), minCount = 2, groupOperand = true, help = "Set the number of instances, then click the geometry and the centre; the copies are spaced evenly round it. With a whole group selected, clicking any member arrays the whole group.") { d, p, _ -> d.circularArray(p.elements, p.points[0], p.count) },
+            ToolDef(ARRAY_LINEAR, "Linear array", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT, SlotKind.POINT), minCount = 2, groupOperand = true, replicates = false, help = "Set the number of instances, then click the geometry and two points giving the step vector; every copy follows both. With a whole group selected, clicking any member arrays the whole group.") { d, p, _ -> d.linearArray(p.elements, p.points[0], p.points[1], p.count) },
+            ToolDef(ARRAY_CIRCULAR, "Circular array", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), minCount = 2, groupOperand = true, replicates = false, help = "Set the number of instances, then click the geometry and the centre; the copies are spaced evenly round it. With a whole group selected, clicking any member arrays the whole group.") { d, p, _ -> d.circularArray(p.elements, p.points[0], p.count) },
+            // patterns (OP-23). A pattern is **not** an array: an array copies geometry, a pattern states a
+            // rule that later gestures ride, and its members are shared points the copies are built *on*. Both
+            // record their own `pattern` step, because a pattern is a named object whose count can be
+            // re-stamped — and neither replicates, since what it builds is the pattern itself.
+            ToolDef(PATTERN_CIRCULAR, "Circular pattern", ToolCategory.TRANSFORM, listOf(SlotKind.POINT, SlotKind.POINT), minCount = 2, recordsSteps = true, replicates = false, help = "Set the number of instances, then click the centre and one reference point: the point is repeated evenly round the centre. Anything you build on its members afterwards is repeated round it too — one segment makes every side, one fillet rounds every corner.") { d, p, _ -> d.createPattern(PatternKind.CIRCULAR, p.points[1], p.points[0], p.count) },
+            ToolDef(PATTERN_LINEAR, "Linear pattern", ToolCategory.TRANSFORM, listOf(SlotKind.POINT, SlotKind.POINT), minCount = 2, recordsSteps = true, replicates = false, help = "Set the number of instances, then click the base point and the step vector's end: the base is repeated along that vector. Anything you build on its members afterwards is repeated along it too (a row of holes, one circle).") { d, p, _ -> d.createPattern(PatternKind.LINEAR, p.points[0], p.points[1], p.count) },
             // ----- Measure -----
-            ToolDef(DISTANCE, "Distance", ToolCategory.MEASURE, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to measure their distance.") { d, p, _ -> d.measureDistance(p.points[0], p.points[1]) },
-            ToolDef(ANGLE, "Angle", ToolCategory.MEASURE, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click a point, the vertex, then another point.") { d, p, _ -> d.measureAngle(p.points[0], p.points[1], p.points[2]) },
-            ToolDef(LENGTH, "Length", ToolCategory.MEASURE, listOf(SlotKind.SEGMENT), help = "Click a segment to measure its length.") { d, p, _ -> d.measureLength(p.elements[0]) },
-            ToolDef(RADIUS, "Radius", ToolCategory.MEASURE, listOf(SlotKind.CIRCLE), help = "Click a circle or arc to measure its radius.") { d, p, _ -> d.measureRadius(p.elements[0]) },
-            ToolDef(COORD_X, "X coordinate", ToolCategory.MEASURE, listOf(SlotKind.POINT), help = "Click a point to read its x coordinate.") { d, p, _ -> d.measureX(p.points[0]) },
-            ToolDef(COORD_Y, "Y coordinate", ToolCategory.MEASURE, listOf(SlotKind.POINT), help = "Click a point to read its y coordinate.") { d, p, _ -> d.measureY(p.points[0]) },
-            ToolDef(ANGLE_LINES, "Angle (2 lines)", ToolCategory.MEASURE, listOf(SlotKind.LINE, SlotKind.LINE), help = "Click two lines to measure the angle between them.") { d, p, _ -> d.measureAngleLines(p.elements[0], p.elements[1]) },
+            // a measurement is a **reading**, not geometry: six of the same number is clutter where one is the
+            // answer, so the measure and annotate tools decline the orbit (OP-23)
+            ToolDef(DISTANCE, "Distance", ToolCategory.MEASURE, listOf(SlotKind.POINT, SlotKind.POINT), replicates = false, help = "Click two points to measure their distance.") { d, p, _ -> d.measureDistance(p.points[0], p.points[1]) },
+            ToolDef(ANGLE, "Angle", ToolCategory.MEASURE, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), replicates = false, help = "Click a point, the vertex, then another point.") { d, p, _ -> d.measureAngle(p.points[0], p.points[1], p.points[2]) },
+            ToolDef(LENGTH, "Length", ToolCategory.MEASURE, listOf(SlotKind.SEGMENT), replicates = false, help = "Click a segment to measure its length.") { d, p, _ -> d.measureLength(p.elements[0]) },
+            ToolDef(RADIUS, "Radius", ToolCategory.MEASURE, listOf(SlotKind.CIRCLE), replicates = false, help = "Click a circle or arc to measure its radius.") { d, p, _ -> d.measureRadius(p.elements[0]) },
+            ToolDef(COORD_X, "X coordinate", ToolCategory.MEASURE, listOf(SlotKind.POINT), replicates = false, help = "Click a point to read its x coordinate.") { d, p, _ -> d.measureX(p.points[0]) },
+            ToolDef(COORD_Y, "Y coordinate", ToolCategory.MEASURE, listOf(SlotKind.POINT), replicates = false, help = "Click a point to read its y coordinate.") { d, p, _ -> d.measureY(p.points[0]) },
+            ToolDef(ANGLE_LINES, "Angle (2 lines)", ToolCategory.MEASURE, listOf(SlotKind.LINE, SlotKind.LINE), replicates = false, help = "Click two lines to measure the angle between them.") { d, p, _ -> d.measureAngleLines(p.elements[0], p.elements[1]) },
             // 3D measurements (OP-4): the solid is picked in plan by its footprint hint, like any other
             // solid pick, and the number lands in the panel as a read-only scalar — usable downstream.
-            ToolDef(VOLUME, "Volume", ToolCategory.MEASURE, listOf(SlotKind.SOLID), help = "Click a solid to measure its volume.") { d, p, _ -> d.measureSolidVolume(p.elements[0]) },
-            ToolDef(EXTENT_X, "Extent (X)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), help = "Click a solid to measure how far it reaches along X.") { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.X) },
-            ToolDef(EXTENT_Y, "Extent (Y)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), help = "Click a solid to measure how far it reaches along Y.") { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.Y) },
-            ToolDef(EXTENT_Z, "Extent (Z)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), help = "Click a solid to measure its height along Z.") { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.Z) },
+            ToolDef(VOLUME, "Volume", ToolCategory.MEASURE, listOf(SlotKind.SOLID), replicates = false, help = "Click a solid to measure its volume.") { d, p, _ -> d.measureSolidVolume(p.elements[0]) },
+            ToolDef(EXTENT_X, "Extent (X)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), replicates = false, help = "Click a solid to measure how far it reaches along X.") { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.X) },
+            ToolDef(EXTENT_Y, "Extent (Y)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), replicates = false, help = "Click a solid to measure how far it reaches along Y.") { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.Y) },
+            ToolDef(EXTENT_Z, "Extent (Z)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), replicates = false, help = "Click a solid to measure its height along Z.") { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.Z) },
             // ----- Annotate: dimensions (OP-4) — the graphic shows a measurement, and drives nothing -----
-            ToolDef(DIM_LINEAR, "Linear dimension", ToolCategory.ANNOTATE, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT, SlotKind.SIDE), shortcut = 'M', help = "Click two points, then click where the dimension line should sit (drag it later, or type the offset).") { d, p, _ -> d.linearDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
-            ToolDef(DIM_RADIAL, "Radial dimension", ToolCategory.ANNOTATE, listOf(SlotKind.CENTRIC, SlotKind.SIDE), help = "Click a circle or arc, then click where the leader and its radius should sit.") { d, p, _ -> d.radialDimension(p.elements[0], p.at, p.dofs) },
-            ToolDef(DIM_ANGULAR, "Angular dimension", ToolCategory.ANNOTATE, listOf(SlotKind.LINE, SlotKind.LINE, SlotKind.SIDE), help = "Click two lines, then click inside the angle you mean — that sector is what the dimension names.") { d, p, _ -> d.angularDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
+            ToolDef(DIM_LINEAR, "Linear dimension", ToolCategory.ANNOTATE, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT, SlotKind.SIDE), shortcut = 'M', replicates = false, help = "Click two points, then click where the dimension line should sit (drag it later, or type the offset).") { d, p, _ -> d.linearDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
+            ToolDef(DIM_RADIAL, "Radial dimension", ToolCategory.ANNOTATE, listOf(SlotKind.CENTRIC, SlotKind.SIDE), replicates = false, help = "Click a circle or arc, then click where the leader and its radius should sit.") { d, p, _ -> d.radialDimension(p.elements[0], p.at, p.dofs) },
+            ToolDef(DIM_ANGULAR, "Angular dimension", ToolCategory.ANNOTATE, listOf(SlotKind.LINE, SlotKind.LINE, SlotKind.SIDE), replicates = false, help = "Click two lines, then click inside the angle you mean — that sector is what the dimension names.") { d, p, _ -> d.angularDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
         )
 
     /**

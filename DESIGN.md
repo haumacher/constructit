@@ -386,11 +386,13 @@ auto-uniquified so wiring is unambiguous — see *Usability — click budgets*):
   inputs), Key points (sub-entity extract), Join points (weld two points into one — see *Welding* below)
 - Curves: Line, Segment, Ray, Circle (c,pt), Circle (c,r), Circle (3pt), Arc (3pt),
   Arc (centre,ends), Concentric circle, Rectangle, Rounded rectangle (the `roundedRect` macro as a
-  tool), Regular polygon, Break curve (one tool over an ortho leg, a segment, an arc and a Bézier —
+  tool), Regular polygon (with an optional corner radius, which builds OP-23's pattern composition),
+  Break curve (one tool over an ortho leg, a segment, an arc and a Bézier —
   see *Break and join legs*, OP-19)
 - Construct: Perp/Parallel-through, Perp-bisector, Angle-bisector, Parallel-at-distance,
   Tangent-from-point, Tangent-at-point (1 click), Fillet, Chamfer, Outer/Inner common tangents
-- Transform: Mirror, Rotate, Scale, Translate-by-vector, Linear array, Circular array
+- Transform: Mirror, Rotate, Scale, Translate-by-vector, Linear array, Circular array, and **Circular /
+  Linear pattern** — a *rule* later gestures ride rather than a copy of geometry (OP-23)
 - Measure: Distance, Angle (3pt), Angle (2 lines), Length, Radius, X/Y coordinate, and of a solid
   (OP-4 forward): Volume, Extent X/Y/Z (three tools, because the axis is a stored discrete choice and a
   tool id is where a `tool` step stores one)
@@ -564,6 +566,11 @@ exist**, exactly as an ortho path's vertex count does. It is therefore a propert
 parameter: `Editor.count` is a tool option like the wall justification (there is no slot to click it
 into), it is recorded in the tool step as `count=n`, and replay re-runs the tool with it verbatim — the
 loader's element-count check then vouches for it. Changing a count later means using the tool again.
+
+> **Superseded for one construction (OP-23).** A **pattern** stores the rule of every gesture that rides it,
+> which makes "changing a count later" a journal rewrite (re-stamp) rather than a re-draw — without making the
+> count live and without a compound value. The paragraph below still holds verbatim for an array's and a
+> polygon's count, which store no such rule. See *Patterns as orbits*.
 
 That is the honest answer here, and the alternative is worth naming: a **live** count — a parameter that
 adds and removes copies as you edit it — cannot be one node per copy, because the number of nodes would
@@ -1352,6 +1359,225 @@ click would have run. Only the arc needed one, `breakarc <el> <angle> ccw|cw`, b
 hangs off the arc it names: the **angle is state** (the rider slides, so it is restated on save) and the sweep
 is a **stored discrete choice** (OP-1), taken from the carrier and never re-derived from the click. One
 checkpoint per break, however many steps it emitted — the same rule a path's start/vertex/close steps follow.
+
+## Patterns as orbits (OP-23 — RESOLVED)
+
+**The user's design, adopted whole.** A pattern is not a copy of geometry. It is a **rule** — a reference
+member, what that member is repeated about, and a count — plus the list of gestures that ride it. The rule:
+
+> **Any subsequent operation whose inputs touch pattern members is replicated by index shift.** Draw
+> `segment(ref0, ref1)` and the editor also records `segment(refj, refj+1)` for every *j*. Fillet
+> `(edge0, edge1)` and every corner rounds. And the **outputs of a replicated operation become members at
+> their own index**, so the orbit *grows*: geometry built on replicated geometry replicates too.
+
+A circular pattern is a centre click, a reference click and the count field; creating it replicates the
+reference point *n*−1 times round the centre (the ring — polygon vertices, but as a live object). The linear
+analog is a base point, a step vector's end, and *n*.
+
+### Why this is not the array tool one level up
+
+The two look alike and are opposites, which is the whole reason both exist (`ARRAY_*` is untouched by this OP):
+
+| | array (OP-6's macros, generalized) | pattern (this OP) |
+|---|---|---|
+| what is repeated | **geometry** — copy *k* is a transform node over the original | a **gesture** — copy *j* is the same tool applied to shifted members |
+| what a copy is built on | a transform of the original's points | the **shared member points themselves** |
+| adjacent copies | meet at two coincident-but-distinct points | meet at **one node** |
+| adding a feature later | array it again, and hope the two arrays line up | draw it once; it fans out |
+| changing the count | use the tool again (structural, OP-18) | **re-stamp**: the rule is re-run at the new count |
+
+The third row is the load-bearing one. Because a copy is built *on* the members rather than transformed off
+copy 0, **there is no seam**: side *j* and side *j*+1 reference the very same `SourceNode`, so they coincide
+because sharing a node *is* equality (OP-5) and not because a tolerance says so. The visible dividend is that
+the Outline tracer crosses every copy boundary and every fillet joint **with zero new machinery** — a rounded
+hexagon traces in two clicks, exactly as the hand-drawn filleted triangle of OP-14 does, and extrudes
+watertight. That is asserted rather than asserted-of (`PatternTest.adjacentSidesShareTheRingsPointNodes`,
+`theRoundedPolygonTracesInTwoClicksAndExtrudesWatertight`).
+
+### The invariance rule — what a replicated gesture may touch besides members
+
+A gesture replicates when one pick is a member **and every other pick is either a member of the same pattern
+or invariant under the pattern's transform.** Otherwise it does not replicate, applies once, and the status
+line names the input that stopped it (*"not replicated: e9 is outside the pattern"*). Three consequences, each
+falling out of the geometry rather than being legislated:
+
+- **Scalars need no test at all.** Every copy is handed the *same* parameter node, so one radius drives all
+  six roundings by reference (OP-5). Retyping it re-rounds the lot with nothing regenerated.
+- **A rotation has exactly one fixed point: its centre.** So a spoke from a member to the centre is a
+  legitimate replicated gesture, and six spokes come out of one click pair.
+- **A translation has no fixed point.** So a *linear* pattern's gestures may touch members and shared scalars
+  and nothing else. Stated, not worked around.
+
+**Alt suppresses replication**, which is the existing Alt semantics ("leave the model as I put it") said one
+level up: this feature is a one-off — a keyway, a single flat, one chamfer. Note the two halves agree rather
+than fight: on a slot that *places* a point Alt already declines the snap, so a one-off there is a one-off by
+construction, and on a slot that picks existing geometry (a fillet leg) Alt is what makes the single feature
+possible at all.
+
+Two exclusions are **declared** in the tool table (`ToolDef.replicates`, and it defaults to **true** —
+the rule of this OP is that *any* gesture fans, so a table where each tool had to opt in would be a rule with
+exceptions instead): a tool that owns a degree of freedom of its own whose value is absolute (the point-on-line
+and point-on-circle riders, the dimensions, the re-parameterizations) and a **measurement**, which is a
+*reading* rather than geometry — six copies of one number is clutter where one is the answer. Two more are
+structural and enforced in `Document.replicationOf` rather than declared: a `repeating` tool already collects
+the whole ring in one gesture (that is the Outline tool), and a tool with no slots cannot touch a member.
+
+### Chain or fan — the per-tool orbit rule (as built, on a review probe)
+
+A gesture over *points and curves* is a **fan**: the copies are independent, built on shared members, and
+nothing sequences them. A gesture over a *solid* is not, and the difference is the whole of the mechanical
+payoff case. A probe found the gap: a ring of four circles on a plate's face plus one **Cut** cut **one**
+pocket, because a face-part tool's operand is the part the editor resolved for it (OP-17) — one body, one
+subtraction, no fan at all.
+
+**The rule, and it is derivable from the tool's own declaration rather than being a new flag:**
+
+| tool | its solid operand | orbit rule |
+|---|---|---|
+| **Cut** (`facePartOperand`) | the part of the face space, resolved by the editor — *not* a pick | **chain**: copy *k*'s base is the tip **after** copy *k*-1, i.e. OP-17's sequential-feature rule applied once per index. One body with *n* pockets. |
+| **Extrude on face** (a `SOLID` slot) | a picked base solid | **fan**: every copy raises its boss off the *same* base, giving *n* independent solids. Honest, and what "a boss per member" means. |
+| Union / Subtract / Intersect solids / Section / Cut openings | two `SOLID` slots, or one | never triggers in practice — a solid becomes a pattern member only if an orbit built it, and then it is an ordinary member fan like any other. |
+| everything else (points, curves, fillets, …) | none | **fan** over members. |
+
+Two things fall out of this. A **solid is the one non-member, non-invariant input a replicated gesture may
+touch**, because it is the body a feature is applied *to* rather than a geometric input that has to travel with
+the copy — every other outside input is still refused by name. And **subtractive means chain, additive means
+fan**, which is not a special case but the same statement OP-17 already makes about a single feature: a cut
+consumes the part, a boss consumes a face.
+
+**What the file records for a chain: the rule, not the *k* names.** A single `tool cut` step names its resolved
+base, and deliberately so (replay must not re-resolve it and fork). An orbit cannot: copy *k*'s base is a
+different body for every *k* **and for every count**, so a baked chain of names could not exist at another
+count — the re-stamp would have nothing to hand copy 5 of an eight-fold ring. So the step says `part=tip`, and
+each copy resolves the tip in index order exactly as the editor's own click did. That is a *positional*
+reference, of the same kind the ortho steps have always used for "the current path", and it is deterministic
+for the same reason: the script prefix before it is the same on every replay. The chain is one `orbit` step, so
+one undo removes every pocket, and a count change re-runs it (four pockets → six, asserted by volume, since
+volume is what tells a chain from a fan: four *forks* would leave a tip missing one pocket).
+
+### The bookkeeping encoding — one step per gesture, and it is the rule
+
+Replication is **edit-time bookkeeping**, in the exact sense of OP-18's outline-follow precedent: *the machine
+saves the clicks, the file stores what the clicks stated.* Two step kinds, both pure descriptions:
+
+```
+point 0,0 -> e1
+point 100,0 -> e2
+pattern "P1" circular ref=e2 centre=e1 count=6 -> e3,e4,e5,e6,e7
+orbit "P1" segment pts=e2@0,e2@1 cells=100,0;100,0.0000000000000071054273576 -> e8,e9,e10,e11,e12,e13
+param "fillet" = 20mm
+orbit "P1" fillet els=e8@0,e8@1 cells=65,60.62177826;85.00000000000001,25.98076211 scalar="fillet" signs=-1;1 -> e14,…,e19
+tool outline els=e8,e14,e9,e15,e10,e16,e11,e17,e12,e18,e13,e19 clicks=… -> e20,…,e32
+tool extrude els=e32 scalar="depth" -> e33
+```
+
+That is the whole acceptance model — a rounded hexagon, traced and extruded — in nine lines. The decisions
+inside it:
+
+- **One `orbit` step per gesture, not *n* ordinary steps.** The alternative (record the *n* copies as *n*
+  ordinary `tool` steps) replays just as exactly, and was rejected for one reason: the file would then not know
+  that the *n* steps were one gesture, so the count change would have nothing to re-run. A compact encoding
+  where the step **is** the rule makes the journal bookkeeping the file's own content rather than session
+  state. One step is also one checkpoint, hence **one undo removes the whole orbit** — no extra rule needed.
+- **A member pick is written `e2@1`: the member of `e2`'s orbit at index 1.** `e2` is always that orbit's
+  member 0 — the reference point for the ring, copy 0's output for a derived orbit — and member 0 is the one
+  member *every* count has, so the reference survives a re-stamp in either direction. It is an ordinary
+  element reference, which is what makes an orbit's picks travel through the delete cascade and the name map
+  with no new case (`Arg.Member`).
+- **Indices are stored relative to the gesture's lowest member index.** The recorded rule therefore says
+  nothing about *which* copy the user happened to click: the base copy is the gesture shifted down to offset 0,
+  and copy *j* uses `offset + j` (mod *n* for a ring). One consequence worth having: the same clicks produce
+  the same file whether the user started at member 0 or member 4.
+- **`cells=` are the gesture's clicks, carried back to the cell of member 0.** Geometry is *never*
+  transformed here — a click is, because a click states a choice ("this quadrant", "the outside") and the
+  corresponding choice in another cell is that same click carried round by the pattern's own transform. Storing
+  it cell-locally is what makes a re-stamp come out right: at a new count each copy's click is re-derived from
+  the pattern's *current* shape, so it lands where the new member is.
+- **`signs=` are scored exactly once, by the first copy, and handed to every other copy verbatim** (OP-1,
+  and OP-18's *a scored choice must be persisted at creation*). Every copy of a congruent configuration scores
+  the same variant anyway; taking the first copy's answer removes both the redundant work and the floating-point
+  risk of scoring a rotated click against rotated geometry.
+- **The loader's count check still vouches for everything.** An `orbit` step declares *n*×*k* names and must
+  create exactly that many; a `pattern` step declares *n*−1. `save → load → save` byte-equality is asserted at
+  every stage of the acceptance flow, the count changes included.
+
+### Count change — a journal rewrite, and the one thing mod-*n* cannot absorb
+
+Changing the count is the delete machinery's move with one literal changed instead of a step removed: save the
+script, replay it with the pattern's `count=` rewritten, adopt the result (`DocumentFormat.restamp`). Nothing
+is copied and nothing is patched — each `orbit` step *is* its gesture's rule, so re-running the script at the
+new count **is** the whole update. Three rules make that safe:
+
+- **Names map positionally.** A member a bigger count adds is simply unnamed (nothing referred to it); a
+  member a smaller count removes leaves its name unmapped, and the steps that named it are **dropped and
+  named** in the status line. That is precisely the promised behaviour for an Alt-suppressed one-off: it stays
+  single through any count change *if its anchor index survives*, and if it does not, the drawing says which
+  feature it lost rather than silently moving it somewhere else.
+- **A step a re-stamp did not resize is still held to the strict count check.** The relaxation is scoped to
+  the pattern being re-stamped, its own gestures, and a re-followed boundary — everywhere else a count mismatch
+  remains the load error it always was (OP-18). A load is strict; a re-stamp is an *edit*, and an edit may lose
+  something as long as it says so.
+- **A gesture spanning more neighbours than the new count has members is refused, by name, before anything
+  happens.** This is the honest answer to *"can that even happen with mod-n?"* — **yes.** "Member 0 to member
+  4" is a pair at six; at three it is not a pair at all, and folding it to (0, 1) would quietly make a
+  different drawing. So `Document.restampRefusal` reports *"can't re-stamp pattern P1 at 3: its segment spans 4
+  members of a 3-member orbit — use the tool again instead"*, and the drawing is untouched.
+
+**A row does not wrap, and that is not a special case.** For a linear pattern a gesture spanning *m*+1
+neighbouring members makes *n*−*m* copies — four rungs between five holes — because wrapping round would jump
+back across the whole row. One expression covers both kinds (`copiesFor`): a ring's copy count is its member
+count, a row's is `min(orbit size − offset)`.
+
+**The traced outline re-follows itself, rather than invalidating.** This was the one open choice, and the
+better of the two options turned out to be available. The Outline tool's boundary-follow is edit-time
+bookkeeping (OP-14: the file keeps the whole ordered boundary, and a *load* discovers nothing); a re-stamp is
+an edit, so it may follow. When a re-stamp replays an `outline` step whose pieces are pattern members, the
+tracer's own two sources of truth — the joint registry and coincident endpoints (`Document.followedLoop`) — are
+re-run from that step's first two picks, and the rewritten step carries the full new list. So a hexagon
+re-stamped to eight sides comes back as a closed sixteen-piece boundary and a watertight solid, and the file it
+saves is as explicit as the one it replaced. If the follow does **not** close (a fork, a gap), the step is
+dropped with the reason *"the pattern's boundary no longer closes by itself — trace it again (two clicks)"* —
+the honest fallback, and it heals in two clicks. OP-14's refusal of *discovering* the loop is untouched: a
+reload still follows nothing.
+
+**Names line up from the right end.** A pattern's and an orbit's creations are copy-major, so a surviving name
+keeps meaning the same copy when counted from the start; a traced outline creates its joints first and the
+**loop last**, so its names line up from the *end* — which is what keeps the loop's name naming the loop, and
+so keeps the extrude built on it alive.
+
+### The everyday shortcut: a polygon with a corner radius
+
+*Regular polygon* gained one **defaulted** length slot, `corner radius` (0 = don't). With no radius it is
+exactly the tool it always was, recorded as the same `tool polygon` step (asserted byte-for-byte, and an unused
+defaulted slot still costs the step nothing — OP-13's rule). With a radius it builds **this OP's composition**:
+a circular pattern of the clicked vertex, one replicated side, one replicated fillet — so the shortcut and the
+general mechanism are the *same construction*, the shortcut is fully re-stampable, and the file says which of
+the two the user asked for. What it is not is a new shape kind.
+
+One honest wart, recorded rather than papered over: this is the first **defaulted `LENGTH`** slot, and the
+existing rule for a defaulted slot only declines a pick of the *wrong dimension* — so a length parameter left
+active by a previous tool will be adopted as a corner radius. The result is visible and undoable, and the
+alternative (a defaulted slot that refuses every pick) would break the ratio-point behaviour that rule exists
+for.
+
+### Click cost
+
+The acceptance model — a rounded hexagon, outlined and extruded — costs **16 actions** by the general
+mechanism (pattern 3, one side 3, one fillet 4, outline 3, extrude 3, counting a tool switch, a click and a
+typed number as 1 each, per the click-budget rules), and **10** through the polygon shortcut. Drawing the same
+figure without patterns is 6 vertices + 6 sides + 6 fillets ≈ 40. The count change afterwards is **2** (type
+the count, press Re-stamp) where it used to be "draw it again".
+
+### What is deliberately not here
+
+- **A pattern of a pattern.** The pattern tools do not replicate (what they build *is* a pattern), so patterns
+  do not nest. Nothing in the model forbids it; nothing has asked for it.
+- **A pattern as a tool operand, or a whole group as a pattern's reference** (OP-16's `groupOperand`): the
+  reference is one point. A group *ring* would be the natural next demand, and it is the arrays' territory
+  today.
+- **Angular spacing other than the full turn** (a 90° sector of six). The count means *evenly round*, exactly
+  as the circular array's does; a partial pattern needs an angle input and a decision about whether the ring
+  closes, which is a design question and not an omission.
 
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
@@ -4444,6 +4670,68 @@ Three broad families (see OP-9 decision above):
   `ElementListSpaceTest`, plus two on the rectangle in `ToolCompletionsTest`), 820 green, browser E2E green.
   Reverting the per-axis delegation fails exactly the two tests about the bend and leaves the rest green, which
   is what makes the fixture a regression test rather than a snapshot.
+- **Patterns as orbits (OP-23) — the user's own design, and the four things building it settled.** The demand
+  arrived as a finished design: a pattern is a centre, a reference and a count, and *any later gesture whose
+  inputs touch its members is replicated by index shift*. Adopted whole; what the implementation had to decide
+  was everything around the rule.
+  (1) **The encoding is one step per gesture, and the step is the rule.** Recording the *n* copies as *n*
+  ordinary `tool` steps replays identically and was still wrong: the file would not know they were one gesture,
+  so a count change would have nothing to re-run and "which steps belong to which gesture" would live only in
+  the session. `orbit "P1" segment pts=e2@0,e2@1 cells=…` is the whole of the bookkeeping, in the file, and it
+  brings one checkpoint (hence one undo for the whole orbit) with it for free. The member reference is written
+  as an **element name plus an index** on purpose — `e2@1` is an ordinary reference as far as the delete
+  cascade and the name map are concerned, so neither needed a new case, while the index says the *rule* rather
+  than one of its copies. Indices are stored relative to the gesture's lowest, so the file does not record
+  which copy the user's hand happened to be over.
+  (2) **Clicks are the only thing transformed, and they are stored cell-locally.** Geometry must not be
+  transformed — that is the point of the whole OP — but a click *states a choice*, and the corresponding choice
+  in another cell is that click carried round. Storing each click carried back to member 0's cell is what makes
+  a re-stamp correct rather than approximately correct: at the new count every copy's click is re-derived from
+  the pattern's current shape. The scored `signs=` then need not be re-derived at all — the first copy scores
+  once and the rest take its answer verbatim, which is OP-1's rule and also removes the floating-point risk of
+  re-scoring a rotated click against rotated geometry.
+  (3) **Mod-*n* is not a universal solvent, and the refusal was the interesting part.** The design asked
+  whether a gesture could fail to re-apply at a new count "with mod-n". It can: a gesture from member 0 to
+  member 4 is a *pair* at six and not a pair at three, and folding it to (0, 1) would silently draw something
+  else. So the re-stamp refuses by name before touching the drawing. The other loss is honest rather than
+  refused: a smaller count genuinely removes members, so a step that named one is dropped **and reported** —
+  which is exactly the promised behaviour for an Alt-suppressed one-off ("stays single if its anchor index
+  survives"). What made all of it implementable was that name mapping is positional, plus one wrinkle worth
+  recording: a traced outline creates its joints first and the **loop last**, so its surviving names line up
+  from the *end* while a pattern's and an orbit's line up from the start.
+  (4) **The outline re-traces; it does not invalidate.** The offered fallback was to invalidate a boundary
+  whose ring changed and let the user re-trace. It was not needed: the tracer's follow is *edit-time*
+  bookkeeping (OP-14), and a re-stamp is an edit, so re-running the same follow from the step's first two picks
+  is entirely in keeping with "recorded, not discovered" — a reload still discovers nothing. A hexagon
+  re-stamped to eight sides comes back a closed sixteen-piece loop and a watertight solid. The honest fallback
+  survives for the case where the follow does not close, with the reason and a two-click cure.
+  The dividend the design predicted showed up exactly as predicted, and is the assertion worth keeping: because
+  copies are built **on** the shared members rather than transformed off copy 0, adjacent sides reference one
+  node, and the Outline tracer crossed every copy boundary and every fillet joint with **no new machinery at
+  all** — the two-click trace of OP-14's hand-drawn triangle, unchanged.
+  (5) **A review probe found the one gap, and it was the mechanical payoff case: subtractive means chain.** A
+  ring of four circles on a plate's face plus one *Cut* cut **one** pocket — a face-part tool's operand is the
+  part the editor resolved for it (OP-17), not a pick, so the fan had nothing to shift and the gesture applied
+  once. The fix is not a new concept but the *existing* tip rule applied per index: copy *k* subtracts from what
+  copy *k*-1 left, and one gesture is a bolt circle of pockets in one body. Two decisions worth keeping. A
+  **solid is the one outside input a replicated gesture may touch**, because it is the body a feature is applied
+  *to* rather than a geometric input that must travel with the copy — and whether the same body means a *chain*
+  (Cut) or a *fan* of independent bosses (Extrude on face) is read off the tool's own declaration rather than a
+  new flag, which is the per-tool table now in this OP. And the step records `part=tip` rather than *k* names:
+  a single Cut names its base precisely so replay cannot re-resolve and fork, but an orbit's base is a different
+  body at every count, so the only form that survives a re-stamp is the rule — a positional reference of exactly
+  the kind the ortho steps have always used for "the current path", deterministic for the same reason. Volume is
+  the assertion that tells a chain from a fan (four forks leave a tip missing one pocket), and it holds at four
+  and again at six after a re-stamp. Two smaller things paid for
+  themselves: `ToolDef.replicates` defaults to **true** (a rule with per-tool opt-in would be a rule with
+  exceptions; the handful of `false`s are tools that own an absolute DOF, and measurements, which are readings
+  rather than geometry), and `recording` gained an `argsAfter` hook because a gesture's `signs=` are only known
+  once its first copy has been built. **18 new tests** (`PatternTest` — the acceptance flow end to end, the
+  shared-node assertion, the non-invariant refusal, Alt, undo of a whole orbit, 6→8→5 with and without a
+  one-off, the chained bolt circle of pockets, the linear row, and both polygon paths), plus the two review
+  probes (`PatternProbeTest`), 843 green, browser E2E extended with a fifth flow
+  (`patternOrbitsInBrowser`: the ring, the one gesture that becomes six sides, and the count field re-stamping
+  in place).
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -4901,6 +5189,18 @@ corrections from the same face* under OP-17). And (d) GitHub #1, *an extrude on 
 material*: the inward direction belongs to *Cut*, and a face-space *Extrude* is a boss. They left one thing
 parked, stated where it belongs: a partial **revolve** in a face space still sweeps inward, which needs a
 direction argument on the feature.
+
+**Retired in session 15: "changing a count means using the tool again", for patterns.** Not a queue line but a
+*stated limitation* — the structural-count note (see *Tool inputs*) said a live count "cannot be one node per
+copy, because the number of nodes would depend on a value", and offered a compound value plus an addressing
+scheme (OP-8's territory) as the only alternative. OP-23 found the third answer the note did not consider:
+keep the count structural and **re-stamp the journal**. The document stays a pure function of its parameters
+(nothing is live; a count change is an *edit*, one undo step, exactly like a delete), and what makes it
+tractable is that a pattern stores the *rule* of every gesture riding it rather than the geometry those
+gestures made. The limitation still stands verbatim for an **array's** count and a **polygon's** side count,
+which store no rule — that is precisely the difference the new OP is about. It leaves one thing parked, stated
+where it belongs: a **pattern of a pattern**, and a whole **group** as a pattern's reference member (OP-23's
+closing note).
 
 1. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
    connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by

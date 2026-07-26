@@ -617,6 +617,13 @@ private fun setupApp() {
         countField.value = editor.count.toString() // the editor clamps it; show what it actually took
         repaint()
     })
+    // ...and the one place that count is *not* only a tool option: with a pattern member selected it
+    // re-stamps that pattern (OP-23) — the count of a pattern is editable after the fact, because the
+    // pattern stores the rule and every gesture riding it can be re-run.
+    (document.getElementById("t-restamp") as HTMLElement).addEventListener("click", {
+        editor.selectedPattern()?.let { editor.setPatternCount(it, countField.value.toIntOrNull() ?: it.count) }
+        repaint()
+    })
     (document.getElementById("f-copy") as HTMLElement).addEventListener("click", {
         val text = DocumentFormat.save(editor.doc)
         window.navigator.clipboard.writeText(text).then(
@@ -783,6 +790,12 @@ private fun renderPanel(
     (document.getElementById("e-undo") as org.w3c.dom.HTMLButtonElement).disabled = !editor.canUndo
     (document.getElementById("e-redo") as org.w3c.dom.HTMLButtonElement).disabled = !editor.canRedo
     (document.getElementById("e-delete") as org.w3c.dom.HTMLButtonElement).disabled = editor.selection == null
+
+    // the pattern the selection addresses (OP-23), and whether the count field can re-stamp it
+    val pattern = editor.selectedPattern()
+    (document.getElementById("t-restamp") as org.w3c.dom.HTMLButtonElement).disabled = pattern == null
+    (document.getElementById("t-pattern") as HTMLElement).textContent =
+        pattern?.let { "Pattern ${it.name}: ${it.count} instances, ${it.gestures.size} gesture(s) riding it" } ?: ""
 
     // the palette carries the document's own macros beside the built-in tools (OP-6), so it follows the
     // document rather than being built once at startup

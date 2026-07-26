@@ -308,6 +308,52 @@ class Editor(
         return true
     }
 
+    /**
+     * The pattern the current selection addresses (OP-23) — the one a selected member belongs to.
+     *
+     * A pattern is reached through its geometry, exactly as an ortho leg or a jamb is: there is no separate
+     * tree to hunt in, and clicking any member of any of its orbits is enough to name the rule.
+     */
+    fun selectedPattern(): Pattern? = selectedElements.firstNotNullOfOrNull { doc.patternOf(it) }
+
+    /**
+     * **Re-stamp** [p] at [n] instances: rebuild the ring and re-run every gesture that rides it (OP-23).
+     *
+     * A journal rewrite plus a replay — the delete machinery's move, with one literal changed instead of a
+     * step removed. Nothing is copied and nothing is patched: each `orbit` step *is* its gesture's rule, so
+     * running the script again at the new count is the whole of the update, and a traced outline re-follows
+     * the boundary it has now. Refused before anything happens when a gesture cannot mean the same thing at
+     * the new count, and whatever a smaller count genuinely loses is named.
+     */
+    fun setPatternCount(
+        p: Pattern,
+        n: Int,
+    ): Boolean {
+        val why = doc.restampRefusal(p, n)
+        if (why != null) {
+            statusHint = why
+            onChange()
+            return false
+        }
+        val was = p.count
+        val name = p.name
+        val result =
+            try {
+                DocumentFormat.restamp(DocumentFormat.save(doc), name, n)
+            } catch (e: Exception) {
+                statusHint = "Re-stamp failed: ${e.message}"
+                onChange()
+                return false
+            }
+        val (fresh, notes) = result
+        adopt(fresh)
+        checkpoint()
+        val lost = if (notes.isEmpty()) "" else " — ${notes.first()}${if (notes.size == 1) "" else " (and ${notes.size - 1} more)"}"
+        statusHint = "Pattern $name: $was -> $n instances$lost"
+        onChange()
+        return true
+    }
+
     var camera: Camera = Camera.centered(canvasW, canvasH)
     var toolId: String = Tools.SELECT
         private set
@@ -2992,10 +3038,25 @@ class Editor(
         // canvas cannot show is *how much* the tool just took (OP-16)
         val fedGroup = pickedGroup
         val members = picks.elements.size
+        // **The replication trigger** (OP-23): a gesture whose inputs touch a pattern's members is stamped
+        // round it by index shift. Decided *before* the build, from the picks alone, so the answer is the same
+        // whether the gesture ends up replicated, refused or suppressed — and so the refusal can name the
+        // input that stopped it rather than being discovered halfway through a fan.
+        val plan = doc.replicationOf(tool, picks)
+        var orbitNote: String? = plan?.refusal
+        var replicated = false
         // a tool that records its own steps is *not* wrapped in a `tool` step (OP-18): what it builds has
         // degrees of freedom of its own that the steps it emits restate — see [ToolDef.recordsSteps]
         if (tool.recordsSteps) {
             tool.build(doc, picks, scalars.map { it.ref })
+        } else if (plan?.gesture != null && !snapEnabled) {
+            // Alt has always meant *leave the model as I put it*, and declining the orbit is the same
+            // sentence one level up: this feature is a one-off (a keyway, a single flat).
+            orbitNote = "not replicated: Alt keeps it a one-off on pattern ${plan.pattern.name}"
+            doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+        } else if (plan?.gesture != null && doc.buildOrbit(plan, tool, scalars) != null) {
+            replicated = true
+            orbitNote = "${tool.label}: ${plan.copies} copies round pattern ${plan.pattern.name}"
         } else {
             doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
         }
@@ -3004,20 +3065,20 @@ class Editor(
         // A tool that only *rewires* changes nothing the canvas can show (OP-4 case b: a point made relative
         // sits exactly where it did), so a silent success reads the same as a silent refusal. The document says
         // what happened — one channel, not a case per tool here.
-        doc.takeNote()?.let {
-            statusHint = it
-            onChange()
-            return true
-        }
-        statusHint =
+        val note = doc.takeNote()
+        val group =
             if (fedGroup == null) {
-                ""
+                null
             } else {
                 // the copies are deliberately *not* grouped (see OP-16's as-built note), so say it here
                 // rather than leave the user to discover it by clicking one
                 "${tool.label}: ${picks.count} instances of group ${fedGroup.name}'s $members element" +
                     "${if (members == 1) "" else "s"} — the copies are not grouped"
             }
+        // an orbit's own note comes second to what the document said about the geometry it built, except when
+        // the document said nothing — and a *refusal* to replicate leads, since it is the surprise
+        statusHint = listOfNotNull(orbitNote.takeIf { !replicated }, note, group, orbitNote.takeIf { replicated }).joinToString(" — ")
+        onChange()
         return true
     }
 

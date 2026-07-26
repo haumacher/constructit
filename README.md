@@ -31,6 +31,15 @@ first-class goal and the current implementation focus.
   polygons, transforms (mirror / rotate / scale / translate), linear and circular **arrays**, and
   measurements. Any tool that wants a line takes a segment or ray, and any tool that wants a circle takes
   an **arc** — the carrier is what the construction is about.
+- **Patterns are orbits, not copies** — a *pattern* is a rule (a centre, a reference point, a count), and
+  **any later gesture whose inputs touch its members is repeated round it**: one segment makes every side of
+  a hexagon, one fillet rounds every corner, and the outputs join the pattern in turn, so features built on
+  replicated geometry replicate too. Because the copies are built on the *shared* member points, adjacent
+  copies share a node outright — no seam, so the outline tracer walks the whole ring in two clicks and the
+  result extrudes watertight. Alt keeps a feature a deliberate one-off, an input from outside the pattern
+  declines to repeat and says why, and the **count is editable afterwards**: re-stamping rebuilds the ring
+  and re-runs every gesture at the new count. *Regular polygon* with a corner radius is that whole
+  composition in one gesture.
 - **Hide/show is part of the drawing** — hiding scaffolding is a recorded step, so it survives save/load
   and undoes like anything else (a welded alias stays hidden by construction, and is not recorded).
 - **The file is the construction** — a `.cit` drawing is the readable sequence of steps that built it, and

@@ -789,4 +789,78 @@ class BrowserE2ETest {
         }
         server.stop(0)
     }
+
+    /**
+     * **Patterns as orbits, in the real browser** (OP-23): a circular pattern, then *one* segment gesture
+     * that becomes every side, then the count field re-stamping the whole thing at another count.
+     *
+     * What only a browser can answer here: the palette really grew the two pattern buttons, one click pair
+     * really produces the whole ring of sides (the status line says how many), and the count field — a tool
+     * *option* everywhere else — really re-stamps the selected pattern in place, with the canvas showing
+     * different pixels afterwards. A fresh page, so no earlier geometry can be snapped to by accident.
+     */
+    @Test
+    fun patternOrbitsInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status() = page.querySelector("#status").textContent()
+
+            fun curves() = page.querySelectorAll("#tree .item").count { it.textContent().startsWith("segment") }
+
+            val box = page.querySelector("#canvas").boundingBox()
+            val cx = box.x + box.width * 0.5
+            val cy = box.y + box.height * 0.5
+            val r = 120.0
+
+            fun member(k: Int) = Pair(cx + r * kotlin.math.cos(k * kotlin.math.PI / 3), cy - r * kotlin.math.sin(k * kotlin.math.PI / 3))
+
+            // the ring: centre, then the reference member, with the count field as its instance count
+            page.click("#tool-${Tools.PATTERN_CIRCULAR}")
+            page.mouse().click(cx, cy)
+            page.mouse().click(member(0).first, member(0).second)
+            assertTrue(status().contains("Pattern P1"), "the ring should announce itself; got: ${status()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/13-pattern-ring.png")))
+
+            // one segment gesture, six sides — the rule, not a copy
+            page.click("#tool-${Tools.SEGMENT}")
+            page.mouse().click(member(0).first, member(0).second)
+            page.mouse().click(member(1).first, member(1).second)
+            assertTrue(status().contains("6 copies round pattern P1"), "one gesture, six sides; got: ${status()}")
+            assertTrue(curves() == 6, "the tree should list six segments; got ${curves()}")
+            val hexagon = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/14-pattern-sides.png")))
+
+            // the count field, in its other role: with a member selected it re-stamps the pattern (OP-23)
+            page.click("#tool-select")
+            page.mouse().click(member(2).first, member(2).second)
+            assertTrue(page.querySelector("#t-pattern").textContent().contains("Pattern P1"), "the panel names the pattern")
+            assertTrue(page.isEnabled("#t-restamp"), "selecting a member is what makes the count field re-stampable")
+            page.fill("#t-count", "9")
+            page.dispatchEvent("#t-count", "change")
+            page.click("#t-restamp")
+            assertTrue(status().contains("6 -> 9 instances"), "the re-stamp should say what it did; got: ${status()}")
+            assertTrue(curves() == 9, "nine sides after the re-stamp; got ${curves()}")
+            assertTrue(
+                (page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String) != hexagon,
+                "the canvas should show the new count",
+            )
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/15-pattern-restamped.png")))
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

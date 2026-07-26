@@ -39,6 +39,19 @@ sealed interface Arg {
     /** Several numbers in one argument — a tool's own degrees of freedom, in the order it created them. */
     class Nums(val qs: List<Quantity>) : Arg
 
+    /**
+     * A pick of a **replicated gesture** (OP-23), written `e2@1`: the member of [el]'s orbit at index
+     * [offset], where [el] is that orbit's member 0 — the one member every count has.
+     *
+     * An element reference, deliberately: it is what makes an orbit's picks travel through the delete
+     * cascade and the name map like every other reference, while the offset says the gesture's *rule*
+     * rather than one of its copies.
+     */
+    class Member(val el: Element, val offset: Int) : Arg
+
+    /** A comma-separated list of mixed references — a replicated gesture's picks (`e2@0,e1`). */
+    class Refs(val items: List<Arg>) : Arg
+
     /** `key=value`, so a step with several optional parts stays readable. */
     class Keyed(val key: String, val value: Arg) : Arg
 }
@@ -302,6 +315,8 @@ object DocumentFormat {
         when (arg) {
             is Arg.El -> names[arg.el.id] ?: "?${arg.el.id}"
             is Arg.Els -> arg.els.joinToString(",") { names[it.id] ?: "?${it.id}" }
+            is Arg.Member -> "${names[arg.el.id] ?: "?${arg.el.id}"}@${arg.offset}"
+            is Arg.Refs -> arg.items.joinToString(",") { encode(it, names) }
             is Arg.Sc -> quote(arg.entry.name)
             is Arg.Scs -> arg.entries.joinToString(",") { quote(it.name) }
             is Arg.Pos -> pos(arg.p)
@@ -369,10 +384,71 @@ object DocumentFormat {
 
     class LoadError(message: String) : Exception(message)
 
+    /**
+     * A step a **re-stamp** cannot carry over, and why — never thrown by an ordinary load (OP-23).
+     *
+     * A load is strict, because a script that does not replay exactly is a drawing that came back different.
+     * A re-stamp is an *edit*: changing a pattern's count changes how many members there are, so a gesture
+     * that named a member the new count does not have has genuinely lost its subject, and the honest answer
+     * is to drop it and say so — the same shape of answer the delete cascade gives.
+     */
+    private class DropStep(val why: String) : Exception()
+
+    /** What a re-stamp is doing, and what it had to leave behind (OP-23). */
+    class Restamp internal constructor(
+        val pattern: String,
+        val count: Int,
+    ) {
+        val notes = ArrayList<String>()
+
+        /**
+         * Whether the step now replaying legitimately creates a **different number of elements** than the
+         * script declares — the pattern being re-counted, one of its gestures, or a boundary re-followed
+         * round more pieces. Everywhere else a count mismatch is still the load error it always was (OP-18),
+         * which is what keeps this from becoming a licence for any drift.
+         */
+        internal var resized = false
+
+        /**
+         * Which end the surviving names line up from. A pattern's and an orbit's creations are copy-major, so
+         * a name keeps meaning the same copy when counted from the **start**; a traced outline creates its
+         * joints first and the loop **last**, so its names line up from the end — that way the name every
+         * later step actually uses (the loop's) still names the loop.
+         */
+        internal var alignFromEnd = false
+    }
+
     fun load(text: String): Document {
         val doc = Document()
         replay(doc, text)
         return doc
+    }
+
+    /**
+     * Replay [text] with pattern [pattern] **re-stamped** at [count] instances (OP-23).
+     *
+     * A journal rewrite plus a replay — the delete machinery's move. The pattern step is replayed with the new
+     * count, and every `orbit` step re-runs its own rule at that count, which is what makes the whole
+     * downstream cone come out right without anything being copied. Names map positionally: a member the new
+     * count adds is simply unnamed (nothing referred to it), and a member it removes leaves the steps that
+     * named it to be dropped, each with a reason.
+     */
+    fun restamp(
+        text: String,
+        pattern: String,
+        count: Int,
+    ): Pair<Document, List<String>> {
+        val doc = Document()
+        val ctx = Restamp(pattern, count)
+        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+        doc.replayingVersion = versionOf(lines.firstOrNull() ?: throw LoadError("empty document"))
+        try {
+            replaySteps(doc, lines, ctx)
+        } finally {
+            doc.replayingVersion = null
+        }
+        doc.publishLoadNotes()
+        return doc to ctx.notes
     }
 
     /**
@@ -412,30 +488,55 @@ object DocumentFormat {
     private fun replaySteps(
         doc: Document,
         lines: List<String>,
+        restamp: Restamp? = null,
     ) {
         val byName = HashMap<String, Element>()
         for ((lineNo, line) in lines.drop(1).withIndex()) {
             val (body, declared) = split(line)
-            val words = body.split(' ').filter { it.isNotEmpty() }
+            var words = body.split(' ').filter { it.isNotEmpty() }
+            // the one literal a re-stamp rewrites: the count of the pattern being re-stamped (OP-23)
+            if (restamp != null && words.firstOrNull() == "pattern" && words.getOrNull(1)?.let { unquote(it) } == restamp.pattern) {
+                words = words.map { if (it.startsWith("count=")) "count=${restamp.count}" else it }
+            }
             val before = doc.elements.toHashSet()
+            restamp?.resized = false
+            restamp?.alignFromEnd = false
             try {
-                apply(doc, words, byName)
+                apply(doc, words, byName, restamp)
+            } catch (e: DropStep) {
+                restamp?.notes?.add("dropped ${describe(words)} — ${e.why}")
+                continue
             } catch (e: LoadError) {
+                // in a re-stamp a reference to a member the new count does not have is a *loss*, not a
+                // malformed file: the step is dropped and named, and the rest of the drawing rebuilds
+                if (restamp != null && e.message?.startsWith("unknown element") == true) {
+                    restamp.notes.add("dropped ${describe(words)} — it named a member that ${restamp.count} instances do not have")
+                    continue
+                }
                 throw LoadError("line ${lineNo + 2}: ${e.message} in '$line'")
             } catch (e: Exception) {
                 throw LoadError("line ${lineNo + 2}: ${e.message ?: e.toString()} in '$line'")
             }
             val created = doc.elements.filter { it !in before }
-            if (created.size != declared.size) {
+            // only a step the re-stamp itself resized may create a different number of elements than the
+            // script declares; everywhere else that is still the load error it always was (OP-18)
+            val elastic = restamp?.resized == true
+            if (created.size != declared.size && !elastic) {
                 throw LoadError(
                     "line ${lineNo + 2}: '${words.firstOrNull()}' created ${created.size} element(s) " +
                         "but the script declares ${declared.size} (${declared.joinToString(",")}) — the file was " +
                         "written by a different version",
                 )
             }
-            declared.forEachIndexed { i, n -> byName[n] = created[i] }
+            // positional, so a name keeps meaning the same *copy*: what a bigger count adds is unnamed, and
+            // what a smaller one removes leaves its name unmapped for the drop rule above to catch
+            val shift = if (elastic && restamp?.alignFromEnd == true) created.size - declared.size else 0
+            declared.forEachIndexed { i, n -> created.getOrNull(i + shift)?.let { byName[n] = it } }
         }
     }
+
+    /** A step, in as many words as a note needs to identify it. */
+    private fun describe(words: List<String>): String = words.take(3).joinToString(" ")
 
     private fun split(line: String): Pair<String, List<String>> {
         val i = line.indexOf("->")
@@ -447,6 +548,7 @@ object DocumentFormat {
         doc: Document,
         words: List<String>,
         byName: Map<String, Element>,
+        restamp: Restamp? = null,
     ) {
         fun el(i: Int): Element = byName[words[i]] ?: throw LoadError("unknown element '${words.getOrNull(i)}'")
 
@@ -507,7 +609,12 @@ object DocumentFormat {
             // other form of *Make absolute* needs none, and an older script that has none frees the point
             // where the geometry puts it, exactly as the gesture did
             "absolute" -> doc.makeAbsolute(el(1), keyedNums(words, "dofs"))
-            "tool" -> applyTool(doc, words, byName)
+            "tool" -> applyTool(doc, words, byName, restamp)
+            // patterns as orbits (OP-23): `pattern` declares the rule, `orbit` is one gesture riding it.
+            // Both are *descriptions* — the ring's members and every copy of every gesture are rebuilt from
+            // them, which is why a count change is a rewrite of one literal and nothing else.
+            "pattern" -> applyPattern(doc, words, byName, restamp)
+            "orbit" -> applyOrbit(doc, words, byName, restamp)
             "macrodef" -> applyMacroDef(doc, words, byName)
             "group" -> applyGroup(doc, words, byName)
             // visibility as a recorded decision (OP-18's reversal): one step per gesture, whole selection
@@ -545,6 +652,101 @@ object DocumentFormat {
         val on = solid ?: throw LoadError("sketchspace is missing 'el='")
         doc.createFaceSpace(on, piece, named = name)
             ?: throw LoadError("'${words.getOrNull(2)}' has no planar side face #${piece + 1}")
+    }
+
+    /**
+     * Replay a **pattern** (OP-23): `pattern "P1" circular ref=e2 centre=e1 count=6`.
+     *
+     * The rule, and only the rule — the members are rebuilt from it, so `count=` is the one literal a
+     * re-stamp rewrites and the loader's element-count check is what vouches for the result. The name is
+     * taken from the file rather than regenerated, because the `orbit` steps that follow refer to it.
+     */
+    private fun applyPattern(
+        doc: Document,
+        words: List<String>,
+        byName: Map<String, Element>,
+        restamp: Restamp? = null,
+    ) {
+        val name = unquote(words.getOrElse(1) { throw LoadError("pattern is missing a name") })
+        if (restamp != null && name == restamp.pattern) restamp.resized = true
+        val kind =
+            PatternKind.entries.firstOrNull { it.name.lowercase() == words.getOrNull(2) }
+                ?: throw LoadError("unknown pattern kind '${words.getOrNull(2)}'")
+        var reference: Element? = null
+        var about: Element? = null
+        var count = 0
+        for (w in words.drop(3)) {
+            val v = w.substringAfter('=', "")
+            when (w.substringBefore('=')) {
+                "ref" -> reference = byName[v] ?: throw LoadError("unknown element '$v'")
+                "centre", "to" -> about = byName[v] ?: throw LoadError("unknown element '$v'")
+                "count" -> count = v.toIntOrNull() ?: throw LoadError("malformed count '$v'")
+                else -> throw LoadError("unknown pattern argument '${w.substringBefore('=')}'")
+            }
+        }
+        val ref = (reference ?: throw LoadError("pattern is missing 'ref='")).ref as? PointRef
+        val ab = (about ?: throw LoadError("pattern is missing its centre or step vector")).ref as? PointRef
+        if (ref == null || ab == null) throw LoadError("a pattern is built on two points")
+        doc.createPattern(kind, ref, ab, count, named = name) ?: throw LoadError("pattern '$name' cannot be built")
+    }
+
+    /**
+     * Replay one **replicated gesture** (OP-23): `orbit "P1" segment pts=e2@0,e2@1 cells=…`.
+     *
+     * A pick is either `name@offset` — the member of that element's orbit at that index — or an ordinary
+     * element reference, which the pattern's transform must leave alone. `cells=` are the gesture's clicks
+     * carried back to the cell of member 0, so where each copy's click lands follows the pattern's *current*
+     * shape; `signs=` are the choices its first copy scored, taken verbatim by all of them (OP-1).
+     */
+    private fun applyOrbit(
+        doc: Document,
+        words: List<String>,
+        byName: Map<String, Element>,
+        restamp: Restamp? = null,
+    ) {
+        val name = unquote(words.getOrElse(1) { throw LoadError("orbit is missing a pattern name") })
+        if (restamp != null && name == restamp.pattern) restamp.resized = true
+        val pattern = doc.patternNamed(name) ?: throw LoadError("unknown pattern '$name'")
+        val tool = doc.toolDef(words.getOrElse(2) { throw LoadError("orbit is missing a tool") }) ?: throw LoadError("unknown tool '${words[2]}'")
+        var points = emptyList<Pair<Element, Int?>>()
+        var elements = emptyList<Pair<Element, Int?>>()
+        var cells = emptyList<Vec2>()
+        var scalars = emptyList<ScalarEntry>()
+        var signs = emptyList<Int>()
+        var count = 0
+        var chainsPart = false
+
+        fun specs(v: String): List<Pair<Element, Int?>> =
+            v.split(',').filter { it.isNotEmpty() }.map { token ->
+                val at = token.indexOf('@')
+                val n = if (at < 0) token else token.substring(0, at)
+                val el = byName[n] ?: throw LoadError("unknown element '$n'")
+                el to if (at < 0) null else (token.substring(at + 1).toIntOrNull() ?: throw LoadError("malformed member index '$token'"))
+            }
+        for (w in words.drop(3)) {
+            val v = w.substringAfter('=', "")
+            when (w.substringBefore('=')) {
+                "pts" -> points = specs(v)
+                "els" -> elements = specs(v)
+                "cells" -> cells = v.split(';').filter { it.isNotEmpty() }.map { parsePos(it) }
+                "scalar" ->
+                    scalars =
+                        scalarNames(v).map { n ->
+                            doc.scalars.firstOrNull { it.name == n } ?: throw LoadError("unknown scalar '$n'")
+                        }
+                "signs" -> signs = v.split(';').filter { it.isNotEmpty() }.map { it.toIntOrNull() ?: throw LoadError("malformed sign '$it'") }
+                "count" -> count = v.toIntOrNull() ?: throw LoadError("malformed count '$v'")
+                // the chained base of a face-part tool (OP-17/OP-23): resolved per copy, in index order, so
+                // copy k subtracts from what copy k-1 left. Written as the rule, never as k names.
+                "part" -> {
+                    if (v != "tip") throw LoadError("unknown part reference '$v'")
+                    chainsPart = true
+                }
+                else -> throw LoadError("unknown orbit argument '${w.substringBefore('=')}'")
+            }
+        }
+        doc.replayOrbit(pattern, tool, points, elements, cells, scalars, signs, count, chainsPart)
+            ?: throw LoadError("pattern '$name' cannot replicate '${tool.id}'")
     }
 
     /**
@@ -685,6 +887,7 @@ object DocumentFormat {
         doc: Document,
         words: List<String>,
         byName: Map<String, Element>,
+        restamp: Restamp? = null,
     ) {
         // the document's registry, not the static one: a user-defined macro is a tool too (OP-6), and its
         // `macrodef` step has already been replayed by the time any instance of it is
@@ -696,6 +899,25 @@ object DocumentFormat {
         var signs = emptyList<Int>()
         var scalars = emptyList<ScalarEntry>()
         var count = 0
+        // **A traced boundary is re-followed when a re-stamp changes how many pieces it has** (OP-23).
+        // The tracer's follow is edit-time bookkeeping (OP-14/OP-18): the file keeps the whole ordered
+        // boundary and a *load* discovers nothing, but a re-stamp is an edit, and re-running the same follow
+        // is what lets the outline of a re-counted ring come back closed instead of coming back short.
+        var retraced: Pair<List<Element>, List<Vec2>>? = null
+        if (restamp != null && tool.id == Tools.OUTLINE) {
+            val tokens = words.drop(2).firstOrNull { it.startsWith("els=") }?.removePrefix("els=")?.split(',')?.filter { it.isNotEmpty() }.orEmpty()
+            val resolved = tokens.map { byName[it] }
+            if (resolved.filterNotNull().any { doc.patternOf(it) != null }) {
+                val a = resolved.getOrNull(0) ?: throw DropStep("the piece it started from is gone")
+                val b = resolved.getOrNull(1) ?: throw DropStep("the piece it turned into is gone")
+                retraced =
+                    doc.followedLoop(a, b)
+                        ?: throw DropStep("the pattern's boundary no longer closes by itself — trace it again (two clicks)")
+                // the loop is this step's *last* creation, and the joints before it are its own scaffolding
+                restamp.resized = true
+                restamp.alignFromEnd = true
+            }
+        }
         for (w in words.drop(2)) {
             val key = w.substringBefore('=')
             val v = w.substringAfter('=', "")
@@ -706,8 +928,8 @@ object DocumentFormat {
                             @Suppress("UNCHECKED_CAST")
                             (byName[it] ?: throw LoadError("unknown element '$it'")).ref as PointRef
                         }
-                "els" -> elements = v.split(',').filter { it.isNotEmpty() }.map { byName[it] ?: throw LoadError("unknown element '$it'") }
-                "clicks" -> clicks = v.split(';').filter { it.isNotEmpty() }.map { parsePos(it) }
+                "els" -> elements = retraced?.first ?: v.split(',').filter { it.isNotEmpty() }.map { byName[it] ?: throw LoadError("unknown element '$it'") }
+                "clicks" -> clicks = retraced?.second ?: v.split(';').filter { it.isNotEmpty() }.map { parsePos(it) }
                 "dofs" -> dofs = v.split(';').filter { it.isNotEmpty() }.map { quantity(it) }
                 // the discrete choices this tool scored from its clicks, replayed verbatim (OP-1, OP-18)
                 "signs" -> signs = v.split(';').filter { it.isNotEmpty() }.map { it.toIntOrNull() ?: throw LoadError("malformed sign '$it'") }
