@@ -449,6 +449,54 @@ tracer needs and the drawing does not. And **chamfer stays line-only**: a bevel 
 honest readings, a chord and an arc of the same length, and until that convention is stated a tool that
 silently picked one would be guessing. Recorded here rather than half-built.
 
+#### Circle from three tangents — and the Apollonius family (as built)
+
+*Circle (3 tangents)* is the **LLL** case of Apollonius' problem: three line picks (the ordinary carrier
+coercion — a line, a segment, a ray or a wall leg), then a click near the circle wanted. It is the first
+member of that family to get a tool, and it was chosen first because it needs **no new geometry at all**:
+
+```
+bisector(l1, l2, s) = angleBisector( pointAlongLine(l1, corner, 1, +1), corner, pointAlongLine(l2, corner, 1, s) )
+                      where corner = Select(intersectLL(l1, l2), +1)
+centre              = Select( intersectLL( bisector(l1, l2, s12), bisector(l1, l3, s13) ), +1 )
+circle              = circleCP( centre, projectToLine(centre, l1) )
+```
+
+**Tangency is by construction, and that is the whole argument for building it this way.** A point on a
+bisector of two lines is equidistant from both, so a centre on one bisector per pair is equidistant from all
+three; and the radius is not a computed number but *the distance to `l1`*, because the circle is built through
+the foot of the perpendicular there. Nothing is asserted, nothing is solved, and dragging any of the three
+lines keeps all three tangencies exactly — asserted as `|dist(centre, lᵢ) − r| < 1e-9` on all three, before
+and after a drag, with `nodesCreated` flat across it (recompute, not regenerate).
+
+**Four solutions, one stored choice** (OP-1). Three lines that make a triangle admit four tangent circles —
+the incircle and the three excircles — and they are exactly the four combinations of the two bisector
+branches. So the discrete freedom is `signs=s12;s13`, two integers, scored **once** from the final click (the
+candidate whose *circumference* is nearest it, since that is what the user is pointing at) and then restated
+by the step on every save. Replay takes them verbatim. This is the fillet's lesson applied before it could
+become the fillet's bug: the regression test moves a leg until re-scoring the stored click would prefer a
+*different* candidate, reloads, and requires the chosen circle to come back. Two parallel legs (or three
+concurrent lines) admit nothing: the tool refuses out loud and records no step, and every `Select` in the
+chain carries its own reason, so a circle that becomes impossible mid-edit hides and heals (OP-3).
+
+No joints are registered for the three touch points, deliberately — unlike a fillet's tangencies. A fillet
+*replaces* a corner, so the boundary tracer has to know where it hands over; an inscribed circle replaces
+nothing, and touching a line is not a handover between two pieces of one boundary.
+
+**The rest of the family, and what each one still needs.** The pattern generalizes, and the honest note is
+that the *bookkeeping* is what differs, not the difficulty:
+
+- **LLC** (two lines, a circle) — the centre is on a bisector of the two lines and on a parabola-like locus
+  from the circle; constructible as `intersect(bisector, concentric(C, ±r))` only once *r* is known, so the
+  composition needs one more step (the tangent-length relation) and has up to **four** solutions with an
+  inside/outside sign per circle leg.
+- **LCC / CCC** — the classical constructions go through an inversion or a radical axis; both are expressible
+  with the ops that exist plus one, and CCC has up to **eight** solutions, i.e. three sign bits.
+
+Each therefore wants its own `signs=` layout and its own scoring click, which is precisely why they are
+separate tools rather than one "tangent circle" tool with a guessing pick: the number of discrete choices is
+part of the *shape* of the construction, and OP-1 requires each of them to be stored, not tracked.
+
 #### Welding (joining two points) — point-level wiring
 
 Joining two otherwise-unconstrained points is the **point-level analog of parameter wiring**,
@@ -597,6 +645,76 @@ which is the test of whether the algebra is closed:
 - *Arrays* are a **fan, not a chain**: copy *k* is `k·v` (or `k·360°/n`) from the original, so no copy
   depends on a sibling, every copy recomputes straight from the original, and the copies are the
   original's dependents — deleting it takes them (OP-18).
+
+#### Live tool previews — one declaration, no controller cases (as built)
+
+Until now exactly one gesture said what it was about to build: the ortho path's rubber band. Every other tool
+was a sequence of clicks whose result appeared only after the last one — and for the tools that resolve a
+**discrete choice** from where you clicked (a fillet's variant, a chamfer's quadrant, a dimension's sector)
+that meant the choice was invisible until it had already been stored. So the band was generalized rather than
+copied: `ToolDef` gained one optional member.
+
+```kotlin
+val preview: ((PreviewContext) -> List<PreviewShape>)? = null
+```
+
+`PreviewContext` carries the picks so far, the **values in effect** (picked, typed, or the slot's declared
+default), the structural count, the cursor, the document and the pick tolerance; `PreviewShape` is a small
+sealed set of plain geometry — dot, segment, line, ray, circle, arc, Bézier, polyline, and a dimension's
+`DimensionGraphic`. `SceneRenderer` draws them in the band's own style, through the same clipping,
+tessellation and dimension-skeleton code the real values go through. The editor's whole share is one call in
+`pointerMove`; there is no case per tool anywhere.
+
+**The rule, restated as a property rather than a discipline: a preview never touches the graph.** The snap
+resolver already worked this way ("hover-time intersections are computed with `GeomMath`, so previewing never
+touches the graph"), and here it is made structural — `PreviewContext` holds no `Construction`, and
+`PreviewShape` holds no `Node`, `Ref` or `Element`, so a preview function *cannot* record anything even by
+mistake. What can be asserted generically then is: hover a grid of positions with every previewing tool
+armed, and `nodesCreated`, the element list, the journal and the saved script are all unchanged
+(`PreviewTest.noHoverTouchesTheGraph` — one test, and the next preview written is covered by it without it
+being touched).
+
+**Honesty is the other rule, and it is what decides the edge cases.** A preview draws what the click will
+build, not an approximation of it:
+
+- a *line* previews as an infinite line and a *ray* as a half line, because that is the element the click
+  makes — a band between two points would promise a segment;
+- the values in effect are **in the picture**: a rounded rectangle previews with the radius that is in effect,
+  a polygon with the current count *and* its corner arcs, an array with all its copies. Typing a value or
+  changing the count redraws it where the cursor last was;
+- where the tool would build nothing, nothing is drawn — a missing required scalar (Rotate with no angle), a
+  degenerate pick (a rectangle whose corners share a coordinate), a cursor over nothing (Mirror needs an axis
+  under it);
+- the cursor a preview is given is the **snapped** one wherever a snap is in effect, since that is where the
+  click will land.
+
+**Previews run from the first pick onward.** That is a deliberate choice with a cost, and the cost is named:
+*Circle (centre, radius)* completes on its first click and so is never previewed, and the rectangle's first
+corner is unpreviewed too. The alternative — previewing with nothing picked — puts geometry under the cursor
+the moment a tool is armed, which reads as a click already made; and a tool armed by accident would then paint
+over the drawing. From the first pick the user has committed to something, and the preview is about the *next*
+click rather than about the tool's existence.
+
+**The scored choices are the point of the feature.** For the fillet and the chamfer the preview runs the *same*
+scoring the build runs — `FilletMath.variantFor` / `legSigns`, extracted out of `Document` into `geom` for
+exactly this reason, so there is one implementation and not a second formula that could drift. Moving the
+cursor from one side of the second leg to the other flips the previewed arc, and the click then builds
+precisely that arc (asserted by comparing the previewed arc with the built one). Note *where* that preview
+runs: after the **first** leg, with the second one resolved from what the cursor is over — because the second
+click both names the leg and scores the side, so there is no hover moment with two legs already in (the tool
+completes on that click, unless it is still waiting for its radius, and then there is no arc to draw either).
+The same holds for the three-tangent circle's four candidates and for a dimension's sector: `LinearDimension.graphicOf` and its two
+siblings are the annotation's own graphic on values, so a previewed dimension and a placed one are drawn by
+one piece of code.
+
+**The first wave**, twenty-four tools: Segment, Line, Ray (the band in each one's own form); Circle
+(centre, point); Circle (3 points) and Arc (3 points) — the live circumcircle/arc through the picks and the
+cursor; Arc (centre, ends); Rectangle and Rounded rectangle; Regular polygon; Mirror, Rotate, Scale,
+Translate and both arrays — **ghost copies** of the picked geometry under the transform the picks imply;
+Circular and Linear pattern — the **ring** (or row) of members under the cursor; Fillet and Chamfer; the three
+dimensions, riding the cursor for their placement click; and Circle (3 tangents). Nothing was cut. The tools
+without one are the ones that would have nothing to say: a pick that creates a point where you click, a
+boolean between two solids, a measurement, and the path tools, which have had their own band from the start.
 
 #### Usability — click budgets (as built)
 
@@ -4878,6 +4996,44 @@ Three broad families (see OP-9 decision above):
   on it). One thing is deliberately still cut and it is named in the queue: two solids drawn in two different
   spaces cannot both be picked by one boolean gesture, because one canvas shows one space.
 
+- **Session 17 — "show me what the click will make", and the first tangent-circle tool.** Two items off the
+  queue, and they turned out to be the same item twice: both are about a **discrete choice that used to be
+  invisible until it was already stored**. Five things worth recording.
+  (1) **The generalization was already sitting there, half-built.** The ortho path had a rubber band and nothing
+  else did — so the work was not "add previews" but "notice that the band is a `ToolDef` member". One optional
+  lambda, one call in `pointerMove`, one loop in the renderer, and twenty-four tools gained a preview with no
+  controller code between them. The test of that claim is the negative one: there is no `when (toolId)` anywhere
+  in the mechanism, and the LLL tool written *after* it got its preview by naming a function in the table.
+  (2) **The never-touches-the-graph rule was made structural instead of trusted.** The snap resolver already had
+  the rule in prose; a mechanism that runs on every mouse move needed it enforced. `PreviewContext` deliberately
+  carries **no `Construction`**, and `PreviewShape` carries no `Node`, `Ref` or `Element` — so the honest
+  version of "a preview must not record anything" is *a preview cannot record anything*. That is what let the
+  invariant be asserted **once, generically**, over every tool that declares a preview (`nodesCreated`, the
+  element list, the journal and the saved script all flat across a grid of hovers), instead of once per tool
+  where the twenty-fifth would have been forgotten.
+  (3) **Honesty forced two refactorings, and both were improvements on their own.** The fillet's variant scoring
+  lived inside `Document` over throwaway nodes; the preview needed the *same* scoring, and a second copy of it
+  would have been a formula that could drift from the one the click uses. It moved to `geom/FilletMath.kt` as
+  values, and `Document` now calls what the preview calls — so "the arc you see is the arc you get" is a fact
+  about the code and not a promise, and the test asserts it by comparing the previewed arc with the built one.
+  A dimension's graphic needed the same treatment for the same reason (`LinearDimension.graphicOf` and its two
+  siblings), since an annotation is nodes and a preview may own none.
+  (4) **"From the first pick onward" is the interesting decision, and it is a cost accepted rather than a limit
+  found.** Previewing with *nothing* picked is tempting — a circle of the typed radius under the cursor is
+  useful — but it puts geometry under the cursor the moment a tool is armed, which reads as a click already
+  made, and a tool armed by accident then paints over the drawing. So the rule is the pick, and what it costs is
+  named in place: *Circle (centre, radius)* completes on its first click and is therefore never previewed.
+  (5) **The tangent-circle tool is the fillet's lesson applied before it could become the fillet's bug.** Three
+  lines admit four circles — incircle plus three excircles — and they are exactly the four combinations of two
+  bisector branches, so the whole construction is `angleBisector` ∘ `intersectLL` ∘ `projectToLine` ∘
+  `circleCP`, with **no new geometry** and tangency by composition rather than by assertion (asserted as
+  `|dist(centre, lᵢ) − r| < 1e-9` on all three, before and after dragging a leg, with `nodesCreated` flat).
+  The regression written *first* is the one that bit the fillet: move a leg until re-scoring the stored click
+  would prefer another candidate, reload, and require the chosen circle back. **27 new tests**
+  (`PreviewTest` 19, `CircleTangentsTest` 8), 892 green, and the browser E2E extended by the one thing only a
+  real canvas can show — that the growing circle is painted while hovering and gone after the click, counted in
+  pixels.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -5361,6 +5517,21 @@ from the toolbar" was closed for *faces* in session 8 and is now closed for arbi
 exactly-predictable assertion on that path (a 45° miter, 16000 mm³). It leaves one thing parked, stated where it
 belongs: **a two-operand boolean whose operands live in two different spaces has no gesture**, because one canvas
 shows one space; *Cut* covers the case that matters by naming the part, and the general case wants 3D picking.
+
+**Retired in session 17: "only the path tools say what they are about to build", and the first Apollonius
+case.** Two queue lines, and the first of them also retires half of a cut recorded in session 13. (a) *Live
+tool previews* — `ToolDef.preview` is now one declared member per tool, drawn by `SceneRenderer` in the ortho
+band's own style, with **twenty-four** tools covered and none cut; see *Live tool previews* under the editor
+roadmap. Session 13's stated cut — "any hover cue before a press (picking is still consulted only on press)" —
+is retired for *cues*: a preview that must know what the cursor is **over** (a fillet's second leg, Mirror's
+axis) asks `HitTest` on hover. What stands verbatim is the half that cut was really protecting: **the
+selection** is still decided on press and on release only, and no hover changes it. It leaves nothing parked;
+the two tools it deliberately skips (Circle (centre, radius), and the rectangle's first corner) are named where
+the from-the-first-pick rule is stated. (b) *Circle from three tangents* — the **LLL** case, four solutions
+resolved by the final click and stored as two bisector branches (OP-1), tangency by construction. It leaves
+one thing parked, stated where it belongs: the rest of the Apollonius family (**LLC**, **LCC**, **CCC**), each
+of which is composable from the ops that exist plus at most one, and each of which needs its own `signs=`
+layout because the number of discrete choices is part of the shape of the construction.
 
 1. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
    connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by

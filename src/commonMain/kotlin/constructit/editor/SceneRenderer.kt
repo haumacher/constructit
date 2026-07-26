@@ -96,6 +96,7 @@ object SceneRenderer {
         frames: List<FrameValue> = emptyList(),
         picked: Set<Element> = emptySet(),
         emphasis: List<Segment> = emptyList(),
+        previews: List<PreviewShape> = emptyList(),
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
@@ -175,6 +176,10 @@ object SceneRenderer {
             target.polyline(listOf(o, ay), frameStyle)
             target.circle(o, 3.0, frameStyle)
         }
+        // What the armed tool would build if the next click happened here (`ToolDef.preview`) — the ortho
+        // band's own style, because it is the same promise about the same click, and drawn *before* the band
+        // so the two can never disagree about who is on top.
+        for (s in previews) drawPreview(s, cam, target, view)
         // rubber band of a marquee in progress — the rectangle whose contents the release will select
         marquee?.let { (a, b) ->
             val p = cam.worldToScreen(a)
@@ -226,6 +231,34 @@ object SceneRenderer {
             target.circle(s, 6.0, haloInner)
         }
         target.end()
+    }
+
+    /**
+     * One [PreviewShape] in the preview style — the whole of the rendering half of live tool previews.
+     *
+     * Every case is a call the renderer already makes for the corresponding *value* kind (an infinite line is
+     * clipped, an arc is tessellated, a dimension goes through the same skeleton drawing), which is what
+     * keeps the preview a picture of the same geometry rather than a second drawing vocabulary.
+     */
+    private fun drawPreview(
+        s: PreviewShape,
+        cam: Camera,
+        target: DrawTarget,
+        view: Rect,
+    ) {
+        when (s) {
+            is PreviewShape.Dot -> target.dot(cam.worldToScreen(s.at), POINT_PX, previewStyle.stroke)
+            is PreviewShape.Seg -> target.polyline(listOf(cam.worldToScreen(s.seg.a), cam.worldToScreen(s.seg.b)), previewStyle)
+            is PreviewShape.Ln ->
+                clipLine(s.line, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), previewStyle) }
+            is PreviewShape.Ry ->
+                clipRay(s.ray, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), previewStyle) }
+            is PreviewShape.Circ -> target.circle(cam.worldToScreen(s.circle.center), s.circle.radius * cam.scale, previewStyle)
+            is PreviewShape.ArcS -> target.polyline(tessellate(s.arc).map { cam.worldToScreen(it) }, previewStyle)
+            is PreviewShape.Bez -> target.polyline(GeomMath.tessellateBezier(s.bezier).map { cam.worldToScreen(it) }, previewStyle)
+            is PreviewShape.Path -> target.polyline(s.points.map { cam.worldToScreen(it) }, previewStyle)
+            is PreviewShape.Dim -> drawGraphic(s.graphic, cam, target, previewStyle, withText = true)
+        }
     }
 
     /**
@@ -314,7 +347,21 @@ object SceneRenderer {
         style: Style,
         withText: Boolean = true,
     ) {
-        val g = ann.graphic(ev) ?: return
+        drawGraphic(ann.graphic(ev) ?: return, cam, target, style, withText)
+    }
+
+    /**
+     * A dimension's world-space skeleton on screen. Taken apart from [drawDimension] so a **previewed**
+     * dimension (`PreviewShape.Dim`, which owns no annotation and no node) is drawn by exactly the same
+     * code as a placed one.
+     */
+    private fun drawGraphic(
+        g: DimensionGraphic,
+        cam: Camera,
+        target: DrawTarget,
+        style: Style,
+        withText: Boolean,
+    ) {
         for (s in g.lines) target.polyline(listOf(cam.worldToScreen(s.a), cam.worldToScreen(s.b)), style)
         g.arc?.let { arc -> target.polyline(tessellate(arc).map { cam.worldToScreen(it) }, style) }
         for (a in g.arrows) drawArrow(cam.worldToScreen(a.tip), screenDir(cam, a.tip, a.along), target, style)

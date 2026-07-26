@@ -27,10 +27,19 @@ first-class goal and the current implementation focus.
   Volume); base units mm and rad.
 - **Rich 2D tool set** — points, midpoints (or any ratio along a span), intersections, projections, perpendiculars, parallels,
   bisectors, tangents (from a point / common), fillets (between lines, circles and arcs alike) and
-  chamfers, circles (centre+point / centre+radius / 3-point), arcs, rectangles (rounded or not) and regular
+  chamfers, circles (centre+point / centre+radius / 3-point / **3 tangents** — the incircle and the three
+  excircles of three lines), arcs, rectangles (rounded or not) and regular
   polygons, transforms (mirror / rotate / scale / translate), linear and circular **arrays**, and
   measurements. Any tool that wants a line takes a segment or ray, and any tool that wants a circle takes
   an **arc** — the carrier is what the construction is about.
+- **Live previews — what the click will make, before you make it.** Every drawing, transform, rounding and
+  dimension tool paints its result under the cursor as you move: the growing circle, the circumcircle through
+  your two picks and the pointer, the rectangle's outline, ghost copies of what a mirror or an array would
+  produce, the ring a pattern would stamp, a dimension riding the cursor — with the typed radius, the default
+  and the current count already in the picture. Where a tool has to *choose* something from where you click —
+  which quadrant a fillet rounds, which of four circles is tangent to your three lines — the choice becomes
+  visible before it is committed, because the preview runs the very scoring the click will run. Previewing is
+  pure computation: it never adds anything to the model.
 - **Patterns are orbits, not copies** — a *pattern* is a rule (a centre, a reference point, a count), and
   **any later gesture whose inputs touch its members is repeated round it**: one segment makes every side of
   a hexagon, one fillet rounds every corner, and the outputs join the pattern in turn, so features built on

@@ -42,11 +42,12 @@ import constructit.dsl.roundedRect
 import constructit.dsl.valueOf
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
-import constructit.geom.Circle
+import constructit.geom.FilletLeg
+import constructit.geom.FilletMath
+import constructit.geom.FilletVariant
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
-import constructit.geom.Line
 import constructit.geom.ProfileElement
 import constructit.geom.Segment
 import constructit.geom.SolidFace
@@ -6732,42 +6733,15 @@ class Document {
         centre: PointRef,
     ): PointRef = if (leg.isLinear) cx.projectToLine(centre, carrierLine(leg)) else cx.radialPoint(carrierCircle(leg), centre)
 
-    /** One fillet leg as values: a carrier line, or a carrier circle. */
-    private class LegValue(val line: Line?, val circle: Circle?) {
-        /** Where a fillet centred at [centre] touches this leg — [tangencyOn] on values. */
-        fun tangency(centre: Vec2): Vec2 =
-            if (line != null) {
-                line.origin + line.dir * (centre - line.origin).dot(line.dir)
-            } else {
-                val c = circle!!
-                val d = centre - c.center
-                if (d.length() < Vec2.EPS) c.center + Vec2(c.radius, 0.0) else c.center + d.normalized() * c.radius
-            }
-    }
-
-    private fun legValueOf(
-        el: Element,
-        ev: Evaluator,
-    ): LegValue? =
-        if (el.isLinear) {
-            ((ev.eval(carrierLine(el).node) as? EvalResult.Ok)?.value as? LineValue)?.line?.let { LegValue(it, null) }
-        } else {
-            ((ev.eval(carrierCircle(el).node) as? EvalResult.Ok)?.value as? CircleValue)?.circle?.let { LegValue(null, it) }
-        }
-
-    /**
-     * The discrete choices a mixed fillet stores: [side1]/[side2] offset each leg (which side of a line;
-     * R+r or R−r for a circle), [branch] picks between the two intersections of those offsets.
-     */
-    private class FilletVariant(val side1: Int, val side2: Int, val branch: Int)
-
     /**
      * Which variant the two clicks meant — decided once, here, and then stored (OP-1).
      *
-     * Every variant is built *numerically* and scored by how near its two tangencies fall to where the legs
-     * were clicked: the user pointed at the two places the rounding should touch, which is the whole of the
+     * The scoring itself is [FilletMath.variantFor], on values: every variant is built *numerically* and
+     * scored by how near its two tangencies fall to where the legs were clicked, which is the whole of the
      * information the clicks carry. Numerically rather than as throwaway nodes, because eight candidate
-     * sub-graphs per fillet would be the wrong kind of cheap (as the area-pick filter records).
+     * sub-graphs per fillet would be the wrong kind of cheap (as the area-pick filter records) — and, since
+     * it is values, the **live preview runs the very same scoring** without touching the graph (see
+     * [Previews.fillet]), so what the hover shows is what this click stores.
      *
      * When no variant has a solution at all — r larger than the geometry admits — the one *closest* to
      * having one is stored, so the invalid node (OP-3) heals into the fillet the user was reaching for as
@@ -6782,92 +6756,21 @@ class Document {
     ): FilletVariant? {
         val ev = Evaluator()
         val r = ((ev.eval(radius.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm ?: return null
-        if (r <= 0.0) return null
-        val v1 = legValueOf(leg1, ev) ?: return null
-        val v2 = legValueOf(leg2, ev) ?: return null
-        var best: FilletVariant? = null
-        var bestScore = Double.MAX_VALUE
-        // an unsolvable variant scores worse than every solvable one by a wide margin, so "closest to
-        // solvable" can only ever decide between variants that are all unsolvable
-        val unsolvable = 1.0e9
-        for (s1 in listOf(1, -1)) {
-            for (s2 in listOf(1, -1)) {
-                val hits = filletCentres(v1, v2, r, s1, s2) ?: continue
-                if (hits.isEmpty()) {
-                    val score = unsolvable + filletGap(v1, v2, r, s1, s2)
-                    if (score < bestScore) {
-                        bestScore = score
-                        best = FilletVariant(s1, s2, +1)
-                    }
-                    continue
-                }
-                for (branch in listOf(1, -1)) {
-                    val centre = if (branch >= 0) hits.first() else hits.last()
-                    val score = (v1.tangency(centre) - clickA).length() + (v2.tangency(centre) - clickB).length()
-                    if (score < bestScore) {
-                        bestScore = score
-                        best = FilletVariant(s1, s2, branch)
-                    }
-                }
-            }
-        }
-        return best
+        val v1 = filletLegOf(leg1, ev) ?: return null
+        val v2 = filletLegOf(leg2, ev) ?: return null
+        return FilletMath.variantFor(v1, v2, r, clickA, clickB)
     }
 
-    /** The candidate fillet centres of one variant, or null when the offsets themselves are degenerate. */
-    private fun filletCentres(
-        v1: LegValue,
-        v2: LegValue,
-        r: Double,
-        s1: Int,
-        s2: Int,
-    ): List<Vec2>? {
-        fun offsetLine(
-            l: Line,
-            s: Int,
-        ) = Line(l.origin + l.dir.perp() * (s * r), l.dir)
-
-        fun offsetCircle(
-            c: Circle,
-            s: Int,
-        ) = (c.radius + s * r).takeIf { it > 0.0 }?.let { Circle(c.center, it) }
-        return when {
-            v1.line != null && v2.circle != null ->
-                offsetCircle(v2.circle, s2)?.let { GeomMath.intersectLC(offsetLine(v1.line, s1), it).points }
-            v2.line != null && v1.circle != null ->
-                offsetCircle(v1.circle, s1)?.let { GeomMath.intersectLC(offsetLine(v2.line, s2), it).points }
-            v1.circle != null && v2.circle != null -> {
-                val c1 = offsetCircle(v1.circle, s1)
-                val c2 = offsetCircle(v2.circle, s2)
-                if (c1 == null || c2 == null) null else GeomMath.intersectCC(c1, c2).points
-            }
-            else -> null
+    /** One fillet leg as values — its carrier line, or its carrier circle. */
+    private fun filletLegOf(
+        el: Element,
+        ev: Evaluator,
+    ): FilletLeg? =
+        if (el.isLinear) {
+            ((ev.eval(carrierLine(el).node) as? EvalResult.Ok)?.value as? LineValue)?.line?.let { FilletLeg.of(it) }
+        } else {
+            ((ev.eval(carrierCircle(el).node) as? EvalResult.Ok)?.value as? CircleValue)?.circle?.let { FilletLeg.of(it) }
         }
-    }
-
-    /** How far one unsolvable variant is from having a solution (mm) — see [filletVariantFor]. */
-    private fun filletGap(
-        v1: LegValue,
-        v2: LegValue,
-        r: Double,
-        s1: Int,
-        s2: Int,
-    ): Double {
-        val line = v1.line ?: v2.line
-        if (line != null) {
-            val c = (v1.circle ?: v2.circle) ?: return 0.0
-            val s = if (v1.line != null) s2 else s1
-            val sLine = if (v1.line != null) s1 else s2
-            val off = Line(line.origin + line.dir.perp() * (sLine * r), line.dir)
-            return abs(abs((c.center - off.origin).cross(off.dir)) - (c.radius + s * r))
-        }
-        val c1 = v1.circle ?: return 0.0
-        val c2 = v2.circle ?: return 0.0
-        val r1 = c1.radius + s1 * r
-        val r2 = c2.radius + s2 * r
-        val d = (c2.center - c1.center).length()
-        return maxOf(0.0, d - (r1 + r2)) + maxOf(0.0, abs(r1 - r2) - d)
-    }
 
     /**
      * A straight bevel across the corner of two legs: the points at [distance] from the corner along each
@@ -6931,10 +6834,7 @@ class Document {
         val ev = Evaluator()
         val la = ((ev.eval(l1.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: return 1 to 1
         val lb = ((ev.eval(l2.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: return 1 to 1
-        val denom = la.dir.cross(lb.dir)
-        if (abs(denom) <= Vec2.EPS) return 1 to 1 // parallel legs: no corner to sit in
-        val corner = la.origin + la.dir * ((lb.origin - la.origin).cross(lb.dir) / denom)
-        return (if ((clickA - corner).dot(la.dir) < 0) -1 else 1) to (if ((clickB - corner).dot(lb.dir) < 0) -1 else 1)
+        return FilletMath.legSigns(la, lb, clickA, clickB)
     }
 
     // ---- shapes: several elements built round shared nodes, so the *shape* is invariant ----
@@ -7636,6 +7536,97 @@ class Document {
             ) ?: return
         buildOrbit(plan, fillet, scalars)
         note = "Rounded polygon: ${p.name}, $count sides and $count roundings — retype the radius to re-round, or re-stamp the count"
+    }
+
+    /**
+     * The circle **tangent to three lines** — the LLL case of Apollonius' problem, and the first of that
+     * family to get a tool.
+     *
+     * Three lines that make a triangle admit four tangent circles: the incircle and the three excircles. All
+     * four are the *same* construction with two discrete choices in it, which is the whole reason this needs
+     * no solver and no new geometry — the composition is
+     *
+     * ```
+     * centre = intersectLL( bisector(l1, l2, s12), bisector(l1, l3, s13) )   // two branches, four centres
+     * touch  = projectToLine(centre, l1)
+     * circle = circleCP(centre, touch)
+     * ```
+     *
+     * and each *bisector* is itself a composition of ops that already existed: the legs' crossing
+     * (`intersectLL` + `Select`), a unit step along each leg (`pointAlongLine`, whose sign is the branch) and
+     * `angleBisector` of that corner. Tangency is therefore **by construction**: the centre is equidistant
+     * from all three lines because it lies on a bisector of each pair, and the radius *is* the distance to
+     * `l1`, since the circle is built through the foot of the perpendicular there. Nothing asserts it, so
+     * dragging any line keeps all three tangencies exactly.
+     *
+     * Which of the four is a **stored discrete choice** (OP-1), scored once from the final click — the circle
+     * whose circumference is nearest it — and written into the step's `signs=` as the two bisector branches
+     * (the fillet's precedent, OP-18). Replay takes them verbatim, so a reload rebuilds the circle the user
+     * clicked even when a line has since moved past that click; re-scoring would re-decide.
+     *
+     * Invalid rather than absent when the lines admit nothing (two parallel, or all three concurrent): every
+     * `Select` in the chain reports its own empty set (OP-3), so the circle simply hides and comes back when
+     * the lines make a triangle again.
+     */
+    fun circleFrom3Tangents(
+        leg1: Element,
+        leg2: Element,
+        leg3: Element,
+        at: Vec2,
+        signs: List<Int> = emptyList(),
+    ): Element? {
+        val l1 = carrierLine(leg1)
+        val l2 = carrierLine(leg2)
+        val l3 = carrierLine(leg3)
+        // the clicks are scored **once**, on the live gesture; a replayed step hands its answer back here
+        val (s12, s13) =
+            storedLegSigns(signs) ?: tangentCircleSigns(l1, l2, l3, at) ?: run {
+                // a refusal is said out loud rather than leaving three picks that quietly built nothing
+                note =
+                    "No circle is tangent to all three of ${nameOf(leg1)}, ${nameOf(leg2)} and ${nameOf(leg3)}: " +
+                    "two of them are parallel, or all three meet in one point"
+                return null
+            }
+        val centre =
+            cx.select(
+                cx.intersectLL(bisectorOfLines(l1, l2, s12), bisectorOfLines(l1, l3, s13)),
+                +1,
+                "no circle is tangent to all three lines (two of them are parallel, or all three meet in a point)",
+            )
+        val touch = cx.projectToLine(centre, l1)
+        val el = add(cx.circleCP(centre, touch), ElementKind.CIRCLE, Styles.CURVE)
+        registerSigns(el, listOf(s12, s13))
+        // Deliberately **no** joints (unlike a fillet's tangencies): a fillet *replaces* a corner, so the
+        // boundary tracer must know where it hands over, while an inscribed circle replaces nothing and
+        // touching a line is not a handover between two pieces of one boundary.
+        return el
+    }
+
+    /**
+     * One of the two bisectors of [l1] and [l2], as nodes: their crossing, a unit step along each leg
+     * ([sign] flipping the second one's), and the bisector of that corner — the twin of
+     * [FilletMath.bisector], which is what the scoring and the preview use on values.
+     */
+    private fun bisectorOfLines(
+        l1: LineRef,
+        l2: LineRef,
+        sign: Int,
+    ): LineRef {
+        val corner = cx.select(cx.intersectLL(l1, l2), +1, "parallel lines have no crossing to bisect")
+        val step = cx.const(1.0.mm)
+        return cx.angleBisector(cx.pointAlongLine(l1, corner, step, +1), corner, cx.pointAlongLine(l2, corner, step, sign))
+    }
+
+    /** Which of the four tangent circles the click at [at] meant, as the two bisector branches (OP-1). */
+    private fun tangentCircleSigns(
+        l1: LineRef,
+        l2: LineRef,
+        l3: LineRef,
+        at: Vec2,
+    ): Pair<Int, Int>? {
+        val ev = Evaluator()
+        val lines = listOf(l1, l2, l3).map { ((ev.eval(it.node) as? EvalResult.Ok)?.value as? LineValue)?.line ?: return null }
+        return FilletMath.nearestTangentCircle(lines[0], lines[1], lines[2], at)?.first
     }
 
     /** Both external (or internal) common tangents of two circles. */

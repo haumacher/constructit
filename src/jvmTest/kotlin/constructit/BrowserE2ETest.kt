@@ -66,7 +66,18 @@ class BrowserE2ETest {
             // Circle tool: centre between them, through the right point
             page.click("#tool-circle")
             page.mouse().click(midx, y)
+            // **A live tool preview, in real Chrome** (`ToolDef.preview`): with the centre in, the growing
+            // circle has to be on the canvas *before* the second click, and gone again after it. Asserted on
+            // the pixels, because that is the only thing a browser can be asked about a canvas — and against
+            // the *idle* count rather than against zero, since the accent colour is a palette colour that
+            // other marks (here the rider dot the centre click landed on) also use.
+            val idle = previewPixels(page)
+            page.mouse().move(p2x, y)
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/02-preview.png")))
+            val hovering = previewPixels(page)
+            assertTrue(hovering > idle + 50, "the growing circle should be painted while hovering ($idle -> $hovering)")
             page.mouse().click(p2x, y)
+            assertTrue(previewPixels(page) <= idle, "…and gone once the click has built it")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/02-built.png")))
 
             // A **defaulted** scalar slot, in the real shell (OP-13): Midpoint still takes exactly two clicks,
@@ -628,11 +639,33 @@ class BrowserE2ETest {
     }
 
     /**
+     * How many canvas pixels are painted in the **preview colour** (`#ff7f0e`, `SceneRenderer.previewStyle`).
+     *
+     * A canvas has no DOM to query, so a preview can only be observed as pixels; the match is loose per
+     * channel because the stroke is antialiased, and requires near-opacity so a faint edge does not count.
+     */
+    private fun previewPixels(page: Page): Int =
+        page.evaluate(
+            """
+            () => {
+              const c = document.getElementById('canvas');
+              const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+              let n = 0;
+              for (let i = 0; i < d.length; i += 4) {
+                if (d[i + 3] > 200 && Math.abs(d[i] - 255) < 8 && Math.abs(d[i + 1] - 127) < 8 && Math.abs(d[i + 2] - 14) < 8) n++;
+              }
+              return n;
+            }
+            """.trimIndent(),
+        ).let { (it as Number).toInt() }
+
+    /**
      * The distribution over **http**, from the JDK's own server — because one thing in this app only works
      * over http: the general boolean engine is a WASM ES module, and a browser refuses ES modules on
      * `file:` outright (OP-9). The other test deliberately exercises that unavailable path; this one
      * exercises the engine actually running in Chrome.
      */
+
     private fun serve(root: File): com.sun.net.httpserver.HttpServer {
         val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { ex ->

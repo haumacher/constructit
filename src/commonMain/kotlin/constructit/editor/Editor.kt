@@ -10,6 +10,7 @@ import constructit.dsl.valueOf
 import constructit.geom.Justification
 import constructit.geom.Vec2
 import constructit.units.Dimension
+import constructit.units.Quantity
 import constructit.units.mm
 
 /** Undo depth bound: snapshots are whole scripts, so the stack must not grow with the session. */
@@ -381,6 +382,9 @@ class Editor(
                 // usual order) is untouched.
                 if (filledSlots > 0) maybeCompleteTool(null)
             }
+            // the value in effect is part of what the preview promises (a radius, an angle), so a pick of a
+            // parameter re-draws it where the cursor last was
+            refreshToolPreviewAtHover()
         }
 
     /**
@@ -433,6 +437,8 @@ class Editor(
     var count: Int = 6
         set(value) {
             field = value.coerceIn(2, MAX_COUNT)
+            // the count *is* part of what an array's or a pattern's preview promises, so it redraws with it
+            refreshToolPreviewAtHover()
         }
 
     var onChange: () -> Unit = {}
@@ -710,6 +716,18 @@ class Editor(
     private var hoverWorld: Vec2? = null // last cursor position, so a typed length keeps its direction
 
     /**
+     * What the armed tool would build if the next click happened where the cursor is (`ToolDef.preview`).
+     *
+     * Held here because it is *view* state of the gesture, exactly as the ortho band ([previewSeg]) is: it is
+     * recomputed on every hover, on every typed value and on a count change, and it is dropped with the picks.
+     * Nothing about it enters the document — see [refreshToolPreview].
+     */
+    private var toolPreview: List<PreviewShape> = emptyList()
+
+    /** The live preview of the armed tool, for tests and for a shell that wants to inspect it. */
+    val previewShapes: List<PreviewShape> get() = toolPreview
+
+    /**
      * Digits typed into the drawing flow, for the two things a number can mean here (OP-13):
      *
      * - **direct distance entry**, while a leg is being previewed: the mouse supplies the leg's
@@ -899,6 +917,7 @@ class Editor(
         closePreview = emptyList()
         pathThickness = null
         hoverWorld = null
+        toolPreview = emptyList()
         numericEntry = ""
         typedScalars = 0
         snapHint = null
@@ -1506,6 +1525,7 @@ class Editor(
         SceneRenderer.render(
             doc, ev, camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selected,
             snapHint?.pos, joinHints, closePreview, terminalHint,
+            previews = toolPreview,
             dimmed = if (dimScaffolding) doc.scaffoldingElements().toHashSet() else emptySet(),
             marquee = marqueeFrom?.let { f -> marqueeTo?.let { t -> f to t } },
             frames = selectedFrames(),
@@ -2044,6 +2064,8 @@ class Editor(
         // through the ordinary setter, so a typed scalar *is* a panel pick as far as every tool is
         // concerned — including its completing a tool that was only waiting for this value
         activeScalar = entry
+        // the typed value is now in effect, so the preview says what it will build with it
+        refreshToolPreviewAtHover()
         // still pending means the tool has not consumed it yet, so say the value is in; a tool that
         // completed on the spot has already said its own thing
         if (pendingTypedParams.any { it === entry }) {
@@ -2066,6 +2088,63 @@ class Editor(
         statusHint = if (placed) "" else "That length would make a zero-length leg"
         onChange()
         return true
+    }
+
+    /**
+     * Recompute the armed tool's live preview for a cursor at [world] (`ToolDef.preview`).
+     *
+     * The **one** call site of the mechanism, and the whole of the controller's share in it: no tool has a
+     * case here, and a tool without a preview simply leaves the list empty. Three rules are applied here
+     * rather than in the tools, because they are properties of the *gesture* and not of any one tool:
+     *
+     * - it runs **from the first filled slot onward**, so an armed tool paints nothing until the user has
+     *   committed to something (see [ToolDef.preview] for what that costs and why it is worth it);
+     * - the cursor handed over is the **snapped** one where a snap is in effect, since that is where the click
+     *   will land (OP-13's "the preview matches the result", already the ortho path's rule);
+     * - the scalars handed over are the values **in effect** — picked, typed, or the slot's default — so the
+     *   picture includes them.
+     *
+     * It cannot touch the graph: what it passes is a [PreviewContext], which holds no `Construction`. That is
+     * the invariant `PreviewTest` asserts generically (`nodesCreated` flat across a sweep of hovers).
+     */
+    private fun refreshToolPreview(world: Vec2?) {
+        hoverWorld = world
+        val tool = doc.toolDef(toolId)
+        val preview = tool?.preview
+        if (tool == null || preview == null || world == null || filledSlots == 0) {
+            toolPreview = emptyList()
+            return
+        }
+        val ev = ev()
+        val picks =
+            Picks(
+                pickedPoints.toList(),
+                pickedElements.toList(),
+                world,
+                pickedClicks.toList(),
+                count = toolCount(tool),
+                landings = pickedLandings.toList(),
+            )
+        toolPreview = preview(PreviewContext(doc, ev, picks, previewScalars(tool, ev), world, tolWorld()))
+    }
+
+    /** Recompute the preview where the cursor last was — for a typed value or a count change. */
+    private fun refreshToolPreviewAtHover() = refreshToolPreview(hoverWorld)
+
+    /**
+     * The value of each of [tool]'s scalar slots **as the next click would use it**: the parameter picked or
+     * typed for it, else the slot's declared default ([ScalarSlot.default]), else null for a slot the tool is
+     * still waiting for. The same three-way answer [currentHelp] words for the status line.
+     */
+    private fun previewScalars(
+        tool: ToolDef,
+        ev: Evaluator,
+    ): List<Quantity?> {
+        val entries = toolScalars(tool)
+        return tool.scalars.mapIndexed { i, slot ->
+            val picked = entries?.getOrNull(i)?.let { (ev.eval(it.ref.node) as? EvalResult.Ok)?.value as? ScalarValue }
+            picked?.q ?: slot.default
+        }
     }
 
     /**
@@ -2388,8 +2467,19 @@ class Editor(
             return
         }
         if (placesAPoint()) {
-            snapHint = snap(camera.screenToWorld(screen)).takeIf { it.linked }
+            val world = camera.screenToWorld(screen)
+            snapHint = snap(world).takeIf { it.linked }
             if (snapHint != null) statusHint = ""
+            // the click will land on the snap, so that is where the preview is drawn from
+            refreshToolPreview(snapHint?.pos ?: world)
+            onChange()
+            return
+        }
+        // Every other previewing tool: the same live preview. Handled before the drag cases and returning,
+        // exactly as the point-placing branch does — a drag belongs to SELECT, which has no tool to preview,
+        // so there is nothing below this that a previewing tool could also want.
+        if (doc.toolDef(toolId)?.preview != null) {
+            refreshToolPreview(camera.screenToWorld(screen))
             onChange()
             return
         }

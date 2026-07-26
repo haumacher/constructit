@@ -144,17 +144,35 @@ class LinearDimension(
 
     override fun graphic(ev: Evaluator): DimensionGraphic? {
         val (pa, pb) = span(ev) ?: return null
-        val dir = (pb - pa).normalized()
-        val n = dir.perp()
-        val ea = pa + n * literal(offset)
-        val eb = pb + n * literal(offset)
-        return DimensionGraphic(
-            lines = listOf(Segment(pa, ea), Segment(pb, eb), Segment(ea, eb)),
-            arrows = listOf(DimArrow(ea, -dir), DimArrow(eb, dir)),
-            textAt = (ea + eb) * 0.5,
-            textUp = n,
-            text = label(ev),
-        )
+        return graphicOf(pa, pb, literal(offset), label(ev))
+    }
+
+    companion object {
+        /**
+         * The graphic of a linear dimension **as values** — the span, the offset and the text.
+         *
+         * Split out so the *preview* draws the very graphic the placing click will leave (see
+         * [Previews.linearDimension]): the annotation is nodes and the preview must own none, and one
+         * implementation is the only way the two cannot drift apart.
+         */
+        fun graphicOf(
+            pa: Vec2,
+            pb: Vec2,
+            offset: Double,
+            text: String,
+        ): DimensionGraphic {
+            val dir = (pb - pa).normalized()
+            val n = dir.perp()
+            val ea = pa + n * offset
+            val eb = pb + n * offset
+            return DimensionGraphic(
+                lines = listOf(Segment(pa, ea), Segment(pb, eb), Segment(ea, eb)),
+                arrows = listOf(DimArrow(ea, -dir), DimArrow(eb, dir)),
+                textAt = (ea + eb) * 0.5,
+                textUp = n,
+                text = text,
+            )
+        }
     }
 }
 
@@ -210,18 +228,30 @@ class RadialDimension(
 
     override fun graphic(ev: Evaluator): DimensionGraphic? {
         val c = circleOf(ev) ?: return null
-        val u = direction()
-        val on = c.center + u * c.radius
-        val end = c.center + u * (c.radius + literal(leaderReach))
-        return DimensionGraphic(
-            lines = listOf(Segment(on, end)),
-            arrows = listOf(DimArrow(on, -u)),
-            textAt = end,
-            textUp = u,
-            text = label(ev),
-            // the text runs away from the circle, so the leader never crosses it
-            textAnchor = if (u.x >= 0.0) TextAnchor.START else TextAnchor.END,
-        )
+        return graphicOf(c, literal(leaderAngle), literal(leaderReach), label(ev))
+    }
+
+    companion object {
+        /** The graphic of a radial dimension as values — see [LinearDimension.graphicOf] for why. */
+        fun graphicOf(
+            c: constructit.geom.Circle,
+            leaderAngle: Double,
+            leaderReach: Double,
+            text: String,
+        ): DimensionGraphic {
+            val u = Vec2(kotlin.math.cos(leaderAngle), kotlin.math.sin(leaderAngle))
+            val on = c.center + u * c.radius
+            val end = c.center + u * (c.radius + leaderReach)
+            return DimensionGraphic(
+                lines = listOf(Segment(on, end)),
+                arrows = listOf(DimArrow(on, -u)),
+                textAt = end,
+                textUp = u,
+                text = text,
+                // the text runs away from the circle, so the leader never crosses it
+                textAnchor = if (u.x >= 0.0) TextAnchor.START else TextAnchor.END,
+            )
+        }
     }
 }
 
@@ -251,16 +281,6 @@ class AngularDimension(
         return Triple(v, a.dir * sign1.toDouble(), b.dir * sign2.toDouble())
     }
 
-    /** The direction the text sits along: into the sector, so it reads inside the arc it belongs to. */
-    private fun bisector(
-        d1: Vec2,
-        d2: Vec2,
-    ): Vec2 {
-        val sum = d1 + d2
-        // opposite directions: the sector is a straight angle and has no bisector of its own
-        return if (sum.length() < Vec2.EPS) d1.perp() else sum.normalized()
-    }
-
     override fun drag(
         world: Vec2,
         ev: Evaluator,
@@ -273,28 +293,48 @@ class AngularDimension(
 
     override fun anchor(ev: Evaluator): Vec2? {
         val (v, d1, d2) = sector(ev) ?: return null
-        return v + bisector(d1, d2) * literal(radius)
+        return v + bisectorOf(d1, d2) * literal(radius)
     }
 
     override fun graphic(ev: Evaluator): DimensionGraphic? {
         val (v, d1, d2) = sector(ev) ?: return null
-        val r = literal(radius)
-        val ccw = d1.cross(d2) >= 0.0
-        val start = v + d1 * r
-        val end = v + d2 * r
-        val sweep = if (ccw) 1.0 else -1.0
-        return DimensionGraphic(
-            // the legs are extended out to the arc, so the sector being named is unambiguous
-            lines = listOf(Segment(v, start), Segment(v, end)),
-            arrows = listOf(DimArrow(start, d1.perp() * -sweep), DimArrow(end, d2.perp() * sweep)),
-            textAt = v + bisector(d1, d2) * r,
-            textUp = bisector(d1, d2),
-            text = label(ev),
-            arc = Arc(v, r, d1.angle(), d2.angle(), ccw),
-        )
+        return graphicOf(v, d1, d2, literal(radius), label(ev))
     }
 
     companion object {
+        /** The direction the text sits along: into the sector, so it reads inside the arc it belongs to. */
+        private fun bisectorOf(
+            d1: Vec2,
+            d2: Vec2,
+        ): Vec2 {
+            val sum = d1 + d2
+            // opposite directions: the sector is a straight angle and has no bisector of its own
+            return if (sum.length() < Vec2.EPS) d1.perp() else sum.normalized()
+        }
+
+        /** The graphic of an angular dimension as values — see [LinearDimension.graphicOf] for why. */
+        fun graphicOf(
+            v: Vec2,
+            d1: Vec2,
+            d2: Vec2,
+            r: Double,
+            text: String,
+        ): DimensionGraphic {
+            val ccw = d1.cross(d2) >= 0.0
+            val start = v + d1 * r
+            val end = v + d2 * r
+            val sweep = if (ccw) 1.0 else -1.0
+            return DimensionGraphic(
+                // the legs are extended out to the arc, so the sector being named is unambiguous
+                lines = listOf(Segment(v, start), Segment(v, end)),
+                arrows = listOf(DimArrow(start, d1.perp() * -sweep), DimArrow(end, d2.perp() * sweep)),
+                textAt = v + bisectorOf(d1, d2) * r,
+                textUp = bisectorOf(d1, d2),
+                text = text,
+                arc = Arc(v, r, d1.angle(), d2.angle(), ccw),
+            )
+        }
+
         /**
          * The signs naming the sector of the [d1]/[d2] crossing that contains [toward] — the click that
          * placed the dimension, resolved once into the discrete choice that is then stored (OP-1).
