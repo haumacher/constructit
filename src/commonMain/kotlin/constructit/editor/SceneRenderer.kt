@@ -55,6 +55,16 @@ object SceneRenderer {
     private val selectionStyle = Style("#1f77b4", 3.0)
     private val selectionRing = Style("#1f77b4", 1.5)
 
+    /**
+     * Geometry a tool has **picked** but not yet used (OP-14's Outline tool above all) — [Styles.PICKED],
+     * in the document's palette because it is a role of an element and not a mark of the gesture.
+     *
+     * Same drawing vocabulary as the selection (the piece restated on top of itself), a different colour and
+     * weight, so "these five curves are in" is legible at a glance on curves of every kind.
+     */
+    private val pickStyle = Styles.PICKED
+    private val pickRing = Styles.PICKED.copy(width = 2.0)
+
     private val marqueeStyle = Style("#1f77b4", 1.0)
 
     /** A placed group's frame marker (OP-16): its own axes, in the group's orientation. */
@@ -81,6 +91,7 @@ object SceneRenderer {
         dimmed: Set<Element> = emptySet(),
         marquee: Pair<Vec2, Vec2>? = null,
         frames: List<FrameValue> = emptyList(),
+        picked: Set<Element> = emptySet(),
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
@@ -126,29 +137,13 @@ object SceneRenderer {
         for (el in selected) {
             if (el.visible) el.annotation?.let { drawDimension(it, ev, cam, target, selectionStyle, withText = false) }
         }
+        // geometry an armed tool has picked, restated in the pick colour — so a boundary being traced shows
+        // how much of it is already in, and a click that hit nothing is visibly a click that added nothing
+        for (el in picked) emphasize(el, ev, cam, target, view, pickStyle, pickRing)
         // the selection, redrawn on top: what delete removes and — when it is a single element — what
         // the inspector's numeric fields refer to. Every kind is highlighted, since a marquee (OP-16)
         // takes whatever it covers and a selection that shows only its points would be unreadable.
-        for (el in selected) {
-            if (!el.visible) continue
-            when (val v = ev.valueOf(el.ref)) {
-                is PointValue -> target.circle(cam.worldToScreen(v.p), 7.0, selectionRing)
-                is SegmentValue -> target.polyline(listOf(cam.worldToScreen(v.seg.a), cam.worldToScreen(v.seg.b)), selectionStyle)
-                is LineValue ->
-                    clipLine(v.line, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), selectionStyle) }
-                is RayValue ->
-                    clipRay(v.ray, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), selectionStyle) }
-                is CircleValue -> target.circle(cam.worldToScreen(v.circle.center), v.circle.radius * cam.scale, selectionStyle)
-                is ArcValue -> target.polyline(tessellate(v.arc).map { cam.worldToScreen(it) }, selectionStyle)
-                is BezierValue -> target.polyline(GeomMath.tessellateBezier(v.bezier).map { cam.worldToScreen(it) }, selectionStyle)
-                is LoopValue -> drawChain(v.loop.elements, cam, target, selectionStyle)
-                is RegionValue -> {
-                    drawChain(v.region.outer.elements, cam, target, selectionStyle)
-                    for (h in v.region.holes) drawChain(h.elements, cam, target, selectionStyle)
-                }
-                else -> {}
-            }
-        }
+        for (el in selected) emphasize(el, ev, cam, target, view, selectionStyle, selectionRing)
         // a selected placed group's frame (OP-16 step 2): its origin and axes, drawn in the group's own
         // orientation — modest, because it is not geometry, but visible, because it is what a drag writes
         for (f in frames) {
@@ -210,6 +205,41 @@ object SceneRenderer {
             target.circle(s, 6.0, haloInner)
         }
         target.end()
+    }
+
+    /**
+     * Redraw [el] on top of itself in [style] — the one **emphasis** vocabulary, used for a selection and
+     * for a tool's picks alike (a point gets a ring in [ringStyle] instead, since a fatter dot reads as a
+     * different point). Every value kind is covered, because a marquee or a trace takes whatever it covers
+     * and an emphasis that skipped kinds would be read as "that one is not in".
+     */
+    private fun emphasize(
+        el: Element,
+        ev: Evaluator,
+        cam: Camera,
+        target: DrawTarget,
+        view: Rect,
+        style: Style,
+        ringStyle: Style,
+    ) {
+        if (!el.visible) return
+        when (val v = ev.valueOf(el.ref)) {
+            is PointValue -> target.circle(cam.worldToScreen(v.p), 7.0, ringStyle)
+            is SegmentValue -> target.polyline(listOf(cam.worldToScreen(v.seg.a), cam.worldToScreen(v.seg.b)), style)
+            is LineValue ->
+                clipLine(v.line, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), style) }
+            is RayValue ->
+                clipRay(v.ray, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), style) }
+            is CircleValue -> target.circle(cam.worldToScreen(v.circle.center), v.circle.radius * cam.scale, style)
+            is ArcValue -> target.polyline(tessellate(v.arc).map { cam.worldToScreen(it) }, style)
+            is BezierValue -> target.polyline(GeomMath.tessellateBezier(v.bezier).map { cam.worldToScreen(it) }, style)
+            is LoopValue -> drawChain(v.loop.elements, cam, target, style)
+            is RegionValue -> {
+                drawChain(v.region.outer.elements, cam, target, style)
+                for (h in v.region.holes) drawChain(h.elements, cam, target, style)
+            }
+            else -> {}
+        }
     }
 
     /**

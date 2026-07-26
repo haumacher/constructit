@@ -40,8 +40,10 @@ import constructit.dsl.roundedRect
 import constructit.dsl.valueOf
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
+import constructit.geom.Circle
 import constructit.geom.GeomMath
 import constructit.geom.Justification
+import constructit.geom.Line
 import constructit.geom.ProfileElement
 import constructit.geom.Segment
 import constructit.geom.SolidFace
@@ -152,7 +154,42 @@ class Element(
 
     /** Line / segment / ray — anything that determines an infinite line. */
     val isLinear: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY
+
+    /**
+     * Circle / arc — anything that determines a **carrier circle** (centre + radius).
+     *
+     * The exact twin of [isLinear], and it exists for the same reason: a slot that wants a circle should
+     * take an arc, because the construction a circle op describes is about the carrier and an arc *has* one
+     * (`Document.carrierCircle`, mirroring `carrierLine`). The consequence is stated where it is picked: a
+     * point derived that way may land off the arc's swept range, exactly as an intersection on a segment's
+     * carrier line may land beyond its ends.
+     */
+    val isCentric: Boolean get() = kind == ElementKind.CIRCLE || kind == ElementKind.ARC
 }
+
+/**
+ * A **constructed joint** (OP-14): two boundary pieces that hand over at one point, plus the node that *is*
+ * that point — a fillet's tangency, a chamfer's bevel end.
+ *
+ * Held as a node and not as a coordinate, so the joint keeps following the parameters (the whole reason the
+ * Outline tool can trace a fillet at all: a tangency has no intersection to find). Registered by the
+ * construction that made the joint, read by both the tracer and its boundary-follow — see
+ * `Document.registerJoint`.
+ */
+class Joint(val a: Element, val b: Element, val at: PointRef)
+
+/** One way a boundary can carry on from a piece: the next [piece], and the position [at] which it takes over. */
+class Continuation(val piece: Element, val at: Vec2)
+
+/**
+ * A corner a fillet or chamfer **replaced**: legs [a] and [b] no longer hand over to each other there,
+ * because [by] — the arc or the bevel — took their meeting.
+ *
+ * Recorded by the construction that cut the corner off rather than re-derived from the picture, which is
+ * OP-14's rule against discovering topology applied to the one fact the picture cannot show: that two curves
+ * still crossing at a point are no longer *joined* there.
+ */
+class Supersession(val a: Element, val b: Element, val by: Element)
 
 /** A named scalar: an editable parameter (OP-7) or a read-only measurement (OP-4). */
 class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val editable: Boolean)
@@ -596,6 +633,13 @@ class Document {
                 if (labelOfStep(step) in droppedGroups) drop(step, chain)
                 continue
             }
+            // a visibility step *names* elements without being built from them, exactly as a group does
+            // (OP-18's reversal — see [setElementsVisible]): it survives losing some of them, with the
+            // survivors written by [DocumentFormat], and goes only once none are left to hide or show
+            if (step.kind == "hide" || step.kind == "show") {
+                if (els.isNotEmpty() && els.all { it in droppedEls }) drop(step, chain)
+                continue
+            }
             // an instance of a macro whose definition is going cannot replay (the tool would be unknown).
             // The editor refuses such a delete outright, naming the instances — this rule is what keeps
             // the *script* consistent whatever route a delete takes.
@@ -648,6 +692,19 @@ class Document {
             ElementKind.RAY -> cx.lineOfRay(el.ref as RayRef)
             else -> el.ref as LineRef
         }
+
+    /**
+     * Coerce a circle/arc element to its whole **carrier circle** — the exact twin of [carrierLine], and the
+     * one place an arc becomes a circle operand.
+     *
+     * Every circle op is about the carrier (an intersection, a concentric offset, a tangent, a fillet leg),
+     * so refusing an arc was refusing the construction rather than protecting it: a user report, *"intersect
+     * between arc and circle not working"*, was exactly this filter and nothing else. What the coercion does
+     * *not* promise is that the result lands on the arc's swept range — see [Element.isCentric].
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun carrierCircle(el: Element): CircleRef =
+        if (el.kind == ElementKind.ARC) cx.circleOfArc(el.ref as ArcRef) else el.ref as CircleRef
 
     // ---- free points & scalars ----
 
@@ -1825,8 +1882,8 @@ class Document {
                 }
             }
         }
-        if (curve.kind == ElementKind.CIRCLE) {
-            val cr = curve.ref as CircleRef
+        if (curve.isCentric) {
+            val cr = carrierCircle(curve)
             val c = (ev.eval(cr.node) as? EvalResult.Ok)?.value as? CircleValue ?: return null
             // an angle about the centre is already absolute: it re-anchors on nothing an edit to the
             // circle's extent can move, since a circle has no ends to stretch
@@ -2217,7 +2274,7 @@ class Document {
     ): PointRef {
         val rider = riderOn(circle, at, "")
         if (rider != null) return addConstrained(rider.point, rider.handle)
-        val circleRef = circle.ref as CircleRef
+        val circleRef = carrierCircle(circle)
         val aNode = SourceNode(nextId("a"), ScalarValue(Quantity.rad(0.0)))
         return addConstrained(cx.pointOnCircle(circleRef, Ref<ScalarValue>(aNode)), OnCircleHandle(circleRef, aNode))
     }
@@ -2246,15 +2303,16 @@ class Document {
     ): Pair<PointSetRef, Boolean>? {
         val aLin = a.isLinear
         val bLin = b.isLinear
-        val aCirc = a.kind == ElementKind.CIRCLE
-        val bCirc = b.kind == ElementKind.CIRCLE
+        // an arc intersects through its carrier circle, exactly as a segment does through its carrier line
+        val aCirc = a.isCentric
+        val bCirc = b.isCentric
         val lineLine = aLin && bLin
         val set: PointSetRef =
             when {
                 lineLine -> cx.intersectLL(carrierLine(a), carrierLine(b))
-                aCirc && bCirc -> cx.intersectCC(a.ref as CircleRef, b.ref as CircleRef)
-                aLin && bCirc -> cx.intersectLC(carrierLine(a), b.ref as CircleRef)
-                aCirc && bLin -> cx.intersectLC(carrierLine(b), a.ref as CircleRef)
+                aCirc && bCirc -> cx.intersectCC(carrierCircle(a), carrierCircle(b))
+                aLin && bCirc -> cx.intersectLC(carrierLine(a), carrierCircle(b))
+                aCirc && bLin -> cx.intersectLC(carrierLine(b), carrierCircle(a))
                 else -> return null
             }
         return set to lineLine
@@ -2321,7 +2379,7 @@ class Document {
         p: PointRef,
         circle: Element,
     ): List<PointRef> {
-        val set = cx.tangentPointsFromPoint(p, circle.ref as CircleRef)
+        val set = cx.tangentPointsFromPoint(p, carrierCircle(circle))
         val refs = listOf(cx.select(set, +1), cx.select(set, -1))
         refs.forEach { addDerived(it) }
         return refs
@@ -2965,13 +3023,225 @@ class Document {
         nearA: Vec2,
         nearB: Vec2,
         ev: Evaluator,
-    ): PointRef? =
-        when {
-            a.kind == ElementKind.BEZIER -> bezierEndNear(a, nearB, ev)
-            b.kind == ElementKind.BEZIER -> bezierEndNear(b, nearA, ev)
-            // pieces that *already* meet hand over there, instead of being re-intersected
-            else -> sharedEndBetween(a, b, ev) ?: intersectNearNow(a, b, (nearA + nearB) * 0.5)
+    ): PointRef? {
+        // a joint the *construction* stated (a fillet's tangency, a chamfer's bevel end) is the handover,
+        // before anything is re-derived: it is exact where an intersection does not even exist — which a
+        // tangency does not — see [registerJoint]
+        registeredJoint(a, b)?.let { return addDerived(it) }
+        // then pieces that *already* meet: they hand over there instead of being re-intersected
+        sharedEndBetween(a, b, ev)?.let { return it }
+        if (a.kind == ElementKind.BEZIER) return bezierEndNear(a, nearB, ev)
+        if (b.kind == ElementKind.BEZIER) return bezierEndNear(b, nearA, ev)
+        return intersectNearNow(a, b, (nearA + nearB) * 0.5)
+    }
+
+    // ---- the joint registry: where the construction says two pieces hand over (OP-14) ----
+
+    /**
+     * Every joint the constructions in this document **stated**: a fillet's two tangencies, a chamfer's two
+     * bevel ends — see [registerJoint].
+     *
+     * Synthetic like handles and styles (OP-18): the step that built the fillet re-runs on replay and
+     * registers the joint again, so nothing about this is in the file.
+     */
+    private val jointRegistry = ArrayList<Joint>()
+
+    /**
+     * Corners a fillet or chamfer has **replaced**: those two legs no longer hand over to each other, even
+     * though their endpoints may still coincide there.
+     *
+     * This is what makes a bevelled corner unambiguous for boundary-follow: at a chamfered triangle vertex
+     * the two legs still meet, but the boundary does not go that way any more — it goes round the bevel. The
+     * fact belongs to the construction that cut the corner off, so it is recorded there and not re-derived
+     * from the picture (OP-14's rule against discovering topology).
+     */
+    private val supersededCorners = ArrayList<Supersession>()
+
+    /**
+     * Record that [a] and [b] hand over at [at] — the generalization of "these two happen to share an
+     * endpoint" to "**this construction says they meet here**".
+     *
+     * [at] is a node, never a coordinate: a fillet's tangency is `radialPoint`/`projectToLine` over the
+     * fillet's own centre, so the joint follows every later edit of radius or legs. It is what
+     * [jointBetween] hands the trim ops, and what [continuationsFrom] reads to walk a boundary — one fact,
+     * two readers, which is why it is registered rather than re-derived on each side.
+     */
+    private fun registerJoint(
+        a: Element,
+        b: Element,
+        at: PointRef,
+    ) {
+        jointRegistry.add(Joint(a, b, at))
+    }
+
+    private fun supersedeCorner(
+        a: Element,
+        b: Element,
+        by: Element,
+    ) {
+        supersededCorners.add(Supersession(a, b, by))
+    }
+
+    /** The registered joint between [a] and [b], or null. */
+    fun registeredJoint(
+        a: Element,
+        b: Element,
+    ): PointRef? = jointRegistry.firstOrNull { (it.a === a && it.b === b) || (it.a === b && it.b === a) }?.at
+
+    /**
+     * Where [a] and [b] still meet end to end, **the corners a fillet or chamfer took excluded**.
+     *
+     * Position by position rather than pair by pair, because two curves can meet *twice* — a chord and its
+     * arc do — and a rounding replaces only the corner it sits in. Which one that is needs no tolerance and
+     * no guess: it is the meeting nearest the rounding, so each superseding piece removes exactly one.
+     */
+    private fun sharedMeetings(
+        a: Element,
+        b: Element,
+        ev: Evaluator,
+    ): List<Vec2> {
+        val endsB = endpointPositions(b, ev)
+        if (endsB.isEmpty()) return emptyList()
+        val meetings = endpointPositions(a, ev).filter { p -> endsB.any { (it - p).length() <= GeomMath.JOIN_TOL } }
+        if (meetings.isEmpty()) return meetings
+        val left = meetings.toMutableList()
+        for (s in supersededCorners) {
+            if (!((s.a === a && s.b === b) || (s.a === b && s.b === a))) continue
+            if (elements.none { it === s.by }) continue
+            val m = supersessionCentre(s, ev) ?: continue
+            left.minByOrNull { (it - m).length() }?.let { left.remove(it) }
         }
+        return left
+    }
+
+    /** Where a superseding fillet/chamfer sits: the midpoint of the two joints it registered. */
+    private fun supersessionCentre(
+        s: Supersession,
+        ev: Evaluator,
+    ): Vec2? {
+        val t1 = registeredJoint(s.by, s.a)?.let { (ev.valueOf(it) as? PointValue)?.p } ?: return null
+        val t2 = registeredJoint(s.by, s.b)?.let { (ev.valueOf(it) as? PointValue)?.p } ?: return null
+        return (t1 + t2) * 0.5
+    }
+
+    /**
+     * Where [a] and [b] hand over **as a position**, or null when nothing says they do.
+     *
+     * The follow's question, asked without building anything: only constructed joints and shared endpoints
+     * count, never an intersection — an intersection is a place two curves cross, which is not by itself a
+     * statement that a boundary turns there.
+     */
+    fun handoverPosition(
+        a: Element,
+        b: Element,
+        ev: Evaluator,
+    ): Vec2? {
+        registeredJoint(a, b)?.let { j -> (ev.valueOf(j) as? PointValue)?.let { return it.p } }
+        return sharedMeetings(a, b, ev).firstOrNull()
+    }
+
+    /**
+     * How a boundary can continue from [piece] when it was entered at [enteredAt]: every *other* piece that
+     * hands over to it somewhere else, and where.
+     *
+     * The generalization the Outline tool's follow reads (OP-14): [sharedEndBetween] answers "do these two
+     * touch?", this answers "**which pieces continue here?**" — the same two sources of truth (the joint
+     * registry, then coincident endpoints), asked over the whole document instead of over one pair.
+     */
+    fun continuationsFrom(
+        piece: Element,
+        enteredAt: Vec2,
+        ev: Evaluator,
+    ): List<Continuation> =
+        handoverPlaces(piece, ev)
+            .filter { (_, at) -> (at - enteredAt).length() > GeomMath.JOIN_TOL }
+            .map { (other, at) -> Continuation(other, at) }
+
+    /** Every (piece, position) [piece] hands over at — the registry's entries, then coincident endpoints. */
+    private fun handoverPlaces(
+        piece: Element,
+        ev: Evaluator,
+    ): List<Pair<Element, Vec2>> {
+        val out = ArrayList<Pair<Element, Vec2>>()
+        for (j in jointRegistry) {
+            val other =
+                if (j.a === piece) {
+                    j.b
+                } else if (j.b === piece) {
+                    j.a
+                } else {
+                    continue
+                }
+            if (elements.none { it === other } || !other.visible) continue
+            val at = (ev.valueOf(j.at) as? PointValue)?.p ?: continue
+            out.add(other to at)
+        }
+        if (endpointPositions(piece, ev).isEmpty()) return out
+        for (other in elements) {
+            if (other === piece || !other.isCurve || !other.visible) continue
+            // a registered joint is the construction's own statement about this pair, so it wins outright
+            if (out.any { it.first === other }) continue
+            for (meet in sharedMeetings(piece, other, ev)) out.add(other to meet)
+        }
+        return out
+    }
+
+    /**
+     * The end of [piece] farthest from [from] — the far side of a followed piece when its second joint is
+     * not known yet (the follow stopped there), so its recorded click still lands on the right part of it.
+     */
+    fun farEndOf(
+        piece: Element,
+        from: Vec2,
+        ev: Evaluator,
+    ): Vec2? = endpointPositions(piece, ev).maxByOrNull { (it - from).length() }
+
+    /** Where a bounded piece ends, as positions — empty for a line, a ray or a whole circle. */
+    private fun endpointPositions(
+        el: Element,
+        ev: Evaluator,
+    ): List<Vec2> =
+        when (val v = ev.valueOf(el.ref)) {
+            is SegmentValue -> listOf(v.seg.a, v.seg.b)
+            is ArcValue -> listOf(GeomMath.arcStart(v.arc), GeomMath.arcEnd(v.arc))
+            is BezierValue -> listOf(v.bezier.p0, v.bezier.p3)
+            else -> emptyList()
+        }
+
+    /**
+     * A point **on** [piece] between the two joints [from] and [to] — the click a followed pick records.
+     *
+     * A followed piece needs a click position for the same two reasons a clicked one does: an arc's branch
+     * (which way round) is read off it, and the step restates it so replay makes the same choice (OP-18). So
+     * the follow has to name a point the user *would* have clicked, and the honest one is between the two
+     * joints: for a straight piece their midpoint, for an arc the mid-angle of whichever way round stays
+     * within the arc.
+     *
+     * Null for a whole circle — there both ways round are inside the piece, so which arc is meant is
+     * genuinely a choice, and the follow must stop and let the user make it rather than guess (OP-1).
+     */
+    fun pointBetweenOn(
+        piece: Element,
+        from: Vec2,
+        to: Vec2,
+        ev: Evaluator,
+    ): Vec2? {
+        if (piece.isLinear) return (from + to) * 0.5
+        if (piece.kind == ElementKind.BEZIER) {
+            val b = (ev.valueOf(piece.ref) as? BezierValue)?.bezier ?: return null
+            return (b.p0 + b.p1 * 3.0 + b.p2 * 3.0 + b.p3) * 0.125
+        }
+        val arc = (ev.valueOf(piece.ref) as? ArcValue)?.arc ?: return null
+        val a0 = (from - arc.center).angle()
+        val a1 = (to - arc.center).angle()
+        val ccwMid = a0 + norm2pi(a1 - a0) * 0.5
+        val cwMid = a0 - norm2pi(a0 - a1) * 0.5
+        return when {
+            GeomMath.arcContains(arc, ccwMid) -> GeomMath.arcPointAt(arc, ccwMid)
+            GeomMath.arcContains(arc, cwMid) -> GeomMath.arcPointAt(arc, cwMid)
+            else -> null
+        }
+    }
 
     /**
      * The endpoint two bounded pieces already share, as an accessor node on one of them — or null when
@@ -3020,6 +3290,14 @@ class Document {
                 @Suppress("UNCHECKED_CAST")
                 val ref = el.ref as ArcRef
                 listOf(GeomMath.arcStart(v.arc) to { cx.arcStart(ref) }, GeomMath.arcEnd(v.arc) to { cx.arcEnd(ref) })
+            }
+            // a spline built onto its neighbours' points shares an endpoint like anything else, and saying
+            // so here is better than choosing one of its ends from a click ([bezierEndNear]): the accessor
+            // is exact and needs no click at all
+            is BezierValue -> {
+                @Suppress("UNCHECKED_CAST")
+                val ref = el.ref as BezierRef
+                listOf(v.bezier.p0 to { cx.bezierStart(ref) }, v.bezier.p3 to { cx.bezierEnd(ref) })
             }
             else -> emptyList()
         }
@@ -3131,6 +3409,39 @@ class Document {
         // measurement becomes an ancestor of the result — and dimming the dimension then would be
         // exactly backwards: the drawing is what it names.
         return elements.filter { !it.isResult && !it.isAnnotation && it.ref.node.id in seen }
+    }
+
+    /**
+     * Hide or show [els], **recorded as a journal step** (`hide` / `show`, batched over the whole selection)
+     * — returns how many elements actually changed.
+     *
+     * This reverses a decision OP-18 recorded: *"no handles, styles … all of it is created by the methods
+     * that create the geometry, hence recreated by replay"*, and with it the line that hiding is a view
+     * state because *"the file is a construction"*. It is — and a construction the user has *arranged* to
+     * read a certain way. From the user's chair, reopening a drawing with every hidden helper line back on
+     * top of the result is data loss, not purity; and a hide is a decision, exactly like which intersection
+     * branch a click meant (OP-1), so it belongs in the file for the same reason. What stays out is
+     * visibility that is *not* a decision: a welded alias hides **by construction**, so nothing records it
+     * (and [setElementsVisible] refuses to show one — it would draw a second point on its master).
+     *
+     * One rule for one encoding: **per-element steps everywhere.** A group's toggle records the same step
+     * over the group's members rather than a flag on the group, so there is exactly one thing a file can say
+     * about visibility, and a member that leaves the group keeps the state the user gave it.
+     */
+    fun setElementsVisible(
+        els: List<Element>,
+        visible: Boolean,
+    ): Int {
+        // a welded alias is hidden by construction, so it is never *shown* and never named in a step
+        val subject = els.filter { el -> elements.any { it === el } && !(visible && isWelded(el)) }
+        val changed = subject.count { it.visible != visible }
+        if (changed == 0) return 0
+        // the step asserts the state of everything the gesture named, not only what moved: replaying it must
+        // reach the same configuration whatever the elements' state was when it runs
+        recording(if (visible) "show" else "hide", Arg.Keyed("els", Arg.Els(subject))) {
+            subject.forEach { it.visible = visible }
+        }
+        return changed
     }
 
     /**
@@ -3631,10 +3942,50 @@ class Document {
     ) = add(cx.parallelThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
 
     /**
-     * Fillet between two legs (lines/segments/rays). The corner is their intersection; the
-     * quadrant is chosen by which side of the corner each leg was clicked ([clickA]/[clickB]).
+     * A fillet of [radius] between two **carrier curves** — a line/segment/ray, a circle or an arc, in any
+     * of the three combinations.
+     *
+     * One tool, because a fillet is one idea: the rounding is the circle of radius r tangent to both legs,
+     * and *where its centre is* is the only thing that differs per leg kind — the intersection of two
+     * corner-side rays for two lines, of an offset line with a concentric circle for a line and a circle,
+     * of two concentric circles for two circles. Every variant is therefore composed of ops that already
+     * existed ([Construction.parallelAtDistance], [Construction.concentricCircle], the intersections and
+     * `Select`), plus the two accessors that give the tangencies — a projection on a straight leg, a
+     * [Construction.radialPoint] on a round one.
+     *
+     * **Which** variant is a persisted discrete choice (OP-1), decided once from the two clicks by
+     * [filletVariantFor] and stored as the signs of that composition: which side of the line, R+r or R−r,
+     * and which intersection branch. Nothing is re-derived later, so editing the radius moves the fillet and
+     * never re-picks a different one; a radius too large for any tangency makes the node invalid with a
+     * reason and heals when it comes back down (OP-3).
+     *
+     * The arc is emitted **quietly** — one element, no visible points — as the line-line fillet always was;
+     * the tangencies are registered as joints instead ([registerJoint]), which is what lets a filleted chain
+     * be traced by the Outline tool's boundary-follow.
      */
-    fun filletBetweenLines(
+    fun filletBetweenCurves(
+        leg1: Element,
+        leg2: Element,
+        radius: ScalarRef,
+        clickA: Vec2,
+        clickB: Vec2,
+    ): Element? =
+        when {
+            leg1.isLinear && leg2.isLinear -> filletLineLine(leg1, leg2, radius, clickA, clickB)
+            isFilletLeg(leg1) && isFilletLeg(leg2) -> filletMixed(leg1, leg2, radius, clickA, clickB)
+            else -> null
+        }
+
+    /** Whether [el] can be a fillet leg at all: it must carry a line or a circle to be tangent to. */
+    private fun isFilletLeg(el: Element): Boolean = el.isLinear || el.isCentric
+
+    /**
+     * The straight-leg case, unchanged: [Construction.filletBetweenLines] computes corner, bisector and
+     * both tangencies in one op, and its tangent points are reachable as accessors on the arc it returns.
+     * Kept rather than re-composed, because it is the case every existing drawing was built with — the
+     * generalization has to add variants, not restate the one that already works.
+     */
+    private fun filletLineLine(
         leg1: Element,
         leg2: Element,
         radius: ScalarRef,
@@ -3644,7 +3995,200 @@ class Document {
         val l1 = carrierLine(leg1)
         val l2 = carrierLine(leg2)
         val (sign1, sign2) = legSigns(l1, l2, clickA, clickB)
-        return add(cx.filletBetweenLines(l1, l2, radius, sign1, sign2), ElementKind.ARC, Styles.CURVE)
+        val arc = cx.filletBetweenLines(l1, l2, radius, sign1, sign2)
+        val el = add(arc, ElementKind.ARC, Styles.CURVE)
+        // the op builds the arc from leg1's tangency to leg2's, so its own ends *are* the two joints
+        registerJoint(el, leg1, cx.arcStart(arc))
+        registerJoint(el, leg2, cx.arcEnd(arc))
+        supersedeCorner(leg1, leg2, el)
+        return el
+    }
+
+    /**
+     * A fillet with at least one round leg: line–circle, or circle–circle.
+     *
+     * The graph is built in **exactly** the argument order [filletCentres] scores numerically, because a
+     * `Select` sign means "first or last of *this* set" (OP-1) and both intersections order their solutions
+     * from their arguments — swap them and the stored branch would mean the other point.
+     */
+    private fun filletMixed(
+        leg1: Element,
+        leg2: Element,
+        radius: ScalarRef,
+        clickA: Vec2,
+        clickB: Vec2,
+    ): Element? {
+        val v = filletVariantFor(leg1, leg2, radius, clickA, clickB) ?: return null
+        val reason = "no circle of that radius is tangent to both legs there"
+        val set =
+            when {
+                leg1.isLinear ->
+                    cx.intersectLC(
+                        cx.parallelAtDistance(carrierLine(leg1), radius, v.side1),
+                        cx.concentricCircle(carrierCircle(leg2), radius, v.side2),
+                    )
+                leg2.isLinear ->
+                    cx.intersectLC(
+                        cx.parallelAtDistance(carrierLine(leg2), radius, v.side2),
+                        cx.concentricCircle(carrierCircle(leg1), radius, v.side1),
+                    )
+                else ->
+                    cx.intersectCC(
+                        cx.concentricCircle(carrierCircle(leg1), radius, v.side1),
+                        cx.concentricCircle(carrierCircle(leg2), radius, v.side2),
+                    )
+            }
+        val centre = cx.select(set, v.branch, reason)
+        val t1 = tangencyOn(leg1, centre)
+        val t2 = tangencyOn(leg2, centre)
+        val el = add(cx.filletArc(centre, t1, t2), ElementKind.ARC, Styles.CURVE)
+        registerJoint(el, leg1, t1)
+        registerJoint(el, leg2, t2)
+        supersedeCorner(leg1, leg2, el)
+        return el
+    }
+
+    /** Where a fillet centred at [centre] touches [leg]: a projection on a straight leg, a radial on a round one. */
+    private fun tangencyOn(
+        leg: Element,
+        centre: PointRef,
+    ): PointRef = if (leg.isLinear) cx.projectToLine(centre, carrierLine(leg)) else cx.radialPoint(carrierCircle(leg), centre)
+
+    /** One fillet leg as values: a carrier line, or a carrier circle. */
+    private class LegValue(val line: Line?, val circle: Circle?) {
+        /** Where a fillet centred at [centre] touches this leg — [tangencyOn] on values. */
+        fun tangency(centre: Vec2): Vec2 =
+            if (line != null) {
+                line.origin + line.dir * (centre - line.origin).dot(line.dir)
+            } else {
+                val c = circle!!
+                val d = centre - c.center
+                if (d.length() < Vec2.EPS) c.center + Vec2(c.radius, 0.0) else c.center + d.normalized() * c.radius
+            }
+    }
+
+    private fun legValueOf(
+        el: Element,
+        ev: Evaluator,
+    ): LegValue? =
+        if (el.isLinear) {
+            ((ev.eval(carrierLine(el).node) as? EvalResult.Ok)?.value as? LineValue)?.line?.let { LegValue(it, null) }
+        } else {
+            ((ev.eval(carrierCircle(el).node) as? EvalResult.Ok)?.value as? CircleValue)?.circle?.let { LegValue(null, it) }
+        }
+
+    /**
+     * The discrete choices a mixed fillet stores: [side1]/[side2] offset each leg (which side of a line;
+     * R+r or R−r for a circle), [branch] picks between the two intersections of those offsets.
+     */
+    private class FilletVariant(val side1: Int, val side2: Int, val branch: Int)
+
+    /**
+     * Which variant the two clicks meant — decided once, here, and then stored (OP-1).
+     *
+     * Every variant is built *numerically* and scored by how near its two tangencies fall to where the legs
+     * were clicked: the user pointed at the two places the rounding should touch, which is the whole of the
+     * information the clicks carry. Numerically rather than as throwaway nodes, because eight candidate
+     * sub-graphs per fillet would be the wrong kind of cheap (as the area-pick filter records).
+     *
+     * When no variant has a solution at all — r larger than the geometry admits — the one *closest* to
+     * having one is stored, so the invalid node (OP-3) heals into the fillet the user was reaching for as
+     * soon as the radius comes down, instead of into an arbitrary other one.
+     */
+    private fun filletVariantFor(
+        leg1: Element,
+        leg2: Element,
+        radius: ScalarRef,
+        clickA: Vec2,
+        clickB: Vec2,
+    ): FilletVariant? {
+        val ev = Evaluator()
+        val r = ((ev.eval(radius.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm ?: return null
+        if (r <= 0.0) return null
+        val v1 = legValueOf(leg1, ev) ?: return null
+        val v2 = legValueOf(leg2, ev) ?: return null
+        var best: FilletVariant? = null
+        var bestScore = Double.MAX_VALUE
+        // an unsolvable variant scores worse than every solvable one by a wide margin, so "closest to
+        // solvable" can only ever decide between variants that are all unsolvable
+        val unsolvable = 1.0e9
+        for (s1 in listOf(1, -1)) {
+            for (s2 in listOf(1, -1)) {
+                val hits = filletCentres(v1, v2, r, s1, s2) ?: continue
+                if (hits.isEmpty()) {
+                    val score = unsolvable + filletGap(v1, v2, r, s1, s2)
+                    if (score < bestScore) {
+                        bestScore = score
+                        best = FilletVariant(s1, s2, +1)
+                    }
+                    continue
+                }
+                for (branch in listOf(1, -1)) {
+                    val centre = if (branch >= 0) hits.first() else hits.last()
+                    val score = (v1.tangency(centre) - clickA).length() + (v2.tangency(centre) - clickB).length()
+                    if (score < bestScore) {
+                        bestScore = score
+                        best = FilletVariant(s1, s2, branch)
+                    }
+                }
+            }
+        }
+        return best
+    }
+
+    /** The candidate fillet centres of one variant, or null when the offsets themselves are degenerate. */
+    private fun filletCentres(
+        v1: LegValue,
+        v2: LegValue,
+        r: Double,
+        s1: Int,
+        s2: Int,
+    ): List<Vec2>? {
+        fun offsetLine(
+            l: Line,
+            s: Int,
+        ) = Line(l.origin + l.dir.perp() * (s * r), l.dir)
+
+        fun offsetCircle(
+            c: Circle,
+            s: Int,
+        ) = (c.radius + s * r).takeIf { it > 0.0 }?.let { Circle(c.center, it) }
+        return when {
+            v1.line != null && v2.circle != null ->
+                offsetCircle(v2.circle, s2)?.let { GeomMath.intersectLC(offsetLine(v1.line, s1), it).points }
+            v2.line != null && v1.circle != null ->
+                offsetCircle(v1.circle, s1)?.let { GeomMath.intersectLC(offsetLine(v2.line, s2), it).points }
+            v1.circle != null && v2.circle != null -> {
+                val c1 = offsetCircle(v1.circle, s1)
+                val c2 = offsetCircle(v2.circle, s2)
+                if (c1 == null || c2 == null) null else GeomMath.intersectCC(c1, c2).points
+            }
+            else -> null
+        }
+    }
+
+    /** How far one unsolvable variant is from having a solution (mm) — see [filletVariantFor]. */
+    private fun filletGap(
+        v1: LegValue,
+        v2: LegValue,
+        r: Double,
+        s1: Int,
+        s2: Int,
+    ): Double {
+        val line = v1.line ?: v2.line
+        if (line != null) {
+            val c = (v1.circle ?: v2.circle) ?: return 0.0
+            val s = if (v1.line != null) s2 else s1
+            val sLine = if (v1.line != null) s1 else s2
+            val off = Line(line.origin + line.dir.perp() * (sLine * r), line.dir)
+            return abs(abs((c.center - off.origin).cross(off.dir)) - (c.radius + s * r))
+        }
+        val c1 = v1.circle ?: return 0.0
+        val c2 = v2.circle ?: return 0.0
+        val r1 = c1.radius + s1 * r
+        val r2 = c2.radius + s2 * r
+        val d = (c2.center - c1.center).length()
+        return maxOf(0.0, d - (r1 + r2)) + maxOf(0.0, abs(r1 - r2) - d)
     }
 
     /**
@@ -3670,7 +4214,12 @@ class Document {
         val corner = cx.select(cx.intersectLL(l1, l2), +1)
         val a = addDerived(cx.pointAlongLine(l1, corner, distance, sign1))
         val b = addDerived(cx.pointAlongLine(l2, corner, distance, sign2))
-        return segment(a, b)
+        val bevel = segment(a, b)
+        // the bevel's ends *are* where it hands over to each leg, and the corner it cut off is gone
+        registerJoint(bevel, leg1, a)
+        registerJoint(bevel, leg2, b)
+        supersedeCorner(leg1, leg2, bevel)
+        return bevel
     }
 
     /**
@@ -3830,8 +4379,8 @@ class Document {
         c2: Element,
         inner: Boolean,
     ): List<Element> {
-        val a = c1.ref as CircleRef
-        val b = c2.ref as CircleRef
+        val a = carrierCircle(c1)
+        val b = carrierCircle(c2)
         return listOf(+1, -1).map {
             add(if (inner) cx.innerTangent(a, b, it) else cx.outerTangent(a, b, it), ElementKind.LINE, Styles.CONSTRUCT)
         }
@@ -3843,7 +4392,7 @@ class Document {
         distance: ScalarRef,
         at: Vec2,
     ): Element {
-        val ref = circle.ref as CircleRef
+        val ref = carrierCircle(circle)
         val c = (Evaluator().eval(ref.node) as? EvalResult.Ok)?.value as? CircleValue
         val sign = if (c != null && (at - c.circle.center).length() < c.circle.radius) -1 else 1
         return add(cx.concentricCircle(ref, distance, sign), ElementKind.CIRCLE, Styles.CURVE)
@@ -3905,7 +4454,7 @@ class Document {
 
     fun measureLength(seg: Element) = measurement("len", cx.measureLength(seg.ref as SegmentRef))
 
-    fun measureRadius(circle: Element) = measurement("radius", cx.measureRadius(circle.ref as CircleRef))
+    fun measureRadius(circle: Element) = measurement("radius", cx.measureRadius(carrierCircle(circle)))
 
     fun measureX(p: PointRef) = measurement("x", cx.measureX(p))
 
@@ -3987,7 +4536,8 @@ class Document {
         at: Vec2,
         dofs: List<Quantity> = emptyList(),
     ): Element? {
-        val circle = carrierCircle(curve) ?: return null
+        if (!curve.isCentric) return null
+        val circle = carrierCircle(curve)
         val ref = cx.measureRadius(circle)
         measurement("radius", ref)
         val c = (Evaluator().eval(circle.node) as? EvalResult.Ok)?.let { (it.value as? CircleValue)?.circle }
@@ -4020,15 +4570,6 @@ class Document {
         val radius = SourceNode(nextId("dR"), ScalarValue(dofs.getOrNull(0) ?: Quantity.mm((at - vertex).length())))
         return annotate(ref, AngularDimension(ref, a, b, s1, s2, radius))
     }
-
-    /** The full circle of a circle or arc element — the coercion a radial dimension needs. */
-    @Suppress("UNCHECKED_CAST")
-    private fun carrierCircle(el: Element): CircleRef? =
-        when (el.kind) {
-            ElementKind.CIRCLE -> el.ref as CircleRef
-            ElementKind.ARC -> cx.circleOfArc(el.ref as ArcRef)
-            else -> null
-        }
 
     /** The one displayable element of a dimension: the measurement it shows, drawn as [ann]. */
     private fun annotate(
@@ -4072,4 +4613,12 @@ object Styles {
 
     /** Annotation (OP-14): thin, and a colour of its own, because it is not part of the drawing. */
     val ANNOTATION = Style(stroke = "#17607d", width = 1.0)
+
+    /**
+     * Geometry an armed tool has **picked** but not yet used — half of an operation in progress.
+     *
+     * Its own colour, deliberately not the selection's: what the next click and the Delete key act on is the
+     * selection, so a pick that read as one would say the wrong thing (see [SceneRenderer]).
+     */
+    val PICKED = Style(stroke = "#e377c2", width = 4.0)
 }

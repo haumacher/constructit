@@ -492,6 +492,14 @@ class Editor(
 
     val pendingCount: Int get() = filledSlots
 
+    /**
+     * The geometry the armed tool has collected so far — what the canvas draws as *picked* (OP-14).
+     *
+     * A pick is not a selection: it is a half-finished operation, so it gets a mark of its own rather than
+     * the selection highlight (see [SceneRenderer]). Exposed read-only, because the collector owns it.
+     */
+    val toolPicks: List<Element> get() = pickedElements
+
     fun setTool(id: String) {
         // an active path is a pending operation: switching tools finishes it (its thickness included)
         // rather than silently abandoning half-drawn state that no gesture ever committed
@@ -574,20 +582,14 @@ class Editor(
     }
 
     /**
-     * Hide or show the selected elements. Visibility is a **view** state: the saved file is a
-     * construction (OP-18) and has no viewing section, so hiding is deliberately neither persisted nor
-     * an undo step. A welded alias stays hidden — it is hidden *by construction*, and showing it would
-     * draw a second point on top of its master.
+     * Hide or show the selected elements — **one recorded step per gesture** (OP-18's visibility reversal;
+     * see [Document.setElementsVisible]), so it survives save/load and undoes like any other operation.
+     * A welded alias stays hidden: it is hidden *by construction*, and showing it would draw a second point
+     * on top of its master.
      */
     fun setSelectionVisible(visible: Boolean): Int {
-        var n = 0
-        for (el in selected) {
-            if (visible && doc.isWelded(el)) continue
-            if (el.visible != visible) {
-                el.visible = visible
-                n++
-            }
-        }
+        val n = doc.setElementsVisible(selectedElements, visible)
+        if (n > 0) checkpoint()
         statusHint = if (n == 0) "Nothing to ${if (visible) "show" else "hide"}" else "${if (visible) "Shown" else "Hidden"} $n element${if (n == 1) "" else "s"}"
         onChange()
         return n
@@ -856,15 +858,19 @@ class Editor(
         onChange()
     }
 
-    /** Hide/show a whole group. A view state like [setSelectionVisible], and not persisted either. */
+    /**
+     * Hide/show a whole group — the same **per-element** step as [setSelectionVisible], over the group's
+     * members.
+     *
+     * One rule rather than two: a group flag would be a second thing a file could say about visibility, and
+     * the two would then have to be reconciled every time membership changed. As members, the state also
+     * stays with the elements when the group is dissolved.
+     */
     fun setGroupVisible(
         g: Group,
         visible: Boolean,
     ) {
-        for (el in doc.groupMembers(g)) {
-            if (visible && doc.isWelded(el)) continue
-            el.visible = visible
-        }
+        if (doc.setElementsVisible(doc.groupMembers(g), visible) > 0) checkpoint()
         statusHint = "Group ${g.name} ${if (visible) "shown" else "hidden"}"
         onChange()
     }
@@ -984,6 +990,7 @@ class Editor(
             dimmed = if (dimScaffolding) doc.scaffoldingElements().toHashSet() else emptySet(),
             marquee = marqueeFrom?.let { f -> marqueeTo?.let { t -> f to t } },
             frames = selectedFrames(),
+            picked = pickedElements.toHashSet(),
         )
     }
 
@@ -1858,6 +1865,97 @@ class Editor(
     }
 
     /**
+     * **Follow the boundary** from the picks already collected, appending every piece whose continuation is
+     * unique, and closing the outline when it comes back to the first piece (OP-14).
+     *
+     * Two picks fix a direction; from there, at the end of the current piece the document is asked which
+     * pieces hand over there ([Document.continuationsFrom] — constructed joints and coincident endpoints,
+     * never an intersection and never a seed point). Exactly one answer is not a decision, so it is taken;
+     * anything else stops the follow and the user keeps clicking.
+     *
+     * **What this does *not* do is discover the loop at replay time.** The pieces it appends are appended to
+     * the pick list, so the recorded step carries the full ordered boundary and replay re-runs the same
+     * `ToolDef.build` over the same list — OP-14's rejection of *"the loop's identity would be discovered
+     * rather than constructed"* is untouched, because nothing follows anything on load. The follow lives
+     * strictly in the *gesture*: it saves clicks, and it is the click log that is stored.
+     *
+     * Stop conditions, all reported: a dead end (nothing continues), a fork (two or more do), a piece
+     * already in the chain, a whole circle (which of its two arcs is meant is a genuine choice — OP-1), and
+     * a pair with no constructed joint at all (two crossing lines, say), where there is nothing to follow.
+     */
+    private fun extendBoundaryPicks() {
+        val ev = ev()
+        val first = pickedElements.firstOrNull() ?: return
+        val start = pickedElements.last()
+        var entered = doc.handoverPosition(pickedElements[pickedElements.size - 2], start, ev) ?: return
+        // (piece, where the boundary enters it) — collected first, because a piece's *click* needs both of
+        // its joints and the second one is only known once the next piece is known
+        val chain = ArrayList<Pair<Element, Vec2>>()
+        var closed = false
+        var stop: String? = null
+        // a chain cannot visit more pieces than the document has
+        var budget = doc.elements.size + 1
+        while (budget-- > 0) {
+            val cur = chain.lastOrNull()?.first ?: start
+            val next = doc.continuationsFrom(cur, entered, ev)
+            if (next.isEmpty()) {
+                stop = "nothing continues past ${cur.id}"
+                break
+            }
+            if (next.size > 1) {
+                stop = "${next.size} pieces meet past ${cur.id}, so the boundary forks there — pick the one you mean"
+                break
+            }
+            val step = next.single()
+            if (step.piece === first) {
+                // back where it started: that is the boundary closed — unless only two pieces are in, which
+                // is the tracer's own two-meetings special case and stays a deliberate Enter ([buildOutline])
+                if (pickedElements.size + chain.size >= 3) closed = true
+                break
+            }
+            if (pickedElements.any { it === step.piece } || chain.any { it.first === step.piece }) {
+                stop = "the boundary rejoins ${step.piece.id}, which is already in it"
+                break
+            }
+            if (step.piece.kind == ElementKind.CIRCLE) {
+                stop = "${step.piece.id} continues there, but which arc of a whole circle the boundary takes is a choice — click it"
+                break
+            }
+            chain.add(step.piece to step.at)
+            entered = step.at
+        }
+        if (chain.isEmpty()) {
+            // a fork is worth saying even when nothing was followed: it is why the tool went quiet
+            if (stop != null && stop.contains("forks")) statusHint = "$stop ($filledSlots picked)"
+            return
+        }
+        for ((i, link) in chain.withIndex()) {
+            val (piece, enter) = link
+            // the far joint: the next piece's, the first piece's when the loop closed, else simply the far
+            // end of the piece — which is where the user will click next anyway
+            val exit =
+                chain.getOrNull(i + 1)?.second
+                    ?: (if (closed) doc.handoverPosition(piece, first, ev) else null)
+                    ?: doc.farEndOf(piece, enter, ev)
+                    ?: enter
+            pickedElements.add(piece)
+            pickedClicks.add(doc.pointBetweenOn(piece, enter, exit, ev) ?: enter)
+            filledSlots++
+        }
+        if (closed) {
+            val n = filledSlots
+            finishRepeatingTool()
+            statusHint = "Followed the boundary round through $n pieces and closed it"
+            return
+        }
+        val last = pickedElements.last()
+        val why = stop?.let { " — $it" } ?: ""
+        statusHint =
+            "Followed ${chain.size} piece${if (chain.size == 1) "" else "s"} to ${last.id} " +
+            "($filledSlots picked)$why; click the next piece, or Enter to close"
+    }
+
+    /**
      * The scalars [tool] consumes: the last of the panel picks, in pick order. Null when too few have been
      * picked — the caller then says which ones are still wanted ([scalarPrompt]).
      */
@@ -1904,11 +2002,15 @@ class Editor(
                 SlotKind.EXISTING_POINT -> pickElement(world) { it.isPoint }
                 SlotKind.CURVE -> pickElement(world) { it.isCurve }
                 SlotKind.LINE -> pickElement(world) { it.isLinear } // a segment or ray also carries a line
-                SlotKind.CIRCLE -> pickElement(world) { it.kind == ElementKind.CIRCLE }
+                // ...and an arc also carries a circle: the twin coercion, so a circle slot takes one
+                SlotKind.CIRCLE -> pickElement(world) { it.isCentric }
                 SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
                 SlotKind.GEOMETRY -> pickElement(world) { true }
                 SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.handle is OnCircleHandle }
-                SlotKind.CENTRIC -> pickElement(world) { it.kind == ElementKind.CIRCLE || it.kind == ElementKind.ARC }
+                SlotKind.CENTRIC -> pickElement(world) { it.isCentric }
+                // a fillet leg: either carrier will do, since all the rounding needs is something to be
+                // tangent to
+                SlotKind.CARRIER -> pickElement(world) { it.isLinear || it.isCentric }
                 // the seam's slot (OP-17): a traced outline or a thick path's footprint, both of which
                 // bound an area — the coercion between them is the document's, not the pick's
                 SlotKind.AREA -> pickElement(world, doc.areaPickFilter(ev()))
@@ -1918,7 +2020,15 @@ class Editor(
             }
         // existing-only slots do NOT create anything on a miss — just hint and wait
         if (!picked) {
-            statusHint = tool.help
+            // A miss must *say* it missed, and say where the operation stands. Silently keeping the old
+            // count is the worst of the three possible answers: the drawing does not change, so nothing on
+            // screen distinguishes "that curve is in" from "that click landed in space".
+            statusHint =
+                if (tool.repeating) {
+                    "That click hit no curve — $filledSlots picked so far. ${tool.help}"
+                } else {
+                    "That click hit nothing pickable — ${tool.help}"
+                }
             onChange()
             return
         }
@@ -1929,6 +2039,9 @@ class Editor(
 
         if (tool.repeating) {
             statusHint = "${tool.help} ($filledSlots picked)"
+            // two picks fix the direction, so from there the boundary can be followed wherever it is not
+            // a choice — see [extendBoundaryPicks]
+            if (filledSlots >= 2) extendBoundaryPicks()
             onChange()
             return
         }

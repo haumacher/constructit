@@ -282,6 +282,26 @@ object GeomMath {
         angle: Double,
     ): Vec2 = arc.center + Vec2(arc.radius * cos(angle), arc.radius * sin(angle))
 
+    /**
+     * Whether [angle] lies within [arc]'s own sweep (its ends included, to within [ANGLE_TOL]).
+     *
+     * Asked by the Outline tool's boundary-follow (OP-14) when it has to name a point *on* a followed arc:
+     * of the two ways round between two joints, the one that stays inside the arc is the piece.
+     */
+    fun arcContains(
+        arc: Arc,
+        angle: Double,
+    ): Boolean {
+        val total = sweep(arc)
+        val twoPi = 2 * PI
+        val along = if (total >= 0) (angle - arc.startAngle) % twoPi else (arc.startAngle - angle) % twoPi
+        val t = if (along < 0) along + twoPi else along
+        return t <= abs(total) + ANGLE_TOL
+    }
+
+    /** Angular slack for "on this arc" questions (rad) — floating-point noise, not a modelling tolerance. */
+    const val ANGLE_TOL = 1e-9
+
     fun arcStart(arc: Arc): Vec2 = arcPointAt(arc, arc.startAngle)
 
     fun arcEnd(arc: Arc): Vec2 = arcPointAt(arc, arc.endAngle)

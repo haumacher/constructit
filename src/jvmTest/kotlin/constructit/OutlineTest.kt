@@ -280,17 +280,11 @@ class OutlineTest {
         assertEquals(8, ed.doc.elements.count { it.isCurve }, "four sides and four corner arcs")
 
         ed.use(Tools.OUTLINE)
-        // round the boundary: side, corner, side, corner, ... (a corner is clicked at its 45° point)
+        // two picks — a side and the corner arc next to it — fix the direction; the boundary-follow walks
+        // the other six pieces and closes it (a corner is clicked at its 45° point)
         val d = 8.0 * kotlin.math.cos(PI / 4)
         ed.click(Vec2(0.0, 40.0))
         ed.click(Vec2(52.0 + d, 32.0 + d))
-        ed.click(Vec2(60.0, 0.0))
-        ed.click(Vec2(52.0 + d, -32.0 - d))
-        ed.click(Vec2(0.0, -40.0))
-        ed.click(Vec2(-52.0 - d, -32.0 - d))
-        ed.click(Vec2(-60.0, 0.0))
-        ed.click(Vec2(-52.0 - d, 32.0 + d))
-        assertTrue(ed.key("Enter"), "Enter should close the outline")
 
         val outline = assertNotNull(ed.doc.elements.singleOrNull { it.kind == ElementKind.OUTLINE }, "the trace must produce a loop")
 

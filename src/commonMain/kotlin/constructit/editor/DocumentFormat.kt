@@ -123,7 +123,11 @@ object DocumentFormat {
             // so a delete leaves a consistent group and one whose members are all gone leaves no step
             // at all — [Document.dependentSteps] drops it. Naming, not presence, is the test: a script
             // can only refer to what an earlier step declared.
-            "group" ->
+            // hide/show follow the same rule for the same reason (OP-18's visibility reversal — see
+            // [Document.setElementsVisible]): the step states which elements are hidden *now*, so a member
+            // the script no longer declares is simply not written, and a step left with none is dropped by
+            // [Document.dependentSteps] before it can be
+            "group", "hide", "show" ->
                 step.args.map { arg ->
                     val els = (arg as? Arg.Keyed)?.value as? Arg.Els
                     if (arg is Arg.Keyed && els != null) Arg.Keyed(arg.key, Arg.Els(els.els.filter { it.id in names })) else arg
@@ -332,6 +336,8 @@ object DocumentFormat {
             "tool" -> applyTool(doc, words, byName)
             "macrodef" -> applyMacroDef(doc, words, byName)
             "group" -> applyGroup(doc, words, byName)
+            // visibility as a recorded decision (OP-18's reversal): one step per gesture, whole selection
+            "hide", "show" -> doc.setElementsVisible(visibilityMembers(words, byName), kind == "show")
             "place" -> applyPlace(doc, words)
             else -> throw LoadError("unknown step '$kind'")
         }
@@ -398,6 +404,20 @@ object DocumentFormat {
         }
         doc.defineMacro(name, members, points, scalars)
             ?: throw LoadError("macro '$name' has no elements, or an input point that is not free")
+    }
+
+    /**
+     * The elements a `hide` / `show` step names. A load error when one is unknown, like every other
+     * element reference: a visibility step that silently applied to nothing would reopen the drawing
+     * looking different from the file, which is exactly what recording it was for.
+     */
+    private fun visibilityMembers(
+        words: List<String>,
+        byName: Map<String, Element>,
+    ): List<Element> {
+        val arg = words.drop(1).firstOrNull { it.startsWith("els=") } ?: throw LoadError("${words[0]} is missing 'els='")
+        return arg.removePrefix("els=").split(',').filter { it.isNotEmpty() }
+            .map { byName[it] ?: throw LoadError("unknown element '$it'") }
     }
 
     /**

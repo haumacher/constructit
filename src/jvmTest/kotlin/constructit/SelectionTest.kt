@@ -212,23 +212,34 @@ class SelectionTest {
         assertEquals(before, DocumentFormat.save(ed.doc), "one undo brings the whole bulk delete back")
     }
 
+    /**
+     * **Hiding is a recorded step** — the reversal of OP-18's "visibility is not persisted" (see
+     * `Document.setElementsVisible`): it survives the file, and it undoes like every other operation.
+     */
     @Test
-    fun hidingTheSelectionIsAViewStateAndNotAnUndoStep() {
+    fun hidingTheSelectionIsARecordedStepThatUndoes() {
         val ed = scene()
         ed.marquee(Vec2(-80.0, -20.0), Vec2(80.0, 20.0))
         val saved = DocumentFormat.save(ed.doc)
 
         assertEquals(3, ed.setSelectionVisible(false))
         assertTrue(ed.doc.elements.none { it.visible })
-        assertEquals(saved, DocumentFormat.save(ed.doc), "visibility is a view state — the file is a construction (OP-18)")
+        val hidden = DocumentFormat.save(ed.doc)
+        assertTrue(hidden.lines().any { it.startsWith("hide els=") }, "the selection is one batched step: $hidden")
+        assertTrue(hidden.length > saved.length, "the hide is in the file now")
+        assertTrue(DocumentFormat.load(hidden).elements.none { it.visible }, "and comes back hidden on load")
 
         assertEquals(3, ed.setSelectionVisible(true))
         assertTrue(ed.doc.elements.all { it.visible })
+        assertTrue(DocumentFormat.save(ed.doc).lines().any { it.startsWith("show els=") }, "showing is a step too")
 
-        // hiding consumed no undo step either: the next undo is still the third point's
-        ed.setSelectionVisible(false)
+        // one undo per visibility gesture, and it walks back through them
         assertTrue(ed.undo())
-        assertEquals(2, ed.doc.freePoints.size)
+        assertTrue(ed.doc.elements.none { it.visible }, "undoing the show leaves them hidden again")
+        assertTrue(ed.undo())
+        assertTrue(ed.doc.elements.all { it.visible }, "undoing the hide brings them back")
+        assertTrue(ed.redo())
+        assertTrue(ed.doc.elements.none { it.visible }, "and redo hides them once more")
     }
 
     /** A hidden element is not pickable, so a marquee cannot select what it cannot show. */

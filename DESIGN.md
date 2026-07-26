@@ -361,10 +361,52 @@ auto-uniquified so wiring is unambiguous — see *Usability — click budgets*):
   as one gesture, through `facePlane`), Section (a solid + a height → an ordinary 2D area, exact for
   prisms) — see *Implementation status (as built — the seam downward)*
 - Parameter **wiring** (reduce DOF; equality by shared reference), measurement-as-scalar-input.
-- Any `LINE` slot also accepts a segment/ray (carrier line).
+- Any `LINE` slot also accepts a segment/ray (carrier line), and any `CIRCLE` slot an **arc** (carrier
+  circle) — see *Arcs are circle operands* below. `Fillet` takes either carrier in both slots.
 - An `AREA` slot accepts either result-layer element that bounds an area: a traced `Outline` (one loop,
   coerced with `region(...)`) or a thick path's footprint (already a region) — or a **section** of a solid,
   which is why the downward seam needed no new slot kind.
+
+#### Arcs are circle operands, and a fillet's legs may be round (as built)
+
+Reported as *"intersect between arc and circle not working"*. It was **one filter**: every `CIRCLE` slot
+demanded `ElementKind.CIRCLE`, so an arc was refused by Intersect, Concentric, Tangent-from-point, the common
+tangents, Point-on-circle and Radius — although every op behind them is about the *carrier* circle, which an
+arc has. The fix is the coercion that already existed one kind up: `Document.carrierCircle` is the exact twin
+of `carrierLine` (`circleOfArc` for an arc, the ref itself for a circle), and the slot filter became
+`Element.isCentric`, the twin of `isLinear`. One pattern, two kinds, no per-tool case.
+
+**The honest consequence is stated where it is picked**: a point derived through a carrier may land **off the
+drawn piece** — an arc–circle intersection can fall outside the arc's sweep, exactly as a segment's carrier
+line meets things beyond its ends. That is what a carrier *is*, so the tool help says it and a test asserts
+it rather than papering over it (`ArcCarrierTest`). The one route deliberately **not** generalized is
+*drag-to-attach* onto an arc: that is a gesture whose magnet promises the point lands where the halo is, and
+riding a carrier off the visible arc would break that promise. It stays on the roadmap as before.
+
+**Fillet, generalized to any carrier leg.** Same idea, one level up: a fillet is the circle of radius *r*
+tangent to both legs, and only *where its centre is* differs per leg kind —
+
+| legs | centre |
+|---|---|
+| line–line | the corner-side bisector construction (`filletBetweenLines`, unchanged) |
+| line–circle | `intersect(parallelAtDistance(line, r, side), concentric(circle, r, ±))` |
+| circle–circle | `intersect(concentric(c₁, r, ±), concentric(c₂, r, ±))` |
+
+So the generalization adds **no geometry**: the centre is composed of ops that already existed, each tangency
+is a projection (straight leg) or the one new accessor `radialPoint` (round leg — a scaled radial, the circle
+analogue of `projectToLine`), and `filletArc` closes it by taking the minor arc between them. Which variant a
+fillet *is* — side of the line, R+r or R−r, which of the two intersections — is a **stored discrete choice**
+(OP-1), decided once from the two clicks by scoring every variant's tangencies against where the legs were
+clicked, and never re-derived. The clicks say where the rounding should touch; that is all the information in
+them, and it is exactly enough. Unsolvable radii are ordinary invalidity with a reason that names the missing
+tangency, and heal (OP-3) — the *closest-to-solvable* variant is the one stored, so a fillet heals into the
+one the user was reaching for rather than into a sibling.
+
+Two deliberate limits. The arc is emitted **quietly** (one element, no visible tangent points), matching the
+line–line fillet — its tangencies are registered as *joints* instead (below), which is what the boundary
+tracer needs and the drawing does not. And **chamfer stays line-only**: a bevel across a round leg has two
+honest readings, a chord and an arc of the same length, and until that convention is stated a tool that
+silently picked one would be guessing. Recorded here rather than half-built.
 
 #### Welding (joining two points) — point-level wiring
 
@@ -487,8 +529,8 @@ one: weighting it 1 would have hidden the very friction the work removed.
 | W1 mechanical | 43 †  | **23** | rounded-rect plate → area → extrude; bolt circle by circular array; counterbore subtracted |
 | W2 architect | 27 | **18** | closed 4-corner wall ring, door + window, extrude, cut openings → storey solid |
 | W3 macro | 25 | **23** | record a 5-element construction as a tool, stamp it 3 times |
-| W4 drawing | 35 † | **31** | rounded-rect bracket outline, bore, brace + linear/radial/angular dimensions |
-| total | 130 | **95** | |
+| W4 drawing | 35 † | **24** | rounded-rect bracket outline, bore, brace + linear/radial/angular dimensions |
+| total | 130 | **88** | |
 
 † **W1 and W4 did not actually complete before.** Measuring them is what found two defects, both of which
 the "before" numbers therefore *understate*: a rounded rectangle could not be traced at all, and a circle
@@ -543,12 +585,15 @@ scripts spend, so the two columns are comparable.
 
 **Friction found and deliberately *not* removed** (measured, then judged):
 
-- **Tracing a boundary is still one click per piece** (9 of W4's 31 actions). The obvious extension — let
-  the *Outline* tool take a whole closed chain from one pick — was rejected: the Outline tool's job is to
-  say *which curves in which order*, and a whole-shape pick would make it impossible to start a mixed
-  boundary on a shape's side (a plate with one corner cut away). The area coercion above is safe precisely
-  because an `AREA` slot has no other reading of a curve pick. Where the whole shape *is* meant, the
-  coercion already avoids the trace entirely.
+- **Tracing a boundary was one click per piece** (9 of W4's 31 actions). The obvious extension — let the
+  *Outline* tool take a whole closed chain from one pick — was rejected: the Outline tool's job is to say
+  *which curves in which order*, and a whole-shape pick would make it impossible to start a mixed boundary
+  on a shape's side (a plate with one corner cut away). The area coercion above is safe precisely because an
+  `AREA` slot has no other reading of a curve pick. Where the whole shape *is* meant, the coercion already
+  avoids the trace entirely.
+  - *Removed later — and the rejection above is why it took the shape it did.* The **boundary-follow** (see
+    *The tracer reports, and follows* under OP-14) appends only what is **not a choice**, so beginning a mixed
+    boundary on a shape's side is untouched. W4's trace is 2 actions instead of 9 (31 → 24).
 - **Repeat-last-tool was evaluated and not built.** It buys nothing here: a tool stays armed after it
   builds, so repeating it is already just its own clicks, and re-arming costs one keystroke since (2).
 - **Regions with holes are still not traceable** (only single loops are), so a hole in a plate is a second
@@ -673,6 +718,35 @@ A step need not create geometry: `group "kitchen" els=e1,e3` records flat-group 
 element name and declares nothing. Membership is *state*, so the step is written with the members the
 script still declares — which is how deleting a member leaves a consistent group, and how a group whose
 members are all gone leaves no step at all.
+
+#### Visibility is recorded after all — a reversal (as built, on a user report)
+
+This decision is **reversed**. What it said, and why, is kept verbatim because the reasoning was sound and the
+conclusion was still wrong:
+
+> Visibility is a **view** state: the saved file is a construction (OP-18) and has no viewing section, so
+> hiding is deliberately neither persisted nor an undo step.
+
+The user's counter-argument wins: the file is a construction the user has *arranged*, and reopening a drawing
+with every hidden helper line back on top of the result is **data loss from the user's chair**. Purity was
+never the point of the format — replayability was, and a hide replays perfectly. It is also, precisely, a
+*decision*, which is the same reason a `Select` sign is stored (OP-1): a decision the file drops is a decision
+the user has to make again.
+
+So `hide els=e1,e5` / `show els=…` are journal steps, batched one per gesture, and they behave like the other
+steps that *name* elements without being built from them (`group`, `place`): membership is state, so save
+writes the members the script still declares, a delete leaves the rest, and a step with none left is dropped
+(`Document.dependentSteps`). Load applies them in order, so a later `show` simply wins. Undo/redo came free —
+the undo substrate *is* the saved script.
+
+**One rule, everywhere: per-element steps.** A group's hide/show records the same step over the group's
+members rather than a flag on the group. A group flag would be a second thing a file can say about
+visibility, and the two would need reconciling on every membership change; as members, the state also stays
+with the elements when the group is dissolved.
+
+**What stays unrecorded is what is not a decision:** a welded alias hides *by construction* (it would draw a
+second point on its master), so nothing records it and `setElementsVisible` refuses to show one. That is the
+line the reversal draws — the file records what the user chose, not what the construction implies.
 
 `macrodef "widget" els=e1,e2,e3 pts=e1,e2 scalar="r"` is the third step of that kind (OP-6): it declares a
 **user-defined tool** over elements earlier steps built — which of them are the definition, which of their
@@ -1196,7 +1270,7 @@ order** (stable node identity); only the trim parameters recompute. A loop that 
 | concept | nature | mechanism |
 |---|---|---|
 | result vs. scaffolding | **semantic** | is it consumed by an output node |
-| dimmed / hidden | presentation | per-element flag |
+| dimmed / hidden | presentation | per-element flag — **recorded** as a `hide`/`show` step (see the reversal under OP-18) |
 | layer (walls, dimensions, annotation) | organizational | named bucket + visibility |
 
 **Annotation is the third column, and the dim toggle must respect that.** Scaffolding is *derived* —
@@ -1284,6 +1358,50 @@ The result layer is reachable end to end in the browser:
   Geometry no result uses is not scaffolding either — it is simply unused.
 - Save/load needed **no per-tool support**: the `tool` step already carries `els=` and `clicks=`, and a
   repeating tool is just more of both.
+
+#### The tracer reports, and follows (as built — user reports)
+
+Two complaints about the same tool: *nothing says where I am while picking*, and *I have to click every
+piece of a corner I already constructed*.
+
+**Feedback.** Picked pieces are drawn in a colour of their own (`Styles.PICKED`, through the one *emphasis*
+path the selection also uses — a pick is not a selection, so it must not read as one), a click that hits
+nothing says *"that click hit no curve — N picked so far"* instead of leaving the old count standing, and the
+count is on the status line after every pick. The silent miss was the worst of the three possible answers: the
+drawing does not change either way, so nothing at all distinguished "that curve is in" from "that click
+landed in space".
+
+**Boundary-follow.** Two picks fix a direction; from there the tool appends every piece whose continuation is
+**unique**, and closes the outline when it comes back to the first piece. The user's own showcase — a triangle
+with two chamfered corners and one filleted corner, six boundary pieces — closes in **two clicks**, and the
+rounded rectangle in W4's budget went from nine actions to two.
+
+The load-bearing part is what it reads and what it records:
+
+- **A joint registry, not a search.** A fillet or chamfer *states* where it hands over: it registers its two
+  tangencies (or bevel ends) as `Joint(a, b, at)`, where `at` is a **node** — `projectToLine` / `radialPoint`
+  / `arcStart` — so the joint keeps following the parameters. This generalizes `sharedEndBetween` from "do
+  these two touch?" to "**which pieces continue here?**" (`Document.continuationsFrom`), over the same two
+  sources of truth: registered joints first, coincident endpoints second. An *intersection* is deliberately
+  not one of them — two curves crossing is not a statement that a boundary turns there.
+- **A cut corner is recorded as cut.** A chamfered triangle vertex is the case that forces this: the two legs
+  still meet there, but the boundary goes round the bevel instead, so the rounding registers a `Supersession`
+  of that corner. Position by position, not pair by pair — two curves can meet twice (a chord and its arc)
+  and a rounding replaces only the corner it sits in, which needs no tolerance to identify: it is the meeting
+  nearest the rounding.
+- **Nothing is discovered on replay.** The followed pieces are appended to the *pick list*, so the recorded
+  step carries the full ordered boundary and replay re-runs the same `ToolDef.build` over the same list. OP-14's
+  rejection of *"the loop's identity would be discovered rather than constructed"* is untouched, because the
+  follow lives strictly in the **gesture**: it saves clicks, and it is the clicks that are stored. (A followed
+  piece therefore needs a click position too — a point on it between its two joints, so an arc's branch is
+  read off it exactly as a clicked one is.)
+- **Stop conditions, every one reported**: a dead end, a fork (two or more continuations — a genuine choice,
+  so the user makes it), a piece already in the chain, a whole circle (which of its two arcs is meant is a
+  choice, OP-1), and a pair with no constructed joint at all. The status line narrates what was followed and
+  why it stopped.
+- **The cut, stated:** auto-close means a boundary that *is* forced can no longer be abandoned half-traced in
+  favour of a different closing piece — the escape is Escape, or one undo. Worth it, because a forced
+  continuation is by definition not a decision the user was making.
 
 **Deliberately not done here:** containment is not verified (a hole outside the outer boundary, or
 two overlapping holes, are accepted; only holes removing more than the boundary encloses are
@@ -2873,6 +2991,48 @@ Three broad families (see OP-9 decision above):
   the cross-axis case remains a DSL construction, and a mesh-only solid has no plan footprint to pick in 2D.
   532 headless tests green (6 new in `MeshBooleanTest`), plus the browser E2E extended with the engine's own
   availability line.
+- **Session 6 — five user reports, and one recorded decision reversed.** All five were about the editor
+  standing between the user and something already modelled. Six things worth recording.
+  (1) **A tool that collects picks has to say what it collected.** The Outline tool drew nothing while
+  picking and answered a miss with silence — and since a pick changes no geometry, silence made "that curve
+  is in" and "that click landed in space" identical on screen. Picks are now drawn in their own colour
+  through the *same* emphasis path as the selection (a pick is not a selection, so it gets a different colour
+  and the same vocabulary), a miss says so with the running count, and the count is on the status line after
+  every pick.
+  (2) **The click-per-piece trace fell to "two clicks", by recording what the construction already knew.**
+  A fillet or chamfer now *registers* its tangencies as joints — nodes, so they follow the parameters — and
+  registers the corner it replaced as superseded, position by position (two curves can meet twice; a rounding
+  replaces only the corner it sits in, identified as the meeting nearest it, with no tolerance). The tracer's
+  `sharedEndBetween` generalized from "do these two touch?" to "which pieces continue here?", and the tool
+  follows every continuation that is **unique**, stopping at forks, dead ends, whole circles and re-visits —
+  each with a reason on the status line. The user's own triangle (two chamfers, one fillet, six pieces)
+  closes in two clicks; W4's budget went 31 → 24 and the total 95 → 88.
+  (3) **The rule that kept OP-14 intact is that following is a *gesture*, not a load-time search.** The
+  followed pieces are appended to the pick list, so the recorded step lists the whole ordered boundary and
+  replay re-runs the same build over the same list — the loop is still constructed, never discovered. The
+  price is that a followed piece needs a click position too (a point on it between its two joints, so an
+  arc's branch is read off it exactly as a clicked one is), and the honest cut is that a *forced* boundary
+  now closes itself, which Escape or one undo reverses.
+  (4) **A recorded decision was reversed: visibility is persisted.** OP-18 said hiding is a view state
+  because the file is a construction. The user's counter — losing hide state is data loss from where they
+  sit — wins, and the old text is kept verbatim above the reversal. `hide`/`show` are journal steps batched
+  per gesture, following the `group` rules for members that go away; undo/redo came free because the undo
+  substrate *is* the saved script. One rule everywhere (per-element steps, group toggles included), and one
+  exclusion that draws the line: a welded alias hides *by construction*, so nothing records it.
+  (5) **Two "not working" reports were the same missing coercion, one kind apart.** *Intersect between arc
+  and circle* failed because every `CIRCLE` slot demanded a circle, though every op behind it is about the
+  carrier — so `carrierCircle`/`isCentric` were built as the exact twins of `carrierLine`/`isLinear`, and six
+  tools accepted arcs with no per-tool case. The same move generalized *Fillet* to round legs: line–circle
+  and circle–circle centres are compositions of `parallelAtDistance`, `concentricCircle` and the existing
+  intersections, so the only new geometry in the whole feature is `radialPoint` (a circle's `projectToLine`)
+  and `filletArc`. Which of the eight variants a fillet is gets decided from the two clicks and **stored**
+  (OP-1); an unreachable radius is invalid with a reason and heals into the variant closest to solvable.
+  (6) **Two limits stated instead of guessed.** Chamfer stays line-only (a bevel across a round leg means
+  either a chord or an arc of the same length, and the convention is not stated yet), and drag-to-attach
+  still refuses arcs (its magnet promises the point lands where the halo is, which riding a carrier off the
+  visible arc would break). 561 headless tests green (24 new: `OutlineFollowTest`, `VisibilityTest`,
+  `FilletCurvesTest`, `ArcCarrierTest`), and the browser E2E extended with the group-visibility toggle —
+  pixels gone, one undo, panel state following.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

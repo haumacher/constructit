@@ -377,15 +377,24 @@ class Construction {
     ): PointSetRef =
         op(line, c) { EvalResult.Ok(PointSetValue(GeomMath.intersectLC((it[0] as LineValue).line, (it[1] as CircleValue).circle))) }
 
-    /** Pick a branch from a solution set. sign >= 0 -> first (left), sign < 0 -> last (right). */
+    /**
+     * Pick a branch from a solution set. sign >= 0 -> first (left), sign < 0 -> last (right).
+     *
+     * [emptyReason] is what an *empty* set is called in the caller's own terms (OP-3). A default rather
+     * than a new op, because "there is no such point" is always the same fact and only ever needs a better
+     * sentence: a generalized fillet's centre is an intersection of two offsets, so its honest failure is
+     * "no tangent circle of that radius", not "empty intersection" — and a reason nobody can act on is the
+     * kind of invalidity that reads as a bug.
+     */
     fun select(
         set: PointSetRef,
         sign: Int,
+        emptyReason: String = "empty intersection",
     ): PointRef =
         op(set) {
             val pts = (it[0] as PointSetValue).set.points
             when {
-                pts.isEmpty() -> EvalResult.Invalid("empty intersection")
+                pts.isEmpty() -> EvalResult.Invalid(emptyReason)
                 sign >= 0 -> EvalResult.Ok(PointValue(pts.first()))
                 else -> EvalResult.Ok(PointValue(pts.last()))
             }
@@ -842,6 +851,59 @@ class Construction {
             val t1 = corner + u1 * (r / tanH)
             val t2 = corner + u2 * (r / tanH)
             EvalResult.Ok(ArcValue(Arc(center, r, (t1 - center).angle(), (t2 - center).angle(), (t1 - center).cross(t2 - center) > 0)))
+        }
+
+    /**
+     * The point of [circle] on the ray from its centre through [toward] — a **scaled radial**.
+     *
+     * The circle leg's half of a generalized fillet (OP-14): a circle of radius r centred at [toward] and
+     * tangent to [circle] touches it exactly there, whether it hugs it from outside (the centre sits at
+     * R+r) or from inside (R−r), because both put the centre on that same ray. So one op covers every
+     * variant, and it is to a circle leg what [projectToLine] is to a straight one — a *node*, hence a
+     * tangency that keeps following the parameters instead of freezing into a coordinate.
+     */
+    fun radialPoint(
+        circle: CircleRef,
+        toward: PointRef,
+    ): PointRef =
+        op(circle, toward) {
+            val c = cir(it[0])
+            val d = pt(it[1]) - c.center
+            if (d.length() < Vec2.EPS) {
+                EvalResult.Invalid("no radial direction from the circle's own centre")
+            } else {
+                EvalResult.Ok(PointValue(c.center + d.normalized() * c.radius))
+            }
+        }
+
+    /**
+     * The arc round [center] running the **short way** from [from] to [to] — a fillet's own arc, whatever
+     * curves it joins.
+     *
+     * The last step of a generalized fillet, and the only piece of it that is not an op that already
+     * existed: the centre is an intersection of two offsets and each tangency is a projection or a
+     * [radialPoint], so all this adds is "and the rounding is the minor arc between them". Minor because a
+     * fillet fills a corner: its sweep is π minus the corner's opening, hence always under a half turn —
+     * the same rule [filletBetweenLines] applies to its own tangent points, here stated once for every leg
+     * kind. The radius is [from]'s distance, and a [to] that disagrees with it is invalid (OP-3) rather
+     * than quietly rounded, since that means the two tangencies are not on one circle at all.
+     */
+    fun filletArc(
+        center: PointRef,
+        from: PointRef,
+        to: PointRef,
+    ): ArcRef =
+        op(center, from, to) {
+            val c = pt(it[0])
+            val a = pt(it[1]) - c
+            val b = pt(it[2]) - c
+            val r = a.length()
+            if (r < Vec2.EPS) return@op EvalResult.Invalid("zero-radius fillet")
+            if (abs(b.length() - r) > GeomMath.JOIN_TOL) {
+                return@op EvalResult.Invalid("fillet tangent points are not equidistant from its centre")
+            }
+            if ((a + b).length() < Vec2.EPS) return@op EvalResult.Invalid("degenerate fillet (tangent points opposite)")
+            EvalResult.Ok(ArcValue(Arc(c, r, a.angle(), b.angle(), a.cross(b) > 0)))
         }
 
     /** The two tangent points on [circle] of the tangents from external [point] (via Thales' circle). */

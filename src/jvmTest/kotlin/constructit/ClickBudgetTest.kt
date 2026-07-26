@@ -298,16 +298,12 @@ class ClickBudgetTest {
         b.click(Vec2(-60.0, -40.0))
         b.click(Vec2(60.0, 40.0))
 
+        // two picks are the whole trace now: they fix the direction, and the boundary-follow walks the
+        // rounded rectangle's remaining six pieces and closes it (OP-14). Seven clicks saved, and the
+        // recorded step still carries all eight pieces in order — nothing is discovered on replay.
         b.tool(Tools.OUTLINE)
         b.click(Vec2(0.0, 40.0))
         b.click(Vec2(57.66, 37.66))
-        b.click(Vec2(60.0, 0.0))
-        b.click(Vec2(57.66, -37.66))
-        b.click(Vec2(0.0, -40.0))
-        b.click(Vec2(-57.66, -37.66))
-        b.click(Vec2(-60.0, 0.0))
-        b.click(Vec2(-57.66, 37.66))
-        b.click(Vec2(0.0, 40.0))
 
         // a bore, and a brace at an angle to the base
         b.tool(Tools.CIRCLE_R)
@@ -332,11 +328,19 @@ class ClickBudgetTest {
 
         assertEquals(3, b.ed.doc.elements.count { it.kind == ElementKind.DIMENSION }, "three dimensions")
         assertEquals(1, b.ed.doc.elements.count { it.kind == ElementKind.OUTLINE }, "one traced boundary")
+        assertEquals(
+            8,
+            b.ed.doc.journal.last { it.kind == "tool" && (it.args.first() as constructit.editor.Arg.Text).s == Tools.OUTLINE }
+                .args.filterIsInstance<constructit.editor.Arg.Keyed>().first { it.key == "els" }
+                .let { (it.value as constructit.editor.Arg.Els).els.size },
+            "the recorded step lists every piece of the boundary, followed ones included",
+        )
         assertTrue(
             b.ed.doc.elements.filter { it.kind == ElementKind.DIMENSION }.all { it.annotation?.graphic(Evaluator()) != null },
             "every dimension draws its graphic, so the sheet is printable",
         )
 
-        b.report(ceiling = 36)
+        // was 36 before the boundary-follow (OP-14): the eight-click-plus-close trace is two clicks now
+        b.report(ceiling = 29)
     }
 }

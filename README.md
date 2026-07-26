@@ -26,9 +26,13 @@ first-class goal and the current implementation focus.
 - **Unit-aware scalars** — dimensional analysis over Length / Angle / Dimensionless (+ Area /
   Volume); base units mm and rad.
 - **Rich 2D tool set** — points, midpoints, intersections, projections, perpendiculars, parallels,
-  bisectors, tangents (from a point / common), fillets and chamfers, circles (centre+point /
-  centre+radius / 3-point), arcs, rectangles (rounded or not) and regular polygons, transforms
-  (mirror / rotate / scale / translate), linear and circular **arrays**, and measurements.
+  bisectors, tangents (from a point / common), fillets (between lines, circles and arcs alike) and
+  chamfers, circles (centre+point / centre+radius / 3-point), arcs, rectangles (rounded or not) and regular
+  polygons, transforms (mirror / rotate / scale / translate), linear and circular **arrays**, and
+  measurements. Any tool that wants a line takes a segment or ray, and any tool that wants a circle takes
+  an **arc** — the carrier is what the construction is about.
+- **Hide/show is part of the drawing** — hiding scaffolding is a recorded step, so it survives save/load
+  and undoes like anything else (a welded alias stays hidden by construction, and is not recorded).
 - **Shapes by construction** — a rectangle's other two corners *share* the clicked corners'
   coordinates and a polygon's vertices are rotations of one, so they cannot stop being rectangular or
   regular however you drag them; an array copy is a transform node over the original, so the copies
@@ -163,9 +167,14 @@ did not previously complete at all. What the measuring produced:
 - **boundaries that already meet are not re-intersected**, which is what makes a rounded rectangle (or a
   fillet) traceable at all — its sides meet its corner arcs tangentially;
 - **a closed curve, or a closed chain a single step built, can be used wherever an area is wanted** — so a
-  circle extrudes into a cylinder and a drawn plate extrudes with one click, no boundary tracing.
+  circle extrudes into a cylinder and a drawn plate extrudes with one click, no boundary tracing;
+- **the Outline tool follows the boundary for you** — two clicks fix the direction, then every piece whose
+  continuation is *unique* is added automatically (through the joints a fillet or chamfer registered), and
+  the loop closes itself when it comes round. A fork, a dead end or an ambiguous arc stops it and says why;
+  picks are highlighted on the canvas and a click that hits nothing says so. The recorded step still lists
+  every piece in order, so nothing is re-discovered when the file is reloaded.
 
-457 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included.
+561 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included.
 
 Planned next: mesh export (STL/3MF), regions with holes from traced outlines, datum planes in the UI (the
 roof is DSL-built for want of a way to *name* a plane), line styles in the render seam, and wall-to-wall

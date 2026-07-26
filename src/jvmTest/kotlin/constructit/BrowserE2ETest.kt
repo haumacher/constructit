@@ -112,6 +112,27 @@ class BrowserE2ETest {
             assertTrue(note == "Grouped $itemsBuilt elements as shell", "got: $note")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/04-grouped.png")))
 
+            // Visibility is a **recorded step** now (OP-18's reversal), and the shell's two routes into it
+            // are the group's toggle and the selection buttons. Cheap to check here and only here for the
+            // one thing headless cannot see: the pixels actually go away, and one undo brings them back.
+            val shown = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            page.click("#groups-list .grow .gvis")
+            assertTrue(page.querySelector("#status").textContent().contains("hidden"), "the toggle says so")
+            assertTrue(
+                (page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String) != shown,
+                "hiding a group must clear it from the canvas",
+            )
+            val gone = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            page.click("#e-undo")
+            assertTrue(
+                (page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String) != gone,
+                "and hiding is one undo step, like every other operation",
+            )
+            assertTrue(
+                page.querySelector("#groups-list .grow .gvis").textContent() == "◉",
+                "the panel's toggle follows the undone state",
+            )
+
             // A linear dimension over the two base points (OP-4). The canvas text primitive exists only
             // in the browser backend, so this is the one place it can be exercised at all — and the
             // dimension is placed *after* grouping, so clicking it addresses the annotation alone.
