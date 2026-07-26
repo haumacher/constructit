@@ -1112,6 +1112,32 @@ class Construction {
 
     fun bezierEnd(b: BezierRef): PointRef = op(b) { EvalResult.Ok(PointValue((it[0] as BezierValue).bezier.p3)) }
 
+    /**
+     * Control point [i] (0..3) of [b] — the sub-entity accessor (OP-8) for the two *inner* controls, which
+     * [bezierStart] and [bezierEnd] only cover the ends of.
+     *
+     * It exists because a **split** has to be a construction over the curve's own controls: de Casteljau's
+     * intermediate points are ratio points between them, and a Bézier whose controls are not points of the
+     * drawing (a mirrored spline, a curve a macro built) has no other way to name them.
+     */
+    fun bezierControl(
+        b: BezierRef,
+        i: Int,
+    ): PointRef =
+        op(b) {
+            val z = (it[0] as BezierValue).bezier
+            EvalResult.Ok(
+                PointValue(
+                    when (i) {
+                        0 -> z.p0
+                        1 -> z.p1
+                        2 -> z.p2
+                        else -> z.p3
+                    },
+                ),
+            )
+        }
+
     // ================= Tier 4: the result layer (OP-14) =================
     // Trimming is what separates the *drawing* from the construction that produced it: a drawn line
     // is infinite and a circle is whole, but an outline needs the piece between two cut points. The

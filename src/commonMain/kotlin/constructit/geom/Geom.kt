@@ -615,6 +615,41 @@ object GeomMath {
     }
 
     /**
+     * The parameter of the point of [b] nearest [p] — **which place on the curve a click meant**.
+     *
+     * A cubic's foot-point equation is a quintic, so there is no closed form; this samples the curve and
+     * then bisects the winning bracket. It is a *pure function* of the curve and the click, which is all
+     * the model needs of it: what the break records is the parameter it returned (state, restated on
+     * save), never this search — so a reload never re-runs it and the split can never drift (OP-18).
+     */
+    fun bezierNearestParam(
+        b: Bezier,
+        p: Vec2,
+        samples: Int = 96,
+        refinements: Int = 40,
+    ): Double {
+        var best = 0.0
+        var bestD = Double.MAX_VALUE
+        for (i in 0..samples) {
+            val t = i.toDouble() / samples
+            val d = (bezierPointAt(b, t) - p).length()
+            if (d < bestD) {
+                bestD = d
+                best = t
+            }
+        }
+        // golden-section-free bisection of the bracket around the winner: halve it, keep the better end
+        var lo = (best - 1.0 / samples).coerceIn(0.0, 1.0)
+        var hi = (best + 1.0 / samples).coerceIn(0.0, 1.0)
+        repeat(refinements) {
+            val m1 = lo + (hi - lo) / 3.0
+            val m2 = hi - (hi - lo) / 3.0
+            if ((bezierPointAt(b, m1) - p).length() <= (bezierPointAt(b, m2) - p).length()) hi = m2 else lo = m1
+        }
+        return (lo + hi) * 0.5
+    }
+
+    /**
      * Polyline approximation of a Bézier for rendering. A **fixed** subdivision count on purpose:
      * an adaptive one would make SVG goldens depend on curvature, and determinism is worth more here
      * than a few saved points.

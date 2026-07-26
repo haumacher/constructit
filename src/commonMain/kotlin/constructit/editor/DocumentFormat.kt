@@ -179,6 +179,13 @@ object DocumentFormat {
                 val n = step.creates.getOrNull(1)?.let { posOf(it) }
                 if (m == null || n == null) step.args else listOf(step.args[0], Arg.Pos(m), Arg.Pos(n))
             }
+            // an arc break's split **angle** is state (the rider slides round the carrier), so it is restated
+            // from the rider the step created; the arc it names and the `ccw` it stored are choices, kept
+            // verbatim — see [Document.breakArc]
+            "breakarc" -> {
+                val q = step.creates.firstOrNull()?.let { doc.restatedRiderParam(it, ev) }
+                if (q == null) step.args else listOf(step.args[0], Arg.Num(q), step.args[2])
+            }
             // an interval feature's position and carried heights live in the parameters the step created,
             // in that order (see [Document.addInterval]). They are state, so a value typed in the panel
             // comes back on reload — which is the whole point of recording the interval as a description
@@ -396,6 +403,8 @@ object DocumentFormat {
                 doc.breakOrthoLeg(path, i, parsePos(words[2]), parsePos(words[3]))
             }
             "orthodiscard" -> doc.discardOrthoPath(currentPath(doc))
+            // splitting an arc: the carrier it names, the angle it splits at (state), the sweep it keeps (OP-1)
+            "breakarc" -> doc.breakArc(el(1), quantity(words[2]), words.getOrNull(3) != "cw")
             // the step kinds keep their user-facing names; what they carry is the generic thick path and
             // its interval features (OP-21) — a pure description, never the geometry it computes
             "wall" -> doc.buildThickPath(currentPath(doc), scalar(1).ref, justification(words.getOrNull(2)))

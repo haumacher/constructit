@@ -1471,25 +1471,79 @@ class Editor(
             return
         }
         if (toolId == Tools.BREAK_LEG) {
-            val world = camera.screenToWorld(screen)
-            statusHint =
-                if (doc.breakOrthoLegNear(world, tolWorld())) {
-                    "Segment broken — drag either half to open the corner"
-                } else {
-                    // a break *replaces* the leg, so it is refused on a leg a tool is defined from
-                    // (OP-6) — say which, since "click a segment" would be a lie there
-                    val hit = HitTest.nearest(doc, ev(), world, tolWorld()) { it.kind == ElementKind.SEGMENT }
-                    if (hit != null && doc.definesAMacro(listOf(hit))) {
-                        "${hit.id} is part of a tool's definition — breaking it would replace it; retire the tool first"
-                    } else {
-                        "Click a segment of an ortho path"
-                    }
-                }
-            checkpoint()
-            onChange()
+            breakClick(camera.screenToWorld(screen))
             return
         }
         runToolClick(screen)
+    }
+
+    /** Curve kinds a plain break splits — an ortho leg is a segment too, and is handled before these. */
+    private fun breakableKind(el: Element): Boolean =
+        el.kind == ElementKind.SEGMENT || el.kind == ElementKind.ARC || el.kind == ElementKind.BEZIER
+
+    /**
+     * One click of the Break tool, **dispatched by what it landed on**: an ortho leg keeps the jog logic
+     * verbatim (OP-19 — a leg's break is a topology edit on its path, inserting a zero-length corner), and any
+     * other segment, arc or Bézier is split as a construction ([Document.breakCurve]).
+     *
+     * The leg case is decided first and by the same search, so nothing about it changed: a leg *is* a segment,
+     * so ranking the two searches together is the only way the two meanings cannot fight over one click.
+     */
+    private fun breakClick(world: Vec2) {
+        val tol = tolWorld()
+        val hit = HitTest.nearest(doc, ev(), world, tol) { doc.legOf(it) != null || breakableKind(it) }
+        statusHint =
+            when {
+                hit == null -> "Click a segment, an arc or a Bézier to split it there (or a leg of an ortho path)"
+                doc.legOf(hit) != null ->
+                    if (doc.breakOrthoLegNear(world, tol)) {
+                        "Segment broken — drag either half to open the corner"
+                    } else {
+                        // a break *replaces* the leg, so it is refused on a leg a tool is defined from
+                        // (OP-6) — say which, since "click a segment" would be a lie there
+                        if (doc.definesAMacro(listOf(hit))) {
+                            "${hit.id} is part of a tool's definition — breaking it would replace it; retire the tool first"
+                        } else {
+                            "${hit.id} can't be broken there"
+                        }
+                    }
+                else -> breakCurveAt(hit, world)
+            }
+        checkpoint()
+        onChange()
+    }
+
+    /**
+     * Split the plain curve [el] at [world], and — when the break made the original redundant — **replace the
+     * step that drew it**: drop that step and replay the remaining script (OP-18), so the file reads as the
+     * two halves the drawing now has, exactly as a delete leaves a script that still constructs.
+     *
+     * The rewrite is the caller's half of the consumer rule because replaying swaps the whole document
+     * ([adopt]); the document decides *whether* to (see [Document.BreakResult.replacesOriginal]) and, when
+     * not, hides the original itself with a recorded step. Returns the status line to show.
+     */
+    private fun breakCurveAt(
+        el: Element,
+        world: Vec2,
+    ): String {
+        val res = doc.breakCurve(el, world) ?: return doc.takeNote() ?: "${el.id} can't be broken there"
+        val note = doc.takeNote() ?: ""
+        if (!res.replacesOriginal) return note
+        val root = doc.creatingStep(el) ?: return note
+        val journalBefore = doc.journal.toList()
+        doc.journal.removeAll(doc.dependentSteps(setOf(root)))
+        val fresh =
+            try {
+                DocumentFormat.load(DocumentFormat.save(doc))
+            } catch (e: Exception) {
+                // the same all-or-nothing discipline a delete keeps: put the script back and say so, rather
+                // than leaving a document that cannot be saved
+                doc.journal.clear()
+                doc.journal.addAll(journalBefore)
+                return "Break failed: ${e.message}"
+            }
+        adopt(fresh)
+        return note
     }
 
     /** One click of a path tool (ortho path / wall): start a chain, append a leg, or close the loop. */

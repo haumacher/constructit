@@ -368,6 +368,47 @@ class BrowserE2ETest {
             )
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/11-group-array.png")))
 
+            // ---- Break on a plain segment, in the real shell ----
+            //
+            // Here for the one thing headless cannot check: an unconsumed break **replays the whole script**
+            // (its creating step is replaced, OP-18), which swaps the document under the running shell — so
+            // the tree, the panel and the canvas all have to come back rather than keep stale references.
+            val bx1 = box.x + box.width * 0.12
+            val bx2 = box.x + box.width * 0.34
+            val by = box.y + box.height * 0.88
+            page.click("#tool-point")
+            page.keyboard().down("Alt") // raw clicks: no snapping onto the figure above
+            page.mouse().click(bx1, by)
+            page.mouse().click(bx2, by)
+            page.keyboard().up("Alt")
+            page.click("#tool-segment")
+            page.mouse().click(bx1, by)
+            page.mouse().click(bx2, by)
+            val itemsBeforeBreak = page.querySelectorAll("#tree .item").size
+            page.click("#tool-breakleg")
+            page.mouse().click((bx1 + bx2) / 2, by)
+            assertTrue(
+                page.querySelector("#status").textContent().contains("split into"),
+                "the break should replace the segment; got: ${page.querySelector("#status").textContent()}",
+            )
+            assertTrue(
+                page.querySelectorAll("#tree .item").size == itemsBeforeBreak + 2,
+                "one segment out, a joint point and two halves in; got " +
+                    "${page.querySelectorAll("#tree .item").size - itemsBeforeBreak}",
+            )
+            // and the joint really is free: drag it off the line and the shell redraws
+            val bent = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            page.click("#tool-select")
+            page.mouse().move((bx1 + bx2) / 2, by)
+            page.mouse().down()
+            page.mouse().move((bx1 + bx2) / 2, by - 40.0)
+            page.mouse().up()
+            assertTrue(
+                (page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String) != bent,
+                "dragging the joint should bend the pair",
+            )
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/12-broken-segment.png")))
+
             assertTrue(
                 meshBoolLines.size == 1 && meshBoolLines[0].contains("Manifold"),
                 "the general boolean engine should report itself exactly once (OP-9); got: $meshBoolLines",

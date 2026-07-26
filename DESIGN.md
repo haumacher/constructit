@@ -348,7 +348,8 @@ auto-uniquified so wiring is unambiguous — see *Usability — click budgets*):
   inputs), Key points (sub-entity extract), Join points (weld two points into one — see *Welding* below)
 - Curves: Line, Segment, Ray, Circle (c,pt), Circle (c,r), Circle (3pt), Arc (3pt),
   Arc (centre,ends), Concentric circle, Rectangle, Rounded rectangle (the `roundedRect` macro as a
-  tool), Regular polygon
+  tool), Regular polygon, Break curve (one tool over an ortho leg, a segment, an arc and a Bézier —
+  see *Break and join legs*, OP-19)
 - Construct: Perp/Parallel-through, Perp-bisector, Angle-bisector, Parallel-at-distance,
   Tangent-from-point, Tangent-at-point (1 click), Fillet, Chamfer, Outer/Inner common tangents
 - Transform: Mirror, Rotate, Scale, Translate-by-vector, Linear array, Circular array
@@ -1105,6 +1106,70 @@ list and must derive from its carrier instead, and intervals address their leg b
 position from the leg start — a merged leg starts further back, so an interval on the second half must be
 re-measured to keep its **absolute** position. Neither is done; a join on a thickened carrier is
 therefore not yet supported.
+
+#### Break on a plain segment, an arc and a Bézier (as built — the user's design)
+
+One tool, dispatched by **what the click landed on**. An ortho leg keeps the jog logic above verbatim (its
+break is a topology edit on a path); any other segment, arc or cubic Bézier is split as an ordinary
+**construction**, because off a path there is no topology to edit — only geometry to build. The gesture and
+the promise are the same in all four cases: the split lands *exactly* where the curve is, so the drawing does
+not change shape at the moment of the break, and the joint is a real freedom from that instant on.
+
+| clicked | the split | the halves | the freedom |
+|---|---|---|---|
+| ortho leg | two vertices, a zero-length perpendicular leg | three legs | the jog opens by dragging either half |
+| segment | a **free point** at the projection of the click | two segments over the same endpoints | the point bends the joint |
+| arc | a **rider** at the click's angle on the carrier circle | two `arcBetween` on that carrier | the rider slides, re-splitting live |
+| Bézier | de Casteljau over one shared `t` | two cubics over the constructed controls | `t` slides the split along the curve |
+
+**The consumer rule, and why it is the whole design (OP-5).** Nothing is ever rewired, so the original
+curve's node keeps whatever meaning it had. What differs is whether the original is still *needed*:
+
+- **Nothing reads it** → the break **replaces the step that drew it**: that step is dropped and the
+  remaining script replayed (the same journal-rewrite-and-replay a delete uses, OP-18), so the file reads as
+  the construction of the two halves and there is no third curve in the drawing. This is only expressible
+  because the halves are built from the curve's **own defining points** — the picks of the step that drew it —
+  rather than from the curve; that is the one structural choice the feature turns on.
+- **Something reads it** — a fillet leg, a rider, an outline piece, a dimension, a measurement, or a later
+  step that merely *names* it (a group's membership) → the original **stays**, hidden by a recorded `hide`
+  step, and the status says which element is why: *"e3 stays (hidden): e7 is built on it"*. Retiring it would
+  silently change what that consumer means, which is the one thing OP-5 forbids; hiding costs nothing, since
+  the halves cover it exactly.
+
+Three consequences worth stating, because each is a *property* rather than a case:
+
+- **An arc is always its own consumer.** Its halves are trims *of it* (OP-14: a trimmed circle is an arc), so
+  the shared carrier they need **is** the original — there is nothing else an arc offers. It therefore always
+  takes the hidden route, and the status says so in those words rather than pretending a choice was made. The
+  alternative (rebuilding the carrier from the picks of whichever tool drew the arc) would put per-tool
+  knowledge into the break, which is exactly what the data-driven registry exists to avoid.
+- **A curve the drawing *derives* still breaks**, over its **key points**: a rectangle's side, a mirrored
+  segment or a spline a macro built has no picks of its own, so the break materializes `keypoints` on it (for
+  which `extractPoints` gained the Bézier case — all four controls, through the new `bezierControl(i)`
+  accessor) and keeps the original as their source, hidden. So no kind is half-supported; what varies is only
+  whether the original can go.
+- **Two refusals, both about a promise the break could not keep.** A curve a user-defined tool is built from
+  is refused as the ortho break refuses a leg (OP-6: replacing it would leave the definition describing
+  geometry that is gone), and a member of a **placed** group is refused because the free point a break
+  introduces is a world point the frame would not carry (OP-16 — membership lives in the recorded `group`
+  step, and a step's arguments are never rewritten, so the new point cannot simply join).
+
+**de Casteljau as a construction, not as a computation.** The five intermediate points and the split point are
+`pointAtRatio` nodes over the four controls, all sharing **one** `t` parameter — the subdivision triangle,
+built rather than evaluated. That buys three things at once, and they are the reason not to compute the halves
+numerically and store the result: the halves *are* the subdivision formula, so they are exact; they stay exact
+under any drag of the controls, because the formula is re-evaluated rather than re-fitted; and `t` is an
+ordinary live parameter, so **the split slides** — type it, or drag any of the six ratio points, and the curve
+re-splits where you put it. One `t` shared by six ratio points is also the OP-5 statement in miniature: it is
+one degree of freedom because it is one node, not because anything says so.
+
+**What the file records.** The segment and Bézier breaks record no step kinds of their own: a half of a segment
+*is* a segment, a half of a spline *is* a spline, and a de Casteljau point *is* the ratio point Midpoint makes,
+so the break emits ordinary `point` / `param` / `tool` steps and replays through the same `ToolDef.build` a
+click would have run. Only the arc needed one, `breakarc <el> <angle> ccw|cw`, because everything it makes
+hangs off the arc it names: the **angle is state** (the rider slides, so it is restated on save) and the sweep
+is a **stored discrete choice** (OP-1), taken from the carrier and never re-derived from the click. One
+checkpoint per break, however many steps it emitted — the same rule a path's start/vertex/close steps follow.
 
 ## Validity & undefined propagation (OP-3 — RESOLVED)
 
@@ -2961,8 +3026,10 @@ Three broad families (see OP-9 decision above):
 - [x] **OP-19 Break / join legs** — RESOLVED and built: threshold-triggered topology edits by
       gesture (join on jog collapse, committed on release; break as a tool inserting a zero-length
       perpendicular). Required ortho coordinates to move from *shared* nodes to *bound* ones — a
-      binding can be re-pointed in place, which is what makes a jog expressible. See *Break and
-      join legs*.
+      binding can be re-pointed in place, which is what makes a jog expressible. **Break now covers
+      plain curves too** — a segment, an arc and a cubic Bézier, split as constructions, with one
+      consumer rule deciding whether the original's step is replaced or the original kept hidden. See
+      *Break and join legs*.
 - [x] **OP-18 Document format** — RESOLVED: a **construction script** — the sequence of steps that
       built the drawing, replayed on load. Stores no node kinds, nothing synthetic (handles, styles,
       path/wall structure) and no separate values section: a step's literals are written as the
@@ -3796,6 +3863,49 @@ Three broad families (see OP-9 decision above):
   `CarrierRelativeTest`, `GroupClosureTest`, the format's canonical-number rule and the review probes), plus a
   typed factor in the browser E2E.
 
+- **Session 12 — Break, off the ortho path: one tool over a segment, an arc and a Bézier.** The user's own
+  design, and it turned on a question the ortho break never had to ask: *what happens to the curve you
+  clicked?* On a path a break is a topology edit — vertices in, legs out, nothing else means anything. Off a
+  path there is no topology, only a construction to build, and the curve that was there is either still needed
+  or not. So the feature is really **one consumer rule** (OP-5) with three geometries under it. If nothing
+  reads the original's node, the break **replaces the step that drew it** — dropped, and the remaining script
+  replayed, exactly as a delete leaves a script that still constructs (OP-18) — so the file reads as the two
+  halves and no third curve lingers in the drawing. If something does read it (a fillet leg, a rider, an
+  outline piece, a dimension, a measurement, a group's membership), the original **stays, hidden by a recorded
+  `hide` step**, and the status names what kept it: *"e3 stays (hidden): e7 is built on it"*. Rewiring the
+  consumer was never on the table; hiding costs nothing, because the halves cover the original exactly.
+  The structural choice the whole thing turns on is **what the halves are built from**: the picks of the step
+  that *drew* the curve, not the curve — which is the only reason that step can be dropped at all. Where a
+  curve has no picks of its own (a rectangle's side, a mirror, a spline a macro built) the break materializes
+  its **key points** instead and keeps the original as their source, hidden; so no kind is half-supported, and
+  what varies is only whether the original can go. `extractPoints` gained the Bézier case for that — all four
+  controls, through one new accessor `bezierControl(i)`, since a spline's *inner* controls had no name before.
+  **An arc is the honest exception, and it is a property rather than a cut.** Its halves are trims *of it*
+  (OP-14: a trimmed circle is an arc), so the shared carrier they need **is** the original: an arc offers
+  nothing else. It therefore always takes the hidden route, and says so in those words. Rebuilding the carrier
+  from the picks of whichever tool drew the arc (`circle3` for a 3-point arc, `circleCP` for a centre-ends one)
+  would have made the journal rewrite reachable there too — at the price of putting per-tool knowledge inside
+  the break, which is precisely what the data-driven registry exists to prevent. Stated, not hidden.
+  **de Casteljau as a construction, not as a computation** is the part worth keeping in mind for OP-15's
+  remaining curve algebra. The five intermediate points and the split point are `pointAtRatio` nodes over the
+  four controls sharing **one** `t` parameter — the subdivision triangle *built* rather than evaluated. The
+  halves are therefore exact because they *are* the formula; they stay exact under any control drag because the
+  formula is re-evaluated rather than re-fitted; and `t` is an ordinary live parameter, so **the split slides**
+  — type it, or drag any of the six ratio points, and the curve re-splits where you put it. One `t` over six
+  ratio points is the OP-5 statement in miniature: one degree of freedom because it is one node.
+  Two things the format needed, and only two. The segment and Bézier breaks record **no step kind of their
+  own** — a half of a segment is a segment, a half of a spline is a spline, and a de Casteljau point is the
+  ratio point Midpoint already makes, so they emit ordinary `point` / `param` / `tool` steps and replay through
+  the same `ToolDef.build` a click would have run. The arc needed `breakarc <el> <angle> ccw|cw`, because
+  everything it makes hangs off the arc it names: the angle is **state** (the rider slides, so it is restated)
+  and the sweep is a **stored discrete choice** (OP-1) taken from the carrier, never re-guessed from the click.
+  One checkpoint per break, however many steps it emitted. Two refusals rather than two half-answers: a curve a
+  user-defined tool is built from (OP-6, the same refusal the ortho break makes), and a member of a **placed**
+  group — the free point a break introduces is a world point the frame would not carry, and membership lives in
+  a recorded step whose arguments are never rewritten, so it cannot simply join. 709 headless tests green (26
+  new, `BreakCurveTest`), and the browser E2E extended with a plain-segment break — which is where the
+  journal rewrite earns its keep, since replaying swaps the document under the running shell.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -4186,9 +4296,14 @@ Then 3D walls = extrude + boolean.
 ## Open work queue (crash-safe snapshot; ordered)
 
 Kept here so no in-flight plan lives only in a session. Per-feature deliberate cuts stay recorded in
-their own as-built notes; this is the *ordered queue* as of 2026-07-27. Session 11's three items (ratio
+their own as-built notes; this is the *ordered queue* as of 2026-07-28. Session 11's three items (ratio
 points / relative parameterizations on a shared carrier / the grouping closure) arrived as **demands** rather
-than off this queue and are delivered, so nothing is retired here; what they left behind is parked below.
+than off this queue and are delivered, so nothing was retired for them; what they left behind is parked below.
+
+**Retired in session 12: break on plain curves.** *Break* covered only ortho legs; it now covers a plain
+segment, an arc and a cubic Bézier as well, with one consumer rule over all of them — see *Break on a plain
+segment, an arc and a Bézier* under OP-19. It left nothing parked: the two limits it names (a curve a
+user-defined tool is built from, a member of a placed group) are refusals by design, not deferrals.
 
 1. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
    connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by

@@ -3607,6 +3607,9 @@ class Document {
                 ElementKind.CIRCLE -> listOf(cx.circleCenter(el.ref as CircleRef))
                 ElementKind.ARC -> listOf(cx.arcCenter(el.ref as ArcRef), cx.arcStart(el.ref as ArcRef), cx.arcEnd(el.ref as ArcRef))
                 ElementKind.RAY -> listOf(cx.rayOrigin(el.ref as RayRef))
+                // a spline's defining points *are* its four controls (OP-15), inner ones included — which is
+                // what lets a derived Bézier be split as a construction over its own controls (see [breakCurve])
+                ElementKind.BEZIER -> (0..3).map { cx.bezierControl(el.ref as BezierRef, it) }
                 else -> emptyList()
             }
         refs.forEach { addDerived(it) }
@@ -4117,6 +4120,338 @@ class Document {
         val (path, i) = legOf(leg) ?: return false
         val at = Snap.legPoint(Evaluator(), leg, world) ?: world
         return breakOrthoLeg(path, i, at, at)
+    }
+
+    // ---- break a plain curve: a segment, an arc or a Bézier (OP-19 generalized off the ortho path) ----
+    //
+    // The gesture is the ortho break's: click a curve, get two curves that together *are* the one you
+    // clicked, plus the freedom at the joint. What differs is that there is no path topology to edit, so the
+    // split has to be an ordinary **construction** — and therefore has to say what it is built on:
+    //
+    // - a segment splits at a **free point** on it (the projection of the click), and the halves are two
+    //   plain segments over the same two endpoints. The point is the whole purpose: it bends the joint.
+    // - an arc splits at a **rider** at the click's angle, and the halves are `arcBetween` on the arc's own
+    //   carrier circle, so both stay exactly on it whatever the arc's parameters do (OP-14).
+    // - a Bézier splits by **de Casteljau, as a construction**: every intermediate point is a `pointAtRatio`
+    //   over one shared, live `t` parameter, so the split is exact *and* slides — dragging any of the ratio
+    //   points, or typing `t`, re-splits the curve (OP-15, OP-5: sharing a node is equality).
+    //
+    // **The consumer rule (OP-5).** Nothing is ever rewired, so the original curve's node keeps whatever
+    // meaning it had. If nothing reads it, the break *replaces* it: the step that drew it is dropped and the
+    // script replayed, so the file reads as the two halves the drawing now has (the caller performs that —
+    // see `Editor.breakCurveAt`). If something does read it — a fillet leg, a rider, an outline piece, a
+    // dimension — the original **stays**, hidden by a recorded `hide` step (OP-18), and the status says which
+    // element is why. Never a silent change to what a consumer means.
+
+    /**
+     * What a break of [el] produced: the point at the joint, the two halves, and whether the original is now
+     * redundant — see [breakCurve].
+     */
+    class BreakResult internal constructor(
+        val original: Element,
+        val split: Element,
+        val halves: List<Element>,
+        /**
+         * True when the original's creating step is to be **dropped**: nothing read its node, and the halves
+         * do not either (they are built from the same points it was). The journal rewrite is the caller's,
+         * because replaying a rewritten script swaps the whole document (`Editor.adopt`).
+         */
+        val replacesOriginal: Boolean,
+    )
+
+    /**
+     * Everything that already reads [el] — the break's **consumer test**, and the one thing that decides
+     * whether the original may go (OP-5).
+     *
+     * Three ways to be a consumer, because there are three ways to depend on an element: a **node** built
+     * over it (a fillet leg, an outline piece, a trim, a rider), a **scalar** measured from it (OP-4), and a
+     * later **step naming it** without being built from it (a group's membership, a visibility decision).
+     * The last counts because dropping the creating step would change what that step says.
+     */
+    fun consumersOf(el: Element): List<String> {
+        val node = el.ref.node
+        val own = creatingStep(el)
+        val out = ArrayList<String>()
+        elements.filter { it !== el && dependsOn(it.ref.node, node, HashSet()) }.forEach { out.add(it.id) }
+        scalars.filter { dependsOn(it.ref.node, node, HashSet()) }.forEach { out.add(it.name) }
+        if (journal.any { s -> s !== own && referencedElements(s).any { it === el } }) out.add("a later step")
+        return out.distinct()
+    }
+
+    /**
+     * Split the curve [el] at [world] — a segment, an arc or a cubic Bézier. Null with a [note] saying why
+     * when the break is impossible.
+     *
+     * The split lands **exactly** on the curve at the click (the projection, the click's angle, the click's
+     * nearest parameter), so the drawing does not change shape at the moment of the break; every freedom the
+     * break introduces is a source node or a parameter, so it is draggable and typeable from that instant on.
+     */
+    fun breakCurve(
+        el: Element,
+        world: Vec2,
+    ): BreakResult? {
+        // a break *replaces* a curve, and a macro definition names its elements (OP-6) — the same refusal
+        // [breakOrthoLeg] makes, for the same reason
+        if (definesAMacro(listOf(el))) {
+            note = "${el.id} is part of a tool's definition — breaking it would replace it; retire the tool first"
+            return null
+        }
+        if (creatingStep(el) == null) {
+            note = "${el.id} has no construction step, so a break has nothing to build the halves from"
+            return null
+        }
+        // A **placed** group holds its members' positions frame-relative (OP-16), and the freedom a break
+        // introduces is a new world point — which the frame would then not carry, so the halves would come
+        // apart the moment the group moved. Refused rather than half-joined, exactly as extending a placed
+        // path in place is: membership is recorded in the group's step and a step's arguments are never
+        // rewritten, so the new point cannot simply join the group.
+        placedGroupOf(el)?.let { g ->
+            note = "${el.id} belongs to placed group ${g.name} — unplace it to break it, or the joint would not follow the frame"
+            return null
+        }
+        return when (el.kind) {
+            ElementKind.SEGMENT -> breakSegmentAt(el, world)
+            ElementKind.ARC -> breakArcAt(el, world)
+            ElementKind.BEZIER -> breakBezierAt(el, world)
+            else -> {
+                note = "${el.id} is not a segment, an arc or a Bézier"
+                null
+            }
+        }
+    }
+
+    /** How close to an end (as a share of the curve) a click is too close to split at. */
+    private val breakEndSlack = 1e-3
+
+    /**
+     * The point elements the step that **drew** [el] picked — its own defining points, when it has any.
+     *
+     * Building the halves from *these* is what makes the original redundant: the halves then descend from the
+     * same points, not from the curve, so the step that drew it can be dropped outright. When the curve was
+     * not drawn from points (a rectangle's side, a mirror, a trimmed piece) the break falls back to its **key
+     * points** ([extractPoints]), which *are* built on it — so the original stays, hidden.
+     */
+    private fun drawnFromPoints(
+        el: Element,
+        toolId: String,
+        n: Int,
+    ): List<Element>? {
+        val step = creatingStep(el) ?: return null
+        if (step.kind != "tool" || (step.args.firstOrNull() as? Arg.Text)?.s != toolId) return null
+        val pts = (step.args.filterIsInstance<Arg.Keyed>().firstOrNull { it.key == "pts" }?.value as? Arg.Els) ?: return null
+        if (pts.els.size != n) return null
+        if (pts.els.any { p -> elements.none { it === p } || !p.isPoint }) return null
+        return pts.els
+    }
+
+    /** [el]'s key points, materialized as a recorded `keypoints` application so replay rebuilds them. */
+    private fun keyPointsOf(
+        el: Element,
+        n: Int,
+    ): List<Element>? = runAsTool(Tools.KEY_POINTS, emptyList(), listOf(el))?.takeIf { it.size == n }
+
+    /**
+     * Run tool [toolId] over already-known picks and record it as an ordinary `tool` step (OP-18).
+     *
+     * The break builds its halves this way rather than through step kinds of its own: a half of a segment
+     * *is* a segment, a half of a Bézier *is* a Bézier, and a de Casteljau point *is* the ratio point the
+     * Midpoint tool makes — so the file says exactly that, and replays through the same [ToolDef.build] a
+     * click would have run.
+     */
+    private fun runAsTool(
+        toolId: String,
+        points: List<PointRef>,
+        els: List<Element> = emptyList(),
+        scalars: List<ScalarEntry> = emptyList(),
+    ): List<Element>? {
+        val def = Tools.byId(toolId) ?: return null
+        val picks = Picks(points, els, Vec2(0.0, 0.0), emptyList())
+        val before = elements.toHashSet()
+        recordingTool(toolId, picks, scalars) { def.build(this, picks, scalars.map { it.ref }) }
+        return elements.filter { it !in before }.ifEmpty { null }
+    }
+
+    /** Split a plain segment at the projection of [world]: a free point there, and the two halves. */
+    private fun breakSegmentAt(
+        el: Element,
+        world: Vec2,
+    ): BreakResult? {
+        val seg =
+            (Evaluator().eval(el.ref.node) as? EvalResult.Ok)?.value as? SegmentValue ?: run {
+                note = "${el.id} has no position to split (its construction is invalid)"
+                return null
+            }
+        val ab = seg.seg.b - seg.seg.a
+        if (ab.length() < Vec2.EPS) {
+            note = "${el.id} has no length to split"
+            return null
+        }
+        // the projection of the click onto the segment — so the two halves *are* the one segment, exactly
+        val t = (world - seg.seg.a).dot(ab) / ab.dot(ab)
+        if (t <= breakEndSlack || t >= 1.0 - breakEndSlack) {
+            note = "Click away from ${el.id}'s ends — a break there would leave a zero-length piece"
+            return null
+        }
+        val at = seg.seg.a + ab * t
+        val own = drawnFromPoints(el, Tools.SEGMENT, 2)
+        val consumers = consumersOf(el)
+        val ends =
+            own ?: keyPointsOf(el, 2) ?: run {
+                note = "${el.id} has no endpoints to hang the halves on"
+                return null
+            }
+        val p = freePoint(Quantity.mm(at.x), Quantity.mm(at.y))
+        val split = elementFor(p) ?: return null
+        val h1 = runAsTool(Tools.SEGMENT, listOf(ends[0].ref as PointRef, p))?.single() ?: return null
+        val h2 = runAsTool(Tools.SEGMENT, listOf(p, ends[1].ref as PointRef))?.single() ?: return null
+        return settle(el, split, listOf(h1, h2), consumers, detached = own != null, why = "the halves are built on it")
+    }
+
+    /**
+     * Split an arc at the click's angle: a rider there, and the two arcs between it and the arc's ends.
+     *
+     * Both halves are `arcBetween` on the **same carrier** — the arc's own circle — so they stay on it by
+     * construction however its centre or radius moves, and the sweep direction is the carrier's own, stored
+     * verbatim in the step (a discrete branch choice, OP-1, never re-guessed from the click).
+     */
+    private fun breakArcAt(
+        el: Element,
+        world: Vec2,
+    ): BreakResult? {
+        val arc =
+            ((Evaluator().eval(el.ref.node) as? EvalResult.Ok)?.value as? ArcValue)?.arc ?: run {
+                note = "${el.id} has no position to split (its construction is invalid)"
+                return null
+            }
+        val angle = (world - arc.center).angle()
+        if (!GeomMath.arcContains(arc, angle)) {
+            note = "That point is not on ${el.id}'s sweep — click on the arc itself"
+            return null
+        }
+        val sweep = abs(GeomMath.sweep(arc))
+        val from = abs(atan2(sin(angle - arc.startAngle), cos(angle - arc.startAngle)))
+        val to = abs(atan2(sin(angle - arc.endAngle), cos(angle - arc.endAngle)))
+        if (sweep < Vec2.EPS || from / sweep <= breakEndSlack || to / sweep <= breakEndSlack) {
+            note = "Click away from ${el.id}'s ends — a break there would leave a zero-length piece"
+            return null
+        }
+        val consumers = consumersOf(el)
+        val made =
+            breakArc(el, Quantity.rad(angle), arc.ccw) ?: run {
+                note = "${el.id} could not be split there"
+                return null
+            }
+        // an arc's halves are trims of *it* (OP-14: a trimmed circle is an arc), so the original is always a
+        // consumer of the break — it is the carrier both halves share, and it therefore always stays
+        return settle(el, made[0], made.drop(1), consumers, detached = false, why = "the two arcs share it as their carrier")
+    }
+
+    /**
+     * The recorded half of an arc break — one step, because everything it makes hangs off the arc it names
+     * and its own [angle] (the rider's position along the carrier: **state**, hence restated on save, OP-18).
+     * [ccw] is the carrier's sweep direction, stored verbatim (OP-1).
+     */
+    fun breakArc(
+        el: Element,
+        angle: Quantity,
+        ccw: Boolean,
+    ): List<Element>? =
+        recording("breakarc", Arg.El(el), Arg.Num(angle), Arg.Text(if (ccw) "ccw" else "cw")) {
+            breakArcNow(el, angle, ccw)
+        }
+
+    private fun breakArcNow(
+        el: Element,
+        angle: Quantity,
+        ccw: Boolean,
+    ): List<Element>? {
+        if (el.kind != ElementKind.ARC) return null
+        @Suppress("UNCHECKED_CAST")
+        val ref = el.ref as ArcRef
+        val arc = ((Evaluator().eval(ref.node) as? EvalResult.Ok)?.value as? ArcValue)?.arc ?: return null
+        val a = angle.requireDim(Dimension.ANGLE, "split angle").base
+        val at = arc.center + Vec2(arc.radius * cos(a), arc.radius * sin(a))
+        // a rider on the carrier circle: the click is *where*, the angle is *what it holds* — the same
+        // split of choice and state every other rider's step makes (OP-18)
+        val rider = pointOnCircle(el, at, angle)
+        val split = elementFor(rider) ?: return null
+        val h1 = add(cx.arcBetween(ref, cx.arcStart(ref), rider, ccw), ElementKind.ARC, Styles.CURVE)
+        val h2 = add(cx.arcBetween(ref, rider, cx.arcEnd(ref), ccw), ElementKind.ARC, Styles.CURVE)
+        return listOf(split, h1, h2)
+    }
+
+    /**
+     * Split a cubic Bézier at the click's nearest parameter — **de Casteljau as a construction** (OP-15).
+     *
+     * The five intermediate points and the split point are `pointAtRatio` nodes over the four controls, all
+     * sharing **one** `t` parameter, and the two halves are ordinary cubics over them. Three things follow
+     * that no approximation would give: the halves are exact (they *are* the subdivision formula), they stay
+     * exact under any drag of the controls (the formula is re-evaluated, not re-fitted), and `t` is live — so
+     * typing it or dragging any of the ratio points slides the split along the curve and re-splits it.
+     */
+    private fun breakBezierAt(
+        el: Element,
+        world: Vec2,
+    ): BreakResult? {
+        val bez =
+            ((Evaluator().eval(el.ref.node) as? EvalResult.Ok)?.value as? BezierValue)?.bezier ?: run {
+                note = "${el.id} has no position to split (its construction is invalid)"
+                return null
+            }
+        val t0 = GeomMath.bezierNearestParam(bez, world)
+        if (t0 <= breakEndSlack || t0 >= 1.0 - breakEndSlack) {
+            note = "Click away from ${el.id}'s ends — a break there would leave a zero-length piece"
+            return null
+        }
+        val own = drawnFromPoints(el, Tools.BEZIER, 4)
+        val consumers = consumersOf(el)
+        val c =
+            own ?: keyPointsOf(el, 4) ?: run {
+                note = "${el.id} has no control points to hang the halves on"
+                return null
+            }
+        val t = newParameter("t", Quantity.number(t0))
+
+        fun at(
+            a: Element,
+            b: Element,
+        ): Element? = runAsTool(Tools.MIDPOINT, listOf(a.ref as PointRef, b.ref as PointRef), scalars = listOf(t))?.single()
+        val l1 = at(c[0], c[1]) ?: return null
+        val m = at(c[1], c[2]) ?: return null
+        val r1 = at(c[2], c[3]) ?: return null
+        val l2 = at(l1, m) ?: return null
+        val r2 = at(m, r1) ?: return null
+        val s = at(l2, r2) ?: return null
+        val refs = { xs: List<Element> -> xs.map { it.ref as PointRef } }
+        val h1 = runAsTool(Tools.BEZIER, refs(listOf(c[0], l1, l2, s)))?.single() ?: return null
+        val h2 = runAsTool(Tools.BEZIER, refs(listOf(s, r2, r1, c[3])))?.single() ?: return null
+        return settle(el, s, listOf(h1, h2), consumers, detached = own != null, why = "the halves are built on it")
+    }
+
+    /**
+     * Apply the consumer rule to a finished break: drop the original (the caller's journal rewrite) when
+     * nothing read it and the halves stand on their own, otherwise **hide** it and say what kept it.
+     */
+    private fun settle(
+        el: Element,
+        split: Element,
+        halves: List<Element>,
+        consumers: List<String>,
+        detached: Boolean,
+        why: String,
+    ): BreakResult {
+        val replaces = detached && consumers.isEmpty()
+        if (!replaces) setElementsVisible(listOf(el), false)
+        // set last: every recording above clears the note, since a note belongs to the operation being run
+        note =
+            if (replaces) {
+                "${el.id} split into ${halves[0].id} and ${halves[1].id} — drag ${split.id} to bend the joint"
+            } else {
+                val by = consumers.firstOrNull()?.let { "$it is built on it" } ?: why
+                "${el.id} stays (hidden): $by — ${halves[0].id} and ${halves[1].id} are new, " +
+                    "so nothing it feeds changes meaning; drag ${split.id} to bend the joint"
+            }
+        return BreakResult(el, split, halves, replaces)
     }
 
     /** Where the next leg of [path] would land (rubber-band preview), from whichever end is growing. */
