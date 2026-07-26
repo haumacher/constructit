@@ -61,6 +61,15 @@ ordinary nodes.
 - **later / 3D:** `Point3`, `Plane`, `Axis`, `Sketch`, `Solid`, `Face`, `Edge`, …
 
 ### Node structure
+> **As-built note — the binding substrate has three node kinds, not two.** A `SourceNode` (free point)
+> and a `ParameterNode` (named scalar) can be *bound* in place onto another node, which is how welding
+> and parameter wiring remove a DOF without rewiring any consumer. Placing an ortho path under a group
+> frame (OP-16) needed the same move over a **derived** value — a vertex is `pointXY(x, y)`, and a turned
+> frame mixes x into y, so `world = f(frame, lx, ly)` cannot be expressed by any per-axis binding. Hence
+> `IndirectNode`: a re-pointable view of another node, published where a vertex's point is consumed. It
+> adds no evaluation semantics (bound → the master's value, else the target's) and keeps the rule that
+> matters: *a capture binds in place; nothing that already referenced the node is touched.*
+
 - `id` — stable identity (references, files, undo)
 - `op` — operation (`FreePoint`, `Parameter`, `LineThrough`, `CircleCenterRadius`,
   `IntersectCC`, `Select`, `Midpoint`, `Measure.*`, `Expr`, …)
@@ -1336,6 +1345,7 @@ plus placement — at two dimensions. Building group frames in 2D therefore **pr
 - **Ortho-path bonus:** retrofitting a path under a frame turns its shared coordinate nodes into
   *local* coordinates, so axis-alignment becomes alignment to the group's own axes. That is precisely
   the rotated **project frame** sketched in the architectural layer — delivered as a side effect.
+  (**Built** — see *Implementation status (as built — ortho paths and walls under a frame)*.)
 
 ### Build order
 0. **Multi-select — DONE.** A set with a primary element; prerequisite for everything, and
@@ -1446,13 +1456,89 @@ ungroup), and ungrouping a placed group unplaces it first.
 **Deliberate omissions at this step.** The frame starts at the members' bounding-box centre and stays
 there: moving it is *relocate-origin*, the world-invariant refactoring of step 3, not an edit. No
 rotation grip on canvas — rotation is the angle **field**; a grip needs picking for something that is
-not an element, which buys a gesture and no capability. **Ortho paths and walls are not captured**: their
-positions live in shared *scalar* coordinate nodes, and capturing those means re-pointing the very
-bindings that hold a leg axis-aligned (and that break/join re-point), plus frame-aware corner handles —
-a separate piece of work, and the *ortho-path bonus* above is precisely it. Until then such a member is
-reported as not following its frame rather than silently pretending to. Placing is also refused when a
-group owns no free point at all: a frame with nothing to carry is three degrees of freedom that move
-nothing.
+not an element, which buys a gesture and no capability. Placing is refused when a group owns no freedom
+at all: a frame with nothing to carry is three degrees of freedom that move nothing.
+
+> **Superseded (ortho paths).** This note used to record a cut — "ortho paths and walls are not
+> captured", because their positions live in shared *scalar* coordinate nodes. **That cut is closed**;
+> the next section is the work it pointed at, and with it the *ortho-path bonus* above is delivered.
+
+### Implementation status (as built — ortho paths and walls under a frame)
+
+The cut above was the one thing a frame could not carry, and it was the thing architectural drawing most
+needed to move: a run of walls. Closing it delivers the **rotated project frame** the architectural layer
+sketched — a building sited at an angle, drawn orthogonally in its own frame.
+
+**Where the frame goes in, and why it cannot go anywhere else.** A vertex's freedom is two scalar
+coordinate nodes, and a leg is axis-aligned because one endpoint's coordinate is `boundTo` the other's
+(OP-19). A turned frame mixes x into y, so `world = f(frame, lx, ly)` is *not* expressible as a per-axis
+binding on a scalar — there is no scalar for a rotated world x to bind to. What every consumer reads is
+the **vertex's point**, so that is where the capture belongs: each vertex is now `pointXY(x, y)` published
+through an `IndirectNode` (see the note under OP-5), and capturing binds that node onto
+`frameApply(frame, pointXY)`. Legs, the wall footprint riding them, openings, sections, solids — all of it
+follows without one input list being rewired (OP-5), exactly as a captured free point's consumers do.
+
+**The coordinates are not converted — they are re-read as local.** The binding structure is untouched:
+who follows whom still holds, and it now relates *local* coordinates. That is the whole feature —
+axis-alignment becomes alignment to the **frame's** axes, so turning the frame 30° leaves every leg
+straight and perpendicular *in the group* and tilts the drawing 30° in the world. The only write is one
+translation per **master** coordinate (once per master, not per vertex: the vertices of a straight run
+resolve to the same node, and writing it once is what keeps them straight).
+
+**One capture rule for both kinds: a capture changes the origin, never the orientation.** It has to for a
+path — reading its coordinates in a turned frame *turns* it, by construction. Free points were being
+captured through the full frame inverse, which would have left a mixed group half-turned by a placement at
+an angle; they now follow the same origin-only rule, so a group is rigid whatever it contains. Since the
+gesture always places at angle 0, the retrofit is exactly world-invariant where the user can see it, and
+rotation is a later edit on the frame. (The uniform rule also fixed a latent save defect: a rotated free
+point's world position did not survive `save → load → save` bit-for-bit, because the round trip went
+through two rotations.)
+
+**Unplacing gives back exactly what placing took.** For an unturned frame that is still world-invariant.
+For a *turned* one it cannot be — only a frame can hold an axis-aligned leg at an angle — so the group
+comes back unturned rather than being torn into the parts that could stay turned and the parts that could
+not, and the status line says so.
+
+**Interaction (OP-13) is the same discipline, in local space.** A corner or leg drag inverse-maps the
+cursor through the frame and then writes the very same masters as before, so grab offsets and axis lock
+(both world-space, both rigid) carry over unchanged, and hit-testing is untouched because it runs on
+evaluated geometry — a leg is picked where it is *drawn*, rotation included. Typed fields keep showing
+**world** x/y for a corner and write through the inverse; under a turned frame a world x depends on both
+local coordinates, so that write lands on both masters — precisely the pair the drag writes. A *leg's*
+offset has no world counterpart at all (a leg of a turned group is neither horizontal nor vertical), so it
+is shown as `y in group` rather than quietly meaning something else.
+
+**Break and join keep working (OP-19), in local space.** A break maps its click into the frame and
+publishes the two vertices it creates through the frame as well; a join re-points bindings and needs
+nothing new — except that the perpendicular value it lands on is read from the *node* rather than off the
+drawn segment, which is right in both spaces and was a world/local mismatch waiting to happen.
+
+**Junctions (OP-20) are the boundary, and the boundary is honest.** A junction's position is a *world*
+position, so a captured vertex may not be driven by one: the coordinate would be read as local. Two
+consequences, both stated in the app. A path whose freedom leaves it at a junction — an end welded or
+attached to anything — is **not captured** (a path is one unit of freedom: its coordinate nodes are shared
+along each run, so half a capture would bend it where nothing moved), and its members are reported as not
+following the frame, which is OP-16's boundary-attachment rule one granularity up. And an end of an
+already-placed path **refuses** to weld or attach outward: the magnet does not offer it, so no halo
+promises a join the release would refuse. The other direction is fine and is how a run reaches a placed
+wall — something outside joins *onto* a placed corner, reading its world position.
+
+**Cuts, named.** *Drawing onto a placed path* is refused: a new leg would be snapped to the world axes
+while the path holds local ones. Clicking a placed end therefore starts a new run **joined** to it (what
+clicking an already-connected end has always done), and says so. And the vertices a break creates inside
+a placed group are not added to the group's member list — a `group` step's argument list is never
+rewritten (OP-16 step 1), so the file could not name them; they are captured and drag correctly, but
+clicking one reaches the element rather than the group.
+
+**Persistence (OP-18): one convention, applied per step position.** A captured source's own step replays
+*before* the `place` step that captures it, so it restates the position it had **before** the capture —
+its local value plus the frame's origin, which the capture then subtracts off again. For a path that is
+the only restatement that can work at all: the world positions of a turned path are not axis-aligned, and
+the drawing steps snap every leg to an axis, so they could not rebuild it. A step recorded *after* the
+placement (a break inside a placed group) runs on already-captured geometry and maps its own positions
+into the frame, so there the world position is what is written. The file still holds no local coordinates
+and no node names — only positions its own steps can be replayed from, and `save → load → save` is
+byte-equal after placing, a frame drag, a corner drag, a rotation and a break.
 
 ## Going to 3D
 
@@ -2042,8 +2128,12 @@ Three broad families (see OP-9 decision above):
       bulk hide/delete, flat named groups recorded as a `group` step, and the **frame** — one
       `FrameValue` source node plus a `frameApply` op, with placement binding the group's own free
       points onto it through the existing weld substrate (world-invariant, DOF-preserving, invertible);
-      see that section's implementation status. Remaining: relocate-origin / re-parent / constructed
-      frames (mates), macro promotion, and ortho paths under a frame.
+      see that section's implementation status. **Ortho paths and the walls riding them are captured
+      too** (the *ortho-path bonus*): the same binding one level up — a vertex is published through a
+      re-pointable `IndirectNode`, its coordinate nodes become the group's local ones, and so
+      axis-alignment becomes alignment to the frame's axes, i.e. the rotated **project frame**.
+      Remaining: relocate-origin / re-parent / constructed frames (mates), macro promotion, and drawing
+      *onto* a placed path (refused today, with the reason stated).
 - [x] **OP-21 A wall is an output feature** — RESOLVED: a wall belongs to the **result layer**
       (OP-14), and the same description must feed the seam (OP-17), because a floor plan is a route
       into 3D. The first wall implementation needed rework for two independent reasons: it was
@@ -2397,6 +2487,41 @@ Three broad families (see OP-9 decision above):
   prismatic booleans (OP-22) and a WebGL view, user-recorded macro tools with live propagation (OP-6),
   the four persona showcases as worked specs, and click budgets asserted as tests (130 → 95 actions over
   the four flagship workflows). 459 jvm tests green; every feature also verified in real Chrome.
+- **Session 4 — ortho paths under a frame: the cut in OP-16 step 2 is closed.** A user report ("I can
+  group an ortho-path, but I cannot assign a frame to that group — *it owns no free point*") was exactly
+  the omission OP-16's as-built note recorded, and closing it delivers the *ortho-path bonus*: the rotated
+  **project frame**. Six things worth recording.
+  (1) **The insertion point was the question, not the algorithm.** An ortho vertex's freedom is two scalar
+  coordinate nodes, and a rotated frame mixes x into y — so `world = f(frame, lx, ly)` cannot be a per-axis
+  binding, and the capture has to sit where the *point* is consumed. Hence one new node kind, `IndirectNode`
+  (OP-5's binding substrate generalized from a literal to a derived value): a re-pointable view that a
+  vertex is published through, bound in place onto `frameApply(frame, pointXY)`. Everything downstream —
+  legs, wall footprint, openings, section, cut solid — followed with no rule of its own, which is the
+  clearest evidence yet for OP-5's no-rewiring stance.
+  (2) **Nothing was converted; the coordinates were re-read.** The binding structure that holds a leg
+  axis-aligned is untouched and now relates *local* coordinates, so axis-alignment becomes alignment to the
+  frame's axes. Turning the frame 30° leaves every leg straight and perpendicular in the group. The feature
+  *is* the side effect.
+  (3) **One rule for both capture kinds, forced by the paths:** a capture changes the origin, never the
+  orientation (an axis-aligned path in a turned frame *is* turned). Free points had been captured through
+  the full inverse; making them follow the same rule keeps a mixed group rigid — and incidentally fixed a
+  latent defect the new test found, a rotated free point losing a bit through `save → load → save`.
+  Unplacing therefore gives back exactly what placing took, and a turned group comes back unturned rather
+  than torn in two.
+  (4) **The junction is the honest boundary (OP-20).** A junction is a *world* position, so a captured
+  vertex may not be driven by one. A path whose freedom leaves it at a junction is not captured at all —
+  a path is one unit of freedom, its coordinates being shared along each run — and is reported as not
+  following its frame; and a placed path's end refuses to weld outward, magnet included. The reverse
+  direction needed nothing and is how a new run reaches a placed wall.
+  (5) **Two conventions in one file, decided by step position.** A captured source's own step replays
+  before the placement, so it restates its *pre-capture* position; a break recorded after the placement
+  restates world. For a turned path only the former can work — the drawing steps snap every leg to an axis,
+  so they cannot rebuild a turned run from world coordinates. The file still contains no local coordinates
+  and no node names.
+  (6) **One cut, stated in the app:** drawing *onto* a placed path is refused (a new leg would snap to the
+  world axes), so clicking its end starts a new run joined to it — what clicking a connected end always
+  did. 491 headless tests green (23 new; `PlacedPathTest`), and the browser E2E now groups the whole storey
+  and turns it by typing an angle.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -2418,6 +2543,11 @@ Do not store a "horizontal" flag and solve it — construct so it *cannot* be ot
 - **Project frame.** Two named axes (X/Y), optionally **rotated**, so a building sited at an angle
   still draws "orthogonally" in its own frame; rotating the frame rotates everything that
   references it.
+  - **As built, and not as a second concept:** a project frame *is* a placed group (OP-16). Grouping a
+    run of walls and placing it re-reads the path's coordinate nodes as the group's local ones, so the
+    frame's angle field turns the building while every leg stays axis-aligned in the group. There are no
+    named axes and no axis references — the frame carries the geometry, which is one mechanism instead of
+    two. See OP-16's *ortho paths and walls under a frame*.
 - **Ortho input aid** (fast entry): while drawing, snap the direction to the frame axes / 90° and
   **store the axis reference** (not baked coordinates) so alignment persists.
 - Motivates a **wall-path / turtle tool**: "from here go 4m east, 3m north…", each leg

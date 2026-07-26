@@ -746,7 +746,10 @@ class Editor(
             onChange()
             return false
         }
-        if (analysis.candidates.isEmpty()) {
+        // the refusal survives only for a group that owns no freedom **at all**: ortho paths and the walls
+        // riding them are carried too now (OP-16's ortho-path bonus), so owning no free *point* is no
+        // longer a reason on its own
+        if (!analysis.carriesSomething) {
             statusHint = "Can't place ${g.name}: it owns no free point, so a frame would have nothing to move"
             onChange()
             return false
@@ -767,20 +770,38 @@ class Editor(
                 " — ${result.unfollowed.joinToString(", ") { it.id }} " +
                     "${if (result.unfollowed.size == 1) "is" else "are"} driven from outside and will not follow it"
             }
-        statusHint = "Placed ${g.name}: ${result.captured} point${if (result.captured == 1) "" else "s"} are now frame-relative$deforms"
+        val carried =
+            listOfNotNull(
+                "${result.captured} point${if (result.captured == 1) "" else "s"}".takeIf { result.captured > 0 },
+                "${result.capturedPaths} path${if (result.capturedPaths == 1) "" else "s"}".takeIf { result.capturedPaths > 0 },
+            ).joinToString(" and ")
+        statusHint = "Placed ${g.name}: $carried now frame-relative$deforms"
         onChange()
         return true
     }
 
-    /** Unplace [g]: its points become free again where they are, and the frame goes. */
+    /**
+     * Unplace [g]: what it holds becomes free again where the frame's origin puts it, and the frame goes.
+     *
+     * A **turned** group comes back un-turned: an ortho path's legs are axis-aligned by construction, so
+     * nothing but a frame can hold them at an angle, and unplacing gives back exactly what placing took
+     * rather than tearing the group into the parts that can stay turned and the parts that cannot. Said out
+     * loud, because it is the one part of unplacing that is not world-invariant (OP-16).
+     */
     fun unplaceGroup(g: Group): Boolean {
+        val unturns = doc.unturnsGroup(g)
         if (!doc.unplaceGroup(g)) {
             statusHint = "${g.name} is not placed"
             onChange()
             return false
         }
         checkpoint()
-        statusHint = "Unplaced ${g.name} — its points are free again, exactly where they were"
+        statusHint =
+            if (unturns) {
+                "Unplaced ${g.name} — it is unturned again, exactly as the frame took it (only a frame can hold a group turned)"
+            } else {
+                "Unplaced ${g.name} — its points are free again, exactly where they were"
+            }
         onChange()
         return true
     }
@@ -1035,8 +1056,15 @@ class Editor(
                 // starting *on* something should mean starting *at* it — link, so the path follows that
                 // geometry instead of merely beginning at its coordinates
                 val linked = s.linked && linkPathVertex(started.vertices.first().ref, s)
+                // a placed path is not extended in place (OP-16): its coordinates are its group's local
+                // ones, so this click starts a new run joined to it — said out loud, since the same click
+                // continues an unplaced path
+                val placedEnd = s.target?.let { t -> (t.handle as? OrthoCornerHandle)?.let { doc.pathFrameOf(it) != null } } == true
                 statusHint =
-                    if (linked) {
+                    if (linked && placedEnd) {
+                        "$what starts on ${s.target?.id} — a placed path is not extended in place; " +
+                            "this is a new run joined to it (unplace its group to extend it)"
+                    } else if (linked) {
                         "$what starts on ${s.target?.id} (${s.label}); click the next point"
                     } else {
                         "$what: click the next point; click the start to close (Esc/double-click to finish)"
@@ -1551,14 +1579,17 @@ class Editor(
         return merged
     }
 
-    /** Leg [i]'s perpendicular coordinate — the value a join keeps when this is the stationary half. */
+    /**
+     * Leg [i]'s perpendicular coordinate — the value a join keeps when this is the stationary half.
+     *
+     * Read from the path's own node ([Document.legPerpValue]), not off the drawn segment: under a frame
+     * (OP-16) the drawn position is a world one while the node a join writes holds a local coordinate, and
+     * asking the node is right in both cases.
+     */
     private fun legPerp(
         path: OrthoPath,
         i: Int,
-    ): Double? {
-        val seg = (ev().valueOf(path.legs[i].ref) as? constructit.core.SegmentValue)?.seg ?: return null
-        return if (path.legAxis(i) == 0) seg.a.y else seg.a.x
-    }
+    ): Double? = doc.legPerpValue(path, i)
 
     /**
      * Where on [el] a grab at [world] landed: the point itself, or the point of the curve under the
@@ -1581,10 +1612,13 @@ class Editor(
     /**
      * Whether dropping [el] can join it to something: a free point, or an open path end. A point held
      * frame-relative by a placed group (OP-16) is neither — its position is already derived, so the weld
-     * would be refused on release and the magnet must not offer it.
+     * would be refused on release and the magnet must not offer it. Nor is an end of a **placed** path: a
+     * junction is a world position and that end's coordinates are the group's local ones, so the connection
+     * is refused on release too (see `Document.bindCornerToJunction`).
      */
     private fun canConnect(el: Element): Boolean =
-        (el.kind == ElementKind.POINT && !doc.isFramed(el)) || (el.handle as? OrthoCornerHandle)?.isEndpoint == true
+        (el.kind == ElementKind.POINT && !doc.isFramed(el)) ||
+            (el.handle as? OrthoCornerHandle)?.let { it.isEndpoint && doc.pathFrameOf(it) == null } == true
 
     /** True when the active tool's next slot creates a point — the case a snap marker is useful for. */
     private fun placesAPoint(): Boolean {

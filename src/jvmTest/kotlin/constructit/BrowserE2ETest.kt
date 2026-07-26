@@ -349,6 +349,32 @@ class BrowserE2ETest {
             page.click("#p-add")
             assertTrue(params().contains("wall"), "a panel parameter still works exactly as before; got ${params()}")
 
+            // ---- the whole storey under one turned frame (OP-16's ortho-path bonus) ----
+            //
+            // Grouping a wall used to be as far as it went ("it owns no free point"); now the frame carries
+            // the carrier path, so the plan turns as a rigid body — which only pixels can really vouch for.
+            page.click("#tool-select")
+            page.mouse().move(box.x + box.width * 0.05, box.y + box.height * 0.95)
+            page.mouse().down()
+            page.mouse().move(box.x + box.width * 0.95, box.y + box.height * 0.05)
+            page.mouse().up()
+            page.click("#g-add")
+            page.fill("#cd-name", "storey")
+            page.click("#cd-ok")
+            page.click("#groups-list .grow .gplace") // ⌖ places it: one frame for the lot
+            assertTrue(status().contains("path"), "the frame reports the captured path; got: ${status()}")
+            val frameFields = page.querySelectorAll("#inspector .flabel").map { it.textContent() }
+            assertTrue(frameFields == listOf("x", "y", "angle"), "the placed group addresses its frame; got $frameFields")
+
+            val straight = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            page.querySelectorAll("#inspector .fval")[2].fill("30")
+            page.keyboard().press("Enter")
+            assertTrue(
+                (page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String) != straight,
+                "typing the frame's angle should turn the plan on canvas",
+            )
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/10-turned-frame.png")))
+
             // ---- and it ends in pixels, in both views ----
             page.click("#v-3d")
             page.waitForSelector("#canvas3:visible")

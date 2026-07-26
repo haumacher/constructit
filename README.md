@@ -49,6 +49,11 @@ first-class goal and the current implementation focus.
   inputs, and it becomes a button in the palette. Clicking its slots stamps an *instance* that is a
   view over the original rather than a copy of it: **editing the original updates every instance**, an
   instance's only freedom is its inputs, and the tool travels with the file.
+- **Groups that carry a frame** — name a selection, then *place* it: the group gets its own coordinate
+  frame, and moving or turning it is one edit on that one frame (its x / y / angle are ordinary typed
+  fields). The internals are re-read as local coordinates, so an ortho path in a placed group is
+  axis-aligned **in the group** — turn the frame and a building sited at an angle still draws
+  orthogonally, walls, openings and the solids cut from them following along.
 - **Architectural layer** — a rectilinear **ortho-path** (shared-coordinate model: local vertex
   editing, axis-aligned by construction, closeable loops) and parametric **walls**: a *thick path*,
   i.e. one offset region around the path (mitred corners, end caps, a ring where the path closes),

@@ -6,6 +6,7 @@ import constructit.core.CircleValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
+import constructit.core.IndirectNode
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Node
@@ -188,6 +189,14 @@ class Group(val id: String, var name: String) {
     /** The free point sources this placement retrofitted — what [Document.unplaceGroup] inverts. */
     val captures = ArrayList<FrameCapture>()
 
+    /**
+     * The ortho paths this placement captured whole (OP-16's *ortho-path bonus*). A path is one unit of
+     * freedom — its coordinate nodes are shared along each straight run — so it is captured or not at all,
+     * never vertex by vertex. From then on its coordinates are the group's **local** ones, which is what
+     * turns axis-alignment into alignment to the frame's axes: the rotated project frame.
+     */
+    val capturedPaths = ArrayList<OrthoPath>()
+
     /** The journal step that recorded the placement — dropped again by unplace. */
     internal var placeStep: Step? = null
 
@@ -200,7 +209,8 @@ class Group(val id: String, var name: String) {
  * [original] is the point's own source node, now **bound** onto a `frameApply` node (so everything that
  * already referenced it follows the frame without a single input list being rewired — OP-5); [local]
  * holds the same position in the group's own coordinates and is the DOF that remains. The pair is what
- * makes the retrofit invertible: unplacing writes the current world value back into [original].
+ * makes the retrofit invertible: unplacing writes [local] plus the frame's origin back into [original],
+ * which is exactly what the capture took (see [Document.unplaceGroup]).
  */
 class FrameCapture(
     val original: SourceNode,
@@ -223,20 +233,29 @@ class Placement(
     val origin: Vec2,
     /** The free point sources the frame would carry. */
     val candidates: List<SourceNode>,
+    /** The ortho paths the frame would carry whole — see [Document.analysePlacement]. */
+    val paths: List<OrthoPath>,
     /**
-     * Free points the group owns that a non-member also depends on. A group moves independently only
-     * if this is empty — a real modelling ambiguity, reported concretely rather than papered over.
+     * Free points (and captured path vertices) the group owns that a non-member also depends on. A group
+     * moves independently only if this is empty — a real modelling ambiguity, reported concretely rather
+     * than papered over.
      */
     val conflicts: List<SharedPoint>,
-)
+) {
+    /** Whether the frame would carry any freedom at all — else it would have nothing to move. */
+    val carriesSomething: Boolean get() = candidates.isNotEmpty() || paths.isNotEmpty()
+}
 
 /** The outcome of a placement: how much the frame carries, and what it does *not*. */
 class PlaceResult(
     val captured: Int,
+    /** How many ortho paths the frame carries — each one whole (see [Group.capturedPaths]). */
+    val capturedPaths: Int,
     /**
      * Members the frame does not move: their position is driven from outside the group (a weld or an
-     * attach that leaves it), or held by coordinates a frame cannot capture (an ortho path's shared
-     * scalars). The group deforms there, correctly — but invisibly, so it is reported.
+     * attach that leaves it), or held by an ortho path the frame could not capture (one whose freedom
+     * leaves the group at a junction). The group deforms there, correctly — but invisibly, so it is
+     * reported.
      */
     val unfollowed: List<Element>,
 )
@@ -246,8 +265,16 @@ class PlaceResult(
  * them. [ownAxis] is the coordinate introduced by the edge that created it (0 = x, 1 = y, -1 = the
  * start, which owns both) — the safe one to bind when closing a loop. [corner] is a `var` because
  * closing a loop replaces the live handle (see [Document.closeOrthoPath]).
+ *
+ * Two point nodes, one vertex: [local] is `pointXY(x, y)` over the coordinates the vertex owns, and
+ * [ref] — what everything else references — is a re-pointable view of it ([IndirectNode]). Unplaced the
+ * two are the same value; placed, [ref] is bound onto `frameApply(frame, local)`, so the coordinates
+ * become the group's **local** ones and every consumer follows the frame untouched (OP-16, OP-5).
  */
-class OrthoVertex(val ref: PointRef, var corner: OrthoCornerHandle, val ownAxis: Int)
+class OrthoVertex(val ref: PointRef, var corner: OrthoCornerHandle, val ownAxis: Int, val local: PointRef) {
+    /** Where a placement inserts the frame: the node [ref] names, bound in place (OP-16). */
+    val indirect: IndirectNode? get() = ref.node as? IndirectNode
+}
 
 /**
  * A retained rectilinear path: [vertices] in draw order plus the [legs] between them (the closing
@@ -266,6 +293,18 @@ class OrthoPath {
      */
     val legAxes = ArrayList<Int>()
     var closed: Boolean = false
+
+    /**
+     * The frame source node this path is placed under (OP-16), or null while it lives in world
+     * coordinates.
+     *
+     * When set, **every coordinate this path holds is local**: the binding structure that keeps a leg
+     * axis-aligned is untouched and now relates local coordinates, so the legs stay straight and
+     * perpendicular *in the group* and a turned frame turns the whole path. Handles read it to
+     * inverse-map the cursor, and break/join read it to convert the positions they are given.
+     */
+    var frame: SourceNode? = null
+        internal set
 
     /** One leg per vertex when closed, one fewer when open. */
     val legCount: Int get() = if (closed) vertices.size else (vertices.size - 1).coerceAtLeast(0)
@@ -770,6 +809,21 @@ class Document {
     }
 
     /**
+     * The frame the ortho path containing [corner] is placed under (OP-16), or null.
+     *
+     * Asked structurally rather than remembered on the handle, so a vertex a break creates inside a
+     * placed path is frame-aware the moment it joins the path, and unplacing needs no bookkeeping.
+     */
+    fun pathFrameOf(corner: OrthoCornerHandle): SourceNode? =
+        orthoPaths.firstOrNull { p -> p.vertices.any { it.corner === corner } }?.frame
+
+    /** The live value of a frame source node — a placed group's origin and angle. */
+    fun frameValue(node: SourceNode): FrameValue? = (Evaluator().eval(node) as? EvalResult.Ok)?.value as? FrameValue
+
+    /** [g]'s frame value, or null when it is not placed. */
+    fun frameValueOf(g: Group): FrameValue? = g.frameNode?.let { frameValue(it) }
+
+    /**
      * What placing [g] would do — computed without touching anything, so the caller can refuse first.
      *
      * The frame carries the free point sources in the members' closure that the group **owns**: a free
@@ -786,26 +840,70 @@ class Document {
             ancestors(members.map { it.ref.node })
                 .filterIsInstance<SourceNode>()
                 .filter { it.boundTo == null && it.value is PointValue && ownedBy(it, memberSet) }
+        val paths = orthoPaths.filter { it.frame == null && ownsPath(it, memberSet) && capturablePath(it) }
         val conflicts = ArrayList<SharedPoint>()
-        if (candidates.isNotEmpty()) {
-            val cand = candidates.toHashSet()
+        // what the capture would take over: the free point sources, plus each captured path's vertices
+        // (their published node) and the coordinate masters behind them
+        val captured = HashSet<Node>(candidates)
+        for (p in paths) {
+            p.vertices.forEach { captured.add(it.ref.node) }
+            captured.addAll(coordMasters(p, 0) + coordMasters(p, 1))
+        }
+        if (captured.isNotEmpty()) {
             for (el in elements) {
                 if (el in memberSet) continue
-                for (n in ancestors(listOf(el.ref.node))) if (n in cand) conflicts.add(SharedPoint(labelOf(n), el))
+                for (n in ancestors(listOf(el.ref.node))) if (n in captured) conflicts.add(SharedPoint(labelOf(n), el))
             }
         }
-        return Placement(boundsCentre(members) ?: Vec2(0.0, 0.0), candidates, conflicts)
+        return Placement(boundsCentre(members) ?: Vec2(0.0, 0.0), candidates, paths, conflicts)
     }
+
+    /**
+     * Whether the group owns *all* of [path] — every one of its vertices is displayed by a member.
+     *
+     * A path is captured whole or not at all, unlike free points, which are captured one by one: the
+     * coordinate nodes of a straight run are *shared* by its vertices (that sharing is what keeps the run
+     * straight), so capturing half a path would put one end's coordinates in local space and the other's
+     * in world space and bend it where nothing was moved. Its legs need not be members: a leg is derived
+     * from the two vertices, so it follows for the same reason any derived geometry does.
+     */
+    private fun ownsPath(
+        path: OrthoPath,
+        members: Set<Element>,
+    ): Boolean = path.vertices.isNotEmpty() && path.vertices.all { v -> elementFor(v.ref)?.let { it in members } == true }
+
+    /**
+     * Whether [path]'s coordinates can be re-read as **local** ones: every coordinate chain must end in a
+     * free master the path itself holds ([writableMaster]).
+     *
+     * A chain that ends in derived geometry does not — an end welded or attached to something is driven by
+     * a [Junction], and a junction's position is a *world* position, so a captured vertex reading it would
+     * take a world coordinate for a local one. Such a path keeps its world coordinates, does not follow the
+     * frame, and is reported at placement time (OP-16's boundary-attachment rule, one granularity up).
+     */
+    private fun capturablePath(path: OrthoPath): Boolean =
+        path.vertices.isNotEmpty() &&
+            path.vertices.all { writableMaster(it.corner.xNode) != null && writableMaster(it.corner.yNode) != null }
 
     /**
      * Place [g]: give it a frame at [origin] (its members' bounding-box centre by default) rotated by
      * [angle] (rad), and retrofit the free points it owns to frame-relative form.
      *
      * **World-invariant by construction:** each captured source keeps its position, expressed as a fresh
-     * local source at the frame-inverse of where it already is, and is then *bound* onto
-     * `frameApply(frame, local)`. So the retrofit preserves every evaluated position, preserves the DOF
-     * count (one local per captured free point, plus the frame's own three), and is invertible
-     * ([unplaceGroup]). Refused when already placed or when a free point is shared with a non-member.
+     * local source measured from the frame's origin, and is then *bound* onto `frameApply(frame, local)`. So
+     * the retrofit preserves every evaluated position, preserves the DOF count (one local per captured free
+     * point, plus the frame's own three), and is invertible ([unplaceGroup]). Refused when already placed or
+     * when a free point is shared with a non-member.
+     *
+     * Ortho paths are captured too ([capturePath]), by the same substrate one level up. Both kinds follow one
+     * rule: **a capture changes the origin, never the orientation.** It has to — an ortho path is
+     * axis-aligned by construction, so re-reading its coordinates in a *turned* frame turns the path, which
+     * is exactly the feature (the rotated project frame). Making that rule uniform keeps a mixed group rigid:
+     * placing at a nonzero [angle] turns all of it rather than turning the paths and leaving the points.
+     *
+     * The gesture therefore always places at [angle] 0, where the retrofit is exactly world-invariant, and
+     * rotation is a later edit on the frame. Only replay passes a nonzero [angle] — and the steps it replays
+     * first restate the *pre-rotation* positions the frame then turns (see [restatedPosition]).
      */
     fun placeGroup(
         g: Group,
@@ -822,7 +920,7 @@ class Document {
                 Arg.Label(g.name),
                 Arg.Keyed("at", Arg.Pos(at)),
                 Arg.Keyed("angle", Arg.Num(Quantity.rad(angle))),
-            ) { placeGroupNow(g, at, angle, analysis.candidates) }
+            ) { placeGroupNow(g, at, angle, analysis.candidates, analysis.paths) }
         g.placeStep = journal.lastOrNull()?.takeIf { it.kind == "place" }
         return result
     }
@@ -832,6 +930,7 @@ class Document {
         at: Vec2,
         angle: Double,
         candidates: List<SourceNode>,
+        paths: List<OrthoPath>,
     ): PlaceResult {
         val f = FrameValue(at, angle)
         val node = SourceNode(nextId("fr"), f)
@@ -844,7 +943,10 @@ class Document {
         val world = candidates.map { pointOf(it, ev) }
         for ((i, src) in candidates.withIndex()) {
             val w = world[i] ?: continue
-            val local = SourceNode(nextId("lp"), PointValue(f.toLocal(w)))
+            // a change of origin, not of orientation — the one rule both capture kinds follow (see the
+            // method comment and [capturePath]): the local coordinate is the world one measured from the
+            // frame's origin, and the frame's angle then *turns* what it carries
+            val local = SourceNode(nextId("lp"), PointValue(w - f.origin))
             src.boundTo = cx.frameApply(frame, Ref<PointValue>(local)).node
             val el = elements.lastOrNull { it.ref.node === src }
             val prior = el?.handle
@@ -853,7 +955,74 @@ class Document {
             if (el != null) el.handle = FramedPointHandle(node, local)
             g.captures.add(FrameCapture(src, local, el, prior))
         }
-        return PlaceResult(g.captures.size, deformingMembers(g))
+        for (path in paths) capturePath(g, path, frame, f)
+        return PlaceResult(g.captures.size, g.capturedPaths.size, deformingMembers(g))
+    }
+
+    /**
+     * Capture [path] under [frame] (OP-16's *ortho-path bonus*): its coordinates become the group's local
+     * ones, and each vertex is published through the frame.
+     *
+     * Two writes, and no rewiring (OP-5):
+     * - every **master** coordinate the path holds moves by the frame's origin, once per master rather than
+     *   once per vertex — the vertices of a straight run resolve to the same node, and writing it once is
+     *   what keeps them straight. The binding structure (who follows whom) is not touched at all: it now
+     *   relates *local* coordinates, so axis-alignment becomes alignment to the frame's own axes.
+     * - each vertex's published node is **bound** onto `frameApply(frame, local)`, so its legs, the wall
+     *   riding it, the openings' leg-relative parameters and anything else downstream follow the frame
+     *   without a single input list being rewired.
+     *
+     * A capture changes the path's origin, never its orientation — the same rule a free point's capture
+     * follows ([placeGroup]): with the frame's angle at 0 (the only angle the gesture places at) it is
+     * exactly world-invariant, and turning the frame afterwards turns the path — legs still straight and
+     * perpendicular *in the group*, rotated in the world.
+     */
+    private fun capturePath(
+        g: Group,
+        path: OrthoPath,
+        frame: FrameRef,
+        f: FrameValue,
+    ) {
+        for (n in coordMasters(path, 0)) shiftCoord(n, -f.origin.x)
+        for (n in coordMasters(path, 1)) shiftCoord(n, -f.origin.y)
+        path.frame = frame.node as? SourceNode
+        for (v in path.vertices) captureVertex(path, v)
+        g.capturedPaths.add(path)
+    }
+
+    /**
+     * The free coordinate masters [path] holds on [axis] (0 = x, 1 = y) — the nodes a capture translates,
+     * a drag writes and a frame therefore drives.
+     *
+     * One entry per master rather than per vertex: the vertices of a straight run resolve to the same node,
+     * and that sharing is exactly what keeps the run straight (OP-19), so translating it once translates
+     * the whole run.
+     */
+    private fun coordMasters(
+        path: OrthoPath,
+        axis: Int,
+    ): Set<SourceNode> {
+        val out = LinkedHashSet<SourceNode>()
+        for (v in path.vertices) writableMaster(if (axis == 0) v.corner.xNode else v.corner.yNode)?.let { out.add(it) }
+        return out
+    }
+
+    /** Publish [v] through [path]'s frame, if it has one — what makes a vertex a *framed* vertex. */
+    private fun captureVertex(
+        path: OrthoPath,
+        v: OrthoVertex,
+    ) {
+        val frame = path.frame ?: return
+        v.indirect?.boundTo = cx.frameApply(Ref<FrameValue>(frame), v.local).node
+    }
+
+    /** Move a free coordinate master by [by] mm — a master holds its literal, so this is one write. */
+    private fun shiftCoord(
+        node: SourceNode,
+        by: Double,
+    ) {
+        val q = (node.value as? ScalarValue)?.q ?: return
+        node.value = ScalarValue(Quantity.mm(q.mm + by))
     }
 
     /**
@@ -861,13 +1030,15 @@ class Document {
      * coordinates and is not one of the group's own locals, so moving the frame stretches them.
      *
      * The pinned kinds are exactly two — a **free point source** owned by something outside the group (a
-     * weld or an attach that left it), and an **ortho vertex coordinate**, which is an absolute world
-     * coordinate a frame cannot capture without also owning the vertex's other coordinate. A curve
+     * weld or an attach that left it), and an **ortho vertex coordinate the capture did not take**, which
+     * stays an absolute world coordinate (a path whose freedom leaves the group at a junction). A curve
      * parameter (a point-on-line's distance, a point-on-circle's angle) is deliberately *not* one: it is
      * relative to a curve that itself follows the frame, so such a point is carried rigidly.
      */
     private fun deformingMembers(g: Group): List<Element> {
-        val local = g.captures.mapTo(HashSet()) { it.local }
+        // what the frame does drive: the captured points' locals, and the captured paths' own coordinates
+        val carried = g.captures.mapTo(HashSet()) { it.local }
+        for (p in g.capturedPaths) carried.addAll(coordMasters(p, 0) + coordMasters(p, 1))
         val orthoCoords = HashSet<SourceNode>()
         for (p in orthoPaths) {
             for (v in p.vertices) {
@@ -877,31 +1048,95 @@ class Document {
         }
         return groupMembers(g).filter { m ->
             ancestors(listOf(m.ref.node)).filterIsInstance<SourceNode>().any { s ->
-                s.boundTo == null && s !in local && (s.value is PointValue || s in orthoCoords)
+                s.boundTo == null && s !in carried && (s.value is PointValue || s in orthoCoords)
             }
         }
     }
 
     /**
-     * Unplace [g]: its captured points become free again exactly where they now are, and the frame is
-     * dropped — the inverse of [placeGroup], world-invariant in the same way. The group survives as a
-     * flat one, and its `place` step goes (like [ungroup] drops the `group` step).
+     * Unplace [g]: **exactly what the capture took, given back** — every captured source keeps the position
+     * the frame's origin puts it at, and the frame is dropped. The group survives as a flat one, and its
+     * `place` step goes (like [ungroup] drops the `group` step).
+     *
+     * The inverse of [placeGroup], hence world-invariant while the frame is unturned. A *turned* frame is the
+     * one case where nothing could be: an ortho path's legs are axis-aligned by construction, so only a frame
+     * can hold one turned, and un-turning the paths while leaving the points would tear the group apart.
+     * Inverting the capture keeps the group rigid and gives back precisely what placing changed — the
+     * rotation lived in the frame that is going. It is reported rather than hidden ([unturnsGroup]).
      */
     fun unplaceGroup(g: Group): Boolean {
         if (!g.placed) return false
-        val ev = Evaluator()
-        val world = g.captures.map { pointOf(it.original, ev) }
-        for ((i, c) in g.captures.withIndex()) {
+        val f = frameValueOf(g)
+        for (c in g.captures) {
             c.original.boundTo = null
-            world[i]?.let { c.original.value = PointValue(it) }
+            val local = (c.local.value as? PointValue)?.p
+            if (f != null && local != null) c.original.value = PointValue(f.origin + local)
             c.restoreHandle()
         }
         g.captures.clear()
+        for (path in g.capturedPaths) {
+            for (v in path.vertices) v.indirect?.boundTo = null
+            if (f != null) {
+                for (n in coordMasters(path, 0)) shiftCoord(n, f.origin.x)
+                for (n in coordMasters(path, 1)) shiftCoord(n, f.origin.y)
+            }
+            path.frame = null
+        }
+        g.capturedPaths.clear()
         g.frame = null
         g.frameHandle = null
         g.placeStep?.let { s -> journal.removeAll { it === s } }
         g.placeStep = null
         return true
+    }
+
+    /**
+     * Whether unplacing [g] would **un-turn** it — true only while its frame is rotated, and the one thing
+     * about unplacing that is not world-invariant (see [unplaceGroup]).
+     */
+    fun unturnsGroup(g: Group): Boolean =
+        (g.captures.isNotEmpty() || g.capturedPaths.isNotEmpty()) && (frameValueOf(g)?.angle ?: 0.0) != 0.0
+
+    /**
+     * The position the step at [stepIndex] must restate for [el] (OP-18) — its world position, or the
+     * position it had **before its capture** when a *later* `place` step captured it.
+     *
+     * Why the step's place in the script matters. A captured source holds coordinates measured from its
+     * frame's origin, and the step that created it replays **before** the placement that captures it — so
+     * what it must restate is where that source stood unplaced: its local value plus the frame's origin,
+     * which is exactly what the capture then subtracts off again. For an ortho path this is the *only*
+     * restatement that works at all: under a turned frame the world positions describe a turned path, and the
+     * drawing steps snap every leg to an axis, so they could not rebuild it. A step recorded *after* the
+     * placement (a break inside a placed group) already runs on captured geometry and maps its own positions
+     * into the frame, so there the world position is what has to be written.
+     *
+     * The file therefore still contains no local coordinates and no node names — only positions the drawing
+     * steps can be replayed from.
+     */
+    fun restatedPosition(
+        el: Element,
+        stepIndex: Int,
+        ev: Evaluator,
+    ): Vec2? {
+        val world = pointOf(el.ref.node, ev)
+        val path = orthoPaths.firstOrNull { p -> p.vertices.any { it.ref === el.ref } }
+        // the group that captured this element, and the local source that now holds its position
+        val g: Group
+        val localNode: Node
+        if (path != null) {
+            if (path.frame == null) return world
+            g = allGroups.firstOrNull { grp -> grp.capturedPaths.any { it === path } } ?: return world
+            localNode = path.vertices.first { it.ref === el.ref }.local.node
+        } else {
+            val node = el.ref.node as? SourceNode ?: return world
+            g = allGroups.firstOrNull { grp -> grp.captures.any { it.original === node } } ?: return world
+            localNode = g.captures.first { it.original === node }.local
+        }
+        val placedAt = g.placeStep?.let { s -> journal.indexOfFirst { it === s } } ?: return world
+        if (placedAt <= stepIndex) return world // the capture has already happened by the time this replays
+        val f = frameValueOf(g) ?: return world
+        val local = pointOf(localNode, ev) ?: return world
+        return f.origin + local
     }
 
     /** [node]'s effective point value — its literal, or whatever drives it. */
@@ -1565,11 +1800,20 @@ class Document {
         return null
     }
 
-    /** Bind both of [corner]'s coordinates (via their masters) to [junction], so it owns neither. */
+    /**
+     * Bind both of [corner]'s coordinates (via their masters) to [junction], so it owns neither.
+     *
+     * Refused for a corner of a **placed** path (OP-16): that corner's coordinates are the group's local
+     * ones while a junction is a *world* position, so the bind would feed a world value into a local
+     * coordinate and move the corner off the point it was joined to. The connection is refused rather than
+     * approximated — the other direction (something outside joining *onto* a placed corner) is fine, and is
+     * how a run reaches a placed wall.
+     */
     private fun bindCornerToJunction(
         corner: OrthoCornerHandle,
         junction: Junction,
     ): Boolean {
+        if (pathFrameOf(corner) != null) return false
         val mx = writableMaster(corner.xNode) ?: return false
         val my = writableMaster(corner.yNode) ?: return false
         // the definitive cycle test, against the freedom that will actually drive the corner: a weld onto
@@ -1849,9 +2093,12 @@ class Document {
     ): OrthoVertex {
         val corner = OrthoCornerHandle(x, y, this)
         corner.ownCoord = if (ownAxis == -1) 0 else ownAxis // start: fixed once its first edge is drawn
-        val ref = cx.pointXY(Ref<ScalarValue>(x), Ref<ScalarValue>(y))
+        // the coordinates make the vertex's *own* position; it is published through a re-pointable view, so
+        // a placement can put the frame in front of it without rewiring a single consumer (OP-16, OP-5)
+        val local = cx.pointXY(Ref<ScalarValue>(x), Ref<ScalarValue>(y))
+        val ref = cx.indirect(local)
         addConstrained(ref, corner)
-        return OrthoVertex(ref, corner, ownAxis)
+        return OrthoVertex(ref, corner, ownAxis, local)
     }
 
     val orthoPaths = ArrayList<OrthoPath>()
@@ -1874,6 +2121,11 @@ class Document {
         if (orthoEndpoint(el) == null) return null
         for (path in orthoPaths) {
             if (path.closed || path.vertices.size < 2) continue
+            // A **placed** path is not extended in place (OP-16): drawing works in world coordinates while
+            // the path holds local ones, and a rubber band that snapped to the world axes would promise a
+            // leg the frame cannot hold. Clicking its end starts a new run joined there instead, which is
+            // what clicking an already-connected end has always done.
+            if (path.frame != null) continue
             if (path.vertices.last().ref === el.ref) return path to true
             if (path.vertices.first().ref === el.ref) return path to false
         }
@@ -2097,8 +2349,13 @@ class Document {
         // binding can be re-pointed onto it while the followed side keeps whatever it already follows.
         val farFollows = perpB.boundTo === perpA
         if (!farFollows && perpA.boundTo !== perpB) return false
-        val along = if (axis == 0) mPos.x else mPos.y
-        val perp = if (axis == 0) nPos.y else nPos.x
+        // a placed path holds *local* coordinates (OP-16), so the world positions this break was clicked at
+        // are mapped into the frame first — and the vertices it creates are published through it below
+        val f = path.frame?.let { frameValue(it) }
+        val m0 = f?.toLocal(mPos) ?: mPos
+        val n0 = f?.toLocal(nPos) ?: nPos
+        val along = if (axis == 0) m0.x else m0.y
+        val perp = if (axis == 0) n0.y else n0.x
 
         // the vertex on the followed side keeps that binding and introduces the along coordinate at the
         // click; the one on the following side introduces the jog — free, and equal to the followed
@@ -2115,6 +2372,8 @@ class Document {
         ) = if (axis == 0) orthoVertex(alongNode, perpNode, ownAxis) else orthoVertex(perpNode, alongNode, ownAxis)
         val m = if (farFollows) vertex(keeper, keeperPerp, axis) else vertex(jogAlong, jog, 1 - axis)
         val n = if (farFollows) vertex(jogAlong, jog, 1 - axis) else vertex(keeper, keeperPerp, axis)
+        captureVertex(path, m)
+        captureVertex(path, n)
         if (farFollows) perpB.boundTo = jog else perpA.boundTo = jog
         m.corner.isEndpoint = false
         n.corner.isEndpoint = false
@@ -2173,7 +2432,9 @@ class Document {
      *
      * [keepPerp] is the perpendicular value the joined run should end up at — the **stationary** half's,
      * so the section the user dragged snaps to what it was aimed at rather than dragging the untouched
-     * half over to meet it. Null keeps whatever the surviving node already holds.
+     * half over to meet it. Null keeps whatever the surviving node already holds. It is a value in the
+     * path's *own* space (local under a frame, OP-16), which is why callers read it with [legPerpValue]
+     * from the node rather than off the drawn segment: the two cannot then drift apart.
      */
     fun joinCollapsedLeg(
         path: OrthoPath,
@@ -2238,6 +2499,19 @@ class Document {
         path.legs.add(legIndex - 1, merged)
         path.legAxes.add(legIndex - 1, axis)
         return merged
+    }
+
+    /**
+     * Leg [i] of [path]'s perpendicular coordinate **as the path holds it** — local when the path is placed
+     * (OP-16), world otherwise. What a join keeps when this is the stationary half ([joinCollapsedLeg]).
+     */
+    fun legPerpValue(
+        path: OrthoPath,
+        i: Int,
+    ): Double? {
+        val corner = path.legEnds(i).first.corner
+        val node = if (path.legAxis(i) == 0) corner.yNode else corner.xNode
+        return ((Evaluator().eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
     }
 
     /** The ortho path [el] belongs to — as one of its legs or as one of its vertices. */

@@ -415,6 +415,16 @@ class OnLineHandle(private val line: LineRef, private val t: SourceNode) : Handl
  * re-pointed in place, which is what break and join do (OP-19). Loop closure is just another binding.
  */
 class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode, private val doc: Document? = null) : Handle {
+    /**
+     * The frame this corner's path is placed under (OP-16), or null.
+     *
+     * When set, the two coordinate nodes hold the group's **local** coordinates: a drag inverse-maps the
+     * cursor into the frame before writing them (so the corner still lands under the pointer, and every leg
+     * stays axis-aligned in the *group*), while the panel keeps showing world x/y — the same numbers as
+     * before placing, only written through the frame (OP-13).
+     */
+    private val frameNode: SourceNode? get() = doc?.pathFrameOf(this)
+
     /** True while this vertex terminates its path (degree 1) — the case that may weld/attach. */
     var isEndpoint: Boolean = true
 
@@ -442,8 +452,11 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode, private va
     ) {
         val mx = writableMaster(xNode)
         val my = writableMaster(yNode)
-        mx?.value = ScalarValue(Quantity.mm(world.x))
-        my?.value = ScalarValue(Quantity.mm(world.y))
+        // in the path's own space: the cursor (grab offset and axis lock already applied to it in world
+        // coordinates, which a rigid map carries over unchanged) inverse-mapped through the frame
+        val at = local(world, ev)
+        mx?.value = ScalarValue(Quantity.mm(at.x))
+        my?.value = ScalarValue(Quantity.mm(at.y))
         // A coordinate this corner does not own belongs to the junction it meets at, so hand the gesture
         // there rather than dropping it (OP-20) — but **only that coordinate**. Handing over the whole
         // cursor made the junction jump to the pointer, so dragging an outer corner along its own arm
@@ -456,9 +469,64 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode, private va
         }
     }
 
-    override fun fields(): List<HandleField> =
-        listOf(orthoCoordField("x", xNode, doc, 0), orthoCoordField("y", yNode, doc, 1)) +
-            (legAnchor?.let { listOf(lengthField("leg length", ownNode, it)) } ?: emptyList())
+    override fun fields(): List<HandleField> {
+        val frame = frameNode
+        val coords =
+            if (frame == null) {
+                listOf(orthoCoordField("x", xNode, doc, 0), orthoCoordField("y", yNode, doc, 1))
+            } else {
+                listOf(framedCoordField("x", frame, 0), framedCoordField("y", frame, 1))
+            }
+        // a leg length is a distance between two of this path's own coordinates, so a frame leaves it alone —
+        // a placement changes the coordinates' origin, and rotation preserves distance
+        return coords + (legAnchor?.let { listOf(lengthField("leg length", ownNode, it)) } ?: emptyList())
+    }
+
+    /** [world] in the space this corner's coordinates live in: the frame's, when it has one. */
+    private fun local(
+        world: Vec2,
+        ev: Evaluator,
+    ): Vec2 = frameNode?.let { frameOf(it, ev)?.toLocal(world) } ?: world
+
+    /**
+     * A **world** coordinate of a corner whose path is placed (OP-16): read through the frame, written by
+     * inverse-mapping the world position it asks for back into it.
+     *
+     * Under a turned frame a world x depends on *both* local coordinates, so the write lands on both
+     * masters — exactly the pair the drag writes, which is what keeps typing and dragging one operation
+     * (OP-13). With the frame unturned only the axis' own master changes, as before.
+     */
+    private fun framedCoordField(
+        label: String,
+        frame: SourceNode,
+        axis: Int,
+    ) = HandleField(
+        label,
+        if (axis == 0) xNode else yNode,
+        Dimension.LENGTH,
+        { ev -> worldOf(frame, ev)?.let { Quantity.mm(if (axis == 0) it.x else it.y) } },
+        { q ->
+            val ev = Evaluator()
+            val w = worldOf(frame, ev) ?: Vec2(0.0, 0.0)
+            val want = if (axis == 0) Vec2(q.mm, w.y) else Vec2(w.x, q.mm)
+            val at = frameOf(frame, ev)?.toLocal(want) ?: want
+            writableMaster(xNode)?.value = ScalarValue(Quantity.mm(at.x))
+            writableMaster(yNode)?.value = ScalarValue(Quantity.mm(at.y))
+        },
+        // both coordinates have to be writable, since the inverse map needs both to place one of them
+        writableWhen = { writableMaster(xNode) != null && writableMaster(yNode) != null },
+    )
+
+    /** This corner's world position: its two local coordinates seen through [frame]. */
+    private fun worldOf(
+        frame: SourceNode,
+        ev: Evaluator,
+    ): Vec2? {
+        val f = frameOf(frame, ev) ?: return null
+        val lx = baseOf(xNode, ev) ?: return null
+        val ly = baseOf(yNode, ev) ?: return null
+        return f.toWorld(Vec2(lx, ly))
+    }
 }
 
 /**
@@ -504,7 +572,11 @@ class OrthoEdgeHandle(private val doc: Document, private val path: OrthoPath, pr
         world: Vec2,
         ev: Evaluator,
     ) {
-        val want = if (axis == 0) world.y else world.x
+        // in the path's own space: under a frame (OP-16) the leg's one degree of freedom is a *local*
+        // perpendicular offset, so the cursor is inverse-mapped before the axis component is taken — which
+        // is what keeps the leg moving across itself as it appears on screen, whatever the frame's angle
+        val at = path.frame?.let { frameOf(it, ev)?.toLocal(world) } ?: world
+        val want = if (axis == 0) at.y else at.x
         sharedNode?.let {
             it.value = ScalarValue(Quantity.mm(want))
             return
@@ -519,7 +591,13 @@ class OrthoEdgeHandle(private val doc: Document, private val path: OrthoPath, pr
     override fun fields(): List<HandleField> {
         // over the leg's *own* node, not its master: when the chain ends in derived geometry there is
         // no master, and the leg must still report its position (as unwritable) and its lengths
-        val position = orthoCoordField(if (axis == 0) "y" else "x", perpendicular ?: return emptyList(), doc, 1 - (axis ?: 0))
+        //
+        // A *placed* path's leg offset is a coordinate in the group's axes and has no world counterpart at
+        // all — a leg of a turned group is neither horizontal nor vertical in the world — so the label says
+        // which space the number is in rather than quietly meaning something else (unlike a corner, which
+        // has a world position and reports it).
+        val name = (if (axis == 0) "y" else "x") + (if (path.frame != null) " in group" else "")
+        val position = orthoCoordField(name, perpendicular ?: return emptyList(), doc, 1 - (axis ?: 0))
         val along = alongNodes() ?: return listOf(position)
         val (start, end) = along
         return listOf(

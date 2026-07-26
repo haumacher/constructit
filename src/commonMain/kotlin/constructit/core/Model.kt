@@ -134,6 +134,28 @@ class ParameterNode(id: String, var literal: ScalarValue, var boundTo: Node? = n
         if (boundTo != null) EvalResult.Ok(args[0]) else EvalResult.Ok(literal)
 }
 
+/**
+ * A **re-pointable indirection**: it yields [target]'s value until [boundTo] is set, and the bound
+ * node's value from then on.
+ *
+ * This is [SourceNode]'s binding substrate (OP-5) generalized from a mutable *literal* to a *derived*
+ * value, and it exists for one reason: a position held as two independent scalar coordinates cannot be
+ * captured per axis. Placing an ortho path under a group frame (OP-16) has to insert
+ * `frameApply(frame, …)` between a vertex and everything that consumes it — a turned frame mixes x into
+ * y, so no per-axis binding can express `world = f(frame, lx, ly)` — while the vertex's own `pointXY`
+ * inputs stay exactly as they were.
+ *
+ * Binding *in place* is what makes that a retrofit rather than a rebuild: every segment, region,
+ * footprint and measurement already pointing here follows the frame with no input list rewired, exactly
+ * as a welded point's consumers follow its master. Unbinding restores the original view, which is what
+ * makes the capture invertible.
+ */
+class IndirectNode(id: String, val target: Node, var boundTo: Node? = null) : Node(id) {
+    override val inputs: List<Node> get() = listOf(boundTo ?: target)
+
+    override fun compute(args: List<Value>): EvalResult = EvalResult.Ok(args[0])
+}
+
 /** A derived node whose value is computed by [fn] from its inputs. */
 class OpNode(
     id: String,

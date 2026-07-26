@@ -3,7 +3,6 @@ package constructit.editor
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
-import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.dsl.PointRef
 import constructit.geom.Justification
@@ -83,8 +82,8 @@ object DocumentFormat {
         val present = doc.elements.toHashSet()
         val names = HashMap<String, String>() // element id -> script name
         val out = StringBuilder(HEADER).append('\n')
-        for (step in doc.journal) {
-            val args = restate(doc, step, ev, present, names).joinToString(" ") { encode(it, names) }
+        for ((index, step) in doc.journal.withIndex()) {
+            val args = restate(doc, step, index, ev, present, names).joinToString(" ") { encode(it, names) }
             val created = step.creates.map { el -> "e${names.size + 1}".also { names[el.id] = it } }
             out.append(step.kind)
             if (args.isNotEmpty()) out.append(' ').append(args)
@@ -105,11 +104,15 @@ object DocumentFormat {
     private fun restate(
         doc: Document,
         step: Step,
+        stepIndex: Int,
         ev: Evaluator,
         present: Set<Element>,
         names: Map<String, String>,
     ): List<Arg> {
-        fun posOf(el: Element): Vec2? = ((ev.eval(el.ref.node) as? EvalResult.Ok)?.value as? PointValue)?.p
+        // where this element is *as this step replays*: its world position, or — for a vertex of a path a
+        // later `place` step captures — the position it has before that capture (OP-16, see
+        // [Document.restatedPosition]). One rule for points and path vertices alike.
+        fun posOf(el: Element): Vec2? = doc.restatedPosition(el, stepIndex, ev)
         // A step whose creations have since been *removed* — by a join collapsing a jog — keeps its
         // recorded literals. Re-reading a deleted vertex would describe the state after the edit that
         // deleted it, whereas replay has to rebuild the geometry that existed before, so the later join
@@ -126,10 +129,10 @@ object DocumentFormat {
                     if (arg is Arg.Keyed && els != null) Arg.Keyed(arg.key, Arg.Els(els.els.filter { it.id in names })) else arg
                 }
             // a placement's frame is state (OP-16 step 2): the origin and angle are re-read from the frame
-            // source, so a dragged or typed group comes back where it now is. The members' own `point`
-            // steps keep restating **world** positions — they are replayed *before* this step retrofits
-            // them, and the retrofit derives the locals from world position and frame, so the script
-            // needs no local coordinates in it at all.
+            // source, so a dragged or typed group comes back where it now is. The members' own steps are
+            // replayed *before* this one retrofits them, and each restates the position that retrofit
+            // expects — a free point's world position, a captured path vertex's pre-capture one — so the
+            // script needs no local coordinates in it at all (see [Document.restatedPosition]).
             "place" -> {
                 val g = doc.groups.firstOrNull { it.name == (step.args.firstOrNull() as? Arg.Label)?.s }
                 val f = g?.frameNode?.let { (ev.eval(it) as? EvalResult.Ok)?.value as? FrameValue }

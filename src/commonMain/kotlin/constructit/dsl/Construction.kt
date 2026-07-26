@@ -7,6 +7,7 @@ import constructit.core.DirectionValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
+import constructit.core.IndirectNode
 import constructit.core.InstanceNode
 import constructit.core.LineValue
 import constructit.core.LoopValue
@@ -753,6 +754,14 @@ class Construction {
         op(frame, local) {
             EvalResult.Ok(PointValue((it[0] as FrameValue).toWorld(pt(it[1]))))
         }
+
+    /**
+     * A **re-pointable view** of [ref] — an [IndirectNode]. Its value is [ref]'s until something binds it,
+     * so a capture can be inserted *above* an already-referenced node without rewiring its consumers
+     * (OP-5). What an ortho vertex is published through, so a placement can put the frame in front of it
+     * (OP-16); see [IndirectNode] for why a per-axis binding cannot do that job.
+     */
+    fun <V : Value> indirect(ref: Ref<V>): Ref<V> = Ref(IndirectNode(freshId(), ref.node))
 
     // ================= Tier 2: mechanical constructions =================
 
