@@ -313,6 +313,9 @@ class BrowserE2ETest {
             page.mouse().click(x0 + 3.0, y1)
             page.mouse().click(x0, y0) // back on the start: the ring closes and the footprint appears
             assertTrue(tree().any { it.startsWith("area") }, "the closed wall ring has a footprint; got ${tree()}")
+            // a run that ends on something says so in the real shell too — the half of the terminal cue that
+            // is words; the other half is the mark on the canvas, which the golden covers
+            assertTrue(status().contains("the run is finished"), "closing a ring ends the run out loud; got: ${status()}")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/08-typed-plan.png")))
 
             // ---- the storey, and a door in the south wall ----

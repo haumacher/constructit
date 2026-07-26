@@ -11,6 +11,7 @@ import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Node
 import constructit.core.ParameterNode
+import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.RayValue
 import constructit.core.RegionValue
@@ -1716,6 +1717,10 @@ class Document {
      * The *master* of each coordinate chain is bound, not the local node, so the rest of the run follows
      * the junction and every leg stays axis-aligned. A leg parallel to the line still ends up collinear
      * with it: that is geometry, not attribution.
+     *
+     * How much freedom the corner still has decides **what kind of meeting point this is**: two free
+     * coordinates make a junction owning one DOF; **one** free coordinate makes a point that is fully
+     * determined — see [bindCornerToDeterminedMeeting].
      */
     fun attachOrthoEndpointToCurve(
         el: Element,
@@ -1730,8 +1735,135 @@ class Document {
         // before making the junction, not after: a rejected bind would otherwise leave a stray junction
         // (and its parameter node) behind in a document that never got the attach it was created for
         if (joinWouldCycle(el, carrierNodeOf(curve) ?: return false)) return false
+        val mx = writableMaster(corner.xNode)
+        val my = writableMaster(corner.yNode)
+        if (mx == null && my == null) return false // nothing left to give — see [connectRefusal]
+        if (mx == null || my == null) {
+            val free = mx ?: my ?: return false
+            return bindCornerToDeterminedMeeting(corner, curve, free, if (mx != null) 0 else 1)
+        }
         val junction = junctionOnCurve(curve, el.ref.node) ?: return false
         return bindCornerToJunction(corner, junction)
+    }
+
+    /**
+     * Attach a corner that has **one** coordinate left to give: the meeting point is then not a junction
+     * but *fully determined* — where the axis line through the coordinate the corner no longer owns crosses
+     * [curve] — and the one remaining coordinate ([free], along [freeAxis]) is bound to it.
+     *
+     * This is the second end of a T-web's middle run (OP-20). That run's first end already ends on the top
+     * wall, so its x belongs to *that* junction; reaching the bottom wall leaves only its y free. A second
+     * junction cannot express this — it would own a slide along the bottom wall that the leg's x already
+     * fixes, one DOF too many — so the attach was refused, and refused *silently*: the run neither joined
+     * nor finished, which is precisely what "the ending did not snap and did not finish the path" looked
+     * like. Deriving the meeting point keeps the count right (1 free -> 0), and a meeting point that owns
+     * nothing is the honestly immovable case the junction model already names.
+     *
+     * Composed from existing primitives (`pointXY` + `lineThrough` + `intersect*` + `Select`), so it is an
+     * ordinary construction: it replays from the same `attachortho` step, undoes, and needs no solver. The
+     * axis line is built from the given **coordinate** alone and never from the corner's point, which
+     * depends on both coordinates and would put the binding inside its own input cone.
+     */
+    private fun bindCornerToDeterminedMeeting(
+        corner: OrthoCornerHandle,
+        curve: Element,
+        free: SourceNode,
+        freeAxis: Int,
+    ): Boolean {
+        // a placed corner holds its group's *local* coordinates while a meeting point is a world one (OP-16)
+        if (pathFrameOf(corner) != null) return false
+        val given = if (freeAxis == 0) corner.yNode else corner.xNode
+        if (dependsOn(given, free, HashSet())) return false
+        val givenRef = Ref<ScalarValue>(given)
+        val zero = Ref<ScalarValue>(scalarSource(0.0))
+        val one = Ref<ScalarValue>(scalarSource(1.0))
+        val axisLine =
+            if (freeAxis == 0) {
+                cx.lineThrough(cx.pointXY(zero, givenRef), cx.pointXY(one, givenRef))
+            } else {
+                cx.lineThrough(cx.pointXY(givenRef, zero), cx.pointXY(givenRef, one))
+            }
+        val meet =
+            when {
+                // two lines that are not parallel cross exactly once, so there is no branch to choose
+                curve.isLinear -> cx.select(cx.intersectLL(axisLine, carrierLine(curve)), 1)
+                curve.kind == ElementKind.CIRCLE -> {
+                    val set = cx.intersectLC(axisLine, curve.ref as CircleRef)
+                    cx.select(set, branchAt(set, corner))
+                }
+                else -> return false
+            }
+        // parallel, or a circle the axis line misses: they never meet, so there is nothing to bind to —
+        // refused whole rather than leaving the corner bound to an invalid point (OP-3 would only hide it)
+        if (Evaluator().eval(meet.node) !is EvalResult.Ok) return false
+        free.boundTo = (if (freeAxis == 0) cx.measureX(meet) else cx.measureY(meet)).node
+        corner.isEndpoint = false
+        return true
+    }
+
+    /**
+     * Which branch of [set] [corner] currently sits on: +1 for the first crossing, -1 for the last — a
+     * persisted discrete choice (OP-1), captured once at the attach, never re-derived by continuity.
+     */
+    private fun branchAt(
+        set: PointSetRef,
+        corner: OrthoCornerHandle,
+    ): Int {
+        val ev = Evaluator()
+        val pts = ((ev.eval(set.node) as? EvalResult.Ok)?.value as? PointSetValue)?.set?.points ?: return 1
+        if (pts.size < 2) return 1
+        val x = ((ev.eval(corner.xNode) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm ?: return 1
+        val y = ((ev.eval(corner.yNode) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm ?: return 1
+        val here = Vec2(x, y)
+        return if ((pts.first() - here).length() <= (pts.last() - here).length()) 1 else -1
+    }
+
+    /**
+     * Why connecting [el] onto [target] cannot be done, in the user's terms — null when it can.
+     *
+     * The refusals themselves live in the operations; this states them, and the two must stay in step:
+     * OP-20's rule is that a connection the editor will not make **explains itself**, and it has to hold on
+     * every route that can bind — the drag magnet, a release, and a *click while drawing*, which used to
+     * refuse in complete silence. A silent refusal on the drawing route is the worst of the three: the
+     * gesture looks like the end of a run, so nothing joining and nothing finishing reads as the tool being
+     * broken rather than as the model saying no.
+     */
+    fun connectRefusal(
+        el: Element,
+        target: Element,
+    ): String? {
+        if (el === target) return "${el.id} cannot be joined onto itself"
+        val corner = el.handle as? OrthoCornerHandle
+        if (corner != null) {
+            if (!corner.isEndpoint) {
+                return "${el.id} is already connected — a run that ends on something is a terminus, not a loose end"
+            }
+            if (pathFrameOf(corner) != null) {
+                return "${el.id}'s path is placed in a group, so its coordinates are the frame's local ones — unplace the group first"
+            }
+        } else if (isFramed(el)) {
+            return "${el.id} is held by a placed group's frame, so its position is already derived"
+        }
+        val driver = (if (target.isPoint) target.ref.node else carrierNodeOf(target)) ?: return "${target.id} cannot carry a connection"
+        if (joinWouldCycle(el, driver)) return "${target.id} already follows ${el.id}"
+        if (corner != null) {
+            val free = listOfNotNull(writableMaster(corner.xNode), writableMaster(corner.yNode)).distinct()
+            if (free.isEmpty()) {
+                return "both of ${el.id}'s coordinates are already driven, so it has no freedom left to give"
+            }
+            if (free.size < 2 && target.isPoint) {
+                val axis = if (writableMaster(corner.xNode) == null) "x" else "y"
+                return "${el.id}'s $axis is already held by ${heldBy(corner)}, and welding onto a point pins both — " +
+                    "reach the leg through that point instead, which needs only the one coordinate"
+            }
+        }
+        return null
+    }
+
+    /** What already drives one of [corner]'s coordinates, named for a refusal message. */
+    private fun heldBy(corner: OrthoCornerHandle): String {
+        val j = junctionOf(corner.xNode) ?: junctionOf(corner.yNode)
+        return j?.curve?.let { "the junction on ${it.id}" } ?: "another connection"
     }
 
     /** The node a junction on [curve] would ride — its carrier line, or the circle itself. */

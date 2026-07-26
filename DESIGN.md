@@ -719,6 +719,20 @@ junction's own handle, one structural hop away.
   kept — so a driven coordinate is derived but *not* read-only.
 - **A junction can own nothing**: welded to a derived point, the meeting place is fixed by construction.
   That is the one honestly immovable case, and it explains itself.
+- **A meeting point may be *determined* rather than owned.** How much freedom the arriving corner still has
+  decides which kind of meeting point this is. Two free coordinates make a junction owning one DOF along the
+  curve; **one** free coordinate cannot — a second junction would own a slide the corner's other coordinate
+  already fixes, one DOF too many — so the meeting point is *derived*: where the axis line through the
+  coordinate the corner no longer owns crosses the curve (`bindCornerToDeterminedMeeting`, composed from
+  `pointXY` + `lineThrough` + `intersect*` + `Select`, with the circle's branch a stored discrete choice per
+  OP-1). The count stays right (1 free → 0) and no solver appears. This is the **second end of a T-web's
+  middle run** — the case a user reported as *"the ending did not snap and did not finish the path"*: its x
+  belonged to the junction at its first end, so the attach was refused, and because the refusal was silent
+  the run neither joined nor finished. The axis line is built from the given **coordinate**, never from the
+  corner's point, which depends on both coordinates and would put the binding inside its own input cone.
+  Welding such a corner onto a *point* is still refused — a weld pins both coordinates, and one of them is
+  no longer the corner's to give — but it now says so, and says that reaching the leg through that point
+  works instead.
 - **A connection is refused when it would be circular**, and the test asks about *what the connection
   binds*: for an ortho corner that is the **masters** of its two coordinate chains, not the corner's own
   point node, which sits downstream of them. Asking about the point let a real cycle through — and a
@@ -2522,6 +2536,34 @@ Three broad families (see OP-9 decision above):
   world axes), so clicking its end starts a new run joined to it — what clicking a connected end always
   did. 491 headless tests green (23 new; `PlacedPathTest`), and the browser E2E now groups the whole storey
   and turns it by typing an angle.
+- **Session 4 — the end of a run, made unmissable (and the silence behind it).** A user drawing a T-web
+  reported *"the ending did not snap and did not finish the path"*. Four things worth recording.
+  (1) **The complaint was literally true, and it was not about feedback.** The middle run's second end could
+  not attach at all: its x already belonged to the junction at its *first* end, so a second junction was one
+  DOF too many and `attachOrthoEndpointToCurve` returned false — silently. The fix is a **determined meeting
+  point** (OP-20): with one coordinate left to give, the meeting place is the crossing of the axis line
+  through the given coordinate with the curve, so the corner ends with none. Composed from existing
+  primitives, so it replays from the same `attachortho` step and undoes like anything else — and the saved
+  file of the reported drawing now *reloads* as what was drawn, where before load quietly dropped the
+  connection too.
+  (2) **The wrong message was a true statement about a wrong graph.** Clicking that end afterwards said
+  *"extending this path"* — the dangling-end wording — and the handler was right, because (1) had left the
+  end dangling. Diagnosing the state instead of rewording the message is what turned one confusing sentence
+  into one real defect; with the attach made, the same click starts a branch, as the design always said.
+  (3) **A design rule reaffirmed: no route may refuse in silence.** OP-20 already required a refused
+  connection to explain itself, but only the drag magnet did — the path click, the very gesture that *looks*
+  like the end of a run, said nothing. One predicate (`Document.connectRefusal`) now serves magnet, release
+  and drawing click, so the three cannot drift apart, and a refused end-click keeps drawing with the reason
+  on the status line.
+  (4) **The cue had to be generic and had to outlive the status line.** A finished run marks its terminus on
+  the canvas — nested diamonds, one mark for weld, attach and close alike, derived from the finished path
+  rather than from the gesture — because what must be noticed is that *drawing stopped*, not which
+  construction stopped it. It is cleared by the next press or keystroke and deliberately not by a hover: a
+  mouse always moves right after a click, and the status line is already handed to the snap label by that
+  same move, which is exactly why the durable half of the signal has to be on the canvas. The rubber band
+  needed no change and turned out to be the honest second half — a band means "still drawing", and there is
+  none after a terminal click. 500 headless tests green (7 new; `OrthoRunEndTest`, with an SVG golden for the
+  mark).
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -2765,6 +2807,30 @@ Then 3D walls = extrude + boolean.
     instead left a phantom corner, because two paths cannot coalesce a straight-on step. An end that is
     already *connected* is a terminus rather than a loose thread, so clicking that one starts a branch —
     which is the only way to make a T-junction, and the other thing a click on an endpoint can mean.
+    - **"Extending" was a true message about a wrong graph.** Clicking the connected end of a T-web's
+      middle run reported *extending this path* — the message for a dangling end. The click handler was
+      right: that end really was still dangling, because the attach that should have connected it had been
+      refused, and refused in *silence* (OP-20's determined meeting point). Fixing the attach fixed the
+      transition; the message was never the bug, and a genuinely dangling end still extends.
+  - **A run that ends on something says so, and shows it.** Reaching other geometry finishes the run (see
+    *Snapping while placing*), which used to be announced by one quiet status line — so a click meant as an
+    intermediate corner stopped the drawing unnoticed, and the *next* click, which then started a fresh
+    path, read as nothing having happened. The terminus is now **marked on the canvas** (nested diamonds in
+    their own colour — `SceneRenderer`'s `terminal`) and the wording ends *"the run is finished; click a
+    point or leg to start the next one"*. One mark for **every** way a run can end on something — welded,
+    attached, closed — because what has to be noticed is that drawing stopped, not which construction
+    stopped it; `Editor.markTerminal` therefore reads it off the finished path rather than off the gesture
+    that finished it. It lasts until the user's next *action* (a press or a key, deliberately **not** a
+    hover: the mouse always moves right after a click, and a mark a stray move erases is not a mark), which
+    is also what makes it the durable half of the signal — the status line is transient by design, a hover
+    handing it to the snap label. The rubber band is the other half, and needed no change: a band means
+    "still drawing", and a terminal click leaves none.
+  - **No route refuses in silence.** A connection the editor will not make explains itself on *every* route
+    that can bind (OP-20's rule, extended to the drawing click): `Document.connectRefusal` owns the reason
+    so the drag magnet, a release and a path click say the same thing. The drawing route was the one that
+    still refused silently, and it is the worst place for it — the click looks exactly like the end of a
+    run, so nothing joining and nothing finishing reads as the tool being broken rather than as the model
+    saying no. Such a click now keeps the run growing (band and all) and says why the join failed.
   - **A grab holds its offset.** Picking has a tolerance, so writing the cursor's position outright made
     geometry jump to it on the first move; the drag applies the offset from where the grab landed
     instead. A repeat click on the growing end is ignored for the same family of reasons — it is the

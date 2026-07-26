@@ -24,6 +24,13 @@ private const val SCALAR_PICK_MEMORY = 4
 private const val MAX_COUNT = 512
 
 /**
+ * How every ending of an ortho run ends its sentence. One wording for weld, attach and close, because the
+ * thing the user has to read off it is the same in all three: drawing stopped, and the next click starts
+ * something new rather than continuing this (see [Editor.markTerminal]).
+ */
+private const val RUN_FINISHED = " — the run is finished; click a point or leg to start the next one"
+
+/**
  * Which button a pointer gesture uses. In SELECT mode they mean different things (OP-16): PRIMARY
  * picks, rubber-bands a marquee and drags geometry; MIDDLE pans, in *every* tool — panning is a
  * button, not a mode, so the view can be moved without putting the tool down. The browser shell
@@ -397,6 +404,23 @@ class Editor(
     }
 
     /**
+     * Why the connection a path click asked for was refused, as a sentence. The document owns the reason
+     * ([Document.connectRefusal]) so the same words serve the drag magnet, a release and this click; the
+     * fallback covers a refusal the predicate cannot foresee (a geometric one, such as a leg parallel to
+     * the curve it reached), because no route may end in silence.
+     */
+    private fun refusal(
+        vertex: PointRef,
+        s: SnapResult,
+    ): String {
+        val el = doc.elementFor(vertex)
+        val target = s.target
+        if (el == null || target == null) return "could not join here."
+        val why = doc.connectRefusal(el, target)
+        return "can't join ${el.id} onto ${target.id}${if (why == null) "" else " — $why"}."
+    }
+
+    /**
      * The point a placing click should use: reuse the snapped point, materialize the intersection, or
      * attach to the curve — so the placed point *depends* on what it was placed on. Only a miss (or a
      * grid snap) makes a new free point.
@@ -420,6 +444,7 @@ class Editor(
     private var dragStart: Vec2? = null // where on the geometry the drag began — the axis-lock origin
     private var grabOffset: Vec2 = Vec2(0.0, 0.0) // cursor minus that, so a grab never jumps
     private var joinHints: List<Vec2> = emptyList() // corners this drag has flattened, marked on canvas
+    private var terminalHint: Vec2? = null // the vertex a run just ended *on* — see [markTerminal]
     private var weldTarget: Element? = null // a point to weld onto
     private var attachTarget: Element? = null // a curve to attach onto
     private var haloPos: Vec2? = null // where the magnet ring is drawn
@@ -499,6 +524,7 @@ class Editor(
         dragStart = null
         grabOffset = Vec2(0.0, 0.0)
         joinHints = emptyList()
+        terminalHint = null
         weldTarget = null
         attachTarget = null
         haloPos = null
@@ -894,7 +920,7 @@ class Editor(
     fun render(target: DrawTarget) {
         SceneRenderer.render(
             doc, Evaluator(), camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selected,
-            snapHint?.pos, joinHints, closePreview,
+            snapHint?.pos, joinHints, closePreview, terminalHint,
             dimmed = if (dimScaffolding) doc.scaffoldingElements().toHashSet() else emptySet(),
             marquee = marqueeFrom?.let { f -> marqueeTo?.let { t -> f to t } },
             frames = selectedFrames(),
@@ -932,6 +958,9 @@ class Editor(
     ) {
         downScreen = screen
         pendingToggle = null
+        // the terminal cue lasts until the user's next *action*, which this is. Deliberately not cleared by
+        // a hover: the mouse always moves right after a click, and a mark a stray move erases is not a mark
+        terminalHint = null
         // panning is a button, not a mode: it works in every tool, and the shell reports Space+drag here
         if (button == PointerButton.MIDDLE) {
             panning = true
@@ -1066,6 +1095,10 @@ class Editor(
                             "this is a new run joined to it (unplace its group to extend it)"
                     } else if (linked) {
                         "$what starts on ${s.target?.id} (${s.label}); click the next point"
+                    } else if (s.linked) {
+                        // the click landed on geometry and the link was refused: say why here too, or the
+                        // run would start looking joined and only come apart when something else moved
+                        "$what: ${refusal(started.vertices.first().ref, s)} The run starts here unjoined; click the next point."
                     } else {
                         "$what: click the next point; click the start to close (Esc/double-click to finish)"
                     }
@@ -1090,10 +1123,23 @@ class Editor(
             val v = doc.extendOrthoPath(path, pathAtEnd, world)
             // reaching other geometry ends the run: connect this end and finish, the open analogue of
             // closing a loop by clicking the start
-            if (v != null && s.linked && linkPathVertex(v.ref, s)) {
+            if (v != null && s.linked) {
+                if (linkPathVertex(v.ref, s)) {
+                    snapHint = null
+                    finishPath() // which marks the terminus and says the run is over — see [markTerminal]
+                    // the same sentence, naming what was reached rather than the vertex that reached it
+                    statusHint = "$what ends on ${s.target?.id} (${s.label})$RUN_FINISHED"
+                    onChange()
+                    return
+                }
+                // A connection that cannot be made **says so** (OP-20): the click looked exactly like the
+                // end of a run, so refusing in silence left a leg placed, unjoined and still growing —
+                // "the ending did not snap and did not finish the path". The rubber band is the honest
+                // cue that drawing continues, and it is still there, so the sentence explains why.
+                statusHint = "$what: ${refusal(v.ref, s)} The leg is placed but not joined; the run continues (Esc to finish)."
+                hoverWorld = world
+                previewSeg = null
                 snapHint = null
-                finishPath()
-                statusHint = "$what ends on ${s.target?.id} (${s.label})"
                 onChange()
                 return
             }
@@ -1111,6 +1157,7 @@ class Editor(
      * the tool that letter belongs to. Returns true when consumed.
      */
     fun key(key: String): Boolean {
+        terminalHint = null // an action, like a press — see [markTerminal]
         val pathActive = activePath != null
         val digit = key.length == 1 && (key[0].isDigit() || key == ".")
         return when {
@@ -1315,6 +1362,7 @@ class Editor(
         if (pathClosed) doc.closeOrthoPath(path) // snaps the last coordinate to fit, adds the closing leg
         val t = pathThickness
         if (t != null && path.vertices.size >= 2) doc.buildThickPath(path, t, justification)
+        val ended = markTerminal(path)
         doc.discardOrthoPath(path) // a path that never got a second vertex isn't a path
         activePath = null
         pathAtEnd = true
@@ -1323,8 +1371,35 @@ class Editor(
         closePreview = emptyList()
         pathThickness = null
         checkpoint() // the whole path — start, legs, close, footprint — commits as one operation
-        statusHint = ""
+        statusHint = ended ?: ""
         onChange()
+    }
+
+    /**
+     * Mark the vertex a run **ended on** and say so, when it ended on something at all.
+     *
+     * A run that reaches geometry stops there by design, and the only signal used to be a quiet status
+     * line — so a click meant as an intermediate corner silently ended the drawing, and the *next* click
+     * (which then started a fresh path) read as nothing having happened. The cue is therefore generic:
+     * whatever ended the run — welded to a point, attached to a curve, or closed — the terminus is marked
+     * and the words say the run is finished, because what has to be noticed is that drawing stopped, not
+     * which construction stopped it. The rubber band disappearing is the second half of the same signal:
+     * a band means "still drawing", and there is none after a terminal click.
+     *
+     * Returns the status line for that ending, or null when the run merely stopped in the air (Esc,
+     * double-click, tool switch), which needs no mark: nothing was reached.
+     */
+    private fun markTerminal(path: OrthoPath): String? {
+        terminalHint = null
+        if (path.vertices.size < 2) return null
+        val what = if (toolId == Tools.WALL) "Wall" else "Ortho path"
+        val closed = pathClosed
+        val v = if (closed || !pathAtEnd) path.vertices.first() else path.vertices.last()
+        val el = doc.elementFor(v.ref) ?: return null
+        // a still-dangling end is not a terminus — it is exactly the end a later click may continue
+        if (!closed && doc.orthoEndpoint(el) != null) return null
+        terminalHint = (ev().valueOf(v.ref) as? PointValue)?.p
+        return "$what ${if (closed) "closed on" else "ends on"} ${el.id}$RUN_FINISHED"
     }
 
     /**
@@ -1489,16 +1564,14 @@ class Editor(
             val ortho = dragged.handle is OrthoCornerHandle
             if (weld != null) {
                 val ok = if (ortho) doc.weldOrthoEndpointToPoint(dragged, weld) else doc.weld(dragged, weld)
-                if (ok) {
-                    statusHint = "Joined ${dragged.id} onto ${weld.id}"
-                    onChange()
-                }
+                // the magnet promised this join, so a release that quietly does nothing is the worst of the
+                // three outcomes — the reason is the document's, and the same one a path click reports
+                statusHint = if (ok) "Joined ${dragged.id} onto ${weld.id}" else joinRefused(dragged, weld)
+                onChange()
             } else if (attach != null) {
                 val ok = if (ortho) doc.attachOrthoEndpointToCurve(dragged, attach) else doc.attachToCurve(dragged, attach)
-                if (ok) {
-                    statusHint = "Attached ${dragged.id} to ${attach.id}"
-                    onChange()
-                }
+                statusHint = if (ok) "Attached ${dragged.id} to ${attach.id}" else joinRefused(dragged, attach)
+                onChange()
             }
         }
         if (movedFrame != null && moved) {
@@ -1521,6 +1594,15 @@ class Editor(
             // the release is where a drag commits — moves, welds, attaches and joins are one operation
             checkpoint()
         }
+    }
+
+    /** What to say when a release could not make the connection its magnet offered — see [refusal]. */
+    private fun joinRefused(
+        dragged: Element,
+        target: Element,
+    ): String {
+        val why = doc.connectRefusal(dragged, target)
+        return "Can't join ${dragged.id} onto ${target.id}${if (why == null) "" else ": $why"}"
     }
 
     /** Whether the pointer travelled far enough since the press for the gesture to count as a drag. */

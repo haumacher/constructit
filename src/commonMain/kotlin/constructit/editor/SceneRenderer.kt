@@ -49,6 +49,9 @@ object SceneRenderer {
 
     private val joinStyle = Style("#9467bd", 2.0)
 
+    /** The mark on the vertex a finished run ended on — its own colour, so it reads as nothing else. */
+    private val terminalStyle = Style("#17becf", 2.0)
+
     private val selectionStyle = Style("#1f77b4", 3.0)
     private val selectionRing = Style("#1f77b4", 1.5)
 
@@ -74,6 +77,7 @@ object SceneRenderer {
         snap: Vec2? = null,
         joins: List<Vec2> = emptyList(),
         closing: List<Pair<Vec2, Vec2>> = emptyList(),
+        terminal: Vec2? = null,
         dimmed: Set<Element> = emptySet(),
         marquee: Pair<Vec2, Vec2>? = null,
         frames: List<FrameValue> = emptyList(),
@@ -183,6 +187,21 @@ object SceneRenderer {
             target.polyline(listOf(Vec2(c.x - r, c.y - r), Vec2(c.x + r, c.y + r)), joinStyle)
             target.polyline(listOf(Vec2(c.x - r, c.y + r), Vec2(c.x + r, c.y - r)), joinStyle)
             target.circle(c, r + 3.0, joinStyle)
+        }
+        // The **terminus** of a run that just finished by reaching geometry: nested diamonds around the
+        // vertex it ended on. One mark for every way a run can end on something — welded, attached or
+        // closed — because what the user has to notice is that *drawing stopped here*, not which
+        // construction stopped it. Diamonds, so it cannot be read as the snap marker (an axis-aligned
+        // square) or as the magnet halo (rings), and pixel-sized like every other mark, since it is a
+        // statement about the gesture rather than geometry.
+        terminal?.let {
+            val c = cam.worldToScreen(it)
+            for (r in listOf(6.0, 10.0)) {
+                target.polyline(
+                    listOf(Vec2(c.x, c.y - r), Vec2(c.x + r, c.y), Vec2(c.x, c.y + r), Vec2(c.x - r, c.y), Vec2(c.x, c.y - r)),
+                    terminalStyle,
+                )
+            }
         }
         // weld magnet: a double ring around the point a dragged point will snap/join onto
         highlight?.let {
