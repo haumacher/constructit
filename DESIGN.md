@@ -3726,3 +3726,34 @@ Then 3D walls = extrude + boolean.
   tool). Note the ordering decision in OP-17: 3D walls were a *later application* of the seam, not its
   proof of concept — the first 3D slices are mechanical parts, because a wall exercises only the
   degenerate half of the seam.
+
+## Open work queue (crash-safe snapshot; ordered)
+
+Kept here so no in-flight plan lives only in a session. Per-feature deliberate cuts stay recorded in
+their own as-built notes; this is the *ordered queue* as of 2026-07-26:
+
+1. **Edit stability** (in flight): gesture-time rider compensation — while a drag or field write turns
+   a host, each carrier-anchored rider is re-solved to the projection of its grab-time world position,
+   superseding OP-20's "turning the host moves the rider" limit at the gesture level; and **relative
+   points** = OP-4 case (b) delivered on demand (`P = anchor + polar(d, θ)` via the bind-in-place
+   substrate; make/unmake recorded, d/θ typed fields — a two-point circle gains "type the radius").
+2. **Opening handles**: an opening's two DOF become grabbable at its jambs — the leading jamb slides
+   `pos` (whole opening moves, width start-relative hence preserved), the trailing jamb writes
+   `width = cursor − pos`. No new elements: the plan-convention jambs become hit-testable, resolving to
+   interval handles owned by the thick path (the ortho-leg addressing pattern).
+3. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
+   connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by
+   curve direction); junctions are shared carrier vertices, branch vertices resolved by cyclic order —
+   which is the honest form of the long-deferred T/L wall-junction cleanup; offsets exact for
+   lines/arcs, bézier offsets in OP-15's approximated class; footprint key points exposed as OP-6
+   provenance accessors (`corner(i)`, `face(side)` — the accessors cut in the first OP-21 slice, now
+   demanded); openings measure along any curve kind by arc length.
+4. **Incremental recompute** (the OP-5 dirty-marking the implementation still owes): persistent
+   cross-pass value cache keyed by source-node versions, so a repaint recomputes only the changed input
+   cone — the fix for revolve-sized meshes making even the 2D view lag. Acceptance: recompute counters
+   flat across repaints that change nothing upstream. Optional afterwards: a low-poly view mode.
+
+Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
+Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
+convention (fillet note), drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), Manifold
+face-ID provenance and 3D picking and the mesh-only footprint (OP-9/OP-17 notes), MeshGL64.
