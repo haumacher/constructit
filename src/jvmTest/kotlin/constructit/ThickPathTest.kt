@@ -9,7 +9,7 @@ import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.ElementKind
 import constructit.editor.SvgDrawTarget
-import constructit.editor.ThickPath
+import constructit.editor.ThickNetwork
 import constructit.editor.Tools
 import constructit.geom.GeomMath
 import constructit.geom.Justification
@@ -58,16 +58,17 @@ class ThickPathTest {
         return ed
     }
 
-    private fun regionOf(tp: ThickPath) = Evaluator().region(tp.footprint.ref as RegionRef)
+    private fun regionOf(tp: ThickNetwork) = Evaluator().region(tp.footprint.ref as RegionRef)
 
     /** The x-extents of the plan's face pieces along [y], the drawn form of "solid here, gap there". */
     private fun facePieces(
         ed: Editor,
-        tp: ThickPath,
+        tp: ThickNetwork,
         y: Double,
     ): List<Pair<Double, Double>> =
         ed.doc
             .planOf(tp, Evaluator())!!
+            .segments()
             .filter { kotlin.math.abs(it.a.y - y) < 1e-9 && kotlin.math.abs(it.b.y - y) < 1e-9 }
             .map { minOf(it.a.x, it.b.x) to maxOf(it.a.x, it.b.x) }
             .sortedBy { it.first }
@@ -75,7 +76,7 @@ class ThickPathTest {
     @Test
     fun anOpenCarrierGivesOneMitredLoopAndNoHoles() {
         val ed = lShaped()
-        val tp = ed.doc.thickPaths.single()
+        val tp = ed.doc.thickNetworks.single()
         assertEquals(ElementKind.AREA, tp.footprint.kind, "the footprint is a result-layer area (OP-14)")
         assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.AREA }, "one element for the whole feature")
 
@@ -111,7 +112,7 @@ class ThickPathTest {
         ed.click(Vec2(2.0, 40.0))
         ed.click(Vec2(0.0, 0.0)) // clicking the start closes the loop and finishes
 
-        val tp = ed.doc.thickPaths.single()
+        val tp = ed.doc.thickNetworks.single()
         assertTrue(tp.closed)
         val reg = regionOf(tp)
         assertEquals(1, reg.holes.size, "a wall ring is exactly OP-14's hole machinery")
@@ -132,7 +133,7 @@ class ThickPathTest {
     @Test
     fun intervalsDoNotCutTheFootprint() {
         val ed = straightWithWidth()
-        val tp = ed.doc.thickPaths.single()
+        val tp = ed.doc.thickNetworks.single()
         val before = regionOf(tp)
         val nodesBefore = ed.doc.cx.nodesCreated
 
@@ -157,7 +158,7 @@ class ThickPathTest {
     @Test
     fun movingAnIntervalPastAnotherResortsThePlanWithoutRebuilding() {
         val ed = straightWithWidth()
-        val tp = ed.doc.thickPaths.single()
+        val tp = ed.doc.thickNetworks.single()
         ed.click(Vec2(25.0, 0.0)) // opening at 20..30
         ed.click(Vec2(65.0, 0.0)) // opening at 60..70
         assertEquals(listOf(0.0 to 20.0, 30.0 to 60.0, 70.0 to 100.0), facePieces(ed, tp, 5.0))
@@ -183,8 +184,8 @@ class ThickPathTest {
         val ed = straightWithWidth()
         ed.doc.setParameter(ed.doc.scalars.first { it.name == "w" }, 20.0.mm)
         ed.click(Vec2(50.0, 0.0)) // centred on the click -> 40..60
-        val tp = ed.doc.thickPaths.single()
-        val plan = ed.doc.planOf(tp, Evaluator())!!
+        val tp = ed.doc.thickNetworks.single()
+        val plan = ed.doc.planOf(tp, Evaluator())!!.segments()
 
         fun has(
             ax: Double,
@@ -236,7 +237,7 @@ class ThickPathTest {
             // and it survives the round trip, since replay must build the same shape
             val text = DocumentFormat.save(ed.doc)
             assertTrue(text.contains("wall \"t\" ${just.name.lowercase()}"), "got:\n$text")
-            assertEquals(just, DocumentFormat.load(text).thickPaths.single().justification)
+            assertEquals(just, DocumentFormat.load(text).thickNetworks.single().justification)
         }
     }
 
@@ -262,8 +263,8 @@ class ThickPathTest {
     @Test
     fun theCarrierStaysEditableAndTheFootprintFollows() {
         val ed = lShaped()
-        val tp = ed.doc.thickPaths.single()
-        assertTrue(tp.carrier === ed.doc.orthoPaths.single(), "the carrier is the retained path")
+        val tp = ed.doc.thickNetworks.single()
+        assertTrue(tp.path === ed.doc.orthoPaths.single(), "the carrier is the retained path")
         val nodesBefore = ed.doc.cx.nodesCreated
 
         ed.setTool(Tools.SELECT)

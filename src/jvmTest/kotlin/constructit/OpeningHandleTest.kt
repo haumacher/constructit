@@ -10,7 +10,7 @@ import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.ElementKind
 import constructit.editor.PathInterval
-import constructit.editor.ThickPath
+import constructit.editor.ThickNetwork
 import constructit.editor.Tools
 import constructit.geom.Geom3
 import constructit.geom.Vec2
@@ -69,7 +69,7 @@ class OpeningHandleTest {
         return ed
     }
 
-    private fun tp(ed: Editor): ThickPath = ed.doc.thickPaths.single()
+    private fun tp(ed: Editor): ThickNetwork = ed.doc.thickNetworks.single()
 
     private fun iv(ed: Editor): PathInterval = tp(ed).intervals.single()
 
@@ -84,6 +84,7 @@ class OpeningHandleTest {
     ): List<Pair<Double, Double>> =
         ed.doc
             .planOf(tp(ed), Evaluator())!!
+            .segments()
             .filter { kotlin.math.abs(it.a.y - y) < 1e-9 && kotlin.math.abs(it.b.y - y) < 1e-9 }
             .map { minOf(it.a.x, it.b.x) to maxOf(it.a.x, it.b.x) }
             .sortedBy { it.first }
@@ -259,11 +260,11 @@ class OpeningHandleTest {
         val after = DocumentFormat.save(ed.doc)
         assertTrue(after != before, "the drag changed the script")
         assertEquals(after, DocumentFormat.save(DocumentFormat.load(after)), "save -> load -> save is byte-identical")
-        assertClose(Evaluator().scalar(DocumentFormat.load(after).thickPaths.single().intervals.single().position).mm, 70.0)
+        assertClose(Evaluator().scalar(DocumentFormat.load(after).thickNetworks.single().intervals.single().position).mm, 70.0)
 
         assertTrue(ed.undo())
         assertEquals(before, DocumentFormat.save(ed.doc), "one drag, one undo step")
-        assertClose(pos(assertNotNull(ed.doc.thickPaths.single().intervals.singleOrNull())), 40.0, msg = "back where it was")
+        assertClose(pos(assertNotNull(ed.doc.thickNetworks.single().intervals.singleOrNull())), 40.0, msg = "back where it was")
         assertTrue(ed.redo())
         assertEquals(after, DocumentFormat.save(ed.doc), "and the same one step forward again")
     }
@@ -329,7 +330,10 @@ class OpeningHandleTest {
         ed.drag(Vec2(20.0, 4.0), Vec2(65.0, 4.0))
         assertClose(pos(i), 65.0)
         assertClose(width(i), 20.0)
-        assertTrue(ed.doc.planOf(tp(ed), Evaluator())!!.isNotEmpty())
+        assertTrue(
+            ed.doc.planOf(tp(ed), Evaluator())!!
+                .segments().isNotEmpty(),
+        )
 
         // …and the clamp knows the leg is longer now
         ed.drag(Vec2(65.0, 4.0), Vec2(200.0, 4.0))

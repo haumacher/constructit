@@ -5033,6 +5033,63 @@ Three broad families (see OP-9 decision above):
   (`PreviewTest` 19, `CircleTangentsTest` 8), 892 green, and the browser E2E extended by the one thing only a
   real canvas can show — that the growing circle is painted while hovering and gone after the click, counted in
   pixels.
+- **Session 18 — "a wall is a thickness applied to an arbitrary path", and the T/L junction finally falls
+  out.** Queue line 1, and the user's own one-sentence spec turned out to contain the answer to a problem
+  OP-21 had deferred twice. Six things worth recording.
+  (1) **The junction problem dissolved rather than being solved.** OP-21 had it as "merge two wall
+  footprints", tried to avoid a boolean by trimming each face at the neighbour's face line, and recorded that
+  preference twice. The user's framing — *a path is a fully connected graph of points and curves; this also
+  nicely defines the joining of walls* — reframes two walls that meet as **one carrier with a shared vertex**,
+  and a shared vertex has no merge problem at all. What resolves it is the **cyclic order** of the incident
+  tangents: the boundary walk visits a *k*-way vertex *k* times, once per angularly adjacent pair, and each
+  visit is an ordinary two-wall corner. The old note's stated reason ("trim at *the* neighbour's face line")
+  is what gave it away as wrong — at *k*≥3 there is no "the neighbour", and the note had quietly assumed the
+  case would stay a two-body problem. Recorded as a correction under the note itself, not as a retraction:
+  the *preference* it expressed (construction, not a boolean, so a corner stays addressable — OP-20) is what
+  the cyclic-order rule delivers, and delivers better.
+  (2) **One rule, no case per *k*.** Dangling end, ordinary corner and branch are the same line of code:
+  `next(h) = the clockwise neighbour of rev(h)`. At *k*=1 the neighbour is `rev(h)` itself, which is exactly
+  the end cap; at *k*=2 it is the mitre. A **figure-8** was on the candidate-cut list and came out honest (one
+  outer boundary, two holes) without a line written for it — which is the usual sign that a rule is the right
+  one rather than a clever one.
+  (3) **The model was unified, and the geometry deliberately was not.** One retained `ThickNetwork` with a
+  two-case carrier, so the plan convention, the jambs, the interval clamps, *Cut openings*, the inspector and
+  the file's `opening` step stayed written once. But the **ortho case still computes its footprint with the
+  same `thickFaces`/`thickRegion` it always did**. A generalized tracer that merely *happened* to agree on
+  rectilinear input would be a claim with nothing to check it; reusing the code makes "every stored `wall`
+  step replays identically" a guarantee, and the goldens prove it.
+  (4) **The file needed nothing.** A per-curve wall side is a *discrete choice scored at creation* — which is
+  what `signs=` has carried for a fillet's variant and an intersection's branch since session 14 (OP-1/OP-18).
+  `tool thicken els=… signs=1;2` restates one integer per curve and replay takes them verbatim. Reaching for
+  a new argument would have been reaching for a new mechanism to say something the format already says.
+  (5) **The kernel is a route, not a preference — and the route is detected by signs.** Pairwise construction
+  cannot express the union when two walls overlap past their adjacent pair; two exact tests catch it (a
+  trimmed run with negative extent, and a ring whose **total turning** is not one full circle), and only then
+  does `RegionBool` run, as a self-union of the traced rings. The turning test is the one that earned its
+  place: the first implementation shipped only the extent test, and a spur folded straight back along its own
+  wall slipped through it with every run forward and a doubled ring — reported by the test that asserted the
+  area, which came back 2800 instead of 2000. Taking the kernel route **demotes the footprint to OP-15's
+  approximated class**, and that is carried in the type (`ThickBody.approximated`) rather than in prose.
+  (6) **The key points had to be *extracted*, not owned.** "A wall should show and use its key points" reads
+  as an accessor per corner created with the wall — and that is defect 1 of the original wall implementation
+  in a new costume, because the corner *count* is a function of the carrier's values. The honest exposure is
+  the one already in the toolbox: the *Key points* tool takes a footprint, the count is structural per
+  extraction (as it is for a Bézier's controls), and a corner that is gone says so instead of pointing
+  somewhere else. Same bargain as every other structural count in the file, and it is a real point
+  afterwards — snappable, dimensionable, weldable — which is the whole of what "use its key points" asked
+  for.
+  (7) **A review probe found two defects, and both were on the wall's side of the seam** — see *Two defects
+  a review probe found* under the extension. The second is the one with a lesson beyond this feature: OP-21
+  had recorded the cutter sharing the wall's faces as an unqualified virtue ("the degenerate case the kernel
+  is built to handle honestly"), and it *is* — for a straight wall, where the shared face is one exact line.
+  On a curved wall the two faces are two independent tessellations of one arc, which is **near**-coincident,
+  and near-coincident is the worst input any kernel can get. The cutter now overhangs where the face is not
+  exact. Diagnosing it took dumping the 2D subtraction and counting rings — twelve where there should be
+  two — which is the argument for the kernel being a *value-level function* one can call from a scratch test
+  rather than a stage buried in the mesher.
+  **20 new tests** (`ThickNetworkTest`) plus the review probe's two, 916 green, ktlint clean, the browser
+  E2E unchanged and still passing — the last of which is the load-bearing number, because the whole ortho half of the feature was
+  refactored underneath it and none of it was supposed to move.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -5161,6 +5218,21 @@ also consistent with OP-20 owning the freedom where things meet.)
 > opaque area whose corners nothing can grab. A boolean is the honest answer for a **solid**, not for a
 > plan the user still has to edit.
 
+> **Second correction, and the one that mattered (the generalized-wall extension, below).** The note
+> above is *right about the preference and wrong about the reason it gave for it*. "Trim each wall's face
+> at the neighbour's face line" only ever describes **two** walls; at a vertex where three or four meet
+> there is no "the neighbour", and the note quietly assumed the T/L case would stay a two-body problem.
+> It does not. What replaces it is not a boolean and not a pairwise trim either: it is the **cyclic order**
+> of the curves incident at the shared vertex, which turns *k* walls meeting into *k* independent
+> two-wall corners — see *Branch vertices resolve by cyclic order* below. That construction is exact for
+> lines and arcs, keeps every corner a constructed point (so OP-20's freedom stays addressable and the
+> drawing stays editable, which is what the preference was protecting), and needs the kernel for nothing.
+> The kernel is kept as a **fallback for the one case the pairwise construction cannot express** — sides
+> chosen so that material genuinely overlaps beyond the adjacent pair — and taking it is a *demotion to
+> OP-15's approximated class*, which is stated where it happens. So: pairwise by construction where it
+> can, the kernel where it must, and the file records which route a given footprint took only in the
+> sense that the same parameters always take the same one.
+
 ### Ordering — and an honest correction
 Reworking the wall onto the result layer is worth doing **before** the hand-tracing *Outline* tool:
 the wall needs rework regardless, it produces regions programmatically (so it exercises OP-14 with no
@@ -5210,10 +5282,11 @@ UI still says *Wall* and *Opening* and nothing in the model does.
   intervals through the ordinary explicit rule, and `Document.dependentSteps` lost its wall/opening
   special case entirely. Deleting one opening no longer drops the later ones.
 
-**Deliberately not done here.** Wall-to-wall **junction trimming** (T/L merges) stays future work: two
-thick paths meeting still overlap, which is visible and known. Per OP-6 **accessors** on the footprint
-(`face(side)`, `corner(i)`) are not built — nothing consumes them yet, and they are what dimensioning
-and wall-to-wall snapping will need. One capability was traded away with the loose face segments: a
+**Deliberately not done here** *(both closed by the generalized-wall extension below — kept because the
+shape of the deferral is what the extension answered)*. Wall-to-wall **junction trimming** (T/L merges)
+stays future work: two thick paths meeting still overlap, which is visible and known. Per OP-6 **accessors**
+on the footprint (`face(side)`, `corner(i)`) are not built — nothing consumes them yet, and they are what
+dimensioning and wall-to-wall snapping will need. One capability was traded away with the loose face segments: a
 wall face is no longer a `SEGMENT` element, so it cannot be snapped or attached to. That is the correct
 direction (OP-21's whole point is that offset lines are not the drawing), and the replacement is those
 accessors, not the old bundle. **3D is now built** (OP-22): the *Cut openings* tool turns each interval
@@ -5450,12 +5523,291 @@ Then 3D walls = extrude + boolean.
   axis now *extends* that leg instead of creating a collinear pair with an undefined miter, and a
   fully driven vertex is no longer grabbable (dragging it was inert while it stole the grab from the
   geometry that drives it).
-- **Next (architectural):** wall-to-wall junction cleanup (T/L merges — two thick paths meeting still
-  overlap) and footprint accessors for dimensioning and wall-to-wall snapping (OP-6). **3D walls are
+- **Next (architectural):** ~~wall-to-wall junction cleanup (T/L merges — two thick paths meeting still
+  overlap) and footprint accessors for dimensioning and wall-to-wall snapping (OP-6)~~ — **both done**, and
+  not as "merging two walls": see *Walls over arbitrary curve networks* above. Walls that meet are one
+  carrier with a shared vertex, resolved by cyclic order; the accessors are the *Key points* tool taking a
+  footprint. What is still true is the narrower statement: two **separate** thick networks that cross still
+  overlap. **3D walls are
   done** — extrude plus a boolean-subtracted box per interval, sill→head (OP-22, the *Cut openings*
   tool). Note the ordering decision in OP-17: 3D walls were a *later application* of the seam, not its
   proof of concept — the first 3D slices are mechanical parts, because a wall exercises only the
   degenerate half of the seam.
+
+### Walls over arbitrary curve networks (the OP-21 extension — RESOLVED)
+
+The user's sentence is the whole specification, and it is a better one than the queue line it replaced:
+
+> *A wall is a thickness applied to an arbitrary path, where a path is a fully connected graph of points
+> and point-connecting curves (segments, arcs, béziers). This also nicely defines the joining of walls.
+> Each curve should allow to define the wall side (left/right/center). And a wall should show and use its
+> key points.*
+
+Four claims, and the third and fourth are the ones that pay. "*This also nicely defines the joining of
+walls*" is the T/L junction cleanup OP-21 deferred twice: two walls that meet are not two footprints to
+be merged, they are **one carrier with a shared vertex**, and a shared vertex has no merge problem at
+all. And "*a wall should show and use its key points*" is the OP-6 accessor cut in the first slice.
+
+#### One model, two constructor cases
+
+`ThickPath` is renamed **`ThickNetwork`** and gains a `carrier`, which is a two-case sealed type:
+
+| case | what it is | footprint node |
+|---|---|---|
+| `ThickCarrier.Ortho` | the rectilinear polyline the *Wall* tool draws — vertices, closed flag, **one** justification for the whole run | `Construction.thickFootprint` (unchanged) |
+| `ThickCarrier.Network` | a connected subgraph of ordinary curve elements, **each with its own side** | `Construction.thickNetworkFootprint` (new) |
+
+**Unified now, and deliberately not by delegation.** Keeping two retained types would have doubled
+every consumer that does not care which carrier it has — the plan convention, the jambs, the interval
+clamps, `Cut openings`, the inspector, the pick cycle, the file's `opening` step — and each of those is a
+place a second type could drift. So there is one retained class, one `Document.thickNetworks` list, one
+`Jamb`, one `JambHandle`. What is *not* unified is the geometry underneath, and that is the point of the
+two cases: an ortho carrier keeps computing its footprint with the same `thickFaces`/`thickRegion` it
+always did, so **every stored `wall` step replays to the identical region, byte-identical goldens
+included**. A generalized tracer that merely *happened* to agree on rectilinear input would be a claim
+this codebase has no way to check; reusing the old code is a guarantee.
+
+The seam between the two is one value type, `ThickBody` — the legs, the joins, and the region — which
+both cases produce and everything above consumes:
+
+- **`ThickLeg`** is one carrier curve resolved to values: the oriented piece, its **arc length**, its two
+  signed face offsets, and the two *trimmed* offset runs (corner to corner). `pointAt`/`dirAt`/`facePoint`
+  are arithmetic on it, so a position along a leg means the same thing whether the leg is a straight
+  ortho run, a concentric arc or a sampled Bézier.
+- **joins** are the boundary pieces belonging to no leg: an open end's cap, and the straight *step* where
+  two offsets cannot mitre. The ortho case's two end caps are joins, which is why `planOf` needed no
+  case of its own.
+
+`planOf` therefore now returns `List<ProfileElement>` rather than `List<Segment>` — a curved wall's plan
+is drawn with arcs, not with a barrel of chords.
+
+#### Offsets per curve kind — and where the honesty line is
+
+| carrier kind | offset | class (OP-15) |
+|---|---|---|
+| segment | the parallel segment at the signed offset | **exact** |
+| arc | the **concentric** arc, radius `r ∓ o` by the sweep direction | **exact** |
+| cubic Bézier | sample at the ordinary tessellation parameters, displace each sample along the curve's **exact** normal there, keep the result as a polyline | **approximated** |
+
+A Bézier's offset is not a Bézier and never was (OP-15 records exactly this for spline offsets), so a
+Bézier carrier produces an offset **polyline** and the footprint containing it is in the approximated class
+from that point on. What is worth being precise about is *where* the approximation lives, because it is not
+where "offset by tessellation" suggests: the samples are displaced along the curve's own derivative, so the
+drawn offset is **exact at every sample parameter** and approximate only in the chords between them —
+the identical bargain every tessellated curve in this engine already makes, and the thing the test asserts
+(a sample's exact offset is a drawn corner, to 1e-9). The same holds for a *position along* such a leg: the
+arc-length→parameter map is the sampled part, and the point and normal it then hands back are the curve's
+own, so a jamb on a Bézier wall sits exactly half a thickness off the curve.
+
+This is not hidden behind a tolerance argument: `ThickBody.approximated` says so, and the *Thicken* tool's
+status line says so at the moment a Bézier is picked. An arc wall stays exact — its footprint holds real
+`ArcE` pieces, extrudes to a real swept surface, and its area is the analytic one.
+
+An arc thicker than twice its own radius has no inner offset at all (the concentric radius goes
+negative). That is invalid **with a reason** and it heals (OP-3), like every other degenerate carrier.
+
+#### Side per curve
+
+`Justification` is unchanged — left is the +90° side of the curve's **own** direction — and it is now
+stored **per carrier curve** instead of per path. The tool option (the browser panel's *Wall side*)
+applies to the **next pick**, so a run is drawn by setting the side and clicking, changing it and
+clicking again.
+
+**It needed no file format change**, which is the part worth recording. A per-curve side is a *discrete
+choice scored at creation*, which is precisely what `signs=` already carries for a fillet's variant and
+an intersection's branch (OP-1/OP-18): the `tool thicken els=… signs=0;1;2` step restates one integer
+per picked curve and replay takes them verbatim. Reaching for a new argument would have been reaching
+for a new mechanism to say a thing the file already knows how to say.
+
+#### The boundary is a walk of the fat graph
+
+Everything below happens **inside the footprint node's `compute`** (OP-21's rule): which endpoints
+coincide, and therefore what the graph even *is*, depends on where the carrier currently is. Only the
+*count* of carrier curves and their sides are structural. Dragging two carrier ends apart makes the
+footprint invalid with a reason rather than silently wrong.
+
+1. **Weld** the curve endpoints into vertices on a `JOIN_TOL` lattice, and check the graph is
+   **connected** — a disconnected pick is refused, by name, before a node is built and again inside
+   `compute` if an edit pulls it apart.
+2. Each carrier curve becomes two **directed half-edges**. A half-edge's *left wall* is one offset curve:
+   the forward half-edge's left wall is the `+` offset, the reverse half-edge's is the `−` one negated.
+3. At each vertex sort the outgoing half-edges by the **angle of their outgoing tangent**.
+4. The walk: travel a half-edge's left wall; on arrival at vertex *v* along `h`, the next half-edge is
+   the neighbour of `rev(h)` **clockwise** in that cyclic order. This keeps material on the left, and it
+   is the whole junction rule.
+5. Between the arriving wall and the departing wall, the corner is the **intersection of their carriers**
+   nearest *v* — `intersectLL` for line/line (the existing mitre), `intersectLC` for line/arc and
+   `intersectCC` for arc/arc (the fillet work's machinery, reused), and the infinite line of the terminal
+   offset segment for a Bézier polyline. Where the two carriers do not meet at all, the two wall ends are
+   joined by a straight **step** — which is the same construction as an end cap, and is what a dangling
+   end (*k*=1, where `rev(h)` is its own neighbour) produces.
+6. The walk decomposes into rings. It keeps material on its **right** (a half-edge's left wall is the
+   boundary the material lies *under*), so every ring comes back with the opposite handedness to OP-14's
+   convention and they are all flipped together — which is what leaves the outer/hole split a question of
+   sign. One positive ring is the outer boundary; the negative ones are its holes.
+
+Note what step 5 does **not** do: it never refuses a corner. The old ortho code declares "corner *n* has
+collinear legs, so no mitre" and goes invalid; here two offsets that do not meet are simply joined by a
+straight step, because on a general carrier that configuration is a real plan — it is what a wall changing
+side part-way through a straight run looks like, and refusing it would refuse a drawing rather than a
+degeneracy. (The ortho case keeps its refusal, because there the same configuration *is* one.)
+
+##### Branch vertices resolve by cyclic order
+
+Step 4 is the answer to the question OP-21 kept deferring, and it does not special-case *k*. At a vertex
+with *k* incident curves the walk visits it *k* times, once per angularly adjacent pair, and each visit
+resolves one ordinary two-wall corner. **A T-junction of three walls is three mitres, not a union**, and
+the result is one region with no interior edge and no sliver, because no interior edge was ever
+constructed to be removed. A cross of four is four. A ring is the *k*=2 case everywhere, which is why the
+closed carrier still comes out as `Region(outer, [inner])`. A **figure-8** — two rings sharing one vertex,
+*k*=4 there — comes out as one outer ring with two holes, honestly, and is not refused: it was on the
+candidate-cut list and did not need to be cut.
+
+##### When the kernel is used instead, and what that costs
+
+Pairwise construction cannot express a union in exactly one situation: two of the walls overlap past what
+the corner between their adjacent pair resolved. Two **signs** detect it — signs, not tolerances, which is
+what makes the choice of route a deterministic function of the parameters:
+
+- a trimmed offset run with **negative extent** (a corner landing behind where the run started — a leg
+  shorter than the mitre its neighbours demand), and
+- a traced ring whose **total turning** is not one full circle. A simple closed curve turns through exactly
+  ±2π; a ring that has run over itself does not. This is one pass over the pieces (each arc's own sweep
+  plus the exterior angle at each corner), needs no tessellation and no pairwise intersection test, and it
+  is what catches the case the extent test misses — a spur folded straight back along the wall it came
+  from, whose runs are all forward and whose ring is nevertheless doubled.
+
+Either sign takes the second route:
+
+> tessellate the traced rings, `RegionBool.combine(rings, rings, UNION)` — the nonzero-winding interior
+> of the tangle, which is what the union *is* — and nest the result.
+
+Also routed there: a trace that comes back with **more than one positive ring**, which a connected fat
+graph cannot honestly produce and which therefore means the same thing. If the kernel then yields more
+than one region the footprint is genuinely several disjoint areas and it is **refused by name** ("thicken
+them separately") rather than silently returning one of them.
+
+The cost is stated where it is paid: the kernel is polygonal (OP-22), so **a footprint that took this
+route is approximated even if every carrier was a line or an arc**. `ThickBody.approximated` carries it.
+This is the reconsideration OP-21's junction note asked for, resolved by *route*, not by preference:
+construction where construction can, the kernel where it cannot, and a name on the difference.
+
+#### Key points — extracted, not accessorized
+
+The user asked for a wall to *show and use* its key points. The tempting reading — one accessor element
+per footprint corner, created with the wall — is the thing OP-21 exists to forbid: the corner **count** is
+a function of the carrier's *values* (a mitre that degenerates, a step that appears, a kernel route that
+retessellates), so a set of elements sized by it would have to be regenerated on every edit, which is
+defect 1 of the original wall implementation wearing a different hat.
+
+So the exposure is the one the model already has a shape for: **the existing *Key points* tool now
+accepts a footprint** — its slot widened from `CURVE` to `EXTRACTABLE`, "anything whose defining points can
+be materialized" — and extracts the corners of the region *as it stands*, each as a
+`Construction.regionCorner(footprint, i)` accessor — an OP-6 provenance node, a real point element,
+therefore pickable, snappable, dimensionable and welded-to like any other point. The count is
+**structural per extraction**, exactly as it is for key points on a fillet or a Bézier's controls today:
+extract, and you get the corners there are now; change the carrier so there are fewer, and the surplus
+accessors go invalid **with a reason** (OP-3) instead of silently pointing somewhere else. That is the
+same bargain OP-18 strikes for every structural count in the file, and it is the honest one — the
+alternative is a live count, which is queue item 2's territory and not this one's.
+
+Jambs already demonstrate the other half (a *drawing* that is pickable without being an element), and
+they are unchanged: an opening's two reveal lines are still derived per pass and still resolve into a
+`JambHandle`.
+
+#### The tool
+
+*Thicken* is the repeating-slot tool *Outline* already is, with two declarations added to the table rather
+than any controller code: `minPicks = 1` (a single curve is a perfectly good wall, where a single curve is
+not a boundary) and `sidePerPick`, which is what collects the wall side in effect at each click. Two things
+were separated out at the same time, because *Outline* had been the only repeating tool and its behaviour
+had been the definition of one:
+
+- **`followsBoundary`**, now declared rather than assumed. Auto-appending the pieces that merely continue
+  is right for tracing a boundary and wrong for a wall: which curves a wall runs over is a *choice*, and a
+  follow would build a wall the user did not draw.
+- **`minPicks`**, likewise, instead of the hard-coded "needs at least two curves".
+
+It draws a **live preview** (`Previews::thicken`) like the other twenty-four: the actual footprint of the
+curves picked so far plus the one under the cursor, computed on values, drawn as itself. A pick that would
+disconnect the network simply previews nothing — and the click then says why.
+
+#### Openings on any curve kind
+
+An interval's `position` is a distance **along its leg's own arc length**, which is what it always was —
+the leg was just always straight. Nothing in `PathInterval`, the clamps, the `opening` step or the jamb
+handle changed:
+
+- `positionAlongLeg` projects the cursor onto the leg and returns arc length (the angle about the centre
+  times the radius for an arc; the cumulative polyline length for a Bézier),
+- a jamb is `Segment(facePoint(d, 0), facePoint(d, 1))` — for an arc leg that is the **radial** line, which
+  is what a plan draws,
+- dragging a jamb on an arc wall therefore slides the opening **along the arc**, with no case of its own.
+
+Leg-relative positioning is a *recorded* exception to absolute anchoring (see the anchoring table under
+OP-20), and this is the second time it pays: the same reason a rigid placement leaves an opening alone is
+the reason a curved leg needs no new parameterization.
+
+#### 3D needs nothing
+
+A footprint is a region, and a region extrudes (OP-17). An arc-walled ring extrudes watertight because
+the caps and the side walls come from the *same* tessellation (OP-9's structural watertightness), and
+*Cut openings* works on a curved leg because the interval's plan shape is derived from the same
+`ThickLeg` — for an arc leg, two concentric arcs closed by two radial segments.
+
+#### Two defects a review probe found, and where they were
+
+Both were on the **wall's side**, not the kernel's — worth recording because the second one is a general
+rule about booleans that this codebase had only ever met in its benign form. The probe: a
+segment–arc–segment wall (t=8), a door on the *arc* leg, extruded and cut. It came back with a **cracked
+shell** (`edge 111->112 used 2 times`) through the *exact* prismatic path, which must never emit one.
+
+**1. The reversed-run test over-triggered on arcs, and quietly demoted exact walls to the kernel.** The
+tangle test asked whether a trimmed arc run covered *more* of the arc than the arc has. But a mitre
+legitimately pushes a corner **past** the carrier's own end — a straight run's does too, and there only
+*reversal* is tested. On a 180° arc meeting a straight leg at a right angle the mitre extended the run to
+197°, which read as an overlap; the whole footprint took the kernel route, and came back tessellated
+(`approximated`, and reported with the *Bézier* wording, which was not even true of it). The fix measures
+the run's own direction instead, placing each corner at the representative of its angle nearest where it
+nominally belongs — exact for any mitre short of half a turn, and immune to the wrap that made 197° look
+like an overlap. The wall's faces are exact arcs again.
+
+**2. A cutter may share a face with the wall only when that face is exact.** This is the general rule, and
+it is the one OP-21 had stated as an unqualified virtue: *"the two faces are the wall's own faces, so the
+subtraction's side walls are coplanar with the wall's — the degenerate case the 2D kernel is built to
+handle honestly."* True on a straight leg, where the two faces are literally the same line and the kernel's
+shared-edge rule resolves them exactly. **False on a curved one**, where the wall's face and the cutter's
+face are two *independent tessellations of one arc*: not coincident but **near**-coincident, crossing each
+other once per chord. The kernel did exactly what it should — it returned a crescent for every crossing —
+and ten slivers of 2×10⁻⁶ to 2×10⁻² mm² became ten sub-slabs, one of which was too thin to triangulate
+into a shell. Diagnosed by dumping the 2D subtraction: twelve rings where there should be two.
+
+The fix is not to special-case the box and not to loosen the kernel: on a curved leg the cutter stops
+pretending and **overhangs** (`ThickLeg.cutterOffsets`), its long faces clear of the material on both
+sides by ten tessellation tolerances, so the only faces that cut are the two jamb faces — and those are
+genuinely transverse. The removed volume is unchanged, because the overhang is outside the wall (asserted).
+The 2D subtraction now returns exactly the two rings it should, and the straight-leg case is untouched:
+its coplanarity is exact, so it keeps it.
+
+> **The rule, stated so it is not re-learned:** near-coincident faces are the worst input a boolean kernel
+> can get — strictly worse than either coincident or clearly separated. Exact coincidence is a *choice a
+> construction can make* only when the shared geometry is exactly representable. Where it is not, share
+> nothing and overhang. This is the same exact/approximated line OP-15 draws, arriving one level up.
+
+#### What this deliberately does not do
+
+- **Wall side is per curve, not per curve *per network*.** A curve used in two thickenings takes its side
+  from each pick separately, which is right, but it also means the same physical curve can carry two
+  walls whose material overlaps — and that overlap is *not* resolved between two networks. Two thick
+  networks that cross still overlap, exactly as two thick paths did. The junction cleanup this delivers is
+  for walls of **one** carrier, which is the honest scope of "a wall is a thickness applied to a path".
+- **No mitre limit.** A very sharp branch produces a very long spike, exactly as the ortho case always
+  has. Stated so it is not mistaken for a bug; capping it is a convention decision (like the
+  chamfer-on-arc one) and belongs with the others.
+- **A whole circle cannot be a carrier**: it has no endpoints, so it joins nothing and its "network" is a
+  ring with no vertices. Break it into arcs first — refused by name.
+- **The carrier curves are not consumed.** A thickened segment stays a visible segment, as the ortho
+  carrier's legs always did. Hiding it is a view decision, and the view has no such state (OP-18).
 
 ## Open work queue (crash-safe snapshot; ordered)
 
@@ -5533,14 +5885,21 @@ one thing parked, stated where it belongs: the rest of the Apollonius family (**
 of which is composable from the ops that exist plus at most one, and each of which needs its own `signs=`
 layout because the number of discrete choices is part of the shape of the construction.
 
-1. **Generalized walls — thickness over an arbitrary curve network** (extends OP-21): carrier = a
-   connected graph of points and curves (segments, arcs, béziers); side per CURVE (left/right/center by
-   curve direction); junctions are shared carrier vertices, branch vertices resolved by cyclic order —
-   which is the honest form of the long-deferred T/L wall-junction cleanup; offsets exact for
-   lines/arcs, bézier offsets in OP-15's approximated class; footprint key points exposed as OP-6
-   provenance accessors (`corner(i)`, `face(side)` — the accessors cut in the first OP-21 slice, now
-   demanded); openings measure along any curve kind by arc length.
-2. **Incremental recompute** (the OP-5 dirty-marking the implementation still owes): persistent
+**Retired in session 18: generalized walls, and with them the T/L junction cleanup OP-21 deferred twice.**
+Queue line 1, delivered whole — see *Walls over arbitrary curve networks* under OP-21. A wall is now a
+thickness over a connected graph of curves with a side per curve; a branch vertex resolves by **cyclic
+order** into one ordinary corner per angularly adjacent pair, which is what makes a T-junction one region
+with no sliver and no boolean. Three things it retires beyond the queue line itself: the long-standing
+*"wall-to-wall junction cleanup (T/L merges — two thick paths meeting still overlap)"* under **Next
+(architectural)**; the first-slice cut *"per OP-6 accessors on the footprint are not built"*, now the *Key
+points* tool taking a footprint; and, as a **correction rather than a deferral**, OP-21's *"trim by
+construction, don't reach for 2D booleans"* note, whose stated reason ("trim each wall's face at the
+neighbour's face line") only ever described two walls — see the second correction under that note. It leaves
+three things parked, each stated where it belongs: **two thick networks that cross still overlap** (the
+junction cleanup is for walls of *one* carrier), there is **no mitre limit** on a sharp branch, and a
+footprint that takes the kernel route is **approximated** even when every carrier was a line or an arc.
+
+1. **Incremental recompute** (the OP-5 dirty-marking the implementation still owes): persistent
    cross-pass value cache keyed by source-node versions, so a repaint recomputes only the changed input
    cone — the fix for revolve-sized meshes making even the 2D view lag. Acceptance: recompute counters
    flat across repaints that change nothing upstream. Optional afterwards: a low-poly view mode.

@@ -31,6 +31,7 @@ import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.Bezier
 import constructit.geom.BoolOp
+import constructit.geom.CarrierCurve
 import constructit.geom.Circle
 import constructit.geom.Direction
 import constructit.geom.Feature3
@@ -51,11 +52,29 @@ import constructit.geom.Solid3
 import constructit.geom.SolidFace
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.geom.thickNetwork
 import constructit.units.Dimension
 import constructit.units.DimensionError
 import constructit.units.Quantity
 import kotlin.math.abs
 import kotlin.math.pow
+
+/**
+ * How finely an opening on a **curved** wall leg is sampled into its plan rectangle's curved twin (the
+ * OP-21 extension). One per degree of a full turn at a metre radius, which is far below the tolerance the
+ * boolean it feeds tessellates at anyway (OP-22).
+ */
+private const val CURVED_INTERVAL_STEPS = 24
+
+/**
+ * How far a cutter on a **curved** wall leg overhangs the wall's faces (mm) — see [ThickLeg.cutterOffsets].
+ *
+ * Ten times the tessellation tolerance, which is the whole of the reasoning: the wall's face and the
+ * cutter's are both chord polylines inscribed in their arcs, each within `TESS_TOL_MM` of it, so anything
+ * comfortably above that tolerance puts the cutter's boundary *clear* of the material rather than
+ * *almost on* it — and "almost on" is the one input a boolean kernel cannot resolve without slivers.
+ */
+private const val CUTTER_MARGIN_MM = 10 * GeomMath.TESS_TOL_MM
 
 /** A typed handle to a node's output. Compile-time typing over the generic graph (OP-5). */
 class Ref<out V : Value>(val node: Node)
@@ -1312,6 +1331,122 @@ class Construction {
             val (region, reason) = GeomMath.thickRegion(faces)
             if (region == null) EvalResult.Invalid(reason ?: "no footprint") else EvalResult.Ok(RegionValue(region))
         }
+
+    /**
+     * The footprint of a **thick network** (the OP-21 extension): the offset region of [thickness] around a
+     * *connected graph* of carrier [curves], each thickened to the side [sides] gives it.
+     *
+     * The same purity rule as [thickFootprint], one level harder: for a polyline only the mitres depend on
+     * where the carrier is, but for a network the **topology** does — which endpoints coincide decides the
+     * cyclic order at every vertex and hence what the boundary even is. So the welding, the connectivity
+     * check and the whole walk happen inside `compute`, and only the *count* of carrier curves and their
+     * sides are structural. Pulling two carrier ends apart therefore makes this invalid with a reason
+     * (OP-3), and pushing them back together heals it.
+     *
+     * Junctions are shared carrier vertices and need no merge: a branch of *k* curves is resolved as *k*
+     * ordinary corners, one per angularly adjacent pair (see `thickNetwork`).
+     */
+    fun thickNetworkFootprint(
+        curves: List<Ref<*>>,
+        sides: List<Justification>,
+        thickness: ScalarRef,
+    ): RegionRef =
+        op(*(curves + thickness).toTypedArray()) { args ->
+            val carriers = carrierCurves(args.dropLast(1), sides) ?: return@op EvalResult.Invalid("a wall's carrier must be curves")
+            val t = (args.last() as ScalarValue).q.requireDim(Dimension.LENGTH, "thickness").mm
+            val (body, why) = thickNetwork(carriers, t)
+            if (body == null) EvalResult.Invalid(why ?: "no footprint") else EvalResult.Ok(RegionValue(body.region))
+        }
+
+    /**
+     * The footprint of **one interval feature** of a thick network (the OP-21 extension's 3D half): the plan
+     * shape of the box a 3D opening subtracts, spanning [width] from [position] **in arc length** along leg
+     * [legIndex], across the wall's whole thickness.
+     *
+     * The twin of [intervalFootprint] for the general carrier, and the reason a *Cut opening* works on a
+     * curved wall with no case of its own: on an arc leg the two faces come out as concentric arcs closed by
+     * two radial segments, because they are read off the same [ThickLeg] the jamb is.
+     */
+    fun networkIntervalFootprint(
+        curves: List<Ref<*>>,
+        sides: List<Justification>,
+        thickness: ScalarRef,
+        legIndex: Int,
+        position: ScalarRef,
+        width: ScalarRef,
+    ): RegionRef =
+        op(*(curves + listOf(thickness, position, width)).toTypedArray()) { args ->
+            val carriers =
+                carrierCurves(args.dropLast(3), sides) ?: return@op EvalResult.Invalid("a wall's carrier must be curves")
+            val t = (args[args.size - 3] as ScalarValue).q.requireDim(Dimension.LENGTH, "thickness").mm
+            val pos = (args[args.size - 2] as ScalarValue).q.requireDim(Dimension.LENGTH, "position").mm
+            val w = (args[args.size - 1] as ScalarValue).q.requireDim(Dimension.LENGTH, "width").mm
+            if (w <= 0.0) return@op EvalResult.Invalid("an opening needs a positive width")
+            val (body, why) = thickNetwork(carriers, t)
+            if (body == null) return@op EvalResult.Invalid(why ?: "no footprint")
+            if (legIndex < 0 || legIndex >= body.legCount) return@op EvalResult.Invalid("leg ${legIndex + 1} is not a leg of this wall")
+            val leg = body.legs[legIndex]
+            // A straight leg's opening is the rectangle it always was, sharing the wall's own faces exactly
+            // (OP-21). A curved one is sampled — and *overhangs* the wall instead of sharing its faces, so
+            // that two tessellations of one arc never end up near-coincident: see [ThickLeg.cutterOffsets].
+            val steps = if (leg.piece is ProfileElement.Seg) 1 else CURVED_INTERVAL_STEPS
+            val across = leg.cutterOffsets(CUTTER_MARGIN_MM)
+            val near = (0..steps).map { leg.offsetPoint(pos + w * it / steps, across[0]) }
+            val far = (0..steps).map { leg.offsetPoint(pos + w * (steps - it) / steps, across[1]) }
+            val ring = near + far
+            val pieces = ring.indices.map { ProfileElement.Seg(Segment(ring[it], ring[(it + 1) % ring.size])) }
+            EvalResult.Ok(RegionValue(Region(GeomMath.orient(Loop(pieces), ccw = true), emptyList())))
+        }
+
+    /** Values as carrier curves with their per-curve sides, or null if any pick is not a curve. */
+    private fun carrierCurves(
+        args: List<Value>,
+        sides: List<Justification>,
+    ): List<CarrierCurve>? =
+        args.mapIndexed { i, v ->
+            val piece =
+                when (v) {
+                    is SegmentValue -> ProfileElement.Seg(v.seg)
+                    is ArcValue -> ProfileElement.ArcE(v.arc)
+                    is BezierValue -> ProfileElement.BezierE(v.bezier)
+                    is CircleValue -> ProfileElement.CircleE(v.circle)
+                    else -> return null
+                }
+            CarrierCurve(piece, sides.getOrElse(i) { Justification.CENTER })
+        }
+
+    /**
+     * Corner [index] of the region [r] — an **OP-6 provenance accessor** over a footprint (the OP-21
+     * extension's *key points*).
+     *
+     * Corners are numbered outer boundary first, then each hole, in the region's own order, and the index is
+     * **structural**: it is fixed when the accessor is created, exactly as the count of a Bézier's control
+     * points or of an array's copies is. An edit that leaves the footprint with fewer corners makes this
+     * invalid **with a reason** (OP-3) rather than silently pointing at a different corner — which is the
+     * honest trade for not regenerating a set of elements whose size is a function of values.
+     */
+    fun regionCorner(
+        r: RegionRef,
+        index: Int,
+    ): PointRef =
+        op(r) {
+            val region = (it[0] as RegionValue).region
+            val corners = (listOf(region.outer) + region.holes).flatMap { l -> l.elements.map { e -> GeomMath.startOf(e) } }
+            if (index < 0 || index >= corners.size) {
+                EvalResult.Invalid("this area has ${corners.size} corners, so corner ${index + 1} is gone — extract its key points again")
+            } else {
+                EvalResult.Ok(PointValue(corners[index]))
+            }
+        }
+
+    /** How many corners [r] currently has — what a *Key points* extraction asks before it creates any. */
+    fun regionCornerCount(
+        r: RegionRef,
+        ev: Evaluator,
+    ): Int {
+        val region = ((ev.eval(r.node) as? EvalResult.Ok)?.value as? RegionValue)?.region ?: return 0
+        return (listOf(region.outer) + region.holes).sumOf { it.elements.size }
+    }
 
     /**
      * The footprint of **one interval feature** of a thick path (OP-21/OP-22): the rectangle spanning

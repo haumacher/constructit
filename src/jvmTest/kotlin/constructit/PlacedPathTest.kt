@@ -470,7 +470,7 @@ class PlacedPathTest {
     @Test
     fun aWallWithAnOpeningFollowsItsFrameAndTurnsWithIt() {
         val (ed, g) = placedL(Tools.WALL)
-        val tp = ed.doc.thickPaths.single()
+        val tp = ed.doc.thickNetworks.single()
         assertEquals(1, ed.doc.groups.single().capturedPaths.size)
 
         // an opening 30 along the first leg, 20 wide
@@ -484,7 +484,7 @@ class PlacedPathTest {
         // frame sits at the members' bounding-box centre, which the wall's own faces widen (52.5,27.5).
         val o = origin(ed, g)
         val outerBefore = footprintCorners(ed, tp)
-        val planBefore = ed.doc.planOf(tp, Evaluator())!!.flatMap { listOf(it.a, it.b) }
+        val planBefore = ed.doc.planOf(tp, Evaluator())!!.segments().flatMap { listOf(it.a, it.b) }
         assertTrue(planBefore.size > 4, "the opening splits the inner face, so the plan has more than four pieces")
 
         ed.click(Vec2(70.0, 0.0)) // the group
@@ -500,7 +500,7 @@ class PlacedPathTest {
         }
         // and the plan convention with it: the opening's parameters are leg-relative, so its gap stayed put
         // on the (now turned) leg rather than sliding along it
-        val planAfter = ed.doc.planOf(tp, Evaluator())!!.flatMap { listOf(it.a, it.b) }
+        val planAfter = ed.doc.planOf(tp, Evaluator())!!.segments().flatMap { listOf(it.a, it.b) }
         assertEquals(planBefore.size, planAfter.size, "the same drawing, turned")
         for (p in planBefore) {
             val want = world(o, 30.0, p - o)
@@ -510,7 +510,7 @@ class PlacedPathTest {
 
     private fun footprintCorners(
         ed: Editor,
-        tp: constructit.editor.ThickPath,
+        tp: constructit.editor.ThickNetwork,
     ): List<Vec2> {
         val reg = (Evaluator().valueOf(tp.footprint.ref) as RegionValue).region
         return (reg.outer.elements + reg.holes.flatMap { it.elements }).map { constructit.geom.GeomMath.startOf(it) }
@@ -520,7 +520,7 @@ class PlacedPathTest {
     @Test
     fun aSolidCutFromAPlacedWallFollowsTheFrame() {
         val ed = lPath(Tools.WALL)
-        val tp = ed.doc.thickPaths.single()
+        val tp = ed.doc.thickNetworks.single()
         ed.activeScalar = ed.doc.newParameter("w", 20.0.mm)
         ed.setTool(Tools.OPENING)
         ed.click(Vec2(30.0, 0.0))

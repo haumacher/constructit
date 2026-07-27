@@ -129,9 +129,11 @@ object SceneRenderer {
                     // every interval, jamb lines across them. The region itself stays whole — an opening
                     // does not interrupt the material — so the break lives here, in the drawing, and
                     // nowhere in the model.
-                    val plan = doc.thickPathOf(el)?.let { doc.planOf(it, ev) }
+                    val plan = doc.thickNetworkOf(el)?.let { doc.planOf(it, ev) }
                     if (plan != null) {
-                        for (s in plan) target.polyline(listOf(cam.worldToScreen(s.a), cam.worldToScreen(s.b)), style)
+                        // the plan's pieces keep their kinds since the OP-21 extension, so a curved wall
+                        // draws as the arcs it is made of rather than as a barrel of chords
+                        drawChain(plan, cam, target, style)
                     } else {
                         drawChain(v.region.outer.elements, cam, target, style)
                         for (h in v.region.holes) drawChain(h.elements, cam, target, style)

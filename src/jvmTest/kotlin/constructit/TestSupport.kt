@@ -2,10 +2,18 @@ package constructit
 
 import constructit.geom.Geom3
 import constructit.geom.Mesh3
+import constructit.geom.ProfileElement
+import constructit.geom.Segment
 import java.io.File
 import kotlin.math.abs
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+
+/**
+ * The straight pieces of a plan drawing (`Document.planOf`), which emits [ProfileElement]s since walls
+ * gained curved carriers (the OP-21 extension). On a rectilinear wall this is the whole plan.
+ */
+fun List<ProfileElement>.segments(): List<Segment> = filterIsInstance<ProfileElement.Seg>().map { it.segment }
 
 /** Numeric closeness assertion for geometry (base units: mm, rad). */
 fun assertClose(

@@ -784,7 +784,7 @@ fun parameterField(
  */
 class JambHandle(
     private val doc: Document,
-    private val path: ThickPath,
+    private val path: ThickNetwork,
     private val interval: PathInterval,
     val atEnd: Boolean,
 ) : Handle {

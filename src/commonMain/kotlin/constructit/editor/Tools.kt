@@ -4,6 +4,7 @@ import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
+import constructit.geom.Justification
 import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.Quantity
@@ -49,6 +50,13 @@ enum class SlotKind {
      * that the leg determine a curve the rounding can be tangent to.
      */
     CARRIER,
+
+    /**
+     * Anything whose **defining points** can be materialized: a curve (its endpoints, its centre, a
+     * spline's controls) **or an area** — whose defining points are its corners (the OP-21 extension's
+     * *key points*, which is how a wall footprint's corners become pickable and snappable).
+     */
+    EXTRACTABLE,
     AREA,
     SOLID,
 }
@@ -156,6 +164,28 @@ class ToolDef(
      * *Outline* data-driven instead of another special case in the controller.
      */
     val repeating: Boolean = false,
+    /**
+     * The fewest picks a [repeating] tool will build from. Two for a boundary (one curve is not a boundary);
+     * **one** for *Thicken*, because a single curve is a perfectly good wall.
+     */
+    val minPicks: Int = 2,
+    /**
+     * Whether a [repeating] tool **follows the boundary** from its picks (OP-14's `extendBoundaryPicks`).
+     *
+     * *Outline* wants it — tracing a closed boundary is the whole gesture. *Thicken* does not: which curves
+     * a wall runs over is a choice, and appending the ones that merely happen to continue would build a wall
+     * the user did not draw. The connectivity machinery is the same either way; only the auto-append differs.
+     */
+    val followsBoundary: Boolean = false,
+    /**
+     * Whether each pick of this tool carries the **wall side** in effect when it was made (the OP-21
+     * extension), collected into [Picks.signs] as one `Justification` ordinal per curve.
+     *
+     * A per-curve side is a *discrete choice scored at creation*, which is exactly what `signs=` already
+     * persists for a fillet's variant and an intersection's branch (OP-1/OP-18) — so this needed no new file
+     * argument, only a declaration that the tool's picks each have one.
+     */
+    val sidePerPick: Boolean = false,
     /**
      * The smallest sensible [Picks.count] for this tool, or 0 when it needs no count at all — a polygon
      * needs three vertices, an array two instances. Non-zero is what makes the count field apply.
@@ -327,6 +357,9 @@ object Tools {
     // Result layer (OP-14)
     const val OUTLINE = "outline"
 
+    /** Thicken an arbitrary connected curve network into a wall (the OP-21 extension). */
+    const val THICKEN = "thicken"
+
     // Solids — the 2D->3D seam (OP-17)
     const val EXTRUDE = "extrude"
     const val REVOLVE = "revolve"
@@ -430,7 +463,7 @@ object Tools {
             // supplied x and y and a click merely says "now"
             ToolDef(POINT_XY, "Point (x, y)", ToolCategory.POINTS, emptyList(), scalars = listOf(len("x"), len("y")), help = "Type x, then y (or pick two parameters in the panel), then click anywhere: the point follows both, so editing either moves it.") { d, _, s -> d.pointFromCoordinates(s[0], s[1]) },
             ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTRIC), help = "Click a circle or arc to add its centre point.") { d, p, _ -> d.centerOf(p.elements[0]) },
-            ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.CURVE), help = "Click a curve to add its defining points (endpoints, centre) — even on mirrored/derived geometry.") { d, p, _ -> d.extractPoints(p.elements[0]) },
+            ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.EXTRACTABLE), help = "Click a curve to add its defining points (endpoints, centre) — or a wall footprint / traced area for its corners, which are then snappable and dimensionable like any point. Works on mirrored and derived geometry too.") { d, p, _ -> d.extractPoints(p.elements[0]) },
             ToolDef(JOIN, "Join points", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), replicates = false, help = "Click the point to keep, then a free point to weld onto it (they become one).") { d, p, _ -> d.weld(p.elements[1], p.elements[0]) },
             // the offset is the tool's own DOF, restated on save through `dofs=` exactly as a dimension's
             // placement is (OP-13/OP-18), so a dragged or typed distance comes back
@@ -456,7 +489,8 @@ object Tools {
             ToolDef(ARC_3, "Arc (3 points)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click start, a point on the arc, then the end.", preview = Previews::arc3) { d, p, _ -> d.arc3(p.points[0], p.points[1], p.points[2]) },
             ToolDef(ARC_CS, "Arc (centre, ends)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the centre, the start point, then the end (sweeps counter-clockwise).", preview = Previews::arcCentreEnds) { d, p, _ -> d.arcCenterStartEnd(p.points[0], p.points[1], p.points[2]) },
             ToolDef(BEZIER, "Bezier curve", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the start, two control points, then the end. Control points may be existing constructed points.") { d, p, _ -> d.bezierCurve(p.points[0], p.points[1], p.points[2], p.points[3]) },
-            ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, shortcut = 'O', help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.") { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
+            ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, followsBoundary = true, shortcut = 'O', help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.") { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
+            ToolDef(THICKEN, "Thicken (wall over curves)", ToolCategory.RESULT, listOf(SlotKind.CURVE), scalars = listOf(len("thickness")), repeating = true, minPicks = 1, sidePerPick = true, replicates = false, preview = Previews::thicken, help = "Type a thickness, set Wall side, then click the curves the wall follows — segments, arcs or Béziers that share their endpoints. The side applies to the next click, so it can change per curve. Enter (or clicking the first curve again) builds it; a disconnected pick is refused.") { d, p, s -> d.buildThickNetwork(p.elements, p.signs.map { Tools.sideOf(it) }, s[0]) },
             ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click a circle or arc, then click inside or outside for the concentric circle.") { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at) },
             // rectangular *by construction* — the two other corners share the clicked corners' coordinates,
             // so no gesture and no parameter edit can shear it (see [Document.rectangle])
@@ -576,6 +610,13 @@ object Tools {
      * document knows its own macros.
      */
     fun byId(id: String): ToolDef? = all.firstOrNull { it.id == id } ?: legacy.firstOrNull { it.id == id }
+
+    /**
+     * A wall side as it rides a step's `signs=` (the OP-21 extension): the [Justification] ordinal, and
+     * CENTER for anything a file does not name — an older or hand-written script that omits a side means
+     * the centred default, exactly as an absent `wall` justification always has.
+     */
+    fun sideOf(sign: Int): Justification = Justification.entries.getOrElse(sign) { Justification.CENTER }
 
     /**
      * The tool [c] arms, case-insensitively, or null. Only built-in tools have keys: a macro's name is

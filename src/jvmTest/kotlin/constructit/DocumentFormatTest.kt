@@ -251,12 +251,12 @@ class DocumentFormatTest {
         val text = DocumentFormat.save(ed.doc)
         assertTrue(text.contains("opening e4 leg=0 pos=25mm width=\"w\" sill=0mm head=2100mm"), "got:\n$text")
         val reloaded = assertRoundTrips(ed)
-        val tp = reloaded.thickPaths.single()
+        val tp = reloaded.thickNetworks.single()
         val interval = tp.intervals.single()
         assertEquals(0, interval.legIndex)
         assertClose(Evaluator().scalar(interval.position).mm, 25.0)
         assertTrue(interval.width.node === reloaded.scalars.first { it.name == "w" }.ref.node, "the width stays shared")
-        assertTrue(tp.carrier === reloaded.orthoPaths.single(), "and so is the link to its carrier")
+        assertTrue(tp.path === reloaded.orthoPaths.single(), "and so is the link to its carrier")
     }
 
     @Test

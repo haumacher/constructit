@@ -32,7 +32,7 @@ class OpeningHandleProbeTest {
         pointerUp(camera.worldToScreen(to))
     }
 
-    private fun openings(ed: Editor) = ed.doc.thickPaths.single().intervals
+    private fun openings(ed: Editor) = ed.doc.thickNetworks.single().intervals
 
     private fun widthOf(
         ed: Editor,

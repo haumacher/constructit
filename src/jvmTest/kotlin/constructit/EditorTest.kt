@@ -2012,8 +2012,8 @@ class EditorTest {
         ed.click(Vec2(0.0, 0.0))
         ed.click(Vec2(100.0, 2.0))
         ed.finishPath()
-        val tp = ed.doc.thickPaths.single()
-        assertTrue(tp.carrier === ed.doc.orthoPaths.single(), "the thick path's carrier is the retained path")
+        val tp = ed.doc.thickNetworks.single()
+        assertTrue(tp.path === ed.doc.orthoPaths.single(), "the thick path's carrier is the retained path")
     }
 
     @Test

@@ -56,7 +56,7 @@ object HitTest {
     ): Jamb? {
         var best: Jamb? = null
         var bestD = tol
-        for (tp in doc.thickPaths) {
+        for (tp in doc.thickNetworks) {
             val el = tp.footprint
             if (!el.visible || el.space != doc.activeSpace.name) continue
             for (j in doc.jambsOf(tp, ev)) {

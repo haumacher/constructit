@@ -14,10 +14,12 @@ import constructit.dsl.valueOf
 import constructit.geom.Affine
 import constructit.geom.Arc
 import constructit.geom.Bezier
+import constructit.geom.CarrierCurve
 import constructit.geom.Circle
 import constructit.geom.FilletLeg
 import constructit.geom.FilletMath
 import constructit.geom.GeomMath
+import constructit.geom.Justification
 import constructit.geom.Line
 import constructit.geom.Loop
 import constructit.geom.ProfileElement
@@ -25,6 +27,7 @@ import constructit.geom.Ray
 import constructit.geom.Region
 import constructit.geom.Segment
 import constructit.geom.Vec2
+import constructit.geom.thickNetwork
 import constructit.units.Quantity
 import kotlin.math.PI
 import kotlin.math.abs
@@ -86,6 +89,11 @@ class PreviewContext(
     val cursor: Vec2,
     /** Pick tolerance in world units, for the previews that resolve what the cursor is over. */
     val tol: Double,
+    /**
+     * The **wall side in effect** for the next pick (the OP-21 extension) — a tool option, exactly as the
+     * typed scalars above are, and read by the one preview whose shape depends on it.
+     */
+    val side: Justification = Justification.CENTER,
 ) {
     /** The structural count the tool would build with (OP-23's re-stamp number, an array's copies). */
     val count: Int get() = picks.count
@@ -181,6 +189,36 @@ object Previews {
         }
 
     private fun regionShapes(r: Region): List<PreviewShape> = loopShapes(r.outer) + r.holes.flatMap { loopShapes(it) }
+
+    /**
+     * The wall the *Thicken* tool would build from the curves picked so far, plus the one under the cursor
+     * (the OP-21 extension): the actual footprint, computed on values and drawn as itself.
+     *
+     * It is also the honest way to see a refusal before making it — a pick that would disconnect the network
+     * simply draws nothing, and the status line says why after the click.
+     */
+    fun thicken(c: PreviewContext): List<PreviewShape> {
+        val t = c.length(0) ?: return emptyList()
+        val sides = c.picks.signs
+        val picked = c.picks.elements
+        val hover = c.under { it.isCurve }?.takeIf { h -> picked.none { it === h } }
+        val curves =
+            (picked + listOfNotNull(hover)).mapIndexed { i, el ->
+                val piece = carrierPieceOf(c.ev.valueOf(el.ref) ?: return emptyList()) ?: return emptyList()
+                CarrierCurve(piece, Tools.sideOf(sides.getOrElse(i) { c.side.ordinal }))
+            }
+        if (curves.isEmpty()) return emptyList()
+        val (body, _) = thickNetwork(curves, t)
+        return body?.let { regionShapes(it.region) } ?: emptyList()
+    }
+
+    private fun carrierPieceOf(v: constructit.core.Value): ProfileElement? =
+        when (v) {
+            is SegmentValue -> ProfileElement.Seg(v.seg)
+            is ArcValue -> ProfileElement.ArcE(v.arc)
+            is BezierValue -> ProfileElement.BezierE(v.bezier)
+            else -> null
+        }
 
     private fun loopShapes(l: Loop): List<PreviewShape> =
         l.elements.map {

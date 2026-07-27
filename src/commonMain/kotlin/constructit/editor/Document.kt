@@ -40,8 +40,10 @@ import constructit.dsl.SolidRef
 import constructit.dsl.instance
 import constructit.dsl.roundedRect
 import constructit.dsl.valueOf
+import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
+import constructit.geom.CarrierCurve
 import constructit.geom.FilletLeg
 import constructit.geom.FilletMath
 import constructit.geom.FilletVariant
@@ -51,8 +53,10 @@ import constructit.geom.Justification
 import constructit.geom.ProfileElement
 import constructit.geom.Segment
 import constructit.geom.SolidFace
-import constructit.geom.ThickFaces
+import constructit.geom.ThickBody
 import constructit.geom.Vec2
+import constructit.geom.thickBodyOf
+import constructit.geom.thickNetwork
 import constructit.units.Dimension
 import constructit.units.Quantity
 import constructit.units.deg
@@ -543,27 +547,72 @@ class PathInterval(
 )
 
 /**
- * A retained **thick path** (OP-21): the offset region of [thickness] around a carrier polyline,
- * justified by [justification], with parametric [intervals] along it. A wall is one use of this and
- * gives the tool its name; the model deliberately says nothing about walls.
+ * What a [ThickNetwork] is thickened over — **one type, two constructor cases** (the OP-21 extension).
  *
- * The geometry is a single [footprint] element over one `Region` node, so editing an interval or the
- * thickness **recomputes** rather than regenerates: no element is replaced, no node is orphaned, and
- * the carrier's own vertices and legs are untouched (they stay draggable exactly as any ortho path).
+ * Unifying the retained model rather than delegating between two of them is what keeps the plan
+ * convention, the jambs, the interval clamps, *Cut openings*, the inspector, the pick cycle and the file's
+ * `opening` step written once. What is *not* unified is the geometry underneath, and that is the point of
+ * the split: an [Ortho] carrier keeps computing its footprint with the very `thickFaces`/`thickRegion` it
+ * always did, so every stored `wall` step replays to the identical region.
  */
-class ThickPath(
-    val vertices: List<PointRef>,
+sealed interface ThickCarrier {
+    /**
+     * The rectilinear case the *Wall* tool draws: an ortho polyline, one [justification] for the whole run.
+     */
+    class Ortho(
+        val vertices: List<PointRef>,
+        val closed: Boolean,
+        val justification: Justification,
+        /** The carrier path this was built over, when it came from the ortho-path tool. */
+        val path: OrthoPath?,
+    ) : ThickCarrier
+
+    /**
+     * A **connected subgraph** of ordinary curves — segments, arcs, Béziers — each with its own [sides]
+     * entry. Connectivity is by shared endpoints and is a function of *values*, so it is checked inside the
+     * footprint node's `compute` and not here (see `Construction.thickNetworkFootprint`).
+     */
+    class Network(
+        val curves: List<Element>,
+        val sides: List<Justification>,
+    ) : ThickCarrier
+}
+
+/**
+ * A retained **thick network** (OP-21 and its generalization): the offset region of [thickness] around a
+ * [carrier], with parametric [intervals] along its legs. A wall is one use of this and gives the tools
+ * their names; the model deliberately says nothing about walls.
+ *
+ * The geometry is a single [footprint] element over one `Region` node, so editing the carrier, the
+ * thickness or an interval **recomputes** rather than regenerates: no element is replaced, no node is
+ * orphaned, and the carrier's own curves are untouched (they stay draggable exactly as they were).
+ */
+class ThickNetwork(
+    val carrier: ThickCarrier,
     val thickness: ScalarRef,
-    val justification: Justification,
-    val closed: Boolean,
-    /** The carrier path this was built from, when it came from the ortho-path tool. */
-    val carrier: OrthoPath?,
     /** The one displayable output: the footprint region (OP-14). */
     val footprint: Element,
 ) {
     val intervals = ArrayList<PathInterval>()
 
-    val legCount: Int get() = if (closed) vertices.size else vertices.size - 1
+    /** The ortho case's carrier vertices — empty for a curve network. */
+    val vertices: List<PointRef> get() = (carrier as? ThickCarrier.Ortho)?.vertices ?: emptyList()
+
+    /** Whether the ortho carrier is a ring. A curve network says so by enclosing area, not by a flag. */
+    val closed: Boolean get() = (carrier as? ThickCarrier.Ortho)?.closed ?: false
+
+    /** The ortho case's single justification; a network's side is per curve (`ThickCarrier.Network.sides`). */
+    val justification: Justification get() = (carrier as? ThickCarrier.Ortho)?.justification ?: Justification.CENTER
+
+    /** The ortho path this was built over, when there is one. */
+    val path: OrthoPath? get() = (carrier as? ThickCarrier.Ortho)?.path
+
+    val legCount: Int
+        get() =
+            when (carrier) {
+                is ThickCarrier.Ortho -> if (carrier.closed) carrier.vertices.size else carrier.vertices.size - 1
+                is ThickCarrier.Network -> carrier.curves.size
+            }
 }
 
 /**
@@ -576,7 +625,7 @@ class ThickPath(
  * leg is addressed through its path, and nothing is stored that could go stale.
  */
 class Jamb(
-    val path: ThickPath,
+    val path: ThickNetwork,
     val interval: PathInterval,
     val atEnd: Boolean,
     val seg: Segment,
@@ -4415,8 +4464,27 @@ class Document {
             else -> null
         }
 
-    /** Materialize a curve's defining points as derived points (works on transformed geometry too). */
+    /**
+     * Materialize a curve's defining points as derived points (works on transformed geometry too).
+     *
+     * **An area's defining points are its corners** (the OP-21 extension's *key points*): a wall footprint
+     * hands back one `regionCorner` accessor per corner it has *right now*, which is what makes a wall's
+     * corners pickable, snappable and dimensionable without the wall owning a set of elements whose size is
+     * a function of its values — the thing OP-21 exists to forbid. The count is **structural per
+     * extraction**, exactly as it is for a Bézier's controls: extract again after reshaping the carrier and
+     * you get the corners there are then, while a surplus accessor goes invalid with a reason (OP-3).
+     */
+    @Suppress("UNCHECKED_CAST")
     fun extractPoints(el: Element): List<PointRef> {
+        if (el.kind == ElementKind.AREA) {
+            val region = el.ref as RegionRef
+            val n = cx.regionCornerCount(region, Evaluator())
+            if (n == 0) {
+                note = "${nameOf(el)} has no corners to extract right now"
+                return emptyList()
+            }
+            return (0 until n).map { cx.regionCorner(region, it) }.onEach { addDerived(it) }
+        }
         val refs: List<PointRef> =
             when (el.kind) {
                 ElementKind.SEGMENT -> listOf(cx.segmentStart(el.ref as SegmentRef), cx.segmentEnd(el.ref as SegmentRef))
@@ -5347,7 +5415,7 @@ class Document {
     }
 
     /** The retained thick paths (OP-21) — a *wall* is one use of the concept, not the concept. */
-    val thickPaths = ArrayList<ThickPath>()
+    val thickNetworks = ArrayList<ThickNetwork>()
 
     // ---- the result layer (OP-14) ----
 
@@ -5847,25 +5915,67 @@ class Document {
         path: OrthoPath,
         thickness: ScalarRef,
         justification: Justification = Justification.CENTER,
-    ): ThickPath? =
+    ): ThickNetwork? =
         recording("wall", Arg.Sc(scalarEntryFor(thickness)), Arg.Text(justification.name.lowercase())) {
-            buildThickPathNow(path.vertices.map { it.ref }, thickness, justification, path.closed, path)
+            buildThickNetworkNow(path.vertices.map { it.ref }, thickness, justification, path.closed, path)
         }
 
-    private fun buildThickPathNow(
+    private fun buildThickNetworkNow(
         vertices: List<PointRef>,
         thickness: ScalarRef,
         justification: Justification,
         closed: Boolean,
         carrier: OrthoPath?,
-    ): ThickPath? {
+    ): ThickNetwork? {
         if (vertices.size < 2) return null
         val ring = closed && vertices.size >= 3
         val ref = cx.thickFootprint(vertices, thickness, ring, justification)
         val el = add(ref, ElementKind.AREA, Styles.FOOTPRINT)
-        val tp = ThickPath(vertices.toList(), thickness, justification, ring, carrier, el)
-        thickPaths.add(tp)
+        val tp = ThickNetwork(ThickCarrier.Ortho(vertices.toList(), ring, justification, carrier), thickness, el)
+        thickNetworks.add(tp)
         return tp
+    }
+
+    /**
+     * Thicken an **arbitrary connected curve network** into a wall (the OP-21 extension): every curve of
+     * [curves] gets the side [sides] gives it, and their shared endpoints are the junctions.
+     *
+     * The pick is refused **by name** when the curves do not form one connected graph, when one of them is a
+     * whole circle (nothing to join at), or when the thickness makes the footprint degenerate — asked here
+     * so a bad pick never leaves a node behind, and asked again inside the node so a later edit that pulls
+     * the network apart is invalid with the same reason rather than silently wrong.
+     *
+     * The side of each curve is a **discrete choice scored at creation** and therefore rides the tool step's
+     * existing `signs=` (OP-1/OP-18) — no new file argument, because the file already knows how to say this.
+     */
+    fun buildThickNetwork(
+        curves: List<Element>,
+        sides: List<Justification>,
+        thickness: ScalarRef,
+    ): ThickNetwork? {
+        if (curves.isEmpty() || curves.any { !it.isCurve }) {
+            note = "Thicken: pick curves — segments, arcs or Béziers — that share their endpoints"
+            return null
+        }
+        val ref = cx.thickNetworkFootprint(curves.map { it.ref }, sides, thickness)
+        (Evaluator().eval(ref.node) as? EvalResult.Invalid)?.let {
+            note = "Thicken: ${it.reason}"
+            return null
+        }
+        val el = add(ref, ElementKind.AREA, Styles.FOOTPRINT)
+        val tn = ThickNetwork(ThickCarrier.Network(curves.toList(), sides.toList()), thickness, el)
+        thickNetworks.add(tn)
+        // the per-curve sides, restated by the step that made them (OP-18) — see [scoredSigns]
+        registerSigns(el, sides.map { it.ordinal })
+        val body = bodyOf(tn, Evaluator())
+        note =
+            if (body?.approximated == true) {
+                "Wall over ${curves.size} curve${if (curves.size == 1) "" else "s"} — its offsets are " +
+                    "approximated (a Bézier's offset is not a Bézier, OP-15), so its area and its solid are too"
+            } else {
+                "Wall over ${curves.size} curve${if (curves.size == 1) "" else "s"}"
+            }
+        return tn
     }
 
     // ---- the 2D->3D seam as tools (OP-17) ----
@@ -6166,21 +6276,21 @@ class Document {
     fun cutOpenings(solidEl: Element): Element? {
         if (solidEl.kind != ElementKind.SOLID) return null
         val tp =
-            thickPaths.firstOrNull { dependsOn(solidEl.ref.node, it.footprint.ref.node, HashSet()) }
+            thickNetworks.firstOrNull { dependsOn(solidEl.ref.node, it.footprint.ref.node, HashSet()) }
                 ?: return null
         if (tp.intervals.isEmpty()) return null
         var cut = solidEl.ref as SolidRef
         for (iv in tp.intervals) {
+            // one op per carrier case, for the same reason the footprint has two (see [ThickCarrier]) —
+            // and both read the interval off the *same* leg the jamb does, which is why a curved wall's
+            // opening cuts with no case of its own
             val region =
-                cx.intervalFootprint(
-                    tp.vertices,
-                    tp.thickness,
-                    tp.closed,
-                    tp.justification,
-                    iv.legIndex,
-                    iv.position,
-                    iv.width,
-                )
+                when (val c = tp.carrier) {
+                    is ThickCarrier.Ortho ->
+                        cx.intervalFootprint(c.vertices, tp.thickness, c.closed, c.justification, iv.legIndex, iv.position, iv.width)
+                    is ThickCarrier.Network ->
+                        cx.networkIntervalFootprint(c.curves.map { it.ref }, c.sides, tp.thickness, iv.legIndex, iv.position, iv.width)
+                }
             val box = cx.extrude(cx.sketchOn(cx.planeOffset(cx.planeXY(), iv.sill), region), cx.sub(iv.head, iv.sill))
             cut = cx.subtract(cut, box)
         }
@@ -6196,58 +6306,117 @@ class Document {
         (Evaluator().eval(ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.mm } ?: 0.0
 
     /** The thick path [el] is the footprint of, if any. */
-    fun thickPathOf(el: Element): ThickPath? = thickPaths.firstOrNull { it.footprint === el }
+    fun thickNetworkOf(el: Element): ThickNetwork? = thickNetworks.firstOrNull { it.footprint === el }
 
-    /** The carrier vertex positions and offset faces of [tp] as they are now, or null if degenerate. */
-    private fun facesOf(
-        tp: ThickPath,
+    /**
+     * [tp] resolved to values — its legs, the joins between them and the footprint region — or null when
+     * the carrier is degenerate right now.
+     *
+     * The **one seam** between the two carrier cases (see [ThickCarrier]). An ortho carrier goes through the
+     * very computation it always did, so its footprint is identical to what every stored `wall` step
+     * produced before; a curve network goes through the fat-graph walk. Everything downstream of here —
+     * the plan convention, the jambs, the interval clamps — has no case per carrier kind at all.
+     */
+    fun bodyOf(
+        tp: ThickNetwork,
         ev: Evaluator,
-    ): ThickFaces? {
-        val pts = tp.vertices.map { ((ev.eval(it.node) as? EvalResult.Ok)?.value as? PointValue)?.p ?: return null }
-        return GeomMath.thickFaces(pts, tp.closed, tp.justification.offsets(scalarMm(tp.thickness, ev))).first
-    }
+    ): ThickBody? =
+        when (val c = tp.carrier) {
+            is ThickCarrier.Ortho -> {
+                val pts = c.vertices.map { ((ev.eval(it.node) as? EvalResult.Ok)?.value as? PointValue)?.p ?: return null }
+                GeomMath.thickFaces(pts, c.closed, c.justification.offsets(scalarMm(tp.thickness, ev))).first?.let { thickBodyOf(it).first }
+            }
+            is ThickCarrier.Network -> {
+                val pieces =
+                    c.curves.mapIndexed { i, el ->
+                        CarrierCurve(carrierPieceOf(ev.valueOf(el.ref) ?: return null) ?: return null, c.sides.getOrElse(i) { Justification.CENTER })
+                    }
+                thickNetwork(pieces, scalarMm(tp.thickness, ev)).first
+            }
+        }
+
+    /** A picked curve's value as a carrier piece — the kinds a wall can follow (OP-21 extension). */
+    private fun carrierPieceOf(v: Value): ProfileElement? =
+        when (v) {
+            is SegmentValue -> ProfileElement.Seg(v.seg)
+            is ArcValue -> ProfileElement.ArcE(v.arc)
+            is BezierValue -> ProfileElement.BezierE(v.bezier)
+            else -> null
+        }
 
     /**
      * The **plan drawing** of [tp] (OP-21): its footprint faces broken at every interval, plus a jamb
-     * (reveal) line across the path at each interval edge, plus end caps for an open carrier.
+     * (reveal) line across the wall at each interval edge, plus the joins (an open end's cap, a step where
+     * two offsets cannot mitre).
      *
      * A drawing convention, not a cut — the footprint region itself stays whole, which is what a plan
      * actually shows (below a sill and above a head there is material). Derived here, per render pass,
      * from evaluated values only: the intervals are sorted **by their current position**, so dragging one
      * past another re-sorts the drawing with no rebuild anywhere. That ordering is precisely the work
      * that must not happen while assembling the graph.
+     *
+     * Emitted as [ProfileElement]s rather than as segments since the OP-21 extension: a curved wall's plan
+     * is drawn with the arcs it is made of, not with a barrel of chords.
      */
     fun planOf(
-        tp: ThickPath,
+        tp: ThickNetwork,
         ev: Evaluator,
-    ): List<Segment>? {
-        val f = facesOf(tp, ev) ?: return null
-        val perLeg = (0 until f.legCount).map { intervalsOnLeg(tp, it, ev) }
-        val out = ArrayList<Segment>()
-
-        fun emit(
-            a: Vec2,
-            b: Vec2,
-        ) {
-            if ((b - a).length() > Vec2.EPS) out.add(Segment(a, b))
-        }
+    ): List<ProfileElement>? {
+        val body = bodyOf(tp, ev) ?: return null
+        val perLeg = (0 until body.legCount).map { intervalsOnLeg(tp, it, ev) }
+        val out = ArrayList<ProfileElement>()
         for (side in 0..1) {
-            val corners = f.faces[side]
-            for (i in 0 until f.legCount) {
-                var cursor = corners[i]
+            for (i in 0 until body.legCount) {
+                val leg = body.legs[i]
+                val run = leg.runs[side]
+                var cursor = GeomMath.startOf(run.first())
                 for (a in perLeg[i]) {
-                    emit(cursor, GeomMath.facePoint(f, i, a.position, side))
-                    cursor = GeomMath.facePoint(f, i, a.position + a.width, side) // solid piece, then the gap
+                    out.addAll(subRun(run, cursor, leg.facePoint(a.position, side)))
+                    cursor = leg.facePoint(a.position + a.width, side) // solid piece, then the gap
                 }
-                emit(cursor, corners[(i + 1) % corners.size])
+                out.addAll(subRun(run, cursor, GeomMath.endOf(run.last())))
             }
         }
-        if (!tp.closed) {
-            emit(f.faces[0].first(), f.faces[1].first())
-            emit(f.faces[0].last(), f.faces[1].last())
-        }
-        for (j in jambsOn(tp, f, perLeg)) emit(j.seg.a, j.seg.b)
+        for (j in body.joins) if ((j.b - j.a).length() > Vec2.EPS) out.add(ProfileElement.Seg(j))
+        for (j in jambsOn(tp, body, perLeg)) out.add(ProfileElement.Seg(j.seg))
         return out
+    }
+
+    /**
+     * The stretch of an offset [run] between two points on it — the plan's "solid here, gap there".
+     *
+     * Kind-preserving, which is the whole reason it exists: on a straight run this is one segment (exactly
+     * what the plan always emitted), on an arc run a shorter arc of the same circle, on a sampled run the
+     * sub-polyline. Empty when the two points coincide, so a zero-width piece draws nothing.
+     */
+    private fun subRun(
+        run: List<ProfileElement>,
+        from: Vec2,
+        to: Vec2,
+    ): List<ProfileElement> {
+        if ((to - from).length() <= Vec2.EPS) return emptyList()
+        val single = run.singleOrNull()
+        if (single is ProfileElement.ArcE) {
+            val c = single.arc.center
+            return listOf(
+                ProfileElement.ArcE(
+                    Arc(c, single.arc.radius, (from - c).angle(), (to - c).angle(), single.arc.ccw),
+                ),
+            )
+        }
+        if (single != null) return listOf(ProfileElement.Seg(Segment(from, to)))
+        // a sampled run: keep the interior samples that lie between the two cuts
+        val pts = listOf(run.first()).map { GeomMath.startOf(it) } + run.map { GeomMath.endOf(it) }
+        val dir = (GeomMath.endOf(run.last()) - GeomMath.startOf(run.first())).normalized()
+        val lo = (from - pts.first()).dot(dir)
+        val hi = (to - pts.first()).dot(dir)
+        val inner =
+            pts.filter {
+                val t = (it - pts.first()).dot(dir)
+                t > lo + Vec2.EPS && t < hi - Vec2.EPS
+            }
+        val chain = listOf(from) + inner + listOf(to)
+        return (0 until chain.size - 1).map { ProfileElement.Seg(Segment(chain[it], chain[it + 1])) }
     }
 
     /** One interval of a leg as the drawing sees it: the feature, plus its position and width right now. */
@@ -6255,7 +6424,7 @@ class Document {
 
     /** [tp]'s intervals on leg [i], **ordered by their current position** (see [planOf]). */
     private fun intervalsOnLeg(
-        tp: ThickPath,
+        tp: ThickNetwork,
         i: Int,
         ev: Evaluator,
     ): List<IntervalAt> =
@@ -6270,24 +6439,27 @@ class Document {
      * grabbed (OP-21).
      */
     fun jambsOf(
-        tp: ThickPath,
+        tp: ThickNetwork,
         ev: Evaluator,
     ): List<Jamb> {
-        val f = facesOf(tp, ev) ?: return emptyList()
-        return jambsOn(tp, f, (0 until f.legCount).map { intervalsOnLeg(tp, it, ev) })
+        val body = bodyOf(tp, ev) ?: return emptyList()
+        return jambsOn(tp, body, (0 until body.legCount).map { intervalsOnLeg(tp, it, ev) })
     }
 
     private fun jambsOn(
-        tp: ThickPath,
-        f: ThickFaces,
+        tp: ThickNetwork,
+        body: ThickBody,
         perLeg: List<List<IntervalAt>>,
     ): List<Jamb> {
         val out = ArrayList<Jamb>()
-        for (i in 0 until f.legCount) {
+        for (i in 0 until body.legCount) {
+            val leg = body.legs[i]
             for (a in perLeg[i]) {
                 for (atEnd in listOf(false, true)) {
                     val d = if (atEnd) a.position + a.width else a.position
-                    out.add(Jamb(tp, a.interval, atEnd, Segment(GeomMath.facePoint(f, i, d, 0), GeomMath.facePoint(f, i, d, 1))))
+                    // on an arc leg this comes out **radial**, which is what a plan draws — and it needed no
+                    // case of its own, because a jamb was always "the two face points at one arc length"
+                    out.add(Jamb(tp, a.interval, atEnd, Segment(leg.facePoint(d, 0), leg.facePoint(d, 1))))
                 }
             }
         }
@@ -6299,20 +6471,21 @@ class Document {
      * jamb emphasizes, and derived from the same arithmetic as the plan it is drawn over.
      */
     fun intervalOutline(
-        tp: ThickPath,
+        tp: ThickNetwork,
         iv: PathInterval,
         ev: Evaluator,
     ): List<Segment> {
-        val f = facesOf(tp, ev) ?: return emptyList()
+        val body = bodyOf(tp, ev) ?: return emptyList()
         val i = iv.legIndex
-        if (i !in 0 until f.legCount) return emptyList()
+        if (i !in 0 until body.legCount) return emptyList()
+        val leg = body.legs[i]
         val a = scalarMm(iv.position, ev)
         val b = a + scalarMm(iv.width, ev)
         return listOf(
-            Segment(GeomMath.facePoint(f, i, a, 0), GeomMath.facePoint(f, i, a, 1)),
-            Segment(GeomMath.facePoint(f, i, b, 0), GeomMath.facePoint(f, i, b, 1)),
-            Segment(GeomMath.facePoint(f, i, a, 0), GeomMath.facePoint(f, i, b, 0)),
-            Segment(GeomMath.facePoint(f, i, a, 1), GeomMath.facePoint(f, i, b, 1)),
+            Segment(leg.facePoint(a, 0), leg.facePoint(a, 1)),
+            Segment(leg.facePoint(b, 0), leg.facePoint(b, 1)),
+            Segment(leg.facePoint(a, 0), leg.facePoint(b, 0)),
+            Segment(leg.facePoint(a, 1), leg.facePoint(b, 1)),
         )
     }
 
@@ -6325,24 +6498,26 @@ class Document {
      * bounded by exactly the same rule.
      */
     fun positionAlongLeg(
-        tp: ThickPath,
+        tp: ThickNetwork,
         i: Int,
         at: Vec2,
         ev: Evaluator = Evaluator(),
     ): Double? {
-        val f = facesOf(tp, ev) ?: return null
-        if (i !in 0 until f.legCount) return null
-        return (at - f.legs[i].origin).dot(f.legs[i].dir)
+        val body = bodyOf(tp, ev) ?: return null
+        if (i !in 0 until body.legCount) return null
+        // arc length along the leg, whatever kind of curve it is: the angle about the centre times the
+        // radius for an arc, the cumulative polyline length for a Bézier (the OP-21 extension)
+        return body.legs[i].distanceAt(at)
     }
 
     /** The current length of leg [i] of [tp] — the extent every interval on it is bounded by. */
     fun legLengthOf(
-        tp: ThickPath,
+        tp: ThickNetwork,
         i: Int,
         ev: Evaluator = Evaluator(),
     ): Double? {
-        val f = facesOf(tp, ev) ?: return null
-        return f.legLengths.getOrNull(i)
+        val body = bodyOf(tp, ev) ?: return null
+        return body.legs.getOrNull(i)?.length
     }
 
     /**
@@ -6356,7 +6531,7 @@ class Document {
      * silently stops following the pointer reads as a bug.
      */
     fun setIntervalPosition(
-        tp: ThickPath,
+        tp: ThickNetwork,
         iv: PathInterval,
         mm: Double,
     ): Boolean {
@@ -6385,7 +6560,7 @@ class Document {
      * edge stays where it is, so this *is* a write of the width, and it goes through the same clamp.
      */
     fun setIntervalEnd(
-        tp: ThickPath,
+        tp: ThickNetwork,
         iv: PathInterval,
         mm: Double,
     ): Boolean = setIntervalWidth(tp, iv, mm - evalMm(iv.position))
@@ -6403,7 +6578,7 @@ class Document {
      * if the others are off screen, so it is named.
      */
     fun setIntervalWidth(
-        tp: ThickPath,
+        tp: ThickNetwork,
         iv: PathInterval,
         mm: Double,
     ): Boolean {
@@ -6417,7 +6592,7 @@ class Document {
         val max = maxOf(MIN_INTERVAL_WIDTH, len - pos)
         val want = mm.coerceIn(MIN_INTERVAL_WIDTH, max)
         node.literal = ScalarValue(want.mm)
-        val shared = thickPaths.sumOf { p -> p.intervals.count { it !== iv && it.width.node === node } }
+        val shared = thickNetworks.sumOf { p -> p.intervals.count { it !== iv && it.width.node === node } }
         note =
             when {
                 kotlin.math.abs(want - mm) > Vec2.EPS && mm <= 0.0 ->
@@ -6464,7 +6639,7 @@ class Document {
      * the footprint node is not even touched, and the plan drawing re-derives itself.
      */
     fun addInterval(
-        tp: ThickPath,
+        tp: ThickNetwork,
         legIndex: Int,
         position: Quantity,
         width: ScalarRef,
@@ -6502,24 +6677,24 @@ class Document {
         tol: Double,
     ): Boolean {
         val ev = Evaluator()
-        var best: ThickPath? = null
+        var best: ThickNetwork? = null
         var bestLeg = -1
         var bestPos = 0.0
         var bestLen = 0.0
         var bestD = Double.MAX_VALUE
-        for (tp in thickPaths) {
+        for (tp in thickNetworks) {
             val threshold = tol + evalMm(tp.thickness) / 2 // clicking anywhere on the body counts
-            val f = facesOf(tp, ev) ?: continue
-            for (i in 0 until f.legCount) {
-                val leg = f.legs[i]
-                val along = (at - leg.origin).dot(leg.dir).coerceIn(0.0, f.legLengths[i])
-                val d = (at - (leg.origin + leg.dir * along)).length()
+            val body = bodyOf(tp, ev) ?: continue
+            for (i in 0 until body.legCount) {
+                val leg = body.legs[i]
+                val along = leg.distanceAt(at).coerceIn(0.0, leg.length)
+                val d = (at - leg.pointAt(along)).length()
                 if (d <= threshold && d < bestD) {
                     bestD = d
                     best = tp
                     bestLeg = i
                     bestPos = along
-                    bestLen = f.legLengths[i]
+                    bestLen = leg.length
                 }
             }
         }

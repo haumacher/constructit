@@ -104,6 +104,11 @@ first-class goal and the current implementation focus.
   editing, axis-aligned by construction, closeable loops) and parametric **walls**: a *thick path*,
   i.e. one offset region around the path (mitred corners, end caps, a ring where the path closes),
   with **openings** (doors/windows) as parametric intervals carrying position, width, sill and head.
+  A wall's carrier need not be rectilinear: *Thicken* takes **any connected network of curves** —
+  segments, arcs, Béziers — with the side (left/right/centred) chosen per curve, and where three or
+  more walls meet the footprint resolves by the cyclic order of the curves there, so a T-junction is
+  one area with no overlap and no sliver. Arc walls offset to real concentric arcs; a Bézier's offset
+  is honestly sampled. A footprint's corners are extractable as ordinary snappable points.
   In plan the wall stays whole and the gap is drawn as the convention it is — faces broken, jambs
   shown — while *Cut openings* turns the same description into the 3D cut: one subtracted box per
   opening, sill to head, following the parameters live. Those drawn jambs are **grabbable**: dragging

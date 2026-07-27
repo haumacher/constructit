@@ -783,7 +783,7 @@ object DocumentFormat {
         words: List<String>,
         footprint: Element,
     ) {
-        val tp = doc.thickPathOf(footprint) ?: throw LoadError("'${words[1]}' is not a thick path's footprint")
+        val tp = doc.thickNetworkOf(footprint) ?: throw LoadError("'${words[1]}' is not a thick path's footprint")
         val keyed = HashMap<String, String>()
         for (w in words.drop(2)) {
             val key = w.substringBefore('=')

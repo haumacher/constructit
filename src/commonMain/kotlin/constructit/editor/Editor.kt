@@ -695,6 +695,14 @@ class Editor(
      * is when the cursor exists; a tool that does not join simply never reads it.
      */
     private val pickedLandings = ArrayList<SnapResult?>()
+
+    /**
+     * The **wall side in effect at each pick**, for a tool that declares [ToolDef.sidePerPick] (the OP-21
+     * extension). Collected here rather than read at build time because the option applies to the *next*
+     * click, so a run whose curves take different sides is one gesture — and it rides the step's existing
+     * `signs=`, which is where a scored discrete choice already belongs (OP-1/OP-18).
+     */
+    private val pickedSides = ArrayList<Int>()
     private var filledSlots = 0
 
     /**
@@ -888,6 +896,7 @@ class Editor(
         pickedElements.clear()
         pickedClicks.clear()
         pickedLandings.clear()
+        pickedSides.clear()
         filledSlots = 0
         pickedGroup = null
         pickRefusal = null
@@ -2125,7 +2134,7 @@ class Editor(
                 count = toolCount(tool),
                 landings = pickedLandings.toList(),
             )
-        toolPreview = preview(PreviewContext(doc, ev, picks, previewScalars(tool, ev), world, tolWorld()))
+        toolPreview = preview(PreviewContext(doc, ev, picks, previewScalars(tool, ev), world, tolWorld(), justification))
     }
 
     /** Recompute the preview where the cursor last was — for a typed value or a count change. */
@@ -2851,16 +2860,23 @@ class Editor(
     fun finishRepeatingTool(): Boolean {
         val tool = doc.toolDef(toolId) ?: return false
         if (!tool.repeating || filledSlots == 0) return false
-        val picks = Picks(pickedPoints.toList(), pickedElements.toList(), pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0), pickedClicks.toList())
+        val picks =
+            Picks(
+                pickedPoints.toList(),
+                pickedElements.toList(),
+                pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0),
+                pickedClicks.toList(),
+                signs = pickedSides.toList(),
+            )
         val scalars = toolScalars(tool)
         when {
             scalars == null -> statusHint = scalarPrompt(tool)
-            filledSlots >= 2 -> {
+            filledSlots >= tool.minPicks -> {
                 doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
                 checkpoint()
-                statusHint = ""
+                statusHint = doc.takeNote() ?: ""
             }
-            else -> statusHint = "${tool.label}: needs at least two curves"
+            else -> statusHint = "${tool.label}: needs at least ${tool.minPicks} curve${if (tool.minPicks == 1) "" else "s"}"
         }
         resetPicks()
         onChange()
@@ -3026,6 +3042,8 @@ class Editor(
                 }
                 SlotKind.EXISTING_POINT -> pickElement(world) { it.isPoint }
                 SlotKind.CURVE -> pickElement(world) { it.isCurve }
+                // a curve's defining points, or an area's corners (the OP-21 extension's key points)
+                SlotKind.EXTRACTABLE -> pickElement(world) { it.isCurve || it.isArea }
                 SlotKind.LINE -> pickElement(world) { it.isLinear } // a segment or ray also carries a line
                 // ...and an arc also carries a circle: the twin coercion, so a circle slot takes one
                 SlotKind.CIRCLE -> pickElement(world) { it.isCentric }
@@ -3066,13 +3084,15 @@ class Editor(
             // beside the click rather than *instead* of it: what a click position means is the tool's business
             // (a side, a quadrant, a sector), and only a tool that joins reads the landing.
             pickedLandings.add(snap(world).takeIf { it.linked })
+            // the wall side this click was made under (the OP-21 extension) — a choice, hence a sign
+            if (tool.sidePerPick) pickedSides.add(justification.ordinal)
         }
 
         if (tool.repeating) {
             statusHint = "${tool.help} ($filledSlots picked)"
             // two picks fix the direction, so from there the boundary can be followed wherever it is not
             // a choice — see [extendBoundaryPicks]
-            if (filledSlots >= 2) extendBoundaryPicks()
+            if (tool.followsBoundary && filledSlots >= 2) extendBoundaryPicks()
             onChange()
             return
         }

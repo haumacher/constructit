@@ -119,7 +119,7 @@ class DeleteTest {
         ed.selectAt(Vec2(50.0, 5.0)) // the footprint, picked on one of its faces
         assertTrue(ed.deleteSelection())
 
-        assertTrue(ed.doc.thickPaths.isEmpty())
+        assertTrue(ed.doc.thickNetworks.isEmpty())
         assertEquals(1, ed.doc.orthoPaths.single().legCount, "the carrier is upstream of the thick path")
         assertTrue(ed.doc.scalars.any { it.name == "t" }, "a parameter is a panel entity, not a dependent")
         assertRoundTrips(ed)
@@ -142,12 +142,12 @@ class DeleteTest {
         ed.setTool(Tools.OPENING)
         ed.click(Vec2(30.0, 0.0))
         ed.click(Vec2(75.0, 0.0))
-        assertEquals(2, ed.doc.thickPaths.single().intervals.size)
+        assertEquals(2, ed.doc.thickNetworks.single().intervals.size)
 
         ed.selectAt(Vec2(50.0, 5.0)) // the footprint
         assertTrue(ed.deleteSelection())
 
-        assertTrue(ed.doc.thickPaths.isEmpty())
+        assertTrue(ed.doc.thickNetworks.isEmpty())
         assertTrue(ed.doc.journal.none { it.kind == "opening" }, "the intervals go with the path they described")
         assertEquals(1, ed.doc.orthoPaths.single().legCount, "the carrier survives")
         assertRoundTrips(ed)
@@ -171,7 +171,7 @@ class DeleteTest {
         assertEquals(ElementKind.SEGMENT, ed.selection?.kind)
         assertTrue(ed.deleteSelection())
 
-        assertTrue(ed.doc.thickPaths.isEmpty(), "the footprint is downstream of the carrier vertices")
+        assertTrue(ed.doc.thickNetworks.isEmpty(), "the footprint is downstream of the carrier vertices")
         assertTrue(ed.doc.journal.none { it.kind == "opening" })
         assertRoundTrips(ed)
     }
