@@ -445,6 +445,32 @@ class Editor(
     var showGrid: Boolean = false
 
     /**
+     * The corner scale bar (see [SceneRenderer.scaleBarLength]). A **view** setting with exactly the same
+     * shape as [showGrid], and off by default for the same reason: the SVG goldens are goldens of geometry,
+     * and the shell switches it on where a person is looking at the drawing.
+     */
+    var showScaleBar: Boolean = false
+
+    /**
+     * The element the pointer is over **in the panel** — a name in the inspector's *built from* / *used by*
+     * rows, or a row of the element list. Purely transient: it is not a selection, nothing acts on it, and
+     * the next repaint after the pointer leaves clears it (see [SceneRenderer]'s spotlight).
+     *
+     * Deliberately a separate concept from the selection, and this is the line session 13 drew about hover:
+     * *the selection is decided on press and on release only*. A spotlight decides nothing.
+     */
+    var spotlight: Element? = null
+        private set
+
+    /** Point the spotlight at [el] (null clears it). True when the highlight actually changed. */
+    fun setSpotlight(el: Element?): Boolean {
+        if (el === spotlight) return false
+        spotlight = el
+        onChange()
+        return true
+    }
+
+    /**
      * Dim the construction that the results are built from (OP-14), so the drawing reads on its own.
      * A *view* setting: which elements are scaffolding is derived from the graph, so nothing is
      * flagged and nothing can drift out of date.
@@ -963,7 +989,74 @@ class Editor(
                 is OrthoCornerHandle -> "corner"
                 else -> el.kind.name.lowercase()
             }
-        return "$kind ${doc.nameOf(el)}"
+        return "$kind ${doc.displayName(el)}"
+    }
+
+    // ---- what the selection is built from, and what is built on it (see [Dependencies]) ----
+
+    /**
+     * The single element the dependency rows and the canvas highlights are about, or null.
+     *
+     * One element only, exactly as [selectionFields] is: two selections have two answers and the inspector
+     * has one place to put them, and a highlight over the union of two cones is a highlight of everything.
+     */
+    private fun dependencySubject(): Element? = selection?.takeIf { selected.size == 1 }
+
+    /** The elements the selection is built from, with their roles — the inspector's *built from* row. */
+    fun selectionInputs(): List<InputRole> = dependencySubject()?.let { Dependencies.inputsOf(doc, it) } ?: emptyList()
+
+    /** The elements built on the selection — the inspector's *used by* row. */
+    fun selectionDependents(): List<Element> = dependencySubject()?.let { Dependencies.dependentsOf(doc, it) } ?: emptyList()
+
+    /**
+     * Name the selected element, or clear the name with a blank string (OP-7 one level up). One user-level
+     * operation, hence one checkpoint; returns the name it actually **took**, or null when refused.
+     */
+    fun nameElement(
+        el: Element,
+        name: String,
+    ): String? {
+        val was = doc.userNameOf(el)
+        val now = doc.nameElement(el, name)
+        if (now == null) {
+            statusHint = "${doc.nameOf(el)} was not built by a step of its own, so the file has nowhere to put a name for it"
+            onChange()
+            return null
+        }
+        if (now != (was ?: "")) {
+            checkpoint()
+            statusHint =
+                when {
+                    now.isEmpty() -> "${doc.nameOf(el)} is back to its script name"
+                    else -> "${doc.nameOf(el)} is now \"$now\""
+                }
+        }
+        onChange()
+        return now
+    }
+
+    /**
+     * Rename group [g] (OP-16 × OP-7). The same shape as [renameParameter]: uniquified, one checkpoint, and
+     * the name it actually took comes back so the field can show the result rather than the request.
+     */
+    fun renameGroup(
+        g: Group,
+        name: String,
+    ): String? {
+        val was = g.name
+        val now = doc.renameGroup(g, name)
+        if (now == null) {
+            statusHint = "$was has no step of its own in the file, so renaming it could not be saved"
+            onChange()
+            return null
+        }
+        if (now != was) {
+            checkpoint()
+            val asked = name.trim()
+            statusHint = "Renamed group $was to $now" + if (asked.isNotEmpty() && now != asked) " (\"$asked\" was taken or not one word)" else ""
+        }
+        onChange()
+        return now
     }
 
     /**
@@ -1541,6 +1634,10 @@ class Editor(
             picked = pickedElements.toHashSet(),
             // the selected opening's own drawing (OP-21), since it has no element to emphasize
             emphasis = selectedJamb?.let { doc.intervalOutline(it.path, it.interval, ev) } ?: emptyList(),
+            inputs = selectionInputs().map { it.element }.toHashSet(),
+            dependents = selectionDependents().toHashSet(),
+            spotlight = spotlight?.let { setOf(it) } ?: emptySet(),
+            scaleBar = showScaleBar,
         )
     }
 

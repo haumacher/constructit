@@ -31,6 +31,18 @@
         #palette .tkey { float: right; font-size: 10px; color: #888; border: 1px solid #ddd; border-radius: 3px;
             padding: 0 3px; margin-left: 4px; }
         #palette .tool.active .tkey { color: #fff; border-color: rgba(255,255,255,.6); }
+        /* icon buttons: a wrapping grid per category, the glyph inheriting the button's colour so the
+           active state costs the icon nothing (see Icons.kt) */
+        #palette .icons { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+        #palette .tool.icon { width: 34px; height: 34px; padding: 0; margin: 0; position: relative;
+            display: inline-flex; align-items: center; justify-content: center; color: #333; }
+        #palette .tool.icon.active { color: #fff; }
+        /* the glyph is transparent to the pointer, so a click is always a click on the button */
+        #palette .tool.icon svg { display: block; pointer-events: none; }
+        /* the shortcut badge in the button's corner — same fact as the text rows', a tenth of the space */
+        #palette .tool.icon .tkey { position: absolute; right: 1px; bottom: 0; float: none; border: none;
+            margin: 0; padding: 0; font-size: 8px; line-height: 1; color: #999; }
+        #palette .tool.icon.active .tkey { color: rgba(255,255,255,.85); }
 
         #canvas-area { flex: 1; position: relative; background: #fff; }
         #canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
@@ -80,6 +92,23 @@
         .frow .funit { width: 18px; color: #999; }
         #inspector .selname { font-size: 12px; color: #1f77b4; padding: 0 4px 2px; }
         #inspector .hint { font-size: 11px; color: #999; padding: 0 4px; }
+        /* A region of its own, of a FIXED height that scrolls internally: what the inspector shows depends
+           on what is selected (nothing, a jamb, a frame, six handle fields), and letting that decide the
+           panel's layout moved every list below it under the cursor on every click. */
+        #inspector { height: 176px; overflow-y: auto; overflow-x: hidden; border: 1px solid #e6e6e6;
+            border-radius: 6px; background: #fff; padding: 4px 2px; }
+        /* the element's own name (OP-7): reads as text until hovered or focused, like a parameter's */
+        #inspector .fname { flex: 1; min-width: 0; font: inherit; font-size: 12px; border: 1px solid transparent;
+            background: transparent; padding: 1px 3px; border-radius: 3px; }
+        #inspector .fname:hover, #inspector .fname:focus { border-color: #bcd; background: #fff; }
+        /* built from / used by (see Dependencies.kt): the graph, said in names */
+        .drow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px; padding: 3px 4px 0; font-size: 11px; }
+        .drow .dlabel { color: #999; width: 100%; }
+        .drow .dep { border: 1px solid #cfe6cf; background: #f2f9f2; color: #237023; border-radius: 4px;
+            padding: 0 4px; cursor: pointer; }
+        .drow .dep:hover { background: #e2f3e2; }
+        .drow.used .dep { border-color: #e4e5c2; background: #fbfbef; color: #7c7d17; }
+        .drow.used .dep:hover { background: #f4f4dc; }
         #sel-actions, #groups-form { display: flex; gap: 4px; margin: 4px 0 6px; }
         #sel-actions button, #groups-form button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff;
             border-radius: 6px; cursor: pointer; }
@@ -88,6 +117,10 @@
         .grow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
         .grow:hover { background: #eef4fb; }
         .grow .gname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        /* editable in place, exactly as a parameter's name is (OP-16 × OP-7) */
+        .grow input.gname { font: inherit; font-size: 12px; border: 1px solid transparent; background: transparent;
+            padding: 1px 2px; border-radius: 3px; }
+        .grow input.gname:hover, .grow input.gname:focus { border-color: #bcd; background: #fff; }
         .grow .gcount { color: #999; }
         .grow button { border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; font-size: 11px; line-height: 1; padding: 2px 4px; }
         /* the shared create dialog: group, or tool (OP-16 — one dialog, two defaults) */

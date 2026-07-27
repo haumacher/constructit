@@ -639,6 +639,132 @@ class BrowserE2ETest {
     }
 
     /**
+     * **The panel polish, end to end** (queue #18): the icon palette, the inspector that does not move the
+     * panel under the cursor, the dependency rows, and the two renames.
+     *
+     * Four of the five items are only observable in a real shell, which is why they are here rather than in
+     * the headless suite. (1) The palette is really made of icon buttons, and every id and every shortcut
+     * badge every other flow addresses is still there. (2) The elements list does not shift by a pixel when
+     * something is selected or deselected — the assertion the fixed-height inspector exists for, and one no
+     * unit test can make. (3) Hovering a name in *built from* changes the canvas, which is the whole point of
+     * a spotlight. (4) A group's name and an element's name are both editable in place, and both stick.
+     */
+    @Test
+    fun panelPolishInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            fun tree(): List<String> = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+            // ---- (2) the icon palette ----
+            assertTrue(page.querySelectorAll("#palette .tool.icon").size >= 30, "most tools carry a glyph")
+            assertTrue(page.querySelector("#tool-point svg") != null, "and a glyph is inline SVG, not an asset")
+            assertTrue(page.querySelector("#tool-fillet svg") != null, "including the operations, not just the shapes")
+            assertTrue(page.querySelectorAll("#palette .tkey").size >= 10, "the shortcut badges survive the icons")
+            val tip = page.querySelector("#tool-circleR").getAttribute("title")
+            assertTrue(
+                tip.startsWith("Circle (centre, radius)") && tip.contains("shortcut C"),
+                "an icon button's tooltip carries the words: label, help and key; got: $tip",
+            )
+            // a tool with no legible glyph keeps its text row, which is the stated cut
+            assertTrue(page.querySelectorAll("#palette .tool:not(.icon)").size > 0, "and the rest stay text rows")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/18-icon-palette.png")))
+
+            // ---- a circle over two points, so there is something with inputs ----
+            val box = page.querySelector("#canvas").boundingBox()
+            val ax = box.x + box.width * 0.35
+            val bx = box.x + box.width * 0.55
+            val y = box.y + box.height * 0.5
+            page.click("#tool-point")
+            page.keyboard().down("Alt")
+            page.mouse().click(ax, y)
+            page.mouse().click(bx, y)
+            page.keyboard().up("Alt")
+            page.click("#tool-circle")
+            page.mouse().click(ax, y)
+            page.mouse().click(bx, y)
+            page.click("#tool-select")
+            assertTrue(tree().size == 3, "two points and a circle; got ${tree()}")
+
+            // ---- (3) the inspector never moves the lists below it ----
+            fun treeTop(): Double =
+                (page.evaluate("() => document.querySelector('#tree').getBoundingClientRect().top") as Number).toDouble()
+            val idle = treeTop()
+            page.querySelectorAll("#tree .item").first { it.textContent().startsWith("circle") }.click()
+            val selected = treeTop()
+            assertTrue(idle == selected, "selecting must not reflow the panel ($idle -> $selected)")
+            page.mouse().click(box.x + box.width * 0.9, box.y + box.height * 0.9) // deselect on empty space
+            assertTrue(treeTop() == idle, "and neither must deselecting (${treeTop()} vs $idle)")
+
+            // ---- (1) built from / used by, and the hover spotlight ----
+            page.querySelectorAll("#tree .item").first { it.textContent().startsWith("circle") }.click()
+            val chips = page.querySelectorAll("#inspector .drow .dep").map { it.textContent() }
+            assertTrue(
+                chips == listOf("centre e1", "radius point e2"),
+                "the inspector names the circle's inputs with the roles the tool declares; got $chips",
+            )
+            val quiet = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            page.hover("#inspector .drow .dep")
+            assertTrue(
+                (page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String) != quiet,
+                "hovering a name should light that element up on the canvas",
+            )
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/19-dependencies.png")))
+            page.querySelectorAll("#inspector .drow .dep").first().click()
+            assertTrue(
+                page.querySelector("#inspector .selname").textContent().contains("e1"),
+                "…and clicking it goes there; got: ${page.querySelector("#inspector .selname").textContent()}",
+            )
+
+            // ---- (4a) an element's own name ----
+            page.fill("#insp-name", "bore-axis")
+            page.querySelector("#insp-name").press("Enter")
+            assertTrue(
+                tree().any { it.contains("bore-axis (e1)") },
+                "the named element shows its label *and* its script name; got ${tree()}",
+            )
+            assertTrue(status().contains("\"bore-axis\""), "and the shell says so; got: ${status()}")
+
+            // ---- (4b) a group's name, editable in the groups panel ----
+            page.mouse().move(box.x + box.width * 0.05, box.y + box.height * 0.95)
+            page.mouse().down()
+            page.mouse().move(box.x + box.width * 0.95, box.y + box.height * 0.05)
+            page.mouse().up()
+            page.click("#g-add")
+            page.fill("#cd-name", "kitchen")
+            page.click("#cd-ok")
+            assertTrue(page.querySelectorAll("#groups-list .grow").size == 1, "the group is in the panel")
+            page.fill("#groups-list .grow input.gname", "larder")
+            page.querySelector("#groups-list .grow input.gname").press("Enter")
+            assertTrue(
+                page.querySelector("#groups-list .grow input.gname").inputValue() == "larder",
+                "the field shows the name it took",
+            )
+            assertTrue(status().contains("Renamed group kitchen to larder"), "and the shell says so; got: ${status()}")
+            // the drawing still saves and the name went with it (the `place` step names the group too)
+            page.click("#f-copy")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/20-renamed-group.png")))
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
+
+    /**
      * How many canvas pixels are painted in the **preview colour** (`#ff7f0e`, `SceneRenderer.previewStyle`).
      *
      * A canvas has no DOM to query, so a preview can only be observed as pixels; the match is loose per

@@ -160,20 +160,36 @@ object DocumentFormat {
             "group", "hide", "show" ->
                 step.args.map { arg ->
                     val els = (arg as? Arg.Keyed)?.value as? Arg.Els
-                    if (arg is Arg.Keyed && els != null) Arg.Keyed(arg.key, Arg.Els(els.els.filter { it.id in names })) else arg
+                    when {
+                        arg is Arg.Keyed && els != null -> Arg.Keyed(arg.key, Arg.Els(els.els.filter { it.id in names }))
+                        // a group's name is state too (OP-7's rename pattern one level up): the step that
+                        // *declares* it writes the name it has now, and load resolves the `place` step by it
+                        arg is Arg.Label && step.kind == "group" -> doc.groupDeclaredBy(step)?.let { Arg.Label(it.name) } ?: arg
+                        else -> arg
+                    }
                 }
+            // the name a user gave an element ([Document.nameElement]): restated, because a rename must not
+            // add a second step — the name is state, exactly as a parameter's value is
+            "name" -> {
+                val el = (step.args.firstOrNull() as? Arg.El)?.el
+                val given = el?.let { doc.userNameOf(it) }
+                if (given == null) step.args else listOf(step.args[0], Arg.Label(given))
+            }
             // a placement's frame is state (OP-16 step 2): the origin and angle are re-read from the frame
             // source, so a dragged or typed group comes back where it now is. The members' own steps are
             // replayed *before* this one retrofits them, and each restates the position that retrofit
             // expects — a free point's world position, a captured path vertex's pre-capture one — so the
             // script needs no local coordinates in it at all (see [Document.restatedPosition]).
+            // …and the placement names the group it places. Resolved by **step identity**, never by the
+            // recorded label: a renamed group would otherwise stop matching, and the frame — the one thing
+            // this step exists to restate — would silently revert to where it was first placed.
             "place" -> {
-                val g = doc.groups.firstOrNull { it.name == (step.args.firstOrNull() as? Arg.Label)?.s }
+                val g = doc.groupPlacedBy(step)
                 val f = g?.frameNode?.let { (ev.eval(it) as? EvalResult.Ok)?.value as? FrameValue }
                 if (f == null) {
                     step.args
                 } else {
-                    listOf(step.args[0], Arg.Keyed("at", Arg.Pos(f.origin)), Arg.Keyed("angle", Arg.Num(Quantity.rad(f.angle))))
+                    listOf(Arg.Label(g.name), Arg.Keyed("at", Arg.Pos(f.origin)), Arg.Keyed("angle", Arg.Num(Quantity.rad(f.angle))))
                 }
             }
             "param" -> {
@@ -620,6 +636,10 @@ object DocumentFormat {
             // visibility as a recorded decision (OP-18's reversal): one step per gesture, whole selection
             "hide", "show" -> doc.setElementsVisible(visibilityMembers(words, byName), kind == "show")
             "place" -> applyPlace(doc, words)
+            // a user-facing name for an element (OP-7): a decision about the drawing, so the file records it
+            "name" ->
+                doc.nameElement(el(1), unquote(words.getOrElse(2) { throw LoadError("name is missing a name") }))
+                    ?: throw LoadError("element '${words[1]}' cannot carry a name")
             else -> throw LoadError("unknown step '$kind'")
         }
     }

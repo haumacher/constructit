@@ -10,6 +10,7 @@ import constructit.editor.DocumentFormat
 import constructit.editor.DocumentName
 import constructit.editor.Editor
 import constructit.editor.Format
+import constructit.editor.Icons
 import constructit.editor.PointerButton
 import constructit.editor.Scene3
 import constructit.editor.Tools
@@ -54,6 +55,9 @@ private fun setupApp() {
 
     val editor = Editor(canvasW = canvas.width.toDouble(), canvasH = canvas.height.toDouble())
     editor.showGrid = true
+    // the corner ruler, on in the shell exactly as the grid is (both are view state the Editor defaults off,
+    // so a headless render stays a render of the geometry alone)
+    editor.showScaleBar = true
     editor.camera = Camera.centered(canvas.width.toDouble(), canvas.height.toDouble(), scale = 4.0)
     val target = BrowserCanvasDrawTarget(ctx)
 
@@ -296,8 +300,27 @@ private fun setupApp() {
         val def = editor.doc.macros.firstOrNull { m -> m.id == row.getAttribute("data-mid") } ?: return@addEventListener
         if (t.className.contains("tdrop")) editor.deleteMacro(def) else editor.setTool(def.toolId)
     })
-    (document.getElementById("groups-list") as HTMLElement).addEventListener("click", {
+    val groupsList = document.getElementById("groups-list") as HTMLElement
+    // Focusing the name field **also picks the group** — the parameter panel's own rule (focusing a value
+    // field makes that parameter active without rebuilding the row). The name is the widest part of the row,
+    // so without this, making it editable would have taken away the row's main click target: the one that
+    // selects a group, and the one that feeds a whole group into an armed geometry slot (OP-16).
+    groupsList.addEventListener("focusin", {
+        val gid = (it.target as? HTMLInputElement)?.getAttribute("data-gid") ?: return@addEventListener
+        editor.doc.groups.firstOrNull { g -> g.id == gid }?.let { g -> editor.clickGroup(g) }
+    })
+    // a group's name is editable in place (OP-16 × OP-7), and commits like a parameter's: on Enter or blur
+    groupsList.addEventListener("change", {
+        val t = it.target as? HTMLInputElement ?: return@addEventListener
+        if (!t.className.contains("gname")) return@addEventListener
+        val g = editor.doc.groups.firstOrNull { g -> g.id == t.getAttribute("data-gid") } ?: return@addEventListener
+        t.value = editor.renameGroup(g, t.value) ?: g.name
+        repaint()
+    })
+    groupsList.addEventListener("click", {
         val t = it.target as? HTMLElement ?: return@addEventListener
+        // clicking into the name field is on the way to typing, not a pick of the group
+        if (t is HTMLInputElement) return@addEventListener
         val row = t.closest(".grow") ?: return@addEventListener
         val g = editor.doc.groups.firstOrNull { g -> g.id == row.getAttribute("data-gid") } ?: return@addEventListener
         when {
@@ -313,8 +336,13 @@ private fun setupApp() {
     })
 
     // ---- palette (tool selection via delegation) ----
+    //
+    // The target is an `Element`, not an `HTMLElement`: an icon button's contents are **SVG**, and an
+    // `SVGElement` is not an `HTMLElement` — so casting to the latter silently dropped every click that
+    // landed on a glyph. (The CSS also makes the glyph transparent to the pointer, which is the belt to
+    // this brace; both are cheap and the failure mode was the whole palette going dead.)
     (document.getElementById("palette") as HTMLElement).addEventListener("click", {
-        val btn = (it.target as? HTMLElement)?.closest("button") ?: return@addEventListener
+        val btn = (it.target as? org.w3c.dom.Element)?.closest("button") ?: return@addEventListener
         btn.getAttribute("data-tool")?.let { id -> editor.setTool(id) }
     })
 
@@ -397,12 +425,34 @@ private fun setupApp() {
     })
 
     // inspector: typing a value writes exactly what dragging the selected handle writes (OP-13)
-    (document.getElementById("inspector") as HTMLElement).addEventListener("change", {
+    val inspector = document.getElementById("inspector") as HTMLElement
+    inspector.addEventListener("change", {
         val t = it.target as? HTMLInputElement ?: return@addEventListener
+        // the element's own name (OP-7 one level up) — the field shows the name it actually took, which a
+        // clash or a blank field makes different from what was typed, exactly as a parameter's does
+        if (t.id == "insp-name") {
+            editor.selection?.let { el -> t.value = editor.nameElement(el, t.value) ?: editor.doc.userNameOf(el) ?: "" }
+            repaint()
+            return@addEventListener
+        }
         val idx = t.getAttribute("data-fidx")?.toIntOrNull() ?: return@addEventListener
         val v = t.value.toDoubleOrNull() ?: return@addEventListener
         if (!editor.writeSelectionField(idx, v)) editor.note("That value is determined by the construction and can't be set here")
         repaint()
+    })
+    // Hovering a name in *built from* / *used by* points the canvas at that element, and clicking it goes
+    // there. The set is on `mouseover` per chip and the clear is on `mouseleave` of the whole panel — never
+    // per chip — because a repaint replaces these nodes under the pointer, and a per-chip clear would then
+    // fight the very highlight it had just asked for.
+    inspector.addEventListener("mouseover", {
+        val chip = (it.target as? HTMLElement)?.closest(".dep")
+        val eid = chip?.getAttribute("data-eid")
+        editor.setSpotlight(editor.doc.elements.firstOrNull { e -> e.id == eid })
+    })
+    inspector.addEventListener("mouseleave", { editor.setSpotlight(null) })
+    inspector.addEventListener("click", {
+        val eid = (it.target as? HTMLElement)?.closest(".dep")?.getAttribute("data-eid") ?: return@addEventListener
+        editor.doc.elements.firstOrNull { e -> e.id == eid }?.let { el -> editor.selectElement(el) }
     })
 
     // ---- drawing file: the document as a construction script (DocumentFormat) ----
@@ -700,21 +750,44 @@ private fun buildPalette(editor: Editor) {
     val palette = document.getElementById("palette") as HTMLElement
     val sb = StringBuilder()
 
-    // the tool's key, on the button and in its tooltip — a shortcut nobody can see is a shortcut nobody uses
+    // the tool's key, on the button and in its tooltip — a shortcut nobody can see is a shortcut nobody uses.
+    // It rides the icon buttons too (a corner badge), because discoverability was never the label's job.
     fun keyTag(key: Char?): String = if (key == null) "" else "<span class=\"tkey\">$key</span>"
-    sb.append(
-        "<button class=\"tool active\" id=\"tool-select\" data-tool=\"select\" title=\"Select / drag (${Tools.SELECT_KEY})\">" +
-            "Select / Drag${keyTag(Tools.SELECT_KEY)}</button>",
-    )
+
+    /**
+     * One palette button. A tool with a glyph ([ToolDef.icon]) gets an icon button whose *tooltip* carries
+     * the words — label, help and key — and a tool without one keeps the text row it always had. Both keep
+     * `id="tool-<id>"` and `data-tool`, which is what every flow and every E2E selector addresses.
+     */
+    fun button(
+        id: String,
+        label: String,
+        help: String,
+        key: Char?,
+        active: Boolean = false,
+    ): String {
+        val hint = (if (help.isEmpty()) label else "$label — $help") + if (key == null) "" else " (shortcut $key)"
+        val cls = "tool" + (if (active) " active" else "") + if (Tools.iconOf(id) != null) " icon" else ""
+        val body = Tools.iconOf(id)?.let { Icons.wrap(it) } ?: label
+        return "<button class=\"$cls\" id=\"tool-$id\" data-tool=\"$id\" title=\"$hint\">$body${keyTag(key)}</button>"
+    }
+    sb.append("<div class=\"icons\">")
+    sb.append(button(Tools.SELECT, "Select / Drag", "Drag a point to reshape the construction", Tools.SELECT_KEY, active = true))
+    sb.append("</div>")
     for (cat in constructit.editor.ToolCategory.values()) {
         val inCat = tools.filter { it.category == cat }
         // the custom category exists only once the document defines a macro
         if (inCat.isEmpty()) continue
         sb.append("<div class=\"cat\">${cat.name.lowercase()}</div>")
-        for (t in inCat) {
-            val hint = if (t.shortcut == null) t.help else "${t.help} (shortcut ${t.shortcut})"
-            sb.append("<button class=\"tool\" id=\"tool-${t.id}\" data-tool=\"${t.id}\" title=\"$hint\">${t.label}${keyTag(t.shortcut)}</button>")
+        // icons first, wrapped into a grid; then whatever has no glyph, as full-width text rows. The order
+        // within each half is the table's, so a tool never moves about between builds.
+        val withIcon = inCat.filter { it.icon != null }
+        if (withIcon.isNotEmpty()) {
+            sb.append("<div class=\"icons\">")
+            for (t in withIcon) sb.append(button(t.id, t.label, t.help, t.shortcut))
+            sb.append("</div>")
         }
+        for (t in inCat.filter { it.icon == null }) sb.append(button(t.id, t.label, t.help, t.shortcut))
     }
     palette.innerHTML = sb.toString()
 }
@@ -804,58 +877,76 @@ private fun renderPanel(
     buildPalette(editor)
     renderCreateDialog(editor)
 
-    // active tool highlight
+    // active tool highlight — the icon class is part of what the button *is*, so it is preserved
     val toolNodes = document.querySelectorAll(".tool")
     for (i in 0 until toolNodes.length) {
         val el = toolNodes.item(i) as HTMLElement
-        el.className = if (el.getAttribute("data-tool") == editor.toolId) "tool active" else "tool"
+        val icon = if (el.className.contains("icon")) " icon" else ""
+        el.className = (if (el.getAttribute("data-tool") == editor.toolId) "tool active" else "tool") + icon
     }
 
     val ev = Evaluator()
 
-    // selection inspector: one row per handle field — the numeric form of the selection's drag
+    // selection inspector: one row per handle field — the numeric form of the selection's drag. Left alone
+    // while its *name* field has the keyboard, for the reason the parameter list is: replacing the DOM under
+    // a half-typed name discards it (the numeric fields keep their old behaviour, committed on change).
     val insp = document.getElementById("inspector") as HTMLElement
     val fields = editor.selectionFields()
-    insp.innerHTML =
-        // an opening's jamb (OP-21) is a selection that owns no element, so it is asked about separately —
-        // its fields are the interval's own parameters
-        if (editor.selection == null && editor.selectedJamb == null) {
-            "<div class=\"hint\">Click a corner, a leg or an opening's jamb to read and set its values.</div>"
-        } else if (editor.selectionCount > 1 && fields.isEmpty()) {
-            // a *placed* group is the exception: several elements are selected, but they have one handle
-            // between them — the frame (OP-16 step 2) — so its fields are shown rather than nothing
-            // fields address one handle (OP-13), so a multi-selection shows none — but it is what
-            // delete, hide and Group act on, hence the count
-            "<div class=\"selname\">${editor.selectionLabel()}</div>" +
-                "<div class=\"hint\">Delete, Hide and Group act on all of them. Click one element for its values.</div>"
-        } else {
-            "<div class=\"selname\">${editor.selectionLabel()}</div>" +
-                fields.withIndex().joinToString("") { (i, f) ->
-                    val q = f.read(ev)
-                    val shown = q?.let { displayValue(it) } ?: ""
-                    val disabled = if (f.writable) "" else " disabled"
-                    "<div class=\"frow\">" +
-                        "<span class=\"flabel\">${f.label}</span>" +
-                        "<input class=\"fval\" data-fidx=\"$i\" value=\"$shown\"$disabled>" +
-                        "<span class=\"funit\">${unitLabel(f.dim)}</span>" +
-                        "</div>"
-                } +
-                if (fields.isEmpty()) "<div class=\"hint\">No editable values — this element is fully derived.</div>" else ""
-        }
+    val namingElement = (document.activeElement as? HTMLElement)?.id == "insp-name"
+    if (!namingElement) {
+        insp.innerHTML =
+            // an opening's jamb (OP-21) is a selection that owns no element, so it is asked about separately —
+            // its fields are the interval's own parameters
+            if (editor.selection == null && editor.selectedJamb == null) {
+                "<div class=\"hint\">Click a corner, a leg or an opening's jamb to read and set its values.</div>"
+            } else if (editor.selectionCount > 1 && fields.isEmpty()) {
+                // a *placed* group is the exception: several elements are selected, but they have one handle
+                // between them — the frame (OP-16 step 2) — so its fields are shown rather than nothing
+                // fields address one handle (OP-13), so a multi-selection shows none — but it is what
+                // delete, hide and Group act on, hence the count
+                "<div class=\"selname\">${editor.selectionLabel()}</div>" +
+                    "<div class=\"hint\">Delete, Hide and Group act on all of them. Click one element for its values.</div>"
+            } else {
+                "<div class=\"selname\">${editor.selectionLabel()}</div>" +
+                    elementNameRow(editor) +
+                    fields.withIndex().joinToString("") { (i, f) ->
+                        val q = f.read(ev)
+                        val shown = q?.let { displayValue(it) } ?: ""
+                        val disabled = if (f.writable) "" else " disabled"
+                        "<div class=\"frow\">" +
+                            "<span class=\"flabel\">${f.label}</span>" +
+                            "<input class=\"fval\" data-fidx=\"$i\" value=\"$shown\"$disabled>" +
+                            "<span class=\"funit\">${unitLabel(f.dim)}</span>" +
+                            "</div>"
+                    } +
+                    (if (fields.isEmpty()) "<div class=\"hint\">No editable values — this element is fully derived.</div>" else "") +
+                    dependencyRows(editor)
+            }
+    }
 
     // groups: a named set (OP-16) — click to select its members, ◉ to hide/show, ⌖ to place/unplace
     // (a placed group gets its own frame: dragging it then moves the frame), × to dissolve
     val glist = document.getElementById("groups-list") as HTMLElement
-    glist.innerHTML =
-        editor.doc.groups.joinToString("") { g ->
-            "<div class=\"grow\" data-gid=\"${g.id}\">" +
-                "<span class=\"gname\">${g.name}</span>" +
-                "<span class=\"gcount\">${editor.doc.groupMembers(g).size}</span>" +
-                "<button class=\"gplace\" title=\"${if (g.placed) "Unplace — its points become free again where they are" else "Place — give it a frame; dragging then moves the whole group"}\">${if (g.placed) "⊗" else "⌖"}</button>" +
-                "<button class=\"gvis\" title=\"Hide or show every member\">${if (editor.isGroupVisible(g)) "◉" else "○"}</button>" +
-                "<button class=\"gdrop\" title=\"Dissolve the group — its elements stay\">×</button>" +
-                "</div>"
-        }
+    val editingGroups = (document.activeElement as? HTMLElement)?.closest("#groups-list") != null
+    if (!editingGroups) {
+        glist.innerHTML =
+            editor.doc.groups.joinToString("") { g ->
+                // the name is editable exactly where the file can carry it (OP-16 × OP-7), as a parameter's is
+                val name =
+                    if (editor.doc.canRenameGroup(g)) {
+                        "<input class=\"gname\" data-gid=\"${g.id}\" value=\"${g.name}\" title=\"Rename — Enter to commit\">"
+                    } else {
+                        "<span class=\"gname\">${g.name}</span>"
+                    }
+                "<div class=\"grow\" data-gid=\"${g.id}\">" +
+                    name +
+                    "<span class=\"gcount\">${editor.doc.groupMembers(g).size}</span>" +
+                    "<button class=\"gplace\" title=\"${if (g.placed) "Unplace — its points become free again where they are" else "Place — give it a frame; dragging then moves the whole group"}\">${if (g.placed) "⊗" else "⌖"}</button>" +
+                    "<button class=\"gvis\" title=\"Hide or show every member\">${if (editor.isGroupVisible(g)) "◉" else "○"}</button>" +
+                    "<button class=\"gdrop\" title=\"Dissolve the group — its elements stay\">×</button>" +
+                    "</div>"
+            }
+    }
 
     // custom tools (OP-6): what the document itself defines — click a row to arm the tool, × to retire it
     val mlistTools = document.getElementById("macros-list") as HTMLElement
@@ -930,9 +1021,59 @@ private fun renderPanel(
             // the 3D viewport rather than in this space's plan
             val where = if (it.space == editor.activeSpace.name) "" else " · ${it.space}"
             // `data-eid` stays the internal id — it is how a click finds the element again — while what the
-            // row *shows* is the drawing's one name for it, the file's (OP-18, [Document.nameOf])
-            "<div class=\"item$active\" data-eid=\"${it.id}\">${it.kind.name.lowercase()}$where<span class=\"eid\">${editor.doc.nameOf(it)}</span></div>"
+            // row *shows* is the drawing's one name for it, the file's (OP-18, [Document.nameOf]), plus the
+            // user's own label in front of it where there is one ([Document.displayName])
+            "<div class=\"item$active\" data-eid=\"${it.id}\">${it.kind.name.lowercase()}$where<span class=\"eid\">${editor.doc.displayName(it)}</span></div>"
         }
+}
+
+/**
+ * The selected element's **own name** (OP-7 one level up): a text field, blank until it has one, and the
+ * script name beside it as a reminder of what it is really called ([Document.displayName]).
+ */
+private fun elementNameRow(editor: Editor): String {
+    val el = editor.selection?.takeIf { editor.selectionCount == 1 } ?: return ""
+    if (!editor.doc.canNameElement(el)) return ""
+    val given = editor.doc.userNameOf(el) ?: ""
+    return "<div class=\"frow\"><span class=\"flabel\">name</span>" +
+        "<input id=\"insp-name\" class=\"fname\" value=\"$given\" placeholder=\"${editor.doc.nameOf(el)}\" " +
+        "title=\"A name of your own for this element. The script name stays what the file and every message call it; " +
+        "clear the field to drop the name.\"></div>"
+}
+
+/**
+ * **built from** / **used by** — the selection's inputs and dependents, by name (see `Dependencies`).
+ *
+ * Each name is a chip that highlights its element on the canvas when hovered and selects it when clicked,
+ * which is what turns "which point is this circle's centre?" into one gesture rather than a hunt.
+ */
+private fun dependencyRows(editor: Editor): String {
+    fun chip(
+        el: constructit.editor.Element,
+        role: String?,
+    ): String {
+        val label = if (role == null) editor.doc.displayName(el) else "$role ${editor.doc.displayName(el)}"
+        return "<span class=\"dep\" data-eid=\"${el.id}\">$label</span>"
+    }
+
+    val inputs = editor.selectionInputs()
+    val dependents = editor.selectionDependents()
+    if (inputs.isEmpty() && dependents.isEmpty()) return ""
+    val from =
+        if (inputs.isEmpty()) {
+            ""
+        } else {
+            "<div class=\"drow\"><span class=\"dlabel\">built from</span>" +
+                inputs.joinToString("") { chip(it.element, it.role) } + "</div>"
+        }
+    val by =
+        if (dependents.isEmpty()) {
+            ""
+        } else {
+            "<div class=\"drow used\"><span class=\"dlabel\">used by</span>" +
+                dependents.joinToString("") { chip(it, null) } + "</div>"
+        }
+    return from + by
 }
 
 private fun unitLabel(dim: Dimension): String =

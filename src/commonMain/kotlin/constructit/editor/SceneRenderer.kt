@@ -73,6 +73,29 @@ object SceneRenderer {
     /** The outline of the face a sketch space sits on (OP-17): reference context, so grid-weight. */
     private val faceStyle = Style("#cfd8e3", 1.4)
 
+    /**
+     * **What the selection is built from, and what is built on it** (see [Dependencies]) — two more colours
+     * in the emphasis vocabulary, because the answer to "which point is this circle's centre?" has to be
+     * *pointed at*, not merely listed.
+     *
+     * Deliberately distinct from the selection's blue and from the pick colour, and deliberately lighter
+     * than both: these elements are context for the one that is selected, so they must not compete with it.
+     */
+    private val inputStyle = Style("#2ca02c", 2.0)
+    private val inputRing = Style("#2ca02c", 1.4)
+    private val dependentStyle = Style("#bcbd22", 2.0)
+    private val dependentRing = Style("#bcbd22", 1.4)
+
+    /**
+     * The element the pointer is over **in the inspector's own lists** — a transient spotlight, drawn last
+     * so it wins over everything: hovering a name in "built from" has to say *that one*, immediately.
+     */
+    private val spotlightStyle = Style("#ff7f0e", 3.0)
+    private val spotlightRing = Style("#ff7f0e", 2.2)
+
+    /** The corner scale bar: a reading of the drawing, so it is drawn in the annotation's quiet grey. */
+    private val scaleBarStyle = Style("#8a8a8a", 1.2)
+
     /** Screen length of a drawn frame axis — a marker, so it does not scale with the drawing. */
     private const val FRAME_AXIS_PX = 22.0
 
@@ -97,6 +120,10 @@ object SceneRenderer {
         picked: Set<Element> = emptySet(),
         emphasis: List<Segment> = emptyList(),
         previews: List<PreviewShape> = emptyList(),
+        inputs: Set<Element> = emptySet(),
+        dependents: Set<Element> = emptySet(),
+        spotlight: Set<Element> = emptySet(),
+        scaleBar: Boolean = false,
     ) {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
@@ -159,6 +186,12 @@ object SceneRenderer {
         // geometry an armed tool has picked, restated in the pick colour — so a boundary being traced shows
         // how much of it is already in, and a click that hit nothing is visibly a click that added nothing
         for (el in picked) emphasize(doc, el, ev, cam, target, view, pickStyle, pickRing, tip)
+        // The selection's **inputs** and **dependents** (see [Dependencies]), under the selection itself so
+        // the thing that was clicked still reads as the subject. Same emphasis vocabulary as everything else
+        // — the piece restated on top of itself — because they are the same kind of statement about an
+        // element, made about a different relation.
+        for (el in inputs) emphasize(doc, el, ev, cam, target, view, inputStyle, inputRing, tip)
+        for (el in dependents) emphasize(doc, el, ev, cam, target, view, dependentStyle, dependentRing, tip)
         // the selection, redrawn on top: what delete removes and — when it is a single element — what
         // the inspector's numeric fields refer to. Every kind is highlighted, since a marquee (OP-16)
         // takes whatever it covers and a selection that shows only its points would be unreadable.
@@ -232,6 +265,9 @@ object SceneRenderer {
             target.circle(s, 11.0, haloOuter)
             target.circle(s, 6.0, haloInner)
         }
+        // ...and last, the element a name in the panel is being hovered: nothing may hide it
+        for (el in spotlight) emphasize(doc, el, ev, cam, target, view, spotlightStyle, spotlightRing, tip)
+        if (scaleBar) drawScaleBar(cam, target, hPx)
         target.end()
     }
 
@@ -435,10 +471,18 @@ object SceneRenderer {
     fun gridStep(scale: Double): Double = niceStep(scale)
 
     /** A "nice" world grid spacing (1/2/5 x 10^k mm) so screen spacing is roughly 40 px. */
-    private fun niceStep(scale: Double): Double {
-        val worldPerTarget = 40.0 / scale
-        val mag = 10.0.pow(floor(log10(worldPerTarget)))
-        val norm = worldPerTarget / mag
+    private fun niceStep(scale: Double): Double = niceLength(40.0 / scale)
+
+    /**
+     * The **one rounding rule** of the drawing: the largest 1/2/5 × 10^k mm that does not exceed [wanted].
+     *
+     * It was the grid's, then the 3D ground's ([Scene3.gridStepFor]), and it is now the scale bar's too —
+     * one rule, three consumers, so a bar and the grid it sits on can never round differently. What differs
+     * is only what each asks for: 40 px of screen for a grid cell, [SCALE_BAR_PX] for the bar.
+     */
+    private fun niceLength(wanted: Double): Double {
+        val mag = 10.0.pow(floor(log10(wanted)))
+        val norm = wanted / mag
         val factor =
             if (norm < 2) {
                 1.0
@@ -449,6 +493,46 @@ object SceneRenderer {
             }
         return factor * mag
     }
+
+    /** How long the scale bar wants to be on screen; the round world length is fitted under it. */
+    private const val SCALE_BAR_PX = 100.0
+
+    /**
+     * The world length the corner scale bar states at [scale] — a round number of millimetres by
+     * [niceLength], spanning at most [SCALE_BAR_PX] pixels.
+     *
+     * Pure and public because it is the assertable half of the feature: the bar's *job* is that the number
+     * beside it is a number a person recognises, and that is a statement about arithmetic, not about pixels.
+     */
+    fun scaleBarLength(scale: Double): Double = niceLength(SCALE_BAR_PX / scale)
+
+    /** The bar's label: the same base unit the whole model is in (mm), never a converted one. */
+    fun scaleBarLabel(scale: Double): String = "${Format.num(scaleBarLength(scale))} mm"
+
+    /**
+     * The corner ruler: a round length, drawn at the size it really is, with its number over it.
+     *
+     * Drawn here rather than in the shell for the reason every other overlay is — one renderer, so the SVG
+     * goldens describe what the browser draws — and gated by a flag exactly as the grid is, so a golden of
+     * geometry stays a golden of geometry (`Editor.showScaleBar`, set by the shell like `showGrid`).
+     */
+    private fun drawScaleBar(
+        cam: Camera,
+        target: DrawTarget,
+        hPx: Double,
+    ) {
+        val mm = scaleBarLength(cam.scale)
+        val px = mm * cam.scale
+        val x0 = SCALE_BAR_MARGIN_PX
+        val y = hPx - SCALE_BAR_MARGIN_PX
+        target.polyline(listOf(Vec2(x0, y), Vec2(x0 + px, y)), scaleBarStyle)
+        target.polyline(listOf(Vec2(x0, y - SCALE_BAR_TICK_PX), Vec2(x0, y)), scaleBarStyle)
+        target.polyline(listOf(Vec2(x0 + px, y - SCALE_BAR_TICK_PX), Vec2(x0 + px, y)), scaleBarStyle)
+        target.text(Vec2(x0 + px / 2.0, y - SCALE_BAR_TICK_PX - 3.0), scaleBarLabel(cam.scale), scaleBarStyle, TextAnchor.MIDDLE)
+    }
+
+    private const val SCALE_BAR_MARGIN_PX = 14.0
+    private const val SCALE_BAR_TICK_PX = 5.0
 
     private fun drawGrid(
         cam: Camera,

@@ -774,6 +774,112 @@ dimensions, riding the cursor for their placement click; and Circle (3 tangents)
 without one are the ones that would have nothing to say: a pick that creates a point where you click, a
 boolean between two solids, a measurement, and the path tools, which have had their own band from the start.
 
+#### The selection says what it is built from (as built, on a user report)
+
+*"Which point is this circle's midpoint?"* — asked of a drawing with forty elements in it, and there was no
+way to answer it. The construction knows, exactly and cheaply (it is a DAG, OP-5), but nothing published the
+answer: the inspector showed the selection's *values* and the canvas showed the selection alone. Reading the
+journal is not an answer either, because the journal says what was *done* and the question is about what a
+piece *is*.
+
+So a selection now publishes two more relations. On canvas its **inputs** are restated in one colour and its
+**dependents** in another (the same emphasis vocabulary as a selection and a tool's picks — the piece drawn
+again on top of itself), and the inspector gains a **built from** row and a **used by** row listing them by
+name, each name a chip that highlights its element while hovered and selects it when clicked.
+
+**The depth rule, stated honestly, because neither obvious answer works.** *Direct inputs* is unusable: most
+element nodes consume op nodes nothing displays — a fillet's arc is built over derived tangency and centre
+nodes, a wall's region over a whole offset network — so a literally-direct rule reports **nothing** for
+precisely the elements a user asks about. *The whole cone* is unusable in the other direction: it is the
+entire drawing upstream, and highlighting everything says nothing. The rule is therefore
+
+> walk up from the selection's node and **stop at the first node an element displays**.
+
+A node nothing displays is *transparent* and the walk carries on through it; a node some element displays is a
+**barrier**, and that element is an input. So a circle reports its centre and its radius point, a fillet its
+two legs *and not the legs' own points* (those are one barrier further up, reachable by selecting a leg and
+asking again), an extrusion of a rectangle reports all four legs — which is the honest answer, since the area
+is coerced from them (`Document.regionOf`) and the solid genuinely consumes every one.
+
+Two consequences fall out of the rule rather than being arranged. **The two arrows agree**: `dependentsOf` is
+the *exact inverse* of the ancestor relation, not a second walk with a rule of its own, so following "used by"
+and then "built from" always comes back. And **welding needs no special case**: binding is an in-place
+re-point (OP-5), so a welded alias' node simply *has* an input, and the walk finds its master through the same
+line of code as everything else.
+
+**The words come from the step, the membership from the graph.** A `tool` step records its picks, and a
+`ToolDef` now declares what its slots *mean* (`slotNames`), so the row reads `centre e4, radius point e5`
+rather than listing two anonymous points. The two sources are kept strictly apart: the graph decides *who* is
+an input (the step cannot know — a rectangle's extrusion is built from four legs and only one was clicked),
+and the step supplies the *word* for the picks it does name. An input the step has no word for is listed
+without one, which is the common case for derived geometry and reads perfectly well.
+
+Scalars are deliberately absent from both rows: a parameter is not an element, it has its own panel row, and
+the wiring dropdown there already says what it drives.
+
+#### An icon palette, and what a glyph is for (as built)
+
+The palette was sixty full-width text rows, which is a list to *read* rather than a board to *aim at*.
+`ToolDef` gained one more optional member — `icon`, inline SVG markup for a 24 × 24 box — and the palette
+renders a wrapping grid of 34 px buttons per category, with the words moved into the tooltip (label, help,
+shortcut). Every button keeps `id="tool-<id>"` and `data-tool`, so no flow, no keyboard route and no E2E
+selector changed.
+
+Three properties, each structural rather than stylistic. The markup is **part of the build** (`Icons`), so
+there is no icon font, no sprite sheet and nothing to fetch — the shell still works from a `file:` URL. Every
+glyph strokes `currentColor` at a width the wrapping `<svg>` sets, so an active button's white-on-blue state
+costs the icon nothing. And a glyph draws **the operation, not the result**: at 24 pixels a fillet is not an
+arc, it is *two legs and the corner the arc replaced*, so the fillet and chamfer glyphs keep that corner as a
+ghost — the same reason *Mirror* has a dashed axis with a shape either side and *Translate* a ghost copy.
+
+**Coverage is partial on purpose, and here is the line.** **60 of the 77** palette tools have a glyph, plus
+*Select*, which is not a `ToolDef` and so carries its own; the other **17** keep their text rows in the same
+category, below the grid. A tool gets one when its operation has a picture — every curve, every construction,
+every transform, the result layer, the solids and booleans, and the three dimensions. It does not when a
+picture would be a guess the user has to decode: *Point at distance*, *Make relative* / *Make absolute*,
+*Angle bisector*, the ten scalar **measurements** (Angle, Angle 2 lines, Length, Radius, X, Y, Volume, Extent
+X/Y/Z — a number has no shape, and drawing the thing being measured would repeat the dimension tools'
+glyphs), *Sketch on face*, *Sketch plane* and *Cut openings*, and every user-defined macro (OP-6), whose name
+is the user's and whose picture there is no way to know. **A glyph nobody can read is worse than the label it
+replaced**, which is the whole reason the field is nullable and the palette renders both kinds.
+
+One defect this uncovered, recorded because it was invisible in every unit test and killed the whole palette
+in the browser: the click delegation cast its target to `HTMLElement`, and an **`SVGElement` is not an
+`HTMLElement`** — so every click that landed on a glyph was dropped. Fixed in both directions (the cast is to
+`Element`, and the glyph is `pointer-events: none`), and it is the reason the browser E2E is not optional for
+a change like this one.
+
+#### The inspector is a region of its own (as built)
+
+What the inspector shows depends entirely on what is selected: nothing (one line of hint), a jamb (four
+parameter rows), a placed group's frame (three), a corner (two), a dimension (two plus its measured value) —
+and now a name row and two dependency rows on top. Every one of those is a different **height**, and the
+panel is one scrolling column, so every click moved the parameter list, the measurements and the element tree
+up or down under the cursor. Selecting something and then wanting to click the element below it in the tree
+meant re-finding the tree first.
+
+The inspector is therefore a fixed-height box that scrolls internally. Nothing below it can move, whatever is
+selected, and the assertion is exactly that: the browser E2E reads `#tree`'s viewport position with nothing
+selected, with an element selected, and after deselecting, and requires all three to be the *same number*.
+
+#### A corner scale bar (as built)
+
+The 2D view had no statement of its own scale. The grid implies one, but reading it means counting cells and
+knowing what a cell is worth; a drawing print has a scale bar for the same reason a map does.
+
+The bar is a `SceneRenderer` overlay — bottom-left, a line with two end ticks and its length written over it —
+which is what makes it appear in the SVG goldens rather than being a shell decoration. Its length is a **round
+number of millimetres** spanning at most 100 px, and the rounding is not a new one: `niceLength` is the grid's
+own 1/2/5 × 10^k rule, now shared by the 2D grid (40 px per cell), the 3D ground (`Scene3.gridStepFor`, sized
+by the model) and the bar (100 px), so a bar and the grid it sits on can never round differently. At 2 px/mm
+it says `50 mm`, at 4 px/mm `20 mm` (25 would fit; 20 is the round one), and it follows the wheel live.
+
+It is **off by default in the `Editor` and switched on by the shell**, exactly as `showGrid` is — so a
+headless render stays a render of the geometry alone and the existing goldens are untouched, while the one new
+golden (`editor_scale_bar`) records the overlay itself. The label is in millimetres always: mm is the model's
+base unit, and a bar that switched to metres would be the display-unit question (OP-7) answered in one corner
+of one view.
+
 #### Usability — click budgets (as built)
 
 The session-3 charge was to *test the application and its usability, and reach the results in a reasonable
@@ -1978,6 +2084,51 @@ kept rebuilding that ratio point instead of the midpoint it was asked for, with 
 decision lives in `Editor.clickScalar`, so the shell only routes the row's click, and focusing a value *field*
 still picks rather than toggles: that click is on the way to typing. Dropping a pick is not deleting a value —
 the parameter stays in the panel and in the file.
+
+### Names for elements and groups — the same rule, two more places (as built)
+
+OP-7 says *nodes get optional user-facing names*, and until now only one kind had them: a scalar parameter.
+Two more places wanted the same thing, and both are the **same rule** — *what may be renamed is exactly what
+the file names* — applied where it had not been yet.
+
+**An element can carry a name.** `name e7 "bore-axis"` is a step of its own, and the panel then reads
+`bore-axis (e7)`. Three decisions in that one line:
+
+- **A step, not a field on the element.** A name is a *decision about the drawing*, which is precisely the
+  argument the visibility reversal settled (OP-18): the file records what the user chose. Undo, redo,
+  save/load and replay then come free, because the undo substrate *is* the saved script.
+- **The script name is never dropped from the display.** `bore-axis (e7)` and not `bore-axis`, because `e7`
+  is the drawing's one identity — what the file says, what a refusal quotes, what two people say to each
+  other about a drawing. A panel that showed only the label would recreate exactly the two-numbering-schemes
+  defect *The name the file gives an element* was written to end.
+- **The name is state, so it is restated.** A rename updates the one step's label at save time rather than
+  appending a second `name` step — the parameter-rename pattern verbatim. Clearing the field drops the step
+  (there is nothing left for it to say), and deleting the element drops it too, through the ordinary
+  reference rule in `dependentSteps` and with no special case anywhere: the step *names* the element as an
+  argument, which is all that rule needs.
+
+Refused for exactly one kind, for the stated reason: an element **no step created** carries no name into the
+script, so a name given to it could only be dropped on reload — or, worse, write a reference nothing declares.
+
+**A group's name is editable, and that exposed a latent defect.** A group is named in **two** steps — the
+`group` step that declares it and the `place` step that gives it a frame (OP-16 step 2) — and both now
+restate the *current* name, which is how a renamed parameter restates its `param` step and every `scalar=`
+reference to it. What had to change beyond that is that the writer no longer looks a placement's group up **by
+name**: it asks which group *this very step* placed. That lookup was already wrong and nobody had noticed,
+because nothing could change a group's name; with a rename it becomes visible immediately, and in the worst
+way — the frame would silently stop being restated and a placed group's position would be lost on the next
+save. `GroupRenameTest.aPlacedGroupKeepsBothItsNameAndItsFrame` is the guard.
+
+**Patterns were checked and are not involved.** A pattern's name (`pattern "P1"`, and every `orbit "P1"`
+gesture riding it, OP-23) lives in its own namespace, and no pattern or orbit step ever names a group — so a
+group rename cannot reach one, and the labels in those steps can stay frozen in the args. That is consistent
+rather than lucky: patterns are **not renameable**, so their names are never state, and the moment one became
+renameable it would need exactly the treatment the group's just got.
+
+One shell consequence, recorded because it is a real trade: making the group's name an input took away the
+row's widest click target, and that target *does* something — it selects the group and feeds a whole group
+into an armed geometry slot (OP-16). So focusing the name field **also picks the group**, which is the
+parameter panel's own rule (focusing a value field makes that parameter active) rather than a new one.
 
 ## Measurements & value feedback (OP-4 — RESOLVED)
 
@@ -5188,6 +5339,48 @@ Three broad families (see OP-9 decision above):
   revolve's counter unmoved; a sweep edit → exactly one; and the evaluation half of a render pass on a
   four-revolve part (38 nodes, 1916 triangles) **~2.5–3.2 ms → under 0.01 ms**, 300–450× run to run.
 
+- **Session 20 — the five-part UI-polish item: the shell finally says what the graph already knew.** Not one
+  of them is a construction question, which is exactly why they had queued up: each is a small tax the
+  application charges every session, and none is urgent on any given day. Six things worth recording.
+  (1) **"Which point is this circle's midpoint?" is a question about the DAG, and the DAG could always
+  answer it** — nothing published the answer. What took thought was not the walk but the *depth*: direct
+  inputs reports nothing for a fillet (its arc consumes derived nodes nothing displays) and the whole cone
+  reports the drawing. The rule that works is *stop at the first node an element displays*, and it is worth
+  stating as a rule because it is what makes the answer **composable**: a fillet reports its two legs, and
+  asking a leg reports its points, so the user walks the construction one honest hop at a time instead of
+  being handed a cone. Two things then fell out rather than being built — the reverse arrow is the *inverse*
+  of the same relation, so "used by" and "built from" can never disagree; and welding needs no case at all,
+  because binding is an in-place re-point and the alias' node simply has an input (OP-5 paying off in a place
+  it was not designed for).
+  (2) **The graph decides membership, the step decides the words.** `ToolDef.slotNames` makes the row read
+  `centre e4, radius point e5`, but the *set* is never the step's: an extrusion of a rectangle is built from
+  four legs and exactly one of them was clicked. Keeping those two sources apart is what stops the feature
+  from becoming a prettier journal.
+  (3) **The icon palette's real risk is not drawing badly, it is drawing ambiguously**, so the rule is that a
+  glyph shows the *operation* — a fillet is two legs and the ghost of the corner the arc replaced — and a
+  tool whose operation has no picture keeps its text row. 60 of 77, and the 17 are named in the note. The
+  bug it produced is the one to remember: an `SVGElement` is **not** an `HTMLElement`, so the palette's click
+  delegation dropped every click that landed on a glyph — the entire palette, dead, and every unit test
+  green. The browser E2E caught it in one run.
+  (4) **A fixed-height inspector is a one-line CSS change and a real defect fixed.** The panel is one column
+  and the inspector's height depends on the selection, so every click moved the element tree under the
+  cursor. The assertion is the honest one and only a browser can make it: `#tree`'s viewport position is the
+  same number with nothing selected, with something selected, and after deselecting.
+  (5) **Renaming groups and elements needed no new mechanism — and it found an old bug.** Both follow OP-7's
+  rule (*what may be renamed is exactly what the file names*) and the parameter's restate-at-save pattern. But
+  a group is named in two steps, and the writer resolved the second, `place`, **by name**; with the name
+  changeable, that would have silently stopped restating the frame and lost a placed group's position on the
+  next save. It is now resolved by step identity. Patterns were checked and are genuinely unaffected: their
+  names are in their own namespace and no pattern step names a group — consistent rather than lucky, since
+  patterns are not renameable and so their names are not state.
+  (6) **The scale bar cost almost nothing because the rounding rule already existed twice.** `niceLength` is
+  now shared by the 2D grid, the 3D ground and the bar, which is what guarantees a bar and the grid under it
+  round the same way; and the bar is a renderer overlay switched on by the shell exactly as the grid is, so
+  the existing goldens are untouched and one new golden records the overlay itself.
+  **20 new tests** (`DependencyViewTest`, `ElementNameTest`, `GroupRenameTest`, `ScaleBarTest`, and a sixth
+  browser flow, `panelPolishInBrowser`), **932 → 952 green**, ktlint clean, the JS bundle built and all six
+  browser E2E flows passing.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -6011,6 +6204,21 @@ depends on retrying — so a node that is expensive *and* invalid pays its cost 
 follow-on the queue line mentioned, **a low-poly view mode, is not needed and not built**: with the mesh
 cached, a drag that does not touch the solid does no tessellation at all, and one that does needs the real
 mesh anyway.
+
+**Retired in session 20: the UI-polish item, all five of it.** Not a construction question at any point —
+five things the shell owed a person actually using it, and the reason they were one queue line is that each
+one costs something every session. (a) *Dependency visibility* — a selection now shows what it is **built
+from** and what is **used by** it, on canvas and by name, on the honest depth rule (nearest element-bearing
+ancestors); see the note under the editor roadmap. (b) *An icon palette*, 60 of 77 tools, with the other 17
+named where the line is drawn. (c) *A stable inspector*, fixed height and its own scroll, so nothing below it
+moves when the selection changes. (d) *Renaming*, for groups and for elements, both on OP-7's existing rule
+and one of them exposing a latent save defect in `place`. (e) *A corner scale bar*, on the grid's own
+rounding, shared now by all three consumers of that rule. It leaves **two things parked**, each stated where
+it belongs: the dependency rows list **elements only** — a parameter that drives the selection is not shown
+there, because a scalar is not an element and its own panel row already says what it drives, but "which
+parameter moves this?" is the same question one type up and will want the same answer; and the scale bar
+speaks **millimetres always**, which is the display-unit half of OP-7 (a bar that switched to metres would be
+answering that question in one corner of one view).
 
 **The numbered queue is empty.** What remains is the parked list below, each item recorded at its source.
 

@@ -1410,6 +1410,75 @@ class Document {
         return names
     }
 
+    // ---- a user-facing name for an element (OP-7's "nodes get names", recorded as its own step) ----
+
+    /**
+     * The names the user has given elements, by runtime id. Rebuilt by replay like everything else, because
+     * a name is a **recorded step** (`name e7 "bore-axis"`) and not a field on the element: it is a decision
+     * about the drawing, exactly as a hide is (OP-18's visibility reversal), so it belongs in the file.
+     */
+    private val elementNames = HashMap<String, String>()
+
+    /** What the user calls [el], or null — [nameOf] stays the identity everywhere. */
+    fun userNameOf(el: Element): String? = elementNames[el.id]
+
+    /**
+     * How [el] is written where a human reads it: `bore-axis (e7)` when it has been named, `e7` otherwise.
+     *
+     * The script name is never dropped from the display, and that is the point. It is the drawing's one
+     * identity (see [nameOf]) — what the file says, what a refusal quotes, what two people say to each other
+     * about a drawing — while a user name is a *label on top of it*. A panel that showed only "bore-axis"
+     * would recreate exactly the two-numbering-schemes defect the naming authority was introduced to end.
+     */
+    fun displayName(el: Element): String = elementNames[el.id]?.let { "$it (${nameOf(el)})" } ?: nameOf(el)
+
+    /**
+     * Whether [el] can carry a name — **exactly when the file names it**, the same rule as a parameter's
+     * ([canRenameParameter]): a `name` step refers to the element by its script name, so an element no step
+     * declares could only be given a name the save would have to drop or, worse, write a reference to
+     * nothing.
+     */
+    fun canNameElement(el: Element): Boolean = creatingStep(el) != null
+
+    /**
+     * Name [el] (blank clears the name), uniquified among element names exactly as a parameter's is. Returns
+     * the name it actually **took** — `""` when it was cleared — or null when [el] cannot carry one.
+     *
+     * One step per named element, created on the first naming and **restated** at save from then on
+     * ([DocumentFormat.restate]), which is the parameter-rename pattern one level up: the name is state, so
+     * the writer re-reads it rather than the journal remembering what was typed first. Clearing drops the
+     * step outright — there is nothing left for it to say — and deleting the element drops it through the
+     * ordinary reference rule ([dependentSteps]), since the step names the element as an argument.
+     */
+    fun nameElement(
+        el: Element,
+        name: String,
+    ): String? {
+        if (!canNameElement(el)) return null
+        val existing = journal.firstOrNull { s -> s.kind == "name" && s.args.any { a -> a is Arg.El && a.el === el } }
+        val wanted = scalarWord(name)
+        if (wanted.isEmpty()) {
+            elementNames.remove(el.id)
+            existing?.let { s -> journal.removeAll { it === s } }
+            return ""
+        }
+        val took = uniqueElementName(wanted, except = el)
+        elementNames[el.id] = took
+        if (existing == null) recording("name", Arg.El(el), Arg.Label(took)) { }
+        return took
+    }
+
+    private fun uniqueElementName(
+        base: String,
+        except: Element,
+    ): String {
+        fun taken(n: String) = elementNames.any { (id, v) -> id != except.id && v == n }
+        if (!taken(base)) return base
+        var i = 2
+        while (taken("$base$i")) i++
+        return "$base$i"
+    }
+
     // ---- delete: the unit of removal is the journal step (OP-18) ----
 
     /** The journal step that created [el], if any — what a delete of [el] removes. */
@@ -1817,15 +1886,60 @@ class Document {
     fun groupCentre(g: Group): Vec2? = boundsCentre(groupMembers(g))
 
     /** Names are unique so the panel is unambiguous; blank auto-numbers ("group1", "group2", …). */
-    private fun uniqueGroupName(base: String): String {
+    private fun uniqueGroupName(
+        base: String,
+        except: Group? = null,
+    ): String {
         // one word, since a step's arguments are split on spaces (as for scalar names)
-        val b = base.trim().replace(Regex("\\s+"), "-")
-        if (b.isNotEmpty() && allGroups.none { it.name == b }) return b
+        val b = scalarWord(base)
+
+        fun taken(n: String) = allGroups.any { it !== except && it.name == n }
+        if (b.isNotEmpty() && !taken(b)) return b
         val stem = b.ifEmpty { "group" }
         // an unnamed group is "group1"; a name that clashes becomes "kitchen2", as for scalars
         var i = if (b.isEmpty()) 1 else 2
-        while (allGroups.any { it.name == "$stem$i" }) i++
+        while (taken("$stem$i")) i++
         return "$stem$i"
+    }
+
+    /** The group [step] declares (its `group` step), or null — how the writer restates a renamed one. */
+    internal fun groupDeclaredBy(step: Step): Group? = allGroups.firstOrNull { it.step === step }
+
+    /** The group [step] places (its `place` step), or null. Identity, never the name — see [renameGroup]. */
+    internal fun groupPlacedBy(step: Step): Group? = allGroups.firstOrNull { it.placeStep === step }
+
+    /**
+     * Whether [g] can be renamed: **exactly when the file names it**, the parameter rule again
+     * ([canRenameParameter]) — a group with no `group` step of its own carries no name into the script.
+     */
+    fun canRenameGroup(g: Group): Boolean = g.step != null
+
+    /**
+     * Rename [g], uniquified as creating it is; a blank field keeps the old name. Returns the name it
+     * actually **took**, or null when [g] cannot be renamed.
+     *
+     * **The format needed one correction, not a new mechanism.** A group's name appears in exactly two
+     * steps — the `group` step that declares it and the `place` step that gives it a frame (OP-16 step 2) —
+     * and both now restate the *current* name ([DocumentFormat.restate]), which is precisely how a renamed
+     * parameter restates its `param` step and every `scalar=` reference to it (OP-7). What had to change is
+     * that the writer no longer looks a placement's group up **by name**: it asks which group this very step
+     * placed. That lookup was already a latent defect — with the name changed under it, a placed group's
+     * frame would have stopped being restated and its position would have been lost on the next save.
+     *
+     * A **pattern's** name (`pattern "P1"`, and the `orbit` steps that ride it, OP-23) is deliberately not
+     * involved: patterns live in a namespace of their own and no pattern step ever names a group, so a
+     * rename here cannot reach one. Patterns are not renameable at all, which is why their labels can stay
+     * frozen in the args.
+     */
+    fun renameGroup(
+        g: Group,
+        name: String,
+    ): String? {
+        if (!canRenameGroup(g)) return null
+        val wanted = scalarWord(name)
+        if (wanted.isEmpty()) return g.name
+        g.name = uniqueGroupName(wanted, except = g)
+        return g.name
     }
 
     /**
