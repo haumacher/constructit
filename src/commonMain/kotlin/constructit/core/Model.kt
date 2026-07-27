@@ -106,6 +106,83 @@ abstract class Node(val id: String) {
 
     /** Compute this node's value from already-evaluated (valid) input values. */
     abstract fun compute(args: List<Value>): EvalResult
+
+    // ---- persistent memo: the OP-5 dirty-marking, kept (see the note on [Evaluator]) ----
+
+    private var memoArgs: List<Value>? = null
+    private var memoResult: EvalResult.Ok? = null
+
+    /**
+     * Whether this node's result may be memoized against the *identity* of its arguments — i.e. whether
+     * [compute] is a function of `args` alone, or of anything else it can read.
+     *
+     * True for everything derived. [SourceNode] and [ParameterNode] read their own mutable literal, which
+     * no argument carries, and are memoized anyway because *they invalidate themselves* on every write
+     * (see their setters); [InstanceNode] is the one kind that must opt out, because it evaluates
+     * *another* node's `compute` and cannot see that node's writes.
+     */
+    open val cacheable: Boolean get() = true
+
+    /**
+     * How often [compute] actually ran on this node — the instrument the incremental-recompute
+     * acceptance is stated in (a repaint that changes nothing upstream must leave every count where
+     * it was). Per node, so it is document-scoped like the memo itself, with no shared static.
+     */
+    var computeCount: Int = 0
+        private set
+
+    /**
+     * Drop this node's memo. Called at every **mutation point** (OP-5): a literal write, a weld or wire
+     * or capture re-pointing [SourceNode.boundTo] / [ParameterNode.boundTo] / [IndirectNode.boundTo].
+     *
+     * Only *this* node is marked — nothing walks the dependents, and nothing has to. A recomputed node
+     * hands its consumers a **new value instance**, and a consumer's memo is keyed on the identity of the
+     * values it last consumed, so the dirty mark travels downstream by itself, through exactly the
+     * affected cone, with no reverse-dependency index to keep in step with a re-pointed edge.
+     */
+    fun invalidate() {
+        memoArgs = null
+        memoResult = null
+    }
+
+    /**
+     * [compute], skipped when this node already holds the result for these very argument values.
+     *
+     * Identity (`===`), not equality: an unchanged upstream node returns its memoized value *object*, so
+     * the check is O(1) per input however large the value is (a revolve's mesh compares as one pointer),
+     * and it is conservative in the safe direction — a recomputed input that lands on an equal-but-new
+     * value costs a recompute, it never yields a stale one.
+     *
+     * **Invalidity is never memoized (OP-3).** A node can be invalid for a reason outside its arguments —
+     * the general boolean engine not being loaded yet is the standing case — and OP-3 promises it heals
+     * the moment that changes. Recomputing an invalid node every pass is what keeps that promise; it also
+     * costs little, since an invalid node's inputs are already known good and the failure is usually fast.
+     */
+    fun computeMemoized(args: List<Value>): EvalResult {
+        if (cacheable) {
+            val prev = memoResult
+            if (prev != null && sameValues(memoArgs, args)) return prev
+        }
+        computeCount++
+        val result = compute(args)
+        if (cacheable && result is EvalResult.Ok) {
+            memoArgs = args
+            memoResult = result
+        } else {
+            invalidate()
+        }
+        return result
+    }
+}
+
+/** Argument lists that are the same values — the memo's freshness test (OP-5). */
+private fun sameValues(
+    a: List<Value>?,
+    b: List<Value>,
+): Boolean {
+    if (a == null || a.size != b.size) return false
+    for (i in b.indices) if (a[i] !== b[i]) return false
+    return true
 }
 
 /**
@@ -115,7 +192,21 @@ abstract class Node(val id: String) {
  * [ParameterNode]). Because binding mutates this node in place, every reference already pointing
  * here transparently follows the new master; no immutable input list is ever rewired.
  */
-class SourceNode(id: String, var value: Value, var boundTo: Node? = null) : Node(id) {
+class SourceNode(id: String, value: Value, boundTo: Node? = null) : Node(id) {
+    /** The literal this node carries while free. Writing it is a **mutation point** (OP-5). */
+    var value: Value = value
+        set(v) {
+            field = v
+            invalidate()
+        }
+
+    /** The master this node tracks, or null while it is a DOF. Re-pointing is a mutation point (OP-5). */
+    var boundTo: Node? = boundTo
+        set(v) {
+            field = v
+            invalidate()
+        }
+
     override val inputs: List<Node> get() = boundTo?.let { listOf(it) } ?: emptyList()
 
     override fun compute(args: List<Value>): EvalResult =
@@ -127,7 +218,21 @@ class SourceNode(id: String, var value: Value, var boundTo: Node? = null) : Node
  * [literal]); **wiring** it to another scalar node makes it track that node's value, removing
  * the DOF — the constructive form of an equality constraint (shared reference, OP-5).
  */
-class ParameterNode(id: String, var literal: ScalarValue, var boundTo: Node? = null) : Node(id) {
+class ParameterNode(id: String, literal: ScalarValue, boundTo: Node? = null) : Node(id) {
+    /** The number this parameter carries while free. Retyping it is a **mutation point** (OP-5). */
+    var literal: ScalarValue = literal
+        set(v) {
+            field = v
+            invalidate()
+        }
+
+    /** The scalar this parameter is wired to, or null while it is a DOF — a mutation point (OP-5). */
+    var boundTo: Node? = boundTo
+        set(v) {
+            field = v
+            invalidate()
+        }
+
     override val inputs: List<Node> get() = boundTo?.let { listOf(it) } ?: emptyList()
 
     override fun compute(args: List<Value>): EvalResult =
@@ -150,7 +255,14 @@ class ParameterNode(id: String, var literal: ScalarValue, var boundTo: Node? = n
  * as a welded point's consumers follow its master. Unbinding restores the original view, which is what
  * makes the capture invertible.
  */
-class IndirectNode(id: String, val target: Node, var boundTo: Node? = null) : Node(id) {
+class IndirectNode(id: String, val target: Node, boundTo: Node? = null) : Node(id) {
+    /** The node this view is captured onto, or null for the original target — a mutation point (OP-5). */
+    var boundTo: Node? = boundTo
+        set(v) {
+            field = v
+            invalidate()
+        }
+
     override val inputs: List<Node> get() = listOf(boundTo ?: target)
 
     override fun compute(args: List<Value>): EvalResult = EvalResult.Ok(args[0])
@@ -177,14 +289,33 @@ class OpNode(
  */
 class InstanceNode(id: String, val defNode: Node, override val inputs: List<Node>) : Node(id) {
     override fun compute(args: List<Value>): EvalResult = defNode.compute(args)
+
+    /**
+     * **The one kind that opts out of the memo** (OP-5), and only over a *source* definition node: this
+     * wrapper runs somebody else's `compute`, and a [SourceNode] / [ParameterNode] reads its own literal
+     * and its own bound-or-free state — neither of which is in this instance's arguments, so a write over
+     * there would leave a memo here that nothing invalidates. Nothing is lost: such a delegation is a
+     * pass-through, so it costs a field read and still hands its consumers the same value object, which is
+     * what their memos are keyed on.
+     */
+    override val cacheable: Boolean
+        get() = defNode !is SourceNode && defNode !is ParameterNode && defNode.cacheable
 }
 
 /**
- * Evaluates the DAG with per-pass memoization (OP-5). Invalidity propagates transitively:
- * a node depending on any invalid input is itself invalid (OP-3). Shared sub-expressions
- * (e.g. a PointSet feeding two Selects) are computed once.
+ * Evaluates the DAG (OP-5). Invalidity propagates transitively: a node depending on any invalid input is
+ * itself invalid (OP-3). Shared sub-expressions (e.g. a PointSet feeding two Selects) are visited once.
  *
- * A fresh Evaluator is used per pass; parametric recompute = mutate a SourceNode + new pass.
+ * **Two memos, one behaviour.** The per-pass map keyed by node id collapses the pass's own repeats and is
+ * what makes a diamond-shaped graph a linear walk. Under it sits each node's **persistent memo**
+ * ([Node.computeMemoized]), which survives the pass: a fresh Evaluator per repaint, per hit-test, per
+ * handle read stays the API — hundreds of call sites depend on it — while the expensive work behind it,
+ * a revolve's tessellation above all, happens only when something the node actually depends on has
+ * changed. That is OP-5's dirty-marking: a drag mutates one literal, which invalidates that one node
+ * (see [Node.invalidate]), and the new value object it produces carries the mark down its own cone and
+ * nowhere else. A pass over untouched geometry does a pointer-compare per edge and no arithmetic.
+ *
+ * Parametric recompute is still: mutate a source + a new pass.
  */
 class Evaluator {
     private val cache = HashMap<String, EvalResult>()
@@ -198,7 +329,7 @@ class Evaluator {
                 EvalResult.Invalid("depends on invalid input (${invalid.reason})")
             } else {
                 try {
-                    node.compute(argResults.map { (it as EvalResult.Ok).value })
+                    node.computeMemoized(argResults.map { (it as EvalResult.Ok).value })
                 } catch (e: Exception) {
                     EvalResult.Invalid(e.message ?: e.toString())
                 }

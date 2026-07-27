@@ -95,6 +95,64 @@ Chosen over both "single-output + selector-on-node" and "multi-output ports":
   parameter edit mutates a literal, marks the node dirty, and recomputes only the affected
   downstream cone. Outputs are cached.
 
+> **As-built note — the dirty-marking, and what it turned out to be.** For a long time this bullet was the
+> one promise the implementation did not keep: the memo was *per pass*, a fresh `Evaluator` per repaint, per
+> hit-test, per handle read, each recomputing the whole cone of whatever it touched. Invisible on 2D
+> geometry; on a revolve it re-tessellated the mesh on every mouse move, which is what made even the *2D*
+> view lag (the 2D pass evaluates a solid element too, if only to find out that it is one).
+>
+> **The scheme: each node remembers its last result together with the argument values it computed that
+> result from, and reuses it when the arguments are the same objects (`===`).** That is all of it. There is
+> no clock, no version stamp, no reverse-dependency index, and nothing that has to be maintained in step
+> with anything else.
+>
+> - **The mark propagates by itself.** A mutation invalidates exactly the node it wrote (`Node.invalidate`
+>   from the setters of `SourceNode.value` / `.boundTo`, `ParameterNode.literal` / `.boundTo`,
+>   `IndirectNode.boundTo` — the complete list of mutation points). That node recomputes and hands its
+>   consumers a **new value object**, whose identity misses their memo, and theirs in turn: the dirty mark
+>   travels down exactly the affected cone and stops. Nothing walks the dependents, so nothing needs to know
+>   who they are.
+> - **Why not the two obvious alternatives.** A *global version stamp* bumped on every mutation is correct
+>   and useless: it flushes the whole document on every drag frame, so the revolve recomputes although its
+>   cone was never touched. *Forward invalidation* over a reverse-dependency index is the textbook answer
+>   and is the one this graph must not have: **`boundTo` re-pointing changes the shape of the DAG** — a weld,
+>   an attach, a capture under a group frame, a parameter wiring — so the index would have to be updated at
+>   exactly the four places where getting it wrong yields *wrong geometry* rather than a slow repaint. A
+>   per-node `lastMutated` with a cached transitive max is the honest third option, and it needs a document
+>   clock, two more fields per node and the same pass-time traversal — more moving parts to buy nothing.
+>   Keying on the inputs themselves is self-validating: the freshness test **re-reads the very edges the
+>   result depends on**, including edges that have just been re-pointed.
+> - **Which is why re-pointing needs no special case at all.** `SourceNode.inputs` *is* `boundTo`, so
+>   welding a point changes its arguments from none to one and unwelding changes them back; an
+>   `IndirectNode` captured onto a frame reads its arguments through the new master from that moment on. The
+>   setters are still there, and they earn their keep for the one case where the arguments do *not* change:
+>   a literal write on a source that is nobody's consumer of anything.
+> - **Identity, not equality.** O(1) per input however large the value is (a revolve's mesh compares as one
+>   pointer), and conservative in the safe direction: an input that recomputes to an equal-but-new value
+>   costs a recompute, never a stale answer. This also means every value type must stay immutable, which
+>   they are (data classes over read-only lists).
+> - **Invalidity is never memoized (OP-3).** A node can be invalid for a reason its arguments do not carry —
+>   the general boolean engine (OP-9) still loading in the browser is the standing case — and OP-3 promises
+>   it heals the moment that changes. Retrying every invalid node on every pass is what keeps that promise.
+> - **One conservative opt-out, named: a macro `InstanceNode` over a definition *source*.** The wrapper runs
+>   somebody else's `compute`, and a `SourceNode`/`ParameterNode` reads its own literal and its own
+>   bound-or-free state, neither of which is in the instance's arguments — so a captured default retyped in
+>   the definition would leave a memo here that nothing invalidates. Such an instance therefore never
+>   memoizes. It costs nothing measurable: that delegation is a pass-through, and it still hands its
+>   consumers the same value object, which is what *their* memos are keyed on.
+> - **The bound: one entry per node, and it lives on the node.** No table anywhere, so nothing to evict and
+>   nothing to grow: the memo is a field, it is document-scoped because a node belongs to one document, it
+>   dies with the node when a delete or a journal rewrite drops it, and there is no shared mutable static
+>   for parallel tests or a second document to trip over.
+> - **`Evaluator` stays the API.** Its per-pass map keyed by node id is unchanged (it collapses a pass's own
+>   repeats, which is what makes a diamond graph a linear walk); the persistent memo sits underneath it. The
+>   several hundred `Evaluator()` call sites did not move, and a pass over untouched geometry is now a
+>   pointer compare per edge and no arithmetic.
+>
+> Measured on a four-revolve turned part (38 nodes, 1916 triangles): the evaluation half of a render pass
+> went from **~2.5–3.2 ms to under 0.01 ms** (300–450× run to run), i.e. a repaint that changes nothing
+> upstream does no geometric work at all. `Node.computeCount` is the instrument the tests state that in.
+
 ### How the coupled points attach (details deferred to their own OPs)
 - **OP-4 (measurements):** `Measure.Distance(P1, P2) → Scalar` is an ordinary node; its
   `Scalar` output feeds any `Scalar` input. Graph stays acyclic.
@@ -3772,7 +3830,9 @@ Three broad families (see OP-9 decision above):
 - [x] **OP-5 Node graph data model** — RESOLVED: one uniform, strongly-typed dataflow DAG;
       unified numbers+geometry; exactly one output per node; intersections emit an ordered
       `PointSet` value consumed by a separate `Select(set, sign)` node (computed once, shared);
-      topological eval with dirty-marking.
+      topological eval with dirty-marking — **now as built**: a persistent per-node memo keyed on the
+      *identity* of the argument values, self-invalidating at the mutation points, so a repaint that
+      changes nothing upstream recomputes nothing (see the as-built note under *Evaluation*).
 - [x] **OP-6 Macros / custom constructions** — RESOLVED: by-example definition;
       reference/composite instances with edit-propagation; instance = namespace of derived
       path-IDs `M/nk` (no output declaration; transparent groups); virtual addressing; pure
@@ -5090,6 +5150,43 @@ Three broad families (see OP-9 decision above):
   **20 new tests** (`ThickNetworkTest`) plus the review probe's two, 916 green, ktlint clean, the browser
   E2E unchanged and still passing — the last of which is the load-bearing number, because the whole ortho half of the feature was
   refactored underneath it and none of it was supposed to move.
+- **Session 19 — the OP-5 dirty-marking, kept: a persistent memo keyed on argument identity.** The last
+  queue line, and the oldest debt in the file: *"topological eval with dirty-marking … outputs are cached"*
+  has been in OP-5 since turn 4, while the implementation memoized *per pass* and threw the results away
+  between repaints. The user's report is the shape of that debt — a revolve re-tessellating on every mouse
+  move, and the *2D* view lagging with it, because the 2D pass evaluates a solid element too. Five things
+  worth recording.
+  (1) **The design brief named two schemes and the right one was a third.** A global version stamp is
+  correct and useless (it flushes the document on every drag frame, so an untouched revolve recomputes
+  anyway); forward invalidation over a reverse-dependency index is the textbook answer and is precisely
+  what this graph must not have, because `boundTo` re-pointing **changes the shape of the DAG** and the
+  index would need updating at the four places — weld, attach, capture under a frame, parameter wiring —
+  where being wrong means *wrong geometry*, not a slow repaint. What shipped keys the memo on **the
+  identity of the argument values themselves**, so the freshness test re-reads the very edges the result
+  depends on. There is nothing derived to keep in step, which is why the dangerous case needed no code:
+  `SourceNode.inputs` *is* `boundTo`, so a weld changes the arguments from none to one and the memo misses
+  on its own.
+  (2) **The dirty mark needs no dependents.** A mutation invalidates the one node it wrote; that node
+  recomputes and hands out a **new value object**, which misses its consumers' memos, and theirs — the mark
+  walks the affected cone by itself and stops. The five setters (`SourceNode.value`/`.boundTo`,
+  `ParameterNode.literal`/`.boundTo`, `IndirectNode.boundTo`) are the complete list of mutation points, and
+  they are needed only for the case where the *arguments* do not change: a literal write on a free source.
+  (3) **Invalidity is deliberately not memoized, and that is OP-3 rather than an oversight.** A node can be
+  invalid for a reason its arguments do not carry — the Manifold WASM still arriving is the standing case —
+  and the promise is that it heals on the next pass. Retrying every invalid node is what keeps it; the
+  browser E2E's drill-through-a-face test is the one that would have caught the alternative.
+  (4) **One conservative opt-out, and it is named where it lives**: a macro `InstanceNode` over a
+  definition *source* runs somebody else's `compute`, which reads a literal this instance's arguments do not
+  carry, so it never memoizes. The regression is that retyping a captured default still reaches every
+  instance.
+  (5) **The regressions were written for the re-pointings first**, before a line of the memo: weld/unweld,
+  make-relative/make-absolute, attach, freeing a rider (the `IndirectNode` re-point), placing and unplacing
+  a group and a wall path, wiring and unwiring a parameter — each *through a warm cache*, which is the only
+  state in which the bug could exist. **14 new tests** (`IncrementalRecomputeTest`), **930 green**, ktlint
+  clean, the JS bundle built and the browser E2E still passing. The numbers the acceptance asked for: 100
+  repaints of an untouched turned part → zero recomputes; a 20-step drag of an unrelated point → the
+  revolve's counter unmoved; a sweep edit → exactly one; and the evaluation half of a render pass on a
+  four-revolve part (38 nodes, 1916 triangles) **~2.5–3.2 ms → under 0.01 ms**, 300–450× run to run.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -5899,10 +5996,23 @@ three things parked, each stated where it belongs: **two thick networks that cro
 junction cleanup is for walls of *one* carrier), there is **no mitre limit** on a sharp branch, and a
 footprint that takes the kernel route is **approximated** even when every carrier was a line or an arc.
 
-1. **Incremental recompute** (the OP-5 dirty-marking the implementation still owes): persistent
-   cross-pass value cache keyed by source-node versions, so a repaint recomputes only the changed input
-   cone — the fix for revolve-sized meshes making even the 2D view lag. Acceptance: recompute counters
-   flat across repaints that change nothing upstream. Optional afterwards: a low-poly view mode.
+**Retired in session 19: incremental recompute — the OP-5 dirty-marking the implementation had owed since
+day one.** Queue line 1, the last one standing, delivered whole — see the as-built note under *Evaluation*
+in OP-5. The queue line proposed "a cross-pass value cache keyed by source-node versions"; what shipped
+needs no versions and no keys: **a node reuses its result when its arguments are the same objects**, which
+makes the freshness test re-read the very edges the result depends on and so survives the four re-pointings
+(weld, attach, capture, wire) that a version index would have had to be told about. Its acceptance is met
+exactly as stated — 100 repaints of an untouched drawing recompute nothing, a drag outside the revolve's
+cone leaves its counter alone, an edit inside it costs one recompute — and the evaluation half of a render
+pass on a four-revolve part drops from ~2.5–3.2 ms to under 0.01 ms. It leaves **two things parked**, both named
+where they belong: an `InstanceNode` over a definition *source* does not memoize (stated in the note, and a
+pass-through anyway), and **invalidity is never memoized**, deliberately, because OP-3's healing promise
+depends on retrying — so a node that is expensive *and* invalid pays its cost every pass. The optional
+follow-on the queue line mentioned, **a low-poly view mode, is not needed and not built**: with the mesh
+cached, a drag that does not touch the solid does no tessellation at all, and one that does needs the real
+mesh anyway.
+
+**The numbered queue is empty.** What remains is the parked list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
