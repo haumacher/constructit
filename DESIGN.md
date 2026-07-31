@@ -6425,6 +6425,21 @@ Deliberately out, stated so it is not looked for: **STEP export** — the kernel
 exact B-rep for solids, so exact-geometry export would be either dishonest or a compliance project, and
 the "STEP into the slicer" trend is unreachable from here by design.
 
+**JT (ISO 14306, Siemens) — a separate project by the user's decision, session 22.** After reading the
+spec the user judged it *"a separate project — but a doable one"*: a standalone **Kotlin multiplatform JT
+library** (read + write), not a ConstructIt export route. What binds the two projects is the seam, and it
+already exists in this entry: the library's top-layer façade takes the same **format-agnostic scene**
+(named nodes, transforms, indexed-triangle meshes per LOD, simple materials, units explicit in the model)
+that the GLB writer and the three.js preview consume — so when the library exists, ConstructIt feeds it
+through the identical neutral handoff and the adapter is a page. Library shape agreed in discussion:
+three layers (segments+codecs behind a KMP `expect/actual` seam; a faithful lossless document model with
+unknown segments preserved as opaque blobs; the scene façade), write one version / read broadly, B-rep/XT
+preserved opaquely and never interpreted, round-trip tests against NX/JT2Go-produced fixtures as the
+acceptance spine, refusals-with-names for undecodable segments. Later hooks, in order of realism: export
+(tessellation + structure tree + names + materials, honest without B-rep — unlike STEP, tessellation-only
+JT is the format's own majority use), **PMI from ConstructIt's dimensions** (they are real model objects),
+import as view-only reference underlay (context, per the section-inputs anchor story).
+
 **In this package too (recorded in session 22 at the user's ask): the in-app realistic preview, on
 three.js.** The app is already Kotlin/JS in the browser, so three.js is an npm dependency of `jsMain`
 with external declarations — and the preview does not even need the GLB round trip: MeshGL maps onto
