@@ -6425,6 +6425,21 @@ Deliberately out, stated so it is not looked for: **STEP export** — the kernel
 exact B-rep for solids, so exact-geometry export would be either dishonest or a compliance project, and
 the "STEP into the slicer" trend is unreachable from here by design.
 
+**In this package too (recorded in session 22 at the user's ask): the in-app realistic preview, on
+three.js.** The app is already Kotlin/JS in the browser, so three.js is an npm dependency of `jsMain`
+with external declarations — and the preview does not even need the GLB round trip: MeshGL maps onto
+`THREE.BufferGeometry` nearly field-for-field, in memory. "Realistic" is configuration, not code: a PBR
+material from the Tier-1 numbers, an environment map (`RoomEnvironment`/PMREM), ACES tone mapping — that
+trio is what makes flat-colored solids read as physical objects. Three boundaries keep it honest to the
+architecture: **(1) `jsMain` only** — the engine stays platform-free and hands over the same neutral
+mesh+appearance data the GLB writer consumes, one appearance model with two consumers, so *what the
+preview shows is what the exported GLB shows, by construction*; **(2) a second viewer, never the editing
+surface** — the working 3D view keeps the ray seam, picking and working-plane gestures; the preview panel
+is display-only, no picking, no gizmos; **(3) incremental for free** — OP-5's argument-identity memo means
+mesh identity says which solids changed, so the preview re-uploads only those buffers and stays live
+during editing. One practical note: three.js is a ~600 KB dependency, so the preview module loads lazily
+on first open rather than riding the main bundle.
+
 **Appearance, scoped in session 21 — three tiers queued, the fourth a future extension (corrected the
 same session).** For viewing, the modeler's
 job is to *assign* appearance, never to render it — rendering (lighting, shadows, reflections) is
