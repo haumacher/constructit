@@ -6491,6 +6491,30 @@ deliberately does not build:
 face-space *creation* by 3D click (that is edit-in-3D slice 2; this item consumes the same provenance
 mechanism in the 2D editor first, which is the cheaper place to grow it).
 
+**Queued in session 22, after the four above (user-directed): conics as first-class curve values —
+ellipse and elliptic arc.** Not "an ellipse tool": the tool is one of three consumers, and the reason the
+item is shaped this way is an asymmetry the vocabulary should not tolerate — an inclined plane ∩ cylinder
+is an analytic ellipse (centre and axes in closed form), so shipping it as a flagged polyline while a
+*drawn* ellipse would be exact makes the same mathematical object two different citizens. First-class
+`EllipseValue` pays three times: the **drawing tool** (centre, two radii, orientation from a picked line —
+every input a node), **exact inclined sections** of cylinders and cones (the section-inputs honesty line
+moves outward by a change in *compute*, eval-time, so recorded files are untouched), and **projections
+later** (a circle seen obliquely, once the 3D view matures). The genuinely new math is intersections:
+line ∩ ellipse is the ordinary two-branch `Select`; circle ∩ ellipse and ellipse ∩ ellipse are **quartic**
+— up to four solutions — so the ordered-solution-set convention must speak four branches, for which the
+session-17 LLL circle is the precedent (four solutions as two composed binary signs). The honesty
+classification, with the user's own correction recorded because it moves the line in the right direction:
+**position-along an elliptic arc is EXACT**, because nothing forces arc length to be the parameter — a
+rider lives at the *parametric angle* (x = a·cos t, y = b·sin t; point, tangent and normal are plain
+trigonometry), which is how on-circle points already record their DOF ("*position-along … can be recorded
+as polar coordinates instead of length — useful for circles, too*"). What stays approximate is only what
+is genuinely *metric*: an elliptic arc's measured **length** (a dimension, computed to tolerance —
+elliptic integrals have no closed form) and equal-**distance** spacing (the sampled arc-length→parameter
+map, exactly the Bézier-leg bargain), plus **offsets** (an ellipse's offset is not an ellipse — OP-15's
+spline rule verbatim). Construction exact, measurement approximate — the right side of the line for a
+construction-based tool. The mechanical rest — tessellation, hit-testing, riders, break, trace, profiles,
+extrude/revolve, thicken over an elliptic carrier, key points — follows existing patterns case by case.
+
 Otherwise the numbered queue is empty; what remains is the parked list below, each item recorded at its
 source.
 
