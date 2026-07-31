@@ -78,6 +78,18 @@ data class Plane3(val origin: Vec3, val u: Vec3, val v: Vec3) {
     /** Where sketch point [p] lands in the world. */
     fun toWorld(p: Vec2): Vec3 = origin + u * p.x + v * p.y
 
+    /**
+     * Where world point [p] lands in this frame's own (u, v) — the inverse of [toWorld] for a point *in*
+     * the plane, and the orthogonal projection of one that is not.
+     *
+     * The frame is orthonormal ([Construction.plane] orthonormalises every one that is built), so this is
+     * two dot products and no solve.
+     */
+    fun toLocal(p: Vec3): Vec2 = Vec2((p - origin).dot(u), (p - origin).dot(v))
+
+    /** Signed distance of [p] from this plane, along its own normal. */
+    fun distanceTo(p: Vec3): Double = (p - origin).dot(normal.normalized())
+
     /** The same frame, moved [d] mm along its own normal. */
     fun translated(d: Double): Plane3 = Plane3(origin + normal * d, u, v)
 
@@ -823,15 +835,69 @@ object Geom3 {
     // inside one function of values (OP-21's rule); the node above it only says which sections there are.
 
     /** One area section resolved to values: its polygon, in the loft's own winding and seam order. */
-    private class LoftPrep(
+    internal class LoftPrep(
         val plane: Plane3,
         var poly: List<Vec2>,
         var starts: List<Int>,
         val tess: TessRegion,
     )
 
+    /**
+     * The **correspondence** of a loft, resolved to values and *before* a triangle is emitted: which
+     * boundary parameter every rail sits at, where each rail meets each section, and which way the run
+     * turns (OP-17's third feature).
+     *
+     * Extracted so it has **two consumers** rather than one: the mesh below, and the structural face/edge
+     * naming a section and a working plane need ([Section3]). That is the same discipline the appearance
+     * seam follows — one authority, two readers — and it is what makes "a loft's ruled face is its
+     * base-edge/seam pair" a statable address instead of a mesh lookup (OP-8).
+     */
+    internal class LoftPlan(
+        val sections: List<LoftSection>,
+        val preps: List<LoftPrep?>,
+        /** the global boundary parameters, ascending — one rail each */
+        val us: List<Double>,
+        /** per section: the sampled ring in the section's own plane coordinates, null for an apex */
+        val ring2: List<List<Vec2>?>,
+        /** per section: the sampled ring in the world (an apex's is its point, repeated) */
+        val ringW: List<List<Vec3>>,
+        val runs: List<Vec3>,
+        val hand: IntArray,
+        val rails: List<LoftRail>,
+    ) {
+        val railCount: Int get() = us.size
+
+        /**
+         * Which rail interval the boundary piece [piece] of section [k] falls into — the bridge from OP-8's
+         * durable footprint-piece name to this correspondence's own rail index.
+         *
+         * Measured from the piece's **midpoint**, deliberately: the polygon may have been reversed (to turn
+         * every boundary the same way about the run) and rotated (by the seam), and a midpoint is invariant
+         * under both where a start index is not.
+         */
+        fun railOfPiece(
+            k: Int,
+            piece: Int,
+        ): Int? {
+            val p = preps.getOrNull(k) ?: return null
+            val section = sections.getOrNull(k) as? LoftSection.Area ?: return null
+            val pieces = section.sketch.regions.firstOrNull()?.outer?.elements ?: return null
+            val e = pieces.getOrNull(piece) ?: return null
+            val mid = GeomMath.tessellatePiece(e, GeomMath.TESS_TOL_MM).let { pts -> pts[pts.size / 2] }
+            val cum = cumulativeOf(p.poly)
+            val (_, u) = nearestOnPolygon(mid, p.poly, cum)
+            for (i in us.indices) {
+                val a = us[i]
+                val b = if (i == us.size - 1) us[0] + 1.0 else us[i + 1]
+                val uu = if (u < a) u + 1.0 else u
+                if (uu >= a - 1e-12 && uu <= b + 1e-12) return i
+            }
+            return null
+        }
+    }
+
     /** A guide resolved to values: its world polyline and where it meets each section it spans. */
-    private class LoftRail(
+    internal class LoftRail(
         val poly: List<Vec3>,
         val cum: List<Double>,
         /** section index → (that section's boundary parameter, this guide's own arc parameter) */
@@ -880,6 +946,24 @@ object Geom3 {
         guides: List<LoftGuide> = emptyList(),
         tolMm: Double = GeomMath.TESS_TOL_MM,
     ): Pair<Solid3?, String?> {
+        val (plan, why) = loftPlan(sections, seams, guides, tolMm)
+        if (plan == null) return null to why
+        return loftShell(plan, seams, guides, tolMm)
+    }
+
+    /**
+     * The value half of a loft: everything that is decided before a triangle exists — see [LoftPlan].
+     *
+     * Every refusal of the feature is here, which is why it comes back as `null to reason` and heals (OP-3):
+     * the naming of faces reads the *same* answers the mesh does, so a face a section can address is a face
+     * the shell actually has.
+     */
+    internal fun loftPlan(
+        sections: List<LoftSection>,
+        seams: List<Int> = emptyList(),
+        guides: List<LoftGuide> = emptyList(),
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<LoftPlan?, String?> {
         if (sections.size < 2) {
             return null to "a loft needs at least two sections — one area and a point make a pyramid or a cone"
         }
@@ -984,6 +1068,24 @@ object Geom3 {
             if (rail == null) return null to (why ?: "cannot honour guide ${gi + 1}")
             rails.add(rail)
         }
+        return LoftPlan(sections, preps.toList(), us, ring2, ringW, runs, hand, rails) to null
+    }
+
+    /** The mesh half of a loft: the bands, the caps, and the folds that are refused before a triangle. */
+    private fun loftShell(
+        plan: LoftPlan,
+        seams: List<Int>,
+        guides: List<LoftGuide>,
+        tolMm: Double,
+    ): Pair<Solid3?, String?> {
+        val sections = plan.sections
+        val preps = plan.preps
+        val us = plan.us
+        val ring2 = plan.ring2
+        val ringW = plan.ringW
+        val runs = plan.runs
+        val hand = plan.hand
+        val rails = plan.rails
 
         // ---- the shell ----
         val mb = MeshBuilder()

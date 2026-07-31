@@ -356,11 +356,18 @@ class LoftToolTest {
         roundTrip(ed)
     }
 
-    /** A loft's own *Extrude on face* and *Section* decline **by name** — there is no silent nothing (OP-3). */
+    /**
+     * The accessor a loft still does not have declines **by name** — there is no silent nothing (OP-3).
+     *
+     * *Section* wants a `Region` (one closed area, to extrude again), and a loft has no *analytic* one: that
+     * cut stands. What no longer stands is the second half this test used to assert — that **sketch-on-face**
+     * refuses a loft outright. A flat face of a loft is a face space since the section-inputs package (see
+     * `SectionInputTest`), so the pick that used to be refused now opens one, and the refusal moved to where
+     * it belongs: a **ruled** face.
+     */
     @Test
     fun theAccessorsALoftDoesNotHaveDeclineOutLoud() {
         val ed = pyramid()
-        val solid = ed.solids().single()
         ed.setTool(Tools.SECTION)
         ed.type("30")
         ed.click(Vec2(30.0, 0.0))
@@ -369,12 +376,7 @@ class LoftToolTest {
         val result = Evaluator().eval(section.ref.node)
         assertTrue(result is constructit.core.EvalResult.Invalid, "a loft has no prismatic cross-section")
         assertTrue((result as constructit.core.EvalResult.Invalid).reason.contains("changes along the run"), result.reason)
-        // ...and sketch-on-face refuses the pick outright, with the reason in the status line
-        ed.setTool(Tools.SKETCH_ON_FACE)
-        ed.click(Vec2(30.0, 0.0))
-        assertTrue(ed.activeSpace.isPlan, "no space was opened on a loft's side")
-        assertTrue(ed.statusHint.contains("no sketch space") || ed.statusHint.contains("not a prism"), ed.statusHint)
-        assertEquals(1, ed.solids().size, "and nothing was built by either refusal: ${ed.statusHint}")
+        assertEquals(1, ed.solids().size, "and nothing was built by the refusal: ${ed.statusHint}")
     }
 
     /** The dependency rows name what a loft was built from: its section's legs and its apex point. */

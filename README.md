@@ -177,6 +177,8 @@ which space each step was drawn in. Features **chain**: each cut takes the part 
 second bore on a second face lands in the part with the first bore in it rather than beside it, and the step
 records which solid it cut so a reload rebuilds the same chain. The elements panel follows the view: it lists
 the active space's 2D geometry plus the solids, which belong to no space and are shown in the 3D view.
+A **flat face of a lofted solid** is a face space too — every face of a pyramid — while a ruled or curved one
+says so and points at *Sketch plane*.
 
 **...and on any plane at all.** Sketch-on-face turns out to be the special case: *Sketch plane (line + angle)*
 takes **any** line in the drawing — a segment, a construction line, a wall's centreline, a footprint edge — and
@@ -205,6 +207,23 @@ you chose rather than the one today's geometry would score. Polygon runs are **e
 pyramid is 300000 mm³ and the frustum 392000 mm³, to the last digit, with planar facets — while a curved
 section or guide is flagged **approximated**, the same bargain a Bézier offset makes. A loft is a solid like
 any other: cut it, fuse it, dimension its footprint, chain features onto it.
+
+**A working plane's context is the part's section — and the section is an input.** Drawing on a plane that is
+not the plan needs to know where the material is, so every such plane draws **the part's section at itself**,
+in its own coordinates: a face space draws its face's true boundary (a pyramid's lateral face draws its
+triangle), a datum plane draws the curves its cut produces. The load-bearing half is that those curves and
+their corners are **construction inputs** — click one while a tool is collecting and it becomes a real element
+downstream of the solid *and* the plane, so nothing is asserted and everything is constructed. Select a
+pyramid's face, take its three edges as the three tangents of a circle, and you have the face's inscribed
+circle to drill at; move the apex and the hole follows, because every step of that chain is a node. A datum
+45 mm above a pyramid's base sections it into the exact 50 × 50 square, and retyping the 45 slides the plane,
+the square and everything anchored on it. Exactness is stated rather than assumed: a plane through a flat face
+is an exact segment, a cylinder cut perpendicular to its axis is that cylinder's own circle (from the profile,
+not from the triangles), a rounded plate keeps its corner arcs — while an inclined cut through a curved face is
+a true **ellipse**, which the curve vocabulary has no name for, so it draws as chords, says it is approximated,
+and **refuses to be an input** rather than letting a construction be tangent to something that is not there.
+A part built by the general (mesh) engine has no faces to name: its section draws, and says why it offers
+nothing to anchor on.
 
 Mesh export is next. See [`DESIGN.md`](DESIGN.md) for the full design record and open questions.
 
@@ -268,11 +287,11 @@ did not previously complete at all. What the measuring produced:
   picks are highlighted on the canvas and a click that hits nothing says so. The recorded step still lists
   every piece in order, so nothing is re-discovered when the file is reloaded.
 
-561 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included.
+1053 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included.
 
-Planned next: mesh export (STL/3MF), regions with holes from traced outlines, datum planes in the UI (the
-roof is DSL-built for want of a way to *name* a plane), line styles in the render seam, and wall-to-wall
-junction cleanup.
+Planned next: conics as first-class curves (an ellipse arc, which is what would make an inclined section of a
+cylinder exact instead of flagged), editing in the 3D view on a working plane, mesh export (GLB / 3MF / STL),
+regions with holes from traced outlines, and line styles in the render seam.
 
 ## Documentation
 

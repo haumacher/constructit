@@ -14,7 +14,20 @@ import constructit.geom.Vec2
 import kotlin.math.round
 
 /** What a click landed on. Everything but [GRID] and [FREE] makes the new point *depend* on geometry. */
-enum class SnapKind { POINT, INTERSECTION, ON_CURVE, GRID, FREE }
+enum class SnapKind {
+    POINT,
+    INTERSECTION,
+    ON_CURVE,
+
+    /**
+     * A **corner of the working plane's section** (OP-17's section inputs): the part's own geometry, as a
+     * place to draw from. It ranks with an existing point, because that is what it becomes — placing here
+     * materializes the section's corner accessor and the new geometry hangs off the solid and the plane.
+     */
+    SECTION_CORNER,
+    GRID,
+    FREE,
+}
 
 /**
  * Where a click lands and what it landed on: [target] is the point to reuse or the curve to attach
@@ -25,6 +38,8 @@ class SnapResult(
     val kind: SnapKind,
     val target: Element? = null,
     val other: Element? = null,
+    /** [SnapKind.SECTION_CORNER] only: which corner of the section this is — the index that gets recorded. */
+    val sectionCorner: Int = -1,
 ) {
     /** Name of the snap, for the status bar. */
     val label: String
@@ -33,12 +48,15 @@ class SnapResult(
                 SnapKind.POINT -> "existing point"
                 SnapKind.INTERSECTION -> "intersection"
                 SnapKind.ON_CURVE -> "on curve"
+                SnapKind.SECTION_CORNER -> "section corner"
                 SnapKind.GRID -> "grid"
                 SnapKind.FREE -> ""
             }
 
     /** True when placing here creates a dependency rather than a free point. */
-    val linked: Boolean get() = kind == SnapKind.POINT || kind == SnapKind.INTERSECTION || kind == SnapKind.ON_CURVE
+    val linked: Boolean get() =
+        kind == SnapKind.POINT || kind == SnapKind.INTERSECTION || kind == SnapKind.ON_CURVE ||
+            kind == SnapKind.SECTION_CORNER
 }
 
 /**
@@ -72,6 +90,13 @@ object Snap {
                 val p = (ev.valueOf(el.ref) as? PointValue)?.p
                 if (p != null) return SnapResult(p, SnapKind.POINT, el)
             }
+        }
+
+        // A corner of the working plane's **section** ranks next: it is not an element yet, but placing here
+        // makes one (the corner accessor), so it produces a real dependency exactly as an existing point does
+        // — which is the rule this whole resolution is about (OP-17's section inputs).
+        doc.sectionCandidateNear(world, tol, ev, Document.SectionInput.CORNER)?.let { c ->
+            if (c.refusal == null) return SnapResult(c.at, SnapKind.SECTION_CORNER, sectionCorner = c.index)
         }
 
         // the attachable curves under the cursor, nearest first — the shared search, so "near a segment"

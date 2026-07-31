@@ -16,6 +16,7 @@ import constructit.core.PointValue
 import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.ScalarValue
+import constructit.core.SectionValue
 import constructit.core.SegmentValue
 import constructit.core.SolidValue
 import constructit.core.SourceNode
@@ -36,6 +37,7 @@ import constructit.dsl.Ref
 import constructit.dsl.RegionRef
 import constructit.dsl.RoundedRectArgs
 import constructit.dsl.ScalarRef
+import constructit.dsl.SectionRef
 import constructit.dsl.SegmentRef
 import constructit.dsl.SolidRef
 import constructit.dsl.instance
@@ -53,7 +55,9 @@ import constructit.geom.FilletVariant
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
+import constructit.geom.PlaneSection
 import constructit.geom.ProfileElement
+import constructit.geom.Section3
 import constructit.geom.Segment
 import constructit.geom.SolidFace
 import constructit.geom.ThickBody
@@ -1042,24 +1046,72 @@ class Document {
     }
 
     /**
-     * The rectangle of the face [space] is a sketch on, in that space's **own (u, v) coordinates** — width
-     * the picked edge's length, height the solid's z-extent (see [Geom3.SideFace]). Null for the plan, and
-     * null while the face's solid has no value (OP-3), where there is simply nothing to show.
+     * The **section node** of [space]: the part this plane belongs to, cut at this plane (OP-17's
+     * section-inputs package). Null for the plan, and null for a plane that belongs to no solid.
      *
-     * A *drawing* rather than a node, like a thick path's plan convention ([planOf]): it is the reference
-     * context that says where the face **is**, and it is the geometry a pick of the base solid measures
-     * against — one rule, so what is visible is what is pickable.
+     * A real node, created **once per space** and shared by every input taken from it — which is what makes
+     * the inputs a construction rather than a drawing: they are pure functions of the solid and the plane, so
+     * retyping the plane's offset or dragging the part's corner slides the section and everything anchored on
+     * it (OP-21: recompute, never rebuild).
+     *
+     * The solid is the space's own **anchor** — the solid the plane is derived from, or the part a datum was
+     * resolved against at creation — and not [facePartTip]: the plane names a state of the model and its
+     * context is the section of *that*, while which solid a *pick* of the part lands on is the tip's question
+     * and keeps the tip's answer ([partOutlineOf]). Two questions, two answers, as the sequential-feature rule
+     * already says for the plane itself.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun spaceSectionNode(space: SketchSpace): SectionRef? {
+        val plane = space.plane ?: return null
+        val anchor = space.anchor ?: return null
+        if (anchor.kind != ElementKind.SOLID) return null
+        sectionNodes[space.name]?.let { return it }
+        val node = cx.section(anchor.ref as SolidRef, plane)
+        sectionNodes[space.name] = node
+        return node
+    }
+
+    /** Section nodes by space name — one per space, so every input taken from it shares it (OP-5). */
+    private val sectionNodes = HashMap<String, SectionRef>()
+
+    /**
+     * The **section of the part at [space]'s plane**, as it stands — the general mechanism behind a working
+     * plane's context *and* its inputs (OP-17).
+     *
+     * Null when there is nothing to cut. Otherwise this is the part's section in the space's own (u, v): a
+     * face space's plane lies **on** a face, so its section is that face's boundary (which is what the face
+     * view has always drawn, now derived rather than assumed); a datum plane's section is the curves the cut
+     * produces. See [constructit.geom.Section3.sectionOf] for the exactness classes.
+     */
+    fun spaceSection(
+        space: SketchSpace,
+        ev: Evaluator,
+    ): PlaneSection? {
+        val node = spaceSectionNode(space) ?: return null
+        return (ev.valueOf(node) as? SectionValue)?.section
+    }
+
+    /**
+     * The boundary of the face [space] is a sketch on, in that space's **own (u, v) coordinates**. Null for
+     * the plan, and null while the face's solid has no value (OP-3), where there is simply nothing to show.
+     *
+     * The **degenerate section** (OP-17's one rule): a face space's plane lies on a face, so the part's
+     * section there *is* that face's boundary — a rectangle for an extrude's side face, exactly as before, and
+     * a triangle for a pyramid's lateral face, which the hardcoded rectangle this replaces could not say.
+     *
+     * A *drawing* rather than a node **as far as the view is concerned** (like a thick path's plan convention,
+     * [planOf]): it is the reference context that says where the face is, and it is the geometry a pick of the
+     * base solid measures against — one rule, so what is visible is what is pickable. The *inputs* on the same
+     * section are nodes ([spaceSectionNode]).
      */
     fun faceOutline(
         space: SketchSpace,
         ev: Evaluator,
     ): List<Vec2>? {
         if (!space.isFace) return null
-        val anchor = space.anchor ?: return null
-        val solid = (ev.valueOf(anchor.ref) as? SolidValue)?.solid ?: return null
-        val (face, _) = Geom3.sideFace(solid.feature, space.piece)
-        if (face == null) return null
-        return listOf(Vec2(0.0, 0.0), Vec2(face.length, 0.0), Vec2(face.length, face.height), Vec2(0.0, face.height))
+        val section = spaceSection(space, ev) ?: return null
+        if (section.onFace == null || section.isEmpty) return null
+        return section.drawn.map { GeomMath.startOf(it) }
     }
 
     /**
@@ -1103,6 +1155,24 @@ class Document {
     ): List<Vec2>? = faceOutline(space, ev) ?: datumHinge(space, ev)
 
     /**
+     * Everything [space] draws as **context**, in its own (u, v): the part's section at this plane, plus a
+     * datum's hinge (its own u axis, over the extent the picked line reaches).
+     *
+     * One query for the renderer, and the reason both are in it is that they answer different questions —
+     * the hinge says *where on the drawing am I standing*, the section says *where is the material*. A datum
+     * that cuts nothing draws its hinge alone and says so in its note; a face space's section is the face.
+     */
+    fun spaceContext(
+        space: SketchSpace,
+        ev: Evaluator,
+    ): List<ProfileElement> {
+        val out = ArrayList<ProfileElement>()
+        spaceSection(space, ev)?.let { out.addAll(it.drawn) }
+        datumHinge(space, ev)?.let { h -> if (h.size == 2) out.add(ProfileElement.Seg(Segment(h[0], h[1]))) }
+        return out
+    }
+
+    /**
      * [spaceOutline] of the active space, but only for the one element it stands for — the part at its
      * current [tip] — else null.
      *
@@ -1116,6 +1186,171 @@ class Document {
         ev: Evaluator,
         tip: Element? = facePartTip(ev),
     ): List<Vec2>? = if (tip != null && el === tip) spaceOutline(activeSpace, ev) else null
+
+    // ---- section inputs: the load-bearing half of a working plane's context (OP-17) ----
+
+    /** Which member of a section a click is reaching for: one of its curves, or one of its corners. */
+    enum class SectionInput { EDGE, CORNER }
+
+    /**
+     * A click landing on a working plane's section: **which** member of the ordered set it is (OP-6), where,
+     * and why it cannot be taken if it cannot.
+     *
+     * [refusal] is what makes this honest rather than silent: a curve the plane cuts into two pieces, a
+     * sampled conic, a mesh-route section — each is *drawn*, so each can be clicked, and each has to say why
+     * it is not an input rather than behaving like a miss.
+     */
+    class SectionCandidate(
+        val space: SketchSpace,
+        val kind: SectionInput,
+        val index: Int,
+        val at: Vec2,
+        val provenance: String,
+        val refusal: String?,
+        /**
+         * What kind of element taking this would create — asked *before* anything is created, so a slot that
+         * cannot use an arc can decline without a node ever existing (the pick pipeline's own rule).
+         */
+        val elementKind: ElementKind,
+    )
+
+    /**
+     * The member of the active space's section nearest [at] within [tol] — corners first, then curves, which
+     * is the same precedence a snap gives a point over the curve it lies on.
+     *
+     * Nothing is created here: this answers *what would be taken*, so a tool slot that cannot use it can
+     * decline before a node exists (the pick pipeline's rule — an existing-only slot creates nothing on a
+     * miss).
+     */
+    fun sectionCandidateNear(
+        at: Vec2,
+        tol: Double,
+        ev: Evaluator,
+        want: SectionInput? = null,
+    ): SectionCandidate? {
+        val space = activeSpace
+        val section = spaceSection(space, ev) ?: return null
+        var best: SectionCandidate? = null
+        var bestDist = Double.MAX_VALUE
+        if (want != SectionInput.EDGE) {
+            for ((i, c) in section.corners.withIndex()) {
+                val p = c.at ?: continue
+                val d = (p - at).length()
+                if (d <= tol && d < bestDist) {
+                    bestDist = d
+                    best =
+                        SectionCandidate(
+                            space, SectionInput.CORNER, i, p, c.provenance, section.inputsRefusal,
+                            ElementKind.DERIVED_POINT,
+                        )
+                }
+            }
+            if (best != null) return best
+        }
+        if (want == SectionInput.CORNER) return null
+        for ((i, e) in section.edges.withIndex()) {
+            val piece = e.curve ?: e.sampled?.let { pts -> pts.firstOrNull()?.let { ProfileElement.Seg(Segment(it, pts.last())) } }
+            val d =
+                if (e.curve != null) {
+                    HitTest.distanceToPiece(at, e.curve)
+                } else {
+                    e.sampled?.let { pts -> (0 until pts.size - 1).minOfOrNull { j -> HitTest.distanceToPiece(at, ProfileElement.Seg(Segment(pts[j], pts[j + 1]))) } }
+                } ?: continue
+            if (piece == null) continue
+            if (d <= tol && d < bestDist) {
+                bestDist = d
+                val why = section.inputsRefusal ?: sectionEdgeRefusal(section, i)
+                best = SectionCandidate(space, SectionInput.EDGE, i, at, e.provenance, why, edgeElementKind(e))
+            }
+        }
+        // …and a piece no index names at all (a face the plane cuts twice) still has to answer for itself
+        if (best == null) {
+            val hit = section.drawn.minByOrNull { HitTest.distanceToPiece(at, it) }
+            if (hit != null && HitTest.distanceToPiece(at, hit) <= tol) {
+                val why =
+                    section.inputsRefusal
+                        ?: section.edges.firstNotNullOfOrNull { it.reason?.takeIf { r -> r.contains("separate pieces") } }
+                        ?: "that piece of the section has no single name to take as an input"
+                best = SectionCandidate(space, SectionInput.EDGE, -1, at, "a piece of the section", why, ElementKind.SEGMENT)
+            }
+        }
+        return best
+    }
+
+    /** Which element kind a section curve becomes — the accessor's kind is part of the stored choice. */
+    private fun edgeElementKind(e: constructit.geom.SectionEdge): ElementKind =
+        when (e.curve) {
+            is ProfileElement.ArcE -> ElementKind.ARC
+            is ProfileElement.CircleE -> ElementKind.CIRCLE
+            else -> ElementKind.SEGMENT
+        }
+
+    /** Why curve [index] of [section] cannot be an input, or null when it can (the accessor's own rule). */
+    private fun sectionEdgeRefusal(
+        section: PlaneSection,
+        index: Int,
+    ): String? {
+        val e = section.edges.getOrNull(index) ?: return "that curve is no longer part of the section"
+        e.reason?.let { return it }
+        if (e.sampled != null) {
+            return "${e.provenance} is cut into a curve this drawing has no name for — an inclined plane through a " +
+                "curved face is a conic, so it draws but cannot be anchored on; cut perpendicular to the axis for " +
+                "the exact circle, or take a flat face's edge"
+        }
+        return null
+    }
+
+    /**
+     * **Take** the member [candidate] addresses as a construction input: a real element, downstream of the
+     * solid and the plane, recorded by index (OP-1/OP-18) and replayed verbatim.
+     *
+     * The precedent this follows is the rider's ([pointOnCurve]): a click that lands on something the drawing
+     * only *draws* materializes the accessor it addresses, and the step remembers the choice rather than the
+     * geometry. From then on it is an ordinary element — pickable, snappable, dimensionable, and usable by
+     * every tool that takes a segment or a point, which is why no tool needed a case for sections.
+     */
+    fun takeSectionInput(candidate: SectionCandidate): Element? {
+        if (candidate.refusal != null || candidate.index < 0) {
+            note = candidate.refusal
+            return null
+        }
+        return sectionInput(candidate.space, candidate.kind, candidate.index)
+    }
+
+    /**
+     * The recorded form of [takeSectionInput] — also the loader's entry point, so a replay creates the same
+     * node from the same index and never re-scores which curve was meant.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun sectionInput(
+        space: SketchSpace,
+        kind: SectionInput,
+        index: Int,
+    ): Element? {
+        val node = spaceSectionNode(space) ?: return null
+        val section = (Evaluator().valueOf(node) as? SectionValue)?.section
+        return recording(
+            "sectioninput",
+            Arg.Label(space.name),
+            Arg.Keyed(if (kind == SectionInput.CORNER) "corner" else "edge", Arg.Text(index.toString())),
+        ) {
+            when (kind) {
+                SectionInput.CORNER -> {
+                    add(cx.sectionCorner(node, index), ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
+                }
+                SectionInput.EDGE -> {
+                    // the *kind* of the curve is part of the accessor and therefore of the step (three ids for
+                    // one choice, the bbox-measurement precedent): a section curve that has since become an arc
+                    // makes the input invalid with a reason rather than changing type under a construction
+                    when (section?.edges?.getOrNull(index)?.curve) {
+                        is ProfileElement.ArcE -> add(cx.sectionArc(node, index), ElementKind.ARC, Styles.CONSTRUCT)
+                        is ProfileElement.CircleE -> add(cx.sectionCircle(node, index), ElementKind.CIRCLE, Styles.CONSTRUCT)
+                        else -> add(cx.sectionSegment(node, index), ElementKind.SEGMENT, Styles.CONSTRUCT)
+                    }
+                }
+            }
+        }
+    }
 
     /**
      * The plane the active space embeds on (OP-17) — what every feature built here sketches on.
@@ -1150,14 +1385,20 @@ class Document {
         return solid to best
     }
 
-    /** Why boundary piece [piece] of [solid] cannot carry a sketch, or null when it can. */
+    /**
+     * Why boundary piece [piece] of [solid] cannot carry a sketch, or null when it can.
+     *
+     * Asked through [Section3.facePatchOfFootprintPiece], so the answer is a *face*'s and not a prism's: a
+     * flat face of a **loft** (every face of a polygon→apex pyramid) carries a sketch at the same stored
+     * address, and a ruled one refuses with the plane that does work named in the message.
+     */
     fun faceRefusal(
         solid: Element,
         piece: Int,
         ev: Evaluator = Evaluator(),
     ): String? {
         val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return "${nameOf(solid)} has no solid to take a face from"
-        return Geom3.sideFace(feature, piece).second
+        return Section3.facePatchOfFootprintPiece(feature, piece).second
     }
 
     /**

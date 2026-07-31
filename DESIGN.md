@@ -3381,6 +3381,10 @@ immediately — the user's back-side drill, end to end, by clicking. `FaceSketch
   it exists is *Subtract*: the plate has no plan in these coordinates, but it does have this face, and
   "the solid this face belongs to" is exactly what the user means by clicking it. One rule, so what is
   visible is pickable: `Document.faceOutline` serves the renderer, the distance test and the marquee.
+  - **Generalized in session 24** — the rectangle was a *drawing*, and only ever a rectangle. It is now the
+    degenerate case of one general mechanism (the part's **section** at the working plane), which draws a
+    pyramid's lateral face as its triangle, keeps this rectangle corner for corner where the face is an
+    extrude's side, and makes both **inputs**. See *a working plane's context is the part's section* below.
   A solid's footprint hint is drawn **in the space its sketch was drawn in**, which discharges the caveat
   the earlier slice recorded: a drill sketched on a face shows its circle in the face view, where it
   belongs, instead of being projected into a plan it has no honest projection into.
@@ -3607,6 +3611,10 @@ click and typing a number first is what tilts it. `DatumPlaneTest` is the record
   the picked element reaches, at the grid's weight, and it is where a pick of the part lands (one rule: what is
   visible is pickable, `Document.spaceOutline` serving the renderer, the distance test, the marquee and the
   first camera). An **unbounded** hinge (an infinite line, a ray) has no extent and none is invented for it.
+  - **And, since session 24, the part's section at that plane** beside the hinge — the curves the cut actually
+    produces, which are also construction *inputs*. The hinge still answers *where on the drawing am I
+    standing*; the section answers *where is the material*. See the section-inputs note below; a plane that
+    cuts nothing draws the hinge alone and says so.
 - **The division of labor with Section, stated so neither grows the other's job.** *Section* is the **parallel**
   answer (`sectionAt`, an offset along the base normal, cutting a solid into 2D geometry); a **datum** is the
   **angled** one (a hinge line plus an angle, giving a plane to draw *on*). A general `section(solid, plane)` —
@@ -3712,6 +3720,11 @@ guide curves, and blends consecutive pairs. A pyramid is `[area, apex]`, a cone 
   (its end faces are its sections' own frames, tilted and sometimes absent — *"put a datum plane where you want
   to sketch"*), and `sectionAt` (an analytic loft section is its own piece of work). Each is the same shape of
   refusal a revolve's caps already are.
+  - **Half of the middle one is retired in session 24**: a *flat* face of a loft **is** a face space now, at
+    the same stored address every solid uses (the footprint boundary piece), so a pyramid's lateral face can be
+    sketched on and drilled. What still declines is a **ruled** face and a curved-section loft's sampled
+    patches — see *a working plane's context is the part's section*, where the quote is retired with its
+    replacement.
 - **Cuts in this slice, deliberately:**
   - **A section is one hole-free area.** A section with a hole is refused with the construction that does work
     named in the message (loft the outer boundaries, loft the holes, subtract) — a correspondence per ring is a
@@ -3725,6 +3738,139 @@ guide curves, and blends consecutive pairs. A pyramid is `[area, apex]`, a cone 
   - **No offset/scale-only section** (the "loft this outline to a scaled copy" shortcut): the copy is an
     ordinary construction (Scale, then loft the two), and a tool for it would be a second way to say the same
     thing.
+
+### Implementation status (as built — a working plane's context is the part's section, and the section is an input)
+
+**One rule replaces a drawing.** The context of a working plane is **the part's section at that plane**, and the
+face case is the degenerate section where the plane lies *on* a face (then the section *is* that face's
+boundary). That single sentence subsumes `Document.faceOutline` — the hardcoded rectangle that only understood
+an extrude's rectangular side faces and was, in the queue entry's own words, *"a drawing rather than a node"* —
+and it adds the half that was missing: the section's **curves and corners are construction inputs**, real
+derived nodes, pure functions of the solid and the plane. `Section3` is the geometry, `PlaneSectionTest` the
+geometry record, `SectionInputTest` the gesture record and
+`SectionInputTest.aPyramidsFaceCarriesItsInscribedCircleAndADrill` the acceptance test: a pyramid's lateral
+face becomes the working plane, its three edges feed the session-17 three-tangent circle, and the drill goes
+at the incircle's centre — with **moving the apex** re-deriving every one of those steps.
+
+- **The node's shape: structure is the feature's, value is everything else.** `section(solid, plane)` is one
+  op node holding one compound value (`SectionValue`, OP-6's pattern — the `PointSet` + `Select` one type up),
+  and the accessors are `sectionSegment/sectionArc/sectionCircle(section, i)` and `sectionCorner(section, i)`.
+  The ordered sets are **one entry per structurally named face and per structurally named edge of the
+  feature**, present whether or not the plane happens to cut it — so an index means the same thing after every
+  edit, and an entry the plane misses is invalid *with a reason* and heals (OP-3). That is deliberately not
+  "the curves there happen to be": a list sized by values would renumber itself the moment a plane slid past a
+  corner, which is exactly the defect OP-21 exists to forbid and which the *Key points* note argues one
+  dimension down.
+- **Provenance is structural, per feature kind, and never mesh-discovered** (OP-8). An extrude's side face
+  **is** a boundary piece of its profile, in the order `boundaryPieces` already fixes, followed by its two
+  caps; a loft's ruled face **is** a band of its run at a rail of its own correspondence, followed by its
+  terminal sections. Edges are named the same way — an extrude's upright edge at a profile corner, a cap's
+  own boundary piece, a loft's rail, a section ring's interval — which is what makes a section *corner* carry
+  the identity the queue entry asked for: the two faces it was cut from, i.e. the cut edge. Nothing is ever
+  re-identified, so the topological-naming problem does not arise.
+  - The loft's correspondence had to gain a **second consumer** for this: `Geom3.loftPlan` is the value half
+    of a loft (sections prepped, winding fixed, seam applied, global parameters sampled, guides resolved) and
+    `loftShell` the mesh half. The faces a section addresses are therefore the faces the shell actually has,
+    read off the same numbers — not a parallel derivation that could disagree.
+- **The recording route: materialize on pick, like a rider.** A click that lands on the section while a tool
+  is collecting creates the accessor it addresses and records **the index** (`sectioninput "plane1" edge=2` /
+  `corner=3`), taken verbatim on replay and never re-scored (OP-1/OP-18). From then on it is an *ordinary
+  element* — pickable, snappable, dimensionable, deletable — which is why **no tool needed a case for
+  sections**: a `LINE` slot gets a segment, a `CIRCLE` slot gets the section's arc, a point slot gets a
+  corner. The alternative considered and rejected was `signs=` on the consuming tool's own step: it would
+  have made every slot kind, every preview and every step argument aware of a second kind of pick, where the
+  precedent that already exists — a click on a curve becoming a rider (`pointoncurve`) — makes the whole
+  vocabulary work unchanged. A corner also ranks in the **snap** vocabulary (`SnapKind.SECTION_CORNER`,
+  beside an existing point, because that is what it becomes), which is what lets *Segment* be drawn corner to
+  corner.
+  - The kind of the curve is part of the accessor and therefore of the step — three accessors for one choice,
+    the bbox-measurement precedent — so a section curve that has since become an arc makes the input invalid
+    with a reason instead of changing type under the construction that uses it.
+- **Exactness, and where the line falls (OP-15).** Plane ∩ planar facet is an **exact segment** (or an exact
+  arc, where that facet's own boundary is curved: a bored plate's cap keeps its circles), computed
+  analytically — crossings from `intersectLL`/`intersectLC`, with only the inside/outside decision between two
+  crossings taken on the tessellated ring, a decision about a point far from the boundary and never about a
+  coordinate. A cylinder cut **perpendicular to its axis** is that cylinder's **own circle or arc**, restated
+  from the profile through the rigid map between two parallel planes; a cut **along** the axis is a ruling, a
+  segment. Everything else is a curve this vocabulary has no name for — an inclined plane through a cylinder
+  is a true **ellipse** — and comes back **sampled and flagged**: exact at every ruling, chords between, drawn
+  but refused as an *input* by name, with what *is* exact in the message. First-class conics would move that
+  line by a change in `compute` alone; they are the next queue item, not this one.
+- **The acceptance numbers, exact where they can be.** A pyramid (100 × 100, apex 90) cut at half height is
+  the **exact 50 × 50 square**, corner for corner, all four corners at 1e-9; its section corners are the
+  midpoints of base corner and apex for *any* apex, so moving the apex moves them by recompute. An inclined
+  cut through a cylinder (r = 30, θ = 30°) has every sample on the true ellipse (semi-axes 30 and 30/cos 30°)
+  to 1e-9. A perpendicular cut through the same cylinder is the circle r = 30. A rounded plate cut
+  perpendicular is four exact arcs and four exact segments, and a *tangent* constructed to one of those arcs
+  is tangent to the corner's true radius rather than to a chord.
+- **Parametricity is the payoff, and it is asserted from both ends.** Retyping a datum's offset from 45 to 30
+  slides the plane, re-derives the section (66.66… mm square) and carries the segment and midpoint anchored on
+  two of its corners with it; dragging the pyramid's apex re-derives the face triangle *and* the incircle
+  centre the drill sits at (to 1e-6), with **no element created and nothing rebuilt**. Byte-equal round trips
+  at both states.
+- **A flat face of a loft is a face space — one recorded cut retired.** The loft's own note said:
+
+  > Three accessors decline, each by name and each pointing at what does work: … `facePlane` (its end faces
+  > are its sections' own frames, tilted and sometimes absent — *"put a datum plane where you want to
+  > sketch"*) …
+
+  For the faces that genuinely **are** planes — every face of a polygon→apex pyramid, every side of an
+  untwisted frustum — that refusal is now wrong, and it is retired: `sideFacePlane(solid, piece)` resolves
+  through `Section3.facePatchOfFootprintPiece`, so the *same stored address* (the footprint boundary piece)
+  opens a face space on a loft, and **not one recorded file changes meaning**. What still declines, and now
+  says which: a **ruled** face (four corners out of plane, with the millimetres in the message), a loft whose
+  sections or guides are **curved** (a cone's lateral surface is one sampled patch, and its rails are
+  tessellation artifacts rather than corners of the drawing — so an index into them would not survive a change
+  of tolerance), and `sectionAt`, which wants a `Region`: a loft's section curves are inputs, but chaining them
+  into one closed area is the analytic-loft-section piece of work, still not built.
+- **The frame of a loft's face, stated once.** `u` along the band's lower edge, `v` from the *later* section
+  towards the earlier one, origin on the later section, normal out of the material — so the space's own
+  (flipped) frame has the face at `v ≥ 0` exactly as an extrude's side face does ("v runs down from the top").
+  For a pyramid the later section is the apex, which is therefore the drawing's origin: the acceptance face is
+  the triangle (0, 0), (−50, 102.956), (50, 102.956).
+- **What is drawn is what is picked, still one rule.** `Document.spaceContext` is the renderer's single query —
+  the section's curves plus a datum's hinge, in the space's own (u, v), at the grid's weight — and the same
+  section answers `faceOutline` (a face space's boundary, which for an extrude's side face is the very
+  rectangle, corner for corner and in the same order, that the old drawing produced), the part pick, the
+  marquee and the first camera. The camera now frames the section too, so a datum whose hinge sits off to one
+  side no longer opens on an empty plane beside the part.
+- **The mesh route: it draws, and it names nothing.** A solid with no analytic pedigree — the general
+  boolean's result (OP-9's sink rule), a revolve, a prism assembled by the slab algebra — still gets a
+  section, from the mesh, drawn as chords and flagged. Every input on it is refused by name, with the honest
+  alternative in the message ("build the geometry you want to anchor on from the operands' own sketches"), and
+  the space's own note says it on arrival. Drawing it anyway is deliberate: *where the plane cuts* is worth
+  seeing even where nothing can be anchored on it.
+- **Cuts in this slice, deliberately:**
+  - **Conics.** An inclined section of a cylinder or a cone is approximated-and-flagged rather than exact,
+    because the curve vocabulary contains no ellipse — the next queue item, recorded there with its three
+    consumers.
+  - **A prism's faces are not cut structurally.** `Section3.faces` names a prism's faces well enough to
+    *sketch on* one (the `sideFace` convention: one whole side per boundary piece over the solid's full
+    extent), but that is not a boundary a section may be assembled from — the material between two slabs may
+    not be there, and which cap of an interface is a face needs a 2D boolean per interface. So a
+    boolean-assembled prism takes the mesh route, and the message names *Section* for the horizontal cut,
+    which is exact. Naming a prism's faces per slab is a well-defined piece of work and is not built.
+  - **A free-standing datum still cuts nothing.** The part a datum's section is *of* is the part the space
+    already names — resolved once at creation from the hinge's ancestry and recorded (GitHub #6's rule,
+    unchanged), the same answer *Cut* uses. So a plane hinged on a line that belongs to no solid draws no
+    section, and the note says so. The consequence worth naming: a solid whose footprint has **no straight
+    edge** (a plain cylinder) has no line to hinge a datum on, so its section is reachable from the DSL and
+    not yet by clicking. The honest generalization is a plane-*and*-a-part pick, which is the plane-valued
+    slot OP-17 has recorded as wanting since the seam's downward slice.
+  - **One index is one curve.** A face the plane cuts into *several* pieces (a plane along a cylinder's axis
+    cuts its side face into two rulings) draws every piece and names none, because which of two an index meant
+    would change as the geometry moved — the same refusal `sectionAt` already makes for a multi-piece section,
+    and the click says so rather than missing silently.
+  - **No section of a section.** The curves are inputs; they are not assembled into a `Region`, so a working
+    plane's section cannot be extruded as an area (draw the outline you want on the plane — the inputs are
+    there to anchor it). That is the analytic-loft-section work above, one level up.
+  - **No rider on a drawn section curve.** A point slot placed on a section *corner* snaps to it (that corner
+    becomes an accessor); a point slot placed along a section *edge* still lands as a free point, because a
+    rider needs a curve element to ride. Take the edge as an input first — any curve slot does it in one click
+    — and it is an ordinary curve to put a point on from then on.
+  - **No 3D picking.** Choosing a face by clicking the solid in the 3D view is edit-in-3D's slice 2; this
+    package consumes the same provenance mechanism in the 2D editor first, which is the cheaper place to grow
+    it — exactly as the queue entry scoped it.
 
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
@@ -5555,6 +5701,39 @@ Three broad families (see OP-9 decision above):
   lacks decline by name.
   **44 new tests** (`LoftTest` 21, `LoftToolTest` 20, plus the datum-offset trio), **981 → 1025 green**, every
   existing golden byte-identical, ktlint clean, the JS bundle built and all six browser E2E flows passing.
+- **Session 24 — a working plane's context is the part's section, and the section is an input.** The queue
+  entry's first half was already a design (the user's, in two steps); what the session had to decide was the
+  *shape* of the thing, and four of those decisions are worth keeping.
+  (1) **One mechanism, and the face case is the degenerate one.** `faceOutline` was a rectangle that only
+  understood an extrude's rectangular sides — the honest generalization is not "a better rectangle" but
+  *the part's section at this plane*, of which a face's boundary is the case where the plane lies **on** a
+  face. That reading is what made the pyramid's triangular face fall out with no case, and it is what makes
+  the same code answer the renderer, the part pick, the marquee, the first camera and the inputs.
+  (2) **The ordered set is the feature's structure, not the geometry's answer.** The tempting list is "the
+  curves this plane cuts", and it renumbers itself the moment a plane slides past a corner — the very defect
+  OP-21 exists to forbid, one dimension up from the wall corners *Key points* argues about. So the set is one
+  entry per **named face** and per **named edge**, present whether cut or not, with an uncut entry invalid *with
+  a reason* and healing (OP-3). Provenance is then structural by construction: an extrude's side face is a
+  profile boundary piece, a loft's ruled face is a band at a rail of its own correspondence — and the loft's
+  correspondence had to be extracted (`loftPlan`) so that the faces a section names are the faces the mesh has,
+  rather than a parallel derivation that could disagree.
+  (3) **The pick materializes, exactly as a rider does.** The alternative — `signs=` on the consuming tool's
+  step — would have taught every slot kind, every preview and every step argument about a second kind of pick.
+  Materializing the accessor on the click (`sectioninput "plane1" edge=2`) instead means a section curve *is*
+  an element from that moment on, so all seventy-odd tools took section inputs with no change at all: the
+  three-tangent circle's `LINE` slots, *Tangent*'s `CIRCLE` slot, *Segment*'s points (through a new snap that
+  ranks a section corner beside an existing point). A pick is one index, verbatim on replay, never re-scored.
+  (4) **The honesty flag is load-bearing, not cosmetic.** An inclined plane through a cylinder is a true
+  ellipse and this vocabulary has no conic, so the section is sampled — but it is *drawn* and **refused as an
+  input by name**, with what is exact named in the refusal. Exact stayed genuinely exact on the other side of
+  the line: a perpendicular cut is restated *from the profile* (a circle with the profile's radius, not a fit
+  to samples), a cut along the axis is a ruling, and a planar facet's cut is analytic. The reward is the
+  acceptance scenario being *predictable*: the pyramid's half-height section is the exact 50 × 50 square, and
+  the drill's centre tracks the recomputed incircle to 1e-6 when the apex moves. It also retired half of a cut
+  a session old — a **flat** face of a loft is a face space, at the same stored address, with no file changing
+  meaning — while a ruled one refuses and names the datum plane.
+  **25 new tests** (`PlaneSectionTest` 13, `SectionInputTest` 12), **1028 → 1053 green**, every existing golden
+  byte-identical, ktlint clean, the JS bundle built and all six browser E2E flows passing.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -6539,6 +6718,72 @@ cut is reversed with its old rationale quoted (under OP-17's datum note). What r
 work: a section is one **hole-free** area, a loft has no analytic **section** and no named end **face**, and
 self-intersection is refused only where a rail or a ruling shows it.
 
+**Retired in session 24: a working plane's context is the part's section — and the section is an input.** The
+queue entry, quoted whole because half of it is the argument and not the specification:
+
+> **Queued in session 22, between the loft and edit-in-3D (user-designed): a working plane's context is
+> the part's section — and the section is an input.** The user's design, arrived at in two steps and
+> adopted whole. First the principle that frames it: **the 2D editor stays the first-order tool even after
+> edit-in-3D lands**, precisely because it shows less — one plane, no clutter; the 3D editor is an addition,
+> never a replacement. But a non-primary working plane needs its 3D context, at two levels: *(a)* a mental
+> anchor, and *(b)* — the load-bearing half — **inputs**: geometry of the part, usable in the construction
+> on that plane. Today's context is `Document.faceOutline`, a hardcoded rectangle that only understands an
+> extrude's side faces and is "a drawing rather than a node" — display and part-pick only, no refs. The
+> general rule replacing it: **the context of a working plane is the part's section at that plane**, and the
+> face case is the degenerate section where the plane lies on a face (then the section *is* that face's
+> boundary). The user's second step generalized it past faces: a datum plane parallel to the base at a given
+> height slices the pyramid, and *"the intersections of the pyramid faces could/should also serve as
+> potential anchors"* — so a section curve is an input like a face edge is, and both carry the same honest
+> identity: **the face it was cut from** (a corner: the two faces, i.e. the cut edge). Mechanism, per the
+> no-solver doctrine: the section is a **compound value with accessors** (OP-6's pattern, like
+> `PointSet`+`Select`) — `edge(i)`/`corner(i)` over a deterministically ordered set, a click recording the
+> *index* (OP-1/OP-18), never re-scored on replay; provenance is **structural, not mesh-discovered** (an
+> extrude's side face is its profile edge, a loft's ruled face is its base-edge/seam pair), with the
+> kernel-route boolean solids as the stated honest limit (refused with a reason there, initially).
+> Exactness: plane ∩ planar facet is an exact segment (the pyramid's section square is exact); curved faces
+> and mesh-route solids are approximated and flagged (OP-15). The acceptance scenario, the user's own:
+> select a pyramid face as working plane, use its three edges as inputs to the session-17 LLL circle —
+> inscribed-circle center — and drill there; then a datum at height *h*, whose section square anchors a
+> construction that stays put when the apex or the height moves. Two additions from the user's follow-up,
+> both in this package. **(i) The offset-plane gesture.** `Construction.planeOffset(plane, distance)` — "the
+> parametric datum plane" — has existed since the seam work, but only as a DSL node: the hinge+angle tool
+> cannot produce a parallel plane, because a hinge line always lies *in* its base space. A *Datum (offset)*
+> tool (base plane + a scalar distance, the distance an ordinary parameter) closes it, and closes the plane
+> vocabulary with it: hinge+angle composed with offset reaches **every** plane in 3D, parametrically — the
+> user's height *h* is a scalar, so editing it slides the plane and every construction anchored on its
+> section. **(ii) The conic honesty line, asserted.** An inclined plane ∩ cylinder is a true ellipse, and
+> the curve vocabulary (segments, arcs, cubic Béziers) contains no conic — nor could a Bézier say it exactly.
+> So section curves are **exact** where the cut is a segment (planar facets) or an axis-perpendicular circle
+> (structural from the profile), and **approximated and flagged** where a curved face meets an inclined
+> plane — exact at every sample, chords between, OP-15's standing bargain. Test requirements, the user's own:
+> the offset gesture round-trips and its parameter slides the section; the inclined cylinder section asserts
+> the approximated flag and sampled points on the true ellipse to 1e-9; the perpendicular cut asserts the
+> exact circle. First-class conics (ellipse arcs) would move that boundary but ripple through intersections,
+> offsets and hit-testing — a **future extension**, recorded here, not part of this package. What this
+> deliberately does not build:
+> face-space *creation* by 3D click (that is edit-in-3D slice 2; this item consumes the same provenance
+> mechanism in the 2D editor first, which is the cheaper place to grow it).
+
+All of it ships — see *a working plane's context is the part's section, and the section is an input* under
+OP-17. Amendment **(i)**, the offset-plane gesture, arrived **early**: the loft needed it a session before this
+package did, so *Sketch plane* already had its defaulted `offset` slot and this work only *uses* it ("0° plus an
+offset" is the parallel plane, and the user's height *h* is that slot's parameter). Amendment **(ii)**, the conic
+honesty line, is asserted exactly as written: the perpendicular cut is the exact circle, the inclined one is
+sampled with every sample on the true ellipse to 1e-9, and the flag is *load-bearing* rather than cosmetic —
+an approximated curve is refused as an **input** by name, so no construction is ever anchored on a chord.
+Three things the entry did not foresee, each recorded with the work: the ordered set had to be **one entry per
+named face and edge whether the plane cuts it or not** (a list of "the curves there are" renumbers itself when a
+plane slides past a corner, which is the defect OP-21 forbids); the pick had to be **materialize-on-click**, the
+rider's precedent, rather than `signs=` on the consuming tool, because that is what let *every* existing tool
+take a section input with no case of its own; and the loft's correspondence needed a **second consumer**
+(`loftPlan`) so the faces a section names are the faces the mesh has. What it closes beyond itself: a **flat
+face of a loft is a face space**, which retires half of the loft's `facePlane` refusal at the same stored
+address, with no file changing meaning. What stays cut, stated with the work: **conics** (the next queue item),
+**a prism's per-slab faces** (a boolean-assembled solid takes the mesh route, and *Section* is exact for the
+horizontal cut), **inputs on a mesh-route section** (it draws and names nothing — OP-9's sink rule), **a
+section as an area** (the curves are inputs, not a `Region` — that is the analytic loft section), and **3D
+picking** (edit-in-3D's slice 2, exactly as the entry scoped it).
+
 **Queued in session 21, behind the loft (user-directed): editing in the 3D view, on a working plane.**
 The user's design, adopted whole: the 2D/3D split stops being "author here, inspect there" — the 3D view
 becomes an *editing* view on one condition, an active **working plane**. Every mouse position in the 3D
@@ -6634,49 +6879,6 @@ wanted beyond the tiers above, it will have to be *parametric appearance* — ma
 projections bound to construction geometry, replayable like every other step. And the general lesson,
 stated as the user stated it: there are no permanent non-goals in this design record, only "future
 extensions at best/worst" — work whose time has not come.
-
-**Queued in session 22, between the loft and edit-in-3D (user-designed): a working plane's context is
-the part's section — and the section is an input.** The user's design, arrived at in two steps and
-adopted whole. First the principle that frames it: **the 2D editor stays the first-order tool even after
-edit-in-3D lands**, precisely because it shows less — one plane, no clutter; the 3D editor is an addition,
-never a replacement. But a non-primary working plane needs its 3D context, at two levels: *(a)* a mental
-anchor, and *(b)* — the load-bearing half — **inputs**: geometry of the part, usable in the construction
-on that plane. Today's context is `Document.faceOutline`, a hardcoded rectangle that only understands an
-extrude's side faces and is "a drawing rather than a node" — display and part-pick only, no refs. The
-general rule replacing it: **the context of a working plane is the part's section at that plane**, and the
-face case is the degenerate section where the plane lies on a face (then the section *is* that face's
-boundary). The user's second step generalized it past faces: a datum plane parallel to the base at a given
-height slices the pyramid, and *"the intersections of the pyramid faces could/should also serve as
-potential anchors"* — so a section curve is an input like a face edge is, and both carry the same honest
-identity: **the face it was cut from** (a corner: the two faces, i.e. the cut edge). Mechanism, per the
-no-solver doctrine: the section is a **compound value with accessors** (OP-6's pattern, like
-`PointSet`+`Select`) — `edge(i)`/`corner(i)` over a deterministically ordered set, a click recording the
-*index* (OP-1/OP-18), never re-scored on replay; provenance is **structural, not mesh-discovered** (an
-extrude's side face is its profile edge, a loft's ruled face is its base-edge/seam pair), with the
-kernel-route boolean solids as the stated honest limit (refused with a reason there, initially).
-Exactness: plane ∩ planar facet is an exact segment (the pyramid's section square is exact); curved faces
-and mesh-route solids are approximated and flagged (OP-15). The acceptance scenario, the user's own:
-select a pyramid face as working plane, use its three edges as inputs to the session-17 LLL circle —
-inscribed-circle center — and drill there; then a datum at height *h*, whose section square anchors a
-construction that stays put when the apex or the height moves. Two additions from the user's follow-up,
-both in this package. **(i) The offset-plane gesture.** `Construction.planeOffset(plane, distance)` — "the
-parametric datum plane" — has existed since the seam work, but only as a DSL node: the hinge+angle tool
-cannot produce a parallel plane, because a hinge line always lies *in* its base space. A *Datum (offset)*
-tool (base plane + a scalar distance, the distance an ordinary parameter) closes it, and closes the plane
-vocabulary with it: hinge+angle composed with offset reaches **every** plane in 3D, parametrically — the
-user's height *h* is a scalar, so editing it slides the plane and every construction anchored on its
-section. **(ii) The conic honesty line, asserted.** An inclined plane ∩ cylinder is a true ellipse, and
-the curve vocabulary (segments, arcs, cubic Béziers) contains no conic — nor could a Bézier say it exactly.
-So section curves are **exact** where the cut is a segment (planar facets) or an axis-perpendicular circle
-(structural from the profile), and **approximated and flagged** where a curved face meets an inclined
-plane — exact at every sample, chords between, OP-15's standing bargain. Test requirements, the user's own:
-the offset gesture round-trips and its parameter slides the section; the inclined cylinder section asserts
-the approximated flag and sampled points on the true ellipse to 1e-9; the perpendicular cut asserts the
-exact circle. First-class conics (ellipse arcs) would move that boundary but ripple through intersections,
-offsets and hit-testing — a **future extension**, recorded here, not part of this package. What this
-deliberately does not build:
-face-space *creation* by 3D click (that is edit-in-3D slice 2; this item consumes the same provenance
-mechanism in the 2D editor first, which is the cheaper place to grow it).
 
 **Queued in session 22, after the four above (user-directed): conics as first-class curve values —
 ellipse and elliptic arc.** Not "an ellipse tool": the tool is one of three consumers, and the reason the

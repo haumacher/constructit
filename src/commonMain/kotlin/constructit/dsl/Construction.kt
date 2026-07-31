@@ -20,6 +20,7 @@ import constructit.core.ProfileValue
 import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.ScalarValue
+import constructit.core.SectionValue
 import constructit.core.SegmentValue
 import constructit.core.SketchValue
 import constructit.core.SolidValue
@@ -48,6 +49,7 @@ import constructit.geom.Profile
 import constructit.geom.ProfileElement
 import constructit.geom.Ray
 import constructit.geom.Region
+import constructit.geom.Section3
 import constructit.geom.Segment
 import constructit.geom.Sketch3
 import constructit.geom.Solid3
@@ -103,6 +105,9 @@ typealias FrameRef = Ref<FrameValue>
 typealias PlaneRef = Ref<PlaneValue>
 typealias SketchRef = Ref<SketchValue>
 typealias SolidRef = Ref<SolidValue>
+
+/** A **section** of a solid at a plane: a compound value with accessors (OP-6, OP-17). */
+typealias SectionRef = Ref<SectionValue>
 
 /**
  * One input of a [Construction.loft] — a section of the run, or a guide that shapes it (OP-17).
@@ -1848,14 +1853,21 @@ class Construction {
      * A sketch on the face therefore wants [planeFlipped], so that a positive extrude depth cuts inward;
      * see [constructit.geom.Geom3.SideFace] for the frame's axes and origin, and for what is refused
      * (a curved edge, a non-vertical axis, a solid with no prism form).
+     *
+     * The **name** is a prism's ("side face") and the answer is no longer only a prism's: it resolves through
+     * [Section3.facePatchOfFootprintPiece], so a *flat* face of a **loft** — every face of a polygon→apex
+     * pyramid — is a face space too, at the same stored address (the footprint boundary piece). A ruled one
+     * refuses by name. That closes the loft's *"no named end faces"* cut for the faces that are planes,
+     * without a single recorded file changing meaning.
      */
     fun sideFacePlane(
         solid: SolidRef,
         piece: Int,
     ): PlaneRef =
         op(solid) {
-            val (face, why) = Geom3.sideFace((it[0] as SolidValue).solid.feature, piece)
-            if (face == null) EvalResult.Invalid(why ?: "no such side face") else EvalResult.Ok(PlaneValue(face.plane))
+            val (face, why) = Section3.facePatchOfFootprintPiece((it[0] as SolidValue).solid.feature, piece)
+            val plane = face?.plane
+            if (plane == null) EvalResult.Invalid(why ?: "no such side face") else EvalResult.Ok(PlaneValue(plane))
         }
 
     /**
@@ -1889,6 +1901,143 @@ class Construction {
             } else {
                 EvalResult.Ok(RegionValue(regions[0]))
             }
+        }
+
+    // ---- the section of a solid at a plane: a working plane's context, and its inputs (OP-17) ----
+
+    /**
+     * The **section of [solid] at [plane]** — one node, and a *compound* value with accessors (OP-6, the
+     * `PointSet` + `Select` pattern one type up).
+     *
+     * This is what a non-plan working plane draws as its context, and — the load-bearing half — what its
+     * construction may be **anchored on**: [sectionSegment], [sectionArc], [sectionCircle] and
+     * [sectionCorner] each address one member of the ordered set by index, which is a stored discrete choice
+     * (OP-1/OP-18) taken verbatim on replay. Since both inputs are nodes, the whole section is a pure
+     * function of the solid and the plane: retype the plane's offset and every anchored construction follows
+     * by recompute, with nothing rebuilt (OP-21).
+     *
+     * The *face* case needs nothing of its own: a plane lying on one of the solid's faces sections to that
+     * face's own boundary — see [constructit.geom.Section3.sectionOf].
+     */
+    fun section(
+        solid: SolidRef,
+        plane: PlaneRef,
+    ): SectionRef =
+        op(solid, plane) {
+            EvalResult.Ok(SectionValue(Section3.sectionOf((it[0] as SolidValue).solid, (it[1] as PlaneValue).plane)))
+        }
+
+    /**
+     * Curve [index] of [section] as a **segment** — a construction input in the plane's own coordinates.
+     *
+     * The kind is part of the accessor and not of the value, exactly as `Select`'s sign and `facePlane`'s
+     * `which` are: it is decided when the input is taken and then stored, so a section curve that has since
+     * become an arc makes this invalid **with a reason** (OP-3) instead of quietly handing back a different
+     * kind of thing. Same rule, same reason, as *Key points*' structural count.
+     */
+    fun sectionSegment(
+        section: SectionRef,
+        index: Int,
+    ): SegmentRef =
+        op(section) {
+            when (val e = sectionEdgeAt(it[0], index, "segment")) {
+                is EvalResult.Invalid -> e
+                else ->
+                    when (val c = (e as EvalResult.Ok).value) {
+                        is SegmentValue -> EvalResult.Ok(c)
+                        else -> EvalResult.Invalid("section curve ${index + 1} is not a straight edge any more — take the input again")
+                    }
+            }
+        }
+
+    /** Curve [index] of [section] as an **arc** — see [sectionSegment] for the kind rule. */
+    fun sectionArc(
+        section: SectionRef,
+        index: Int,
+    ): ArcRef =
+        op(section) {
+            when (val e = sectionEdgeAt(it[0], index, "arc")) {
+                is EvalResult.Invalid -> e
+                else ->
+                    when (val c = (e as EvalResult.Ok).value) {
+                        is ArcValue -> EvalResult.Ok(c)
+                        else -> EvalResult.Invalid("section curve ${index + 1} is not an arc any more — take the input again")
+                    }
+            }
+        }
+
+    /** Curve [index] of [section] as a **circle** — see [sectionSegment] for the kind rule. */
+    fun sectionCircle(
+        section: SectionRef,
+        index: Int,
+    ): CircleRef =
+        op(section) {
+            when (val e = sectionEdgeAt(it[0], index, "circle")) {
+                is EvalResult.Invalid -> e
+                else ->
+                    when (val c = (e as EvalResult.Ok).value) {
+                        is CircleValue -> EvalResult.Ok(c)
+                        else -> EvalResult.Invalid("section curve ${index + 1} is not a circle any more — take the input again")
+                    }
+            }
+        }
+
+    /**
+     * Curve [index] of a section, as whichever value its kind is — with every refusal this accessor family
+     * shares stated once: an index past the set, a face the plane no longer cuts, a face cut in several
+     * pieces, a section with no structural pedigree at all (the mesh route), and the **conic** line: a curve
+     * that is exact only at its samples is refused as an input by name, because a chord is not the curve and
+     * a construction anchored on one would be tangent to something that is not there (OP-15).
+     */
+    private fun sectionEdgeAt(
+        v: Value,
+        index: Int,
+        want: String,
+    ): EvalResult {
+        val section = (v as SectionValue).section
+        section.inputsRefusal?.let { return EvalResult.Invalid(it) }
+        val e =
+            section.edges.getOrNull(index)
+                ?: return EvalResult.Invalid(
+                    "this section has ${section.edges.size} named curves, so curve ${index + 1} is gone — take the input again",
+                )
+        e.reason?.let { return EvalResult.Invalid(it) }
+        if (e.sampled != null) {
+            return EvalResult.Invalid(
+                "${e.provenance} is cut into a curve this drawing has no name for (an inclined plane through a " +
+                    "cylinder is a true ellipse), so it draws but cannot be used as a $want — cut perpendicular to " +
+                    "the axis for the exact circle, or anchor on a flat face's edge",
+            )
+        }
+        return when (val c = e.curve) {
+            is ProfileElement.Seg -> EvalResult.Ok(SegmentValue(c.segment))
+            is ProfileElement.ArcE -> EvalResult.Ok(ArcValue(c.arc))
+            is ProfileElement.CircleE -> EvalResult.Ok(CircleValue(c.circle))
+            else -> EvalResult.Invalid("${e.provenance} has no curve to take as a $want")
+        }
+    }
+
+    /**
+     * Corner [index] of [section] — the point where the plane crosses one structurally named edge of the
+     * solid (which is what the queue entry means by a corner carrying "the two faces" as its identity).
+     *
+     * Exact wherever the edge is: the cut of a straight edge by a plane is a linear solve, so a pyramid's
+     * section corners are exact rational functions of its base and its apex.
+     */
+    fun sectionCorner(
+        section: SectionRef,
+        index: Int,
+    ): PointRef =
+        op(section) {
+            val s = (it[0] as SectionValue).section
+            s.inputsRefusal?.let { why -> return@op EvalResult.Invalid(why) }
+            val c =
+                s.corners.getOrNull(index)
+                    ?: return@op EvalResult.Invalid(
+                        "this section has ${s.corners.size} named corners, so corner ${index + 1} is gone — take the input again",
+                    )
+            val at = c.at ?: return@op EvalResult.Invalid(c.reason ?: "the plane does not cross ${c.provenance}")
+            EvalResult.Ok(PointValue(at))
         }
 
     /**

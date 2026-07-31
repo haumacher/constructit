@@ -7,6 +7,7 @@ import constructit.geom.Direction
 import constructit.geom.Line
 import constructit.geom.Loop
 import constructit.geom.Plane3
+import constructit.geom.PlaneSection
 import constructit.geom.PointSet
 import constructit.geom.Profile
 import constructit.geom.Ray
@@ -92,6 +93,18 @@ data class SketchValue(val sketch: Sketch3) : Value
  * lifts back to analytic geometry while a solid's faces and edges remain exact.
  */
 data class SolidValue(val solid: Solid3) : Value
+
+/**
+ * The **section of a solid at a plane** (OP-17's section-inputs package): a *compound* value with
+ * accessors, exactly as [PointSetValue] is (OP-6).
+ *
+ * One value rather than a node per curve, for the reason OP-21 states and the *Key points* tool already
+ * demonstrates one dimension down: how many curves a section has is a function of the solid's **values** (a
+ * plane slid past a corner cuts one face fewer), so a set of nodes sized by it would have to be regenerated
+ * on every edit. The set is ordered by the feature's own structure, an accessor addresses it by index, and an
+ * index the plane misses is invalid with a reason and heals (OP-3).
+ */
+data class SectionValue(val section: PlaneSection) : Value
 
 /** Result of evaluating a node: valid value or invalid with a reason (OP-3). */
 sealed interface EvalResult {

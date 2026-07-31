@@ -604,6 +604,11 @@ object DocumentFormat {
             // path; `space` switches back. Both create nothing, so they declare nothing, and steps belong
             // to the last space named — the ordering rule the writer relies on ([Document.noteSpace]).
             "sketchspace" -> applySketchSpace(doc, words, byName)
+            // A **section input** (OP-17): the working plane's own section, addressed by index. The index is
+            // the whole of the choice (OP-1/OP-18) — taken verbatim, never re-scored, so a curve that has
+            // moved comes back as *that* curve and one the plane no longer cuts comes back invalid with a
+            // reason (OP-3) instead of quietly meaning its neighbour.
+            "sectioninput" -> applySectionInput(doc, words)
             "space" ->
                 if (!doc.switchSpace(unquote(words.getOrElse(1) { throw LoadError("space is missing a name") }), record = true)) {
                     throw LoadError("unknown sketch space '${unquote(words[1])}'")
@@ -662,6 +667,7 @@ object DocumentFormat {
      * *angle*, by contrast, is state — it lives in the parameter this step names, and that parameter's own
      * `param` step restates it.
      */
+
     private fun applySketchSpace(
         doc: Document,
         words: List<String>,
@@ -697,6 +703,30 @@ object DocumentFormat {
         val on = solid ?: throw LoadError("sketchspace is missing 'el='")
         doc.createFaceSpace(on, piece, named = name)
             ?: throw LoadError("'${words.getOrNull(2)}' has no planar side face #${piece + 1}")
+    }
+
+    /** `sectioninput "plane1" edge=2` / `corner=3` — one member of a working plane's section, by index. */
+    private fun applySectionInput(
+        doc: Document,
+        words: List<String>,
+    ) {
+        val name = unquote(words.getOrElse(1) { throw LoadError("sectioninput is missing a sketch space") })
+        val space = doc.spaceNamed(name) ?: throw LoadError("unknown sketch space '$name'")
+        var kind: Document.SectionInput? = null
+        var index = -1
+        for (w in words.drop(2)) {
+            val v = w.substringAfter('=', "")
+            val key = w.substringBefore('=')
+            when (key) {
+                "edge", "corner" -> {
+                    kind = if (key == "edge") Document.SectionInput.EDGE else Document.SectionInput.CORNER
+                    index = v.toIntOrNull() ?: throw LoadError("malformed section index '$v'")
+                }
+                else -> throw LoadError("unknown sectioninput argument '$key'")
+            }
+        }
+        if (kind == null) throw LoadError("sectioninput needs edge= or corner=")
+        doc.sectionInput(space, kind, index) ?: throw LoadError("sketch space '$name' has no section to take an input from")
     }
 
     /** The panel entry a step names by name — a scalar is addressed by its name in the file (OP-18). */

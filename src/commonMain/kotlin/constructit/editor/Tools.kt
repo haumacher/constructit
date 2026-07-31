@@ -586,7 +586,7 @@ object Tools {
             // projects to exactly that edge, so the edge names the face and the solid at once. Like the
             // path and opening tools this one records a step of its own (`sketchspace`, naming the
             // boundary-piece index — a discrete choice, OP-18), so the Editor runs its click.
-            ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.SOLIDS, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that side face, where u runs along the edge from its start and v runs down from the top. Cut there drills into the material; Extrude builds a boss out of it.") { _, _, _ -> },
+            ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.SOLIDS, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that face, where u runs along the edge from its start and v runs down from the top. A flat face of a lofted solid works too — every face of a pyramid — while a ruled or curved one says so and points at Sketch plane. The part's section at that plane is drawn there, and its edges and corners can be clicked as inputs. Cut there drills into the material; Extrude builds a boss out of it.") { _, _, _ -> },
             // ----- ...and the general form of the same thing (GitHub #6): **any** line, **any** angle. One
             // LINE pick (a line, a segment, a ray or an ortho leg — the ordinary carrier coercion) plus a
             // *defaulted* angle slot, so the gesture is one click and typing a number first tilts the plane.

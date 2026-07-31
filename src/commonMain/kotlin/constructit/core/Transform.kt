@@ -48,4 +48,7 @@ fun transformValue(
         is PlaneValue -> throw IllegalArgumentException("a sketch plane cannot be transformed by a 2D map (OP-17)")
         is SketchValue -> throw IllegalArgumentException("a sketch cannot be transformed by a 2D map (OP-17)")
         is SolidValue -> throw IllegalArgumentException("a solid cannot be transformed by a 2D map (OP-17)")
+        // A section is a *reading* of a solid at a plane (OP-17): what it would mean to mirror one is to
+        // mirror the plane, which is the case above. Take the input first, then transform that.
+        is SectionValue -> throw IllegalArgumentException("a section cannot be transformed by a 2D map — mirror its inputs instead (OP-17)")
     }

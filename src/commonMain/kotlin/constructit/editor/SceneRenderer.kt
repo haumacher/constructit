@@ -128,15 +128,17 @@ object SceneRenderer {
         target.begin(wPx, hPx)
         val view = worldViewRect(cam, wPx, hPx)
         if (grid) drawGrid(cam, target, view)
-        // Reference context of a sketch space (OP-17): a **face**'s rectangle, or a **datum**'s hinge line
-        // (GitHub #6), in this space's own (u, v) — so the user can see where the plane *is* before drawing
-        // on it. Drawn with the grid's weight because it is not this space's geometry; it is nevertheless
-        // where a pick of the part this plane cuts lands ([Document.partOutlineOf]). Ghosting the *other*
-        // spaces is deliberately not attempted (see DESIGN.md).
+        // Reference context of a sketch space (OP-17): **the part's section at this plane**, in the space's
+        // own (u, v), plus a datum's hinge line (GitHub #6) — so the user can see where the plane is, and
+        // where the material is, before drawing on it. A face space's plane lies *on* a face, so its section
+        // is that face's own boundary: one mechanism, and a pyramid's lateral face draws its triangle where
+        // the hardcoded rectangle this replaces could only ever draw a rectangle.
+        // Drawn with the grid's weight because it is not this space's geometry; it is nevertheless where a
+        // pick of the part this plane cuts lands ([Document.partOutlineOf]) and where a pick of a **section
+        // input** lands ([Document.sectionCandidateNear]) — one rule: what is visible is pickable. Ghosting
+        // the *other* spaces is deliberately not attempted (see DESIGN.md).
         val tip = doc.facePartTip(ev)
-        doc.spaceOutline(doc.activeSpace, ev)?.let { r ->
-            target.polyline((r + r.first()).map { cam.worldToScreen(it) }, faceStyle)
-        }
+        drawChain(doc.spaceContext(doc.activeSpace, ev), cam, target, faceStyle)
         for (el in doc.elements) {
             if (!el.visible) continue
             // one canvas shows one space (OP-17): everything else belongs to a different coordinate system

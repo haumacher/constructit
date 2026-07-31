@@ -15,6 +15,7 @@ import constructit.core.ProfileValue
 import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.ScalarValue
+import constructit.core.SectionValue
 import constructit.core.SegmentValue
 import constructit.core.SketchValue
 import constructit.core.SolidValue
@@ -151,6 +152,9 @@ object Svg {
                 is PlaneValue -> {}
                 is SketchValue -> {}
                 is SolidValue -> {}
+                // …and a section is a reading of a solid: it is drawn as the working plane's context by the
+                // canvas, which knows which plane it is standing on. This serializer does not.
+                is SectionValue -> {}
                 null -> {}
             }
         }

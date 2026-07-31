@@ -7,6 +7,7 @@ import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.dsl.PointRef
 import constructit.dsl.valueOf
+import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.Vec2
 import constructit.units.Dimension
@@ -648,6 +649,10 @@ class Editor(
                 SnapKind.POINT -> s.target?.ref as? PointRef
                 SnapKind.INTERSECTION -> doc.intersectNear(s.target!!, s.other!!, s.pos)
                 SnapKind.ON_CURVE -> doc.pointOnCurve(s.target!!, s.pos)
+                // a corner of the section: the accessor is materialized here, so what gets drawn hangs off
+                // the solid and the plane and follows every edit to either (OP-17's section inputs)
+                SnapKind.SECTION_CORNER ->
+                    doc.sectionInput(doc.activeSpace, Document.SectionInput.CORNER, s.sectionCorner)?.ref as? PointRef
                 else -> null
             }
         if (ref != null) statusHint = "Snapped to ${s.label}"
@@ -892,11 +897,31 @@ class Editor(
                     ": u runs along that line, v rises out of " +
                     "${space.from} as the angle grows. Extrude builds along this plane's normal, Cut the other way — " +
                     "a negative angle swaps them. Retype the angle to tilt the plane and everything on it." +
-                    (if (space.anchor == null) " Nothing here to cut into: its line is part of no solid." else "")
+                    (if (space.anchor == null) " Nothing here to cut into: its line is part of no solid." else sectionNote(space))
             else ->
-                "Sketching on ${space.name}, the side face of ${space.anchor?.let { doc.nameOf(it) }}: u along the edge from its start, " +
-                    "v down from the top face. Cut here drills into the material; Extrude builds outward, as a boss."
+                "Sketching on ${space.name}, the face of ${space.anchor?.let { doc.nameOf(it) }}: u along the edge from its start, " +
+                    "v down from the top face. Cut here drills into the material; Extrude builds outward, as a boss." +
+                    sectionNote(space)
         }
+
+    /**
+     * What this plane's **section** offers, in one sentence: how many curves and corners can be clicked as
+     * construction inputs, whether they are exact, and — where there are none — why (OP-17's section inputs).
+     *
+     * Said when the space is entered because it is the one thing the canvas cannot show about a drawing on a
+     * plane: that the grey curves under the cursor are *inputs*, not a picture.
+     */
+    private fun sectionNote(space: SketchSpace): String {
+        val s = doc.spaceSection(space, ev()) ?: return ""
+        if (s.isEmpty) return " This plane cuts nothing of the part, so there is no context to anchor on."
+        s.inputsRefusal?.let { return " The section here draws but cannot be anchored on: $it." }
+        val curves = s.edges.count { it.curve != null }
+        val corners = s.corners.count { it.at != null }
+        val sampled = s.edges.count { it.approximated }
+        val exact = if (sampled == 0) "exact" else "$sampled of them approximated (a conic has no name here)"
+        return " Its section is $curves curve${if (curves == 1) "" else "s"} and $corners corner" +
+            "${if (corners == 1) "" else "s"} ($exact) — click one while a tool is collecting to use it as an input."
+    }
 
     /**
      * The first view of a space: the plan centred as always, a face or datum framed on the reference
@@ -904,7 +929,12 @@ class Editor(
      * plane off screen.
      */
     private fun cameraFor(space: SketchSpace): Camera {
-        val r = doc.spaceOutline(space, ev())?.takeIf { it.isNotEmpty() } ?: return Camera.centered(canvasW, canvasH)
+        // the section counts as context too (OP-17's section inputs): a datum whose hinge is off to one side
+        // must still frame the material it cuts, or the first view shows an empty plane beside the part
+        val section = doc.spaceSection(space, ev())?.drawn?.flatMap { GeomMath.tessellatePiece(it) } ?: emptyList()
+        val r =
+            ((doc.spaceOutline(space, ev()) ?: emptyList()) + section).takeIf { it.isNotEmpty() }
+                ?: return Camera.centered(canvasW, canvasH)
         val lo = Vec2(r.minOf { it.x }, r.minOf { it.y })
         val hi = Vec2(r.maxOf { it.x }, r.maxOf { it.y })
         val w = hi.x - lo.x
@@ -3302,8 +3332,11 @@ class Editor(
                 SlotKind.LOFT_PART -> pickElement(world) { doc.loftRoleOf(it) != null }
                 SlotKind.SIDE -> true // captures the click position only; creates nothing
             }
+        // …and a slot the ordinary pick missed may still have landed on the working plane's **section**, whose
+        // curves and corners are inputs (OP-17). Tried second, so a real element always wins.
+        val landed = picked || (slot != null && pickSectionInput(world, slot))
         // existing-only slots do NOT create anything on a miss — just hint and wait
-        if (!picked) {
+        if (!landed) {
             // A miss must *say* it missed, and say where the operation stands. Silently keeping the old
             // count is the worst of the three possible answers: the drawing does not change, so nothing on
             // screen distinguishes "that curve is in" from "that click landed in space". A pick that hit
@@ -3478,6 +3511,65 @@ class Editor(
     ): Boolean {
         val el = HitTest.nearest(doc, ev(), world, tolWorld(), filter) ?: return false
         pickedElements.add(el)
+        return true
+    }
+
+    /**
+     * A slot pick that landed on the working plane's **section**: the addressed curve or corner is
+     * materialized as a real element and fed to the slot (OP-17's section inputs).
+     *
+     * The precedent is the rider's: a click on something the canvas only *draws* creates the accessor it
+     * addresses and records the choice, so no tool needs a case for sections — a `LINE` slot gets a segment, a
+     * point slot gets a point, and from then on it is an ordinary element. Tried only *after* the ordinary
+     * pick, so a real element on top of the section still wins, and only for slots the section can fill: a
+     * section curve is scaffolding, not an area or a solid.
+     */
+    private fun pickSectionInput(
+        world: Vec2,
+        slot: SlotKind,
+    ): Boolean {
+        val want =
+            when (slot) {
+                SlotKind.EXISTING_POINT -> Document.SectionInput.CORNER
+                SlotKind.LINE, SlotKind.SEGMENT, SlotKind.CURVE, SlotKind.CARRIER, SlotKind.CIRCLE, SlotKind.CENTRIC,
+                SlotKind.EXTRACTABLE,
+                -> Document.SectionInput.EDGE
+                SlotKind.GEOMETRY -> null
+                else -> return false
+            }
+        val cand = doc.sectionCandidateNear(world, tolWorld(), ev(), want) ?: return false
+        if (cand.refusal != null) {
+            pickRefusal = "${cand.provenance} cannot be an input: ${cand.refusal}"
+            return false
+        }
+        // A straight-curve slot must not silently take an arc, and vice versa — so the kind is checked against
+        // the slot *before* anything is created, using the coercion rules the element filters already state
+        // (a segment carries a line, an arc carries a circle).
+        val k = cand.elementKind
+        val fits =
+            when (slot) {
+                SlotKind.LINE, SlotKind.SEGMENT -> k == ElementKind.SEGMENT
+                SlotKind.CIRCLE, SlotKind.CENTRIC -> k == ElementKind.CIRCLE || k == ElementKind.ARC
+                SlotKind.CARRIER, SlotKind.CURVE, SlotKind.EXTRACTABLE -> k != ElementKind.DERIVED_POINT
+                // a geometry slot (mirror, rotate, array) takes whatever the section offers: a corner is a
+                // point and a section curve is a curve, and both are ordinary operands once materialized
+                SlotKind.GEOMETRY -> true
+                SlotKind.EXISTING_POINT -> k == ElementKind.DERIVED_POINT
+                else -> true
+            }
+        if (!fits) {
+            pickRefusal =
+                "${cand.provenance} is cut as ${if (k == ElementKind.SEGMENT) "a straight edge" else "a curve"} " +
+                "there, which this pick cannot use — click another piece of the section"
+            return false
+        }
+        val el = doc.takeSectionInput(cand)
+        if (el == null) {
+            pickRefusal = doc.takeNote() ?: "${cand.provenance} cannot be taken as an input here"
+            return false
+        }
+        pickedElements.add(el)
+        statusHint = "Anchored on ${cand.provenance}"
         return true
     }
 }
