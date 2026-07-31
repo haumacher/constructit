@@ -51,12 +51,23 @@ object Painter3 {
     /** One thing to paint, with the depth it is sorted by. */
     private class Item(val depth: Double, val draw: (DrawTarget) -> Unit)
 
+    /**
+     * [overlay] is drawn **last, over the shaded solids**, and is how the working plane's sketch appears in
+     * the 3D view (edit-in-3D slice 1): [Viewport3] passes the editor's own drawing there, projected onto
+     * the plane by [PlanePerspective].
+     *
+     * On top rather than depth-sorted with the triangles, deliberately: the geometry being drawn is what
+     * the gesture is about, and a sketch that disappeared behind the material it is going to cut would make
+     * the view unusable exactly when it matters. The same choice the 2D canvas makes about its own overlays
+     * (a snap marker is never hidden by a wall), one dimension up.
+     */
     fun render(
         scene: Scene3,
         cam: Camera3,
         target: DrawTarget,
         wPx: Double,
         hPx: Double,
+        overlay: (DrawTarget) -> Unit = {},
     ) {
         target.begin(wPx, hPx)
         val vp = cam.viewProjection(wPx, hPx)
@@ -114,6 +125,7 @@ object Painter3 {
         // far first: the near ones paint over them. Ties broken by insertion order, so the output is a
         // deterministic function of the scene — a golden's whole reason for existing.
         for (item in items.sortedWith(compareByDescending { it.depth })) item.draw(target)
+        overlay(target)
         target.end()
     }
 

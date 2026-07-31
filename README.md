@@ -133,8 +133,9 @@ Kotlin Multiplatform, layered so the UI/shell is a late, reversible choice:
 
 The renderer draws through a backend-agnostic `DrawTarget` (SVG for tests, Canvas2D in the browser),
 so the interaction core is fully headless-testable by simulating pointer gestures. The 3D view works
-the same way: the orbit camera, the scene extraction and a painter's-algorithm projector all live in
-`commonMain`, so a 3D scene has SVG goldens and orbit gestures have headless tests — the browser
+the same way: the orbit camera, the scene extraction, a painter's-algorithm projector and the screen↔plane
+projection that lets that view *edit* all live in
+`commonMain`, so a 3D scene has SVG goldens and both orbit and drawing gestures have headless tests — the browser
 contributes only the GL calls, using the very same projection matrices.
 
 Solids are built by construction too: an outline or a wall footprint plus a depth or a sweep angle
@@ -225,6 +226,20 @@ and **refuses to be an input** rather than letting a construction be tangent to 
 A part built by the general (mesh) engine has no faces to name: its section draws, and says why it offers
 nothing to anchor on.
 
+**The 3D view draws, too.** Arm a tool while the 3D viewport is showing and it stops being somewhere to look
+and becomes somewhere to work: every mouse position casts a ray onto the **active working plane**, so the click
+lands in that plane's own coordinates and every one of the seventy-odd tools works there unchanged — same
+gestures, same snaps, same live previews, same document. The plane's sketch is drawn back **onto the plane** in
+the 3D scene, in perspective, so a circle reads as the ellipse it projects to and an arc is sampled from its own
+geometry rather than from the screen's. Hold **Ctrl** to orbit without leaving the tool (the wheel zooms,
+Space+drag pans); let it go and the next click carries on where you were, through the camera the orbit left
+behind. The plane is chosen the way it always was — the spaces list, *Sketch on face*, *Sketch plane* — and the
+picking radius stays the same ten pixels wherever the cursor is, because it is converted through the local
+scale there; where a plane is so edge-on that a pixel means metres, the app says so instead of guessing. What is
+deliberately not here yet: clicking a solid's **face** in the 3D view to choose the plane, and selecting
+existing geometry there — both belong to the next slice, which needs a durable name for a face rather than a
+ray-cast.
+
 Mesh export is next. See [`DESIGN.md`](DESIGN.md) for the full design record and open questions.
 
 ## Build & run
@@ -287,11 +302,12 @@ did not previously complete at all. What the measuring produced:
   picks are highlighted on the canvas and a click that hits nothing says so. The recorded step still lists
   every piece in order, so nothing is re-discovered when the file is reloaded.
 
-1053 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included.
+1068 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included.
 
 Planned next: conics as first-class curves (an ellipse arc, which is what would make an inclined section of a
-cylinder exact instead of flagged), editing in the 3D view on a working plane, mesh export (GLB / 3MF / STL),
-regions with holes from traced outlines, and line styles in the render seam.
+cylinder exact instead of flagged), picking a face in the 3D view to choose the working plane (edit-in-3D's
+second slice), mesh export (GLB / 3MF / STL), regions with holes from traced outlines, and line styles in the
+render seam.
 
 ## Documentation
 

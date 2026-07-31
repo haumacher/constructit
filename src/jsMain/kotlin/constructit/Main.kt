@@ -69,6 +69,11 @@ private fun setupApp() {
     // event plumbing and the GL calls, so orbit/zoom/pan are the headless-tested gestures of the
     // controller and nothing about *what a drag means* lives here.
     val viewport = Viewport3()
+    // ...and since edit-in-3D slice 1, the same view *edits*: the controller is handed the editor once, and
+    // decides for itself whether a gesture is the camera's or the armed tool's (its `shown` flag is what the
+    // view switch below writes). The shell still contributes only plumbing — which canvas got the event, and
+    // whether the modifier is down.
+    viewport.editor = editor
     val gl = WebGlRenderer3(canvas3)
     var view3d = false
     // The document's own "version counter" is [Editor.onChange]: geometry is rebuilt exactly when the
@@ -85,6 +90,12 @@ private fun setupApp() {
             glDirty = false
         }
         gl.draw(viewport.camera)
+        // The working plane's sketch, over the shaded solids: the *same* renderer and the same document as
+        // the 2D view, through a perspective projection instead of the canvas camera (edit-in-3D slice 1).
+        // Two canvases rather than one because the platform makes it cheap — GL below, Canvas2D above — and
+        // `Viewport3.render` composes exactly the same two layers onto one target for the headless goldens.
+        viewport.renderSketch(target)
+        canvas3.style.cursor = if (viewport.editing()) "crosshair" else "grab"
     }
 
     fun repaint() {
@@ -111,7 +122,10 @@ private fun setupApp() {
 
     fun setView3d(on: Boolean) {
         view3d = on
-        canvas.hidden = on
+        // the 2D canvas stays *shown* in the 3D view — as the transparent sketch layer over the GL canvas —
+        // but stops taking the pointer, since the 3D canvas is the one that routes gestures there
+        viewport.shown = on
+        canvas.className = if (on) "overlay" else ""
         canvas3.hidden = !on
         (document.getElementById("v-2d") as HTMLElement).className = if (on) "" else "active"
         (document.getElementById("v-3d") as HTMLElement).className = if (on) "active" else ""
@@ -124,8 +138,8 @@ private fun setupApp() {
             val scene = Scene3.extract(editor.doc)
             if (!scene.isEmpty) viewport.frame(scene)
             editor.note(
-                if (scene.isEmpty) {
-                    "Nothing solid yet — trace an Outline (or a Wall), then use Extrude or Revolve in the 2D view."
+                if (scene.isEmpty && !viewport.editing()) {
+                    "Nothing solid yet — trace an Outline (or a Wall), then use Extrude or Revolve."
                 } else {
                     viewport.help()
                 },
@@ -139,16 +153,16 @@ private fun setupApp() {
     (document.getElementById("v-2d") as HTMLElement).addEventListener("click", { setView3d(false) })
     (document.getElementById("v-3d") as HTMLElement).addEventListener("click", { setView3d(true) })
 
-    // Which 2D sketch space the canvas shows (OP-17): the view indicator *and* the way back to the plan.
+    // Which sketch space is active (OP-17): the view indicator *and* the way back to the plan.
     // A `<select>` because that is what "one of these, and here is which" is; the Editor owns the switch
     // (its own camera per space, its own selection reset), so this only routes.
+    //
+    // It no longer switches to the 2D view. That was right while the 3D view was read-only ("a space is a
+    // 2D thing, so asking for one means looking at it"), and it is wrong now: the active space *is* the
+    // working plane the 3D view edits on, so choosing one from here is how a plane is chosen without
+    // leaving that view (edit-in-3D slice 1 — the plane is chosen the existing way).
     (document.getElementById("v-space") as HTMLElement).addEventListener("change", {
-        // read what was picked *first*: a repaint restates the select from the editor, so anything that
-        // paints in between (the view switch below) would put the old value back under us
         val picked = (document.getElementById("v-space") as HTMLSelectElement).value
-        // the 2D view first: a space is a 2D thing, so asking for one means looking at it — and switching
-        // views has a note of its own, which must not talk over the space's
-        if (view3d) setView3d(false)
         editor.setActiveSpace(picked)
         repaint()
     })
@@ -179,18 +193,30 @@ private fun setupApp() {
     })
     canvas.addEventListener("dblclick", { editor.finishPath() })
 
-    // ---- 3D canvas input: the same three gestures, routed to the pure Viewport3 ----
+    // ---- 3D canvas input: every gesture routed to the pure Viewport3, which decides whose it is ----
+    //
+    // The shell's whole contribution to edit-in-3D: which canvas the event came from, and whether the camera
+    // modifier is down. Where the ray lands, whether the tool or the camera takes the drag, and what a
+    // release means are all [Viewport3]'s, in commonMain, where the headless suite drives them.
     fun pos3(e: MouseEvent): Vec2 {
         val r = canvas3.getBoundingClientRect()
         return Vec2(e.clientX - r.left, e.clientY - r.top)
     }
+
+    /** Ctrl (Cmd on a Mac) held: the camera takes the drag even while a tool is armed. */
+    fun modifier(e: MouseEvent): Boolean = e.ctrlKey || e.metaKey
     canvas3.addEventListener("mousedown", {
         val e = it as MouseEvent
         if (e.button.toInt() == 1) e.preventDefault()
         viewport.panMode = spaceDown
+        viewport.cameraModifier = modifier(e)
         viewport.pointerDown(pos3(e), if (e.button.toInt() == 1 || spaceDown) PointerButton.MIDDLE else PointerButton.PRIMARY)
     })
-    canvas3.addEventListener("mousemove", { viewport.pointerMove(pos3(it as MouseEvent)) })
+    canvas3.addEventListener("mousemove", {
+        val e = it as MouseEvent
+        viewport.cameraModifier = modifier(e)
+        viewport.pointerMove(pos3(e))
+    })
     canvas3.addEventListener("mouseup", { viewport.pointerUp(pos3(it as MouseEvent)) })
     canvas3.addEventListener("mouseleave", { viewport.pointerUp(pos3(it as MouseEvent)) })
     canvas3.addEventListener("wheel", {
@@ -198,8 +224,9 @@ private fun setupApp() {
         e.preventDefault()
         viewport.wheel(pos3(e), e.deltaY)
     })
-    // double-click reframes: the cheap way back when an orbit has wandered off the part
-    canvas3.addEventListener("dblclick", { viewport.frame(Scene3.extract(editor.doc)) })
+    // double-click reframes — unless a tool is drawing here, where it means what it means on the canvas:
+    // finish the run. The decision is the controller's, so it is asserted headlessly like the rest.
+    canvas3.addEventListener("dblclick", { viewport.doubleClick(Scene3.extract(editor.doc)) })
     document.addEventListener("keydown", {
         val e = it as org.w3c.dom.events.KeyboardEvent
         val key = e.key
@@ -243,6 +270,13 @@ private fun setupApp() {
             editor.note("Alt: clicks place at the cursor and flattened corners are kept (release to resume)")
             repaint()
         }
+        // the camera modifier, while the 3D view is drawing: it only *says* so here — the routing decision is
+        // read off the key state at the press ([Viewport3.cameraModifier])
+        if ((key == "Control" || key == "Meta") && !viewport.cameraModifier) {
+            viewport.cameraModifier = true
+            if (viewport.editing()) editor.note("Ctrl: drag to orbit the view without leaving the tool (release to draw again)")
+            repaint()
+        }
     })
     document.addEventListener("keyup", {
         val key = (it as org.w3c.dom.events.KeyboardEvent).key
@@ -260,6 +294,12 @@ private fun setupApp() {
         if (key == "Alt" && !editor.snapEnabled) {
             editor.snapEnabled = true
             editor.note("")
+            repaint()
+        }
+        if ((key == "Control" || key == "Meta") && viewport.cameraModifier) {
+            viewport.cameraModifier = false
+            // back to the tool, mid-session: an orbit already under way keeps the camera to its release
+            if (view3d) editor.note(viewport.help())
             repaint()
         }
     })

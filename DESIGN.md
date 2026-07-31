@@ -390,13 +390,18 @@ WebGlRenderer3 (jsMain) — one program: position+normal+colour, uniform MVP, he
 - **The repaint "version counter" is `Editor.onChange`.** GPU buffers are rebuilt exactly when the
   editor reports a document change; an orbit never goes through the editor, so it only re-issues the
   draw call with a new matrix. No dirty flag on the document was needed.
-- **Cut, deliberately: no picking in the 3D view.** A click there selects nothing, and the status line
-  says the drawing tools apply to the 2D view. Picking in 3D needs a ray/mesh intersection *and* an
-  answer to "what does selecting a face mean for a construction" — that answer is the sketch-on-face
-  task, and guessing it now would put a second, weaker selection model beside the 2D one. Sketch-on-face
-  has since shipped and answered it **without** 3D picking: a face is named by a *provenance choice*
-  (`facePlane(solid, TOP)`) reached by picking the solid in plan, not by clicking a facet — so the cut
-  stands, and what remains for 3D picking is convenience rather than expressiveness.
+- **Cut, deliberately: no picking *of the solids* in the 3D view.** A click there selects no facet. Picking
+  in 3D needs a ray/mesh intersection *and* an answer to "what does selecting a face mean for a
+  construction" — that answer is the sketch-on-face task, and guessing it now would put a second, weaker
+  selection model beside the 2D one. Sketch-on-face has since shipped and answered it **without** 3D
+  picking: a face is named by a *provenance choice* (`facePlane(solid, TOP)`) reached by picking the solid
+  in plan, not by clicking a facet — so the cut stands as *face-picking*, which is edit-in-3D's slice 2.
+  - **Superseded in part: the drawing tools now apply here too.** Since edit-in-3D slice 1 this view *is* an
+    editing view whenever a tool is armed on the active working plane — every mouse position casts a ray onto
+    that plane and reaches the same `Editor`. What the cut above now means precisely is: a gesture reaches the
+    **active plane's** geometry, never a triangle of a mesh, and SELECT's own gestures (marquee, dragging a
+    handle) stay the canvas'. See *Implementation status (as built — the 3D view edits, on the active working
+    plane)* under OP-17.
 - Consequence handled rather than ignored: a solid's 2D **footprint hint** sits exactly on the area it
   was extruded from, so a canvas click can only reach the topmost of the two. The **element tree**
   therefore selects by name (`Editor.selectElement`). Biasing the pick would merely make the other one
@@ -3872,6 +3877,93 @@ at the incircle's centre — with **moving the apex** re-deriving every one of t
     package consumes the same provenance mechanism in the 2D editor first, which is the cheaper place to grow
     it — exactly as the queue entry scoped it.
 
+### Implementation status (as built — the 3D view edits, on the active working plane)
+
+Edit-in-3D **slice 1**, the user's design adopted whole: *the 2D/3D split stops being "author here, inspect
+there"*. Whenever there is an active working plane (which there always is — the plan is one, OP-17), the 3D
+viewport is an **editing** view. Nothing about the model changed, and nothing about the `Editor` learned about
+3D: this is a **second projection into the same headless controller**.
+
+```
+PlaneProjection (commonMain)  — screen px <-> one plane's own (u, v): the one authority, two consumers
+  Camera            — the 2D canvas: a similarity (one scale, a circle is a circle, screen marks are exact)
+  PlanePerspective  — the working plane through Camera3: scale varies, a circle is an ellipse, a point may
+                      have no image at all
+Camera3.unproject(px) -> Ray3 ; Geom3.rayPlane(ray, plane) -> t?     — the seam's whole arithmetic
+Editor.pointing: PlaneProjection?   — null on the canvas; set by Viewport3 while the 3D view is shown
+Viewport3           — now also the router: whose gesture is this, the tool's or the camera's
+```
+
+- **The seam is one type with two consumers, and that is the load-bearing decision.** The same
+  `PlaneProjection` answers the *event* path (a pointer position becomes plane coordinates; a tolerance in
+  pixels becomes one in millimetres) and the *rendering* path (`SceneRenderer`'s world→screen). Two
+  conversions that merely agreed would be a bug no test could see; one type cannot disagree with itself. It is
+  handed to the editor as a single field, so the controller goes on receiving plane coordinates exactly as the
+  jvmTest suite has always driven it — **what varies is only who computed them**.
+- **`SceneRenderer` was generalized, not forked.** Every world→screen step goes through the interface, and
+  three things the old code took for granted became questions the projection answers: how an arc is sampled
+  (`arcPoints` — the canvas' fixed 64-per-turn, or the arc's *own* chord count at `TESS_TOL_MM` for a curve
+  that spans depth), what a circle *is* (`drawCircle` — the target's circle primitive, or a projected ring,
+  because a circle seen obliquely is an ellipse and `DrawTarget` has no primitive for one), and what the view
+  covers (`viewRect`, which clips an infinite line). Every 2D golden is byte-identical, by construction: the
+  `Camera` implementation emits precisely the calls the renderer used to make inline.
+- **A point with no image drops its whole primitive.** Under perspective a segment straddling the eye plane
+  projects to two opposite screen edges; joining them would draw a line that exists nowhere in the model.
+  Near-plane clipping per piece would be a second projection pipeline, which is the one thing this engine does
+  not have (OP-12). The 2D camera never returns null, so the canvas path is the map it always was.
+- **The pick tolerance stays 10 screen pixels — by *converting*, not by being one number.** `scaleAt(p)` is
+  the isotropic (geometric-mean) scale of the plane→screen map at the cursor, in closed form
+  (`focalPx/depth · sqrt(|n̂·r̂| · |r|/depth)`), checked against finite differences of the projection it
+  describes. One number per event, read where the cursor is, and `Editor.pickToleranceAt` is public because it
+  is the assertable half of the rule. **Clamped and spoken**: past 20× the view's nominal scale the tolerance
+  stops following the perspective and the status line says why, because a 10-pixel pick reaching metres of a
+  nearly edge-on plane is not a pick.
+- **A gesture with no plane coordinates is a refusal, never a coordinate.** `toPlane` returns null when the
+  ray runs parallel to the plane or meets it behind the eye; `Editor.enter` — the one door every pointer
+  gesture now comes through — turns that into a note naming the reason and leaves the drawing alone. No NaN,
+  no ten-kilometre literal.
+- **The modifier is Ctrl, chosen by elimination.** Shift is the axis lock, Alt declines a snap and a pick
+  cycle's join, Space is the pan (unchanged, in both views) — each already means something *inside* a drawing
+  gesture and has to go on meaning it. Ctrl appears only in key chords (Ctrl+Z/Y), never during a pointer
+  gesture. **Mid-gesture semantics, stated and tested: a drag belongs to whoever owned it at the press.** So
+  letting Ctrl go halfway through an orbit finishes the orbit rather than teleporting geometry to the cursor,
+  and pressing it halfway through the tool's drag leaves that drag alone. Crossing the modifier changes the
+  *next* gesture — and the tool is untouched by the detour: its picks, its active path and its preview are
+  still there, now drawn through the camera the orbit left behind (the projection is re-read per event). The
+  wheel is always the camera's, modifier or not: no tool uses it, and the 2D camera it would otherwise zoom is
+  not the one on screen.
+- **The sketch is painted over the solids, deliberately.** `Painter3.render` takes an overlay drawn last;
+  depth-sorting the sketch with the triangles would hide the geometry being drawn behind the material it is
+  about to cut. The browser splits the same two layers across its two canvases (WebGL under, a transparent
+  Canvas2D over) because the platform makes that cheap — the *content* is identical, since both go through the
+  one renderer and the one projection, which is what makes `edit3d-pyramid-with-its-plan-sketch.svg` evidence
+  about what Chrome draws.
+- **What `jsMain` got: which canvas, and whether Ctrl is down.** Two CSS lines to stack the canvases, the
+  pointer-transparency of the overlay, `viewport.editor = editor` once, and the modifier's key state. Every
+  decision — where the ray lands, who owns the drag, what a double-click means, whether this view is editing
+  at all — is `Viewport3`'s, in `commonMain`, and is driven headlessly.
+- **The plane is chosen the existing way, and the spaces list stopped switching views.** Picking a space in
+  the topbar used to force the 2D view ("a space is a 2D thing"); that was right while the 3D view was
+  read-only and is wrong now, because the active space *is* the plane the 3D view edits on.
+- **Cuts, stated.** (1) **SELECT is still the canvas'**: with no tool armed a drag orbits and a click selects
+  nothing, exactly as before — the one gesture that competes with the orbit is the marquee, and picking *in*
+  the 3D view properly means picking the solids, which is slice 2. A tool's own picks are unaffected: a slot
+  wanting a curve gets its click through the ray seam like any other. (2) **No grid and no ruler on the plane
+  in 3D.** Both are stated in screen pixels, which means one length everywhere — true only under a similarity;
+  the 3D view's world ground grid is that statement made where perspective can carry it. Grid *snapping* still
+  works, through the local scale. (3) **Nothing of slice 2**: no ray–triangle picking against the meshes, no
+  face-as-a-recorded-choice. The cheap partial (a ray-cast that picks a facet) was deliberately not built —
+  without the provenance half it would be a second, weaker selection model beside the 2D one, which is the
+  reason this view had no picking in the first place.
+- Tests: `Edit3DTest` (14) — the ray seam over four camera poses × three planes, the parallel-ray refusal, the
+  acceptance pyramid + a datum at offset 45 + a segment between two of its section corners **clicked entirely
+  in the 3D view** and compared step-for-step against the same gestures on the canvas, plane-space arc
+  tessellation with per-vertex projection (with the screen-space count shown to be 20× the tolerance and over
+  a pixel out at that pose), previews projected on the plane, the tolerance rule at two camera distances, the
+  clamp, and the modifier gate both ways — plus one browser E2E (`drawingOnTheWorkingPlaneInThe3DView`) that
+  draws a rectangle in the 3D viewport with a Ctrl-orbit in the middle and reads the document back out of the
+  app's own Copy button.
+
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
 **Decision:** an **analytic construction layer is the source of truth**; the mesh is an
@@ -5734,6 +5826,36 @@ Three broad families (see OP-9 decision above):
   meaning — while a ruled one refuses and names the datum plane.
   **25 new tests** (`PlaneSectionTest` 13, `SectionInputTest` 12), **1028 → 1053 green**, every existing golden
   byte-identical, ktlint clean, the JS bundle built and all six browser E2E flows passing.
+- **Session 25 — the 3D view starts editing: one projection seam, and the controller never hears about 3D.**
+  Slice 1 of the queued edit-in-3D entry, and the session's whole job was to keep the promise the entry itself
+  made — *a projection seam, not a new controller* — which turned into four decisions worth keeping.
+  (1) **One type, two consumers.** The tempting shape is two conversions: a ray-cast for the mouse and a
+  projector for the drawing. They would agree until they didn't, and nothing would catch it, because "what you
+  clicked is what you see" is not a statement either half can make alone. So `PlaneProjection` is one interface
+  with one perspective implementation and one *exact* one — and the exact one is the existing 2D `Camera`,
+  which is why every golden is byte-identical: the interface's methods emit precisely the calls the renderer
+  used to make inline.
+  (2) **What perspective takes away has to be *asked for*, not assumed.** Three things the renderer took for
+  granted were really statements about a similarity: an arc's step count (equal angular steps are equal screen
+  steps), a circle's *shape* (a circle's image is a circle), and one scale for the whole plane. Each became a
+  method on the projection rather than a branch in the renderer — so the canvas keeps its exact, golden-stable
+  policy and the 3D view samples the arc at its own chord tolerance and emits a circle as a projected ring. The
+  test that pins it measures both step counts against the true projected curve in *pixels*, so the case is one
+  where the difference is visible and not merely arithmetical.
+  (3) **The one honest null.** A pointer position in the 3D view sometimes has *no* plane coordinates — the ray
+  runs parallel to the plane, or the plane is behind the eye. Returning a huge number or a NaN would place
+  geometry where nobody pointed, so `toPlane` is nullable and `Editor.enter` is the single door every gesture
+  now comes through: it resolves the position, remembers where the local tolerance is taken, and turns "no
+  answer" into a note naming the reason. The same door is where the tolerance clamp speaks.
+  (4) **Ownership of a drag is decided once, at the press.** The modifier question looks like "which key", and
+  the interesting half is what happens when it is crossed *during* a gesture. A per-event decision would
+  teleport geometry to the cursor the moment Ctrl came up mid-orbit. Deciding at the press and holding it makes
+  both directions trivial to state and to test — and it is what lets a tool keep its picks across an orbit and
+  finish through the camera the orbit left behind. Ctrl itself is chosen by elimination: Shift, Alt and Space
+  all already mean something inside a drawing gesture.
+  **15 new tests** (`Edit3DTest` 14 + one browser E2E), **1053 → 1068 green** (1069 with `-De2e=1`), every
+  existing golden byte-identical plus one new one of the composed editing view, ktlint clean, the JS bundle
+  built and all seven browser E2E flows passing.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -6784,28 +6906,51 @@ horizontal cut), **inputs on a mesh-route section** (it draws and names nothing 
 section as an area** (the curves are inputs, not a `Region` — that is the analytic loft section), and **3D
 picking** (edit-in-3D's slice 2, exactly as the entry scoped it).
 
-**Queued in session 21, behind the loft (user-directed): editing in the 3D view, on a working plane.**
-The user's design, adopted whole: the 2D/3D split stops being "author here, inspect there" — the 3D view
-becomes an *editing* view on one condition, an active **working plane**. Every mouse position in the 3D
-viewport casts a ray that intersects that plane, giving exact 2D coordinates in the plane's own space, so
-every existing tool gesture translates losslessly and the inverse map draws the sketch back onto the plane
-inside the 3D scene; choosing the working plane itself becomes a 3D gesture (click the surface to work
-on); a modifier keeps orbit/pan available without leaving the tool. Nothing about the *model* changes — it
-is a second projection into the same editor: the `Editor` is already a pure headless controller driven by
-pointer gestures in the active space's coordinates, and the working-plane concept already exists
-(`activeSpace`, `activePlane()`, face spaces, session 16's datum planes), so the feature is a **projection
-seam, not a new controller**. Four pieces: (1) Camera3 unproject-to-ray and ray ∩ `activeSpace.plane` →
-plane 2D coords, fed to the same `pointerDown/Move/Up` the test suite drives; (2) the active space's
-sketch drawn *in* the 3D view — under perspective, arcs must tessellate in plane space with per-vertex
-projection (what the solid painter already does), not in screen space; (3) pick tolerances stay screen
-pixels, converted through the *local* px→mm scale at the cursor's plane point (perspective makes it vary);
-(4) click-a-face plane selection — ray–triangle picking against the tessellated solids, the face's plane
-becoming/activating a face space, with the click recorded as a durable choice, which is exactly the parked
-**Manifold face-ID provenance + 3D picking** item (the provenance is the hard part, the ray-cast is easy).
-Slices, each whole: (1) edit-in-3D on the current active plane (ray seam, in-plane sketch rendering, all
-tools, modifier-gated orbit; the plane chosen the existing way); (2) click-a-face working-plane selection
-(3D picking + face provenance as a recorded choice); (3) what that unlocks — the parked cross-space
-two-operand boolean gets its gesture, and datum/loft-section placement in 3D.
+**Retired in session 25 — slice 1 only: editing in the 3D view, on the current active plane.** The queue
+entry, quoted whole so what was promised can be compared with what shipped; **slices 2 and 3 stay queued**
+and are restated after it.
+
+> **Queued in session 21, behind the loft (user-directed): editing in the 3D view, on a working plane.**
+> The user's design, adopted whole: the 2D/3D split stops being "author here, inspect there" — the 3D view
+> becomes an *editing* view on one condition, an active **working plane**. Every mouse position in the 3D
+> viewport casts a ray that intersects that plane, giving exact 2D coordinates in the plane's own space, so
+> every existing tool gesture translates losslessly and the inverse map draws the sketch back onto the plane
+> inside the 3D scene; choosing the working plane itself becomes a 3D gesture (click the surface to work
+> on); a modifier keeps orbit/pan available without leaving the tool. Nothing about the *model* changes — it
+> is a second projection into the same editor: the `Editor` is already a pure headless controller driven by
+> pointer gestures in the active space's coordinates, and the working-plane concept already exists
+> (`activeSpace`, `activePlane()`, face spaces, session 16's datum planes), so the feature is a **projection
+> seam, not a new controller**. Four pieces: (1) Camera3 unproject-to-ray and ray ∩ `activeSpace.plane` →
+> plane 2D coords, fed to the same `pointerDown/Move/Up` the test suite drives; (2) the active space's
+> sketch drawn *in* the 3D view — under perspective, arcs must tessellate in plane space with per-vertex
+> projection (what the solid painter already does), not in screen space; (3) pick tolerances stay screen
+> pixels, converted through the *local* px→mm scale at the cursor's plane point (perspective makes it vary);
+> (4) click-a-face plane selection — ray–triangle picking against the tessellated solids, the face's plane
+> becoming/activating a face space, with the click recorded as a durable choice, which is exactly the parked
+> **Manifold face-ID provenance + 3D picking** item (the provenance is the hard part, the ray-cast is easy).
+> Slices, each whole: (1) edit-in-3D on the current active plane (ray seam, in-plane sketch rendering, all
+> tools, modifier-gated orbit; the plane chosen the existing way); (2) click-a-face working-plane selection
+> (3D picking + face provenance as a recorded choice); (3) what that unlocks — the parked cross-space
+> two-operand boolean gets its gesture, and datum/loft-section placement in 3D.
+
+Pieces (1), (2) and (3) of the four shipped, which is exactly slice 1; the as-built record is
+*Implementation status (as built — the 3D view edits, on the active working plane)* under OP-17, including
+the modifier choice (Ctrl, by elimination), the mid-gesture rule (a drag belongs to whoever owned it at the
+press) and the three stated cuts (SELECT stays the canvas', no grid or ruler on the plane in 3D, nothing of
+slice 2 — not even the cheap ray-cast).
+
+**Still queued, restated:**
+- **Slice 2 — click-a-face working-plane selection.** Piece (4) of the entry above: ray–triangle picking
+  against the tessellated solids, the picked face's plane becoming (or activating) a face space, with the click
+  recorded as a **durable choice** rather than re-scored on load. This is the parked *Manifold face-ID
+  provenance + 3D picking* item; the provenance is the hard part and the ray-cast is easy, and slice 1
+  deliberately built none of it — a facet pick without a durable name would be a second, weaker selection model
+  beside the 2D one. Tier 3 of the appearance package (per-face material assignment) waits on this for the same
+  reason.
+- **Slice 3 — what that unlocks.** The parked cross-space two-operand boolean gets its gesture (pick one
+  solid, then the other, in the view where both are visible), and datum / loft-section placement becomes a 3D
+  gesture: with the ray seam and face picking both in place, "put the next section on that face, 40 mm out" is
+  two clicks in the 3D view rather than a plan-view detour.
 
 **Queued in session 21, at the end of the queue (user-directed): the export package — GLB for viewing,
 3MF + binary STL for printing.** The session-3 directive is hereby *clarified, not reversed*: format work

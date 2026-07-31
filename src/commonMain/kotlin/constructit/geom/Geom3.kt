@@ -102,6 +102,18 @@ data class Plane3(val origin: Vec3, val u: Vec3, val v: Vec3) {
 }
 
 /**
+ * A world ray: everything from [origin] along [dir] with `t >= 0`.
+ *
+ * The one 3D thing a *gesture* needs (edit-in-3D slice 1): a pointer position in the 3D view is a ray,
+ * and where it meets the working plane is the 2D coordinate every existing tool already speaks
+ * ([Geom3.rayPlane]). [dir] is not required to be unit — [Geom3.rayPlane] returns the parameter in
+ * *these* units, so a caller that built the ray from a normalized direction gets millimetres.
+ */
+data class Ray3(val origin: Vec3, val dir: Vec3) {
+    fun at(t: Double): Vec3 = origin + dir * t
+}
+
+/**
  * **The seam** (OP-17): 2D result-layer [regions] (OP-14) embedded on a [plane].
  *
  * A separate value rather than a property of the regions, so the 2D engine stays abstract-planar and a
@@ -297,6 +309,35 @@ object Geom3 {
 
     /** Areas below this (mm²) count as zero — a degenerate ear, a collinear vertex, a sliver. */
     private const val AREA_EPS = 1e-12
+
+    /**
+     * How far along [ray] it meets [plane], or **null** when it never does *ahead of the origin*: the ray
+     * runs parallel to the plane (no meeting at all), or the plane lies behind it.
+     *
+     * The whole of the ray seam's arithmetic (edit-in-3D slice 1), and the reason it returns null rather
+     * than an infinity: a gesture in the 3D view whose ray misses the working plane has no plane
+     * coordinates, and a NaN handed to the editor would place geometry at a position no one asked for.
+     * The caller says so instead (see `PlanePerspective.toPlane`).
+     *
+     * [PARALLEL_EPS] is compared against the *normalized* cosine, so it is an angle threshold (about
+     * 6e-8 rad) rather than a length one — grazing a plane at less than that is not a pick, it is noise.
+     */
+    fun rayPlane(
+        ray: Ray3,
+        plane: Plane3,
+    ): Double? {
+        val n = plane.normal.normalized()
+        val d = ray.dir
+        val len = d.length()
+        if (len <= Vec3.EPS) return null
+        val denom = n.dot(d) / len
+        if (abs(denom) < PARALLEL_EPS) return null
+        val t = n.dot(plane.origin - ray.origin) / n.dot(d)
+        return if (t > 0.0) t else null
+    }
+
+    /** Below this |cos| between a ray and a plane, the two count as parallel (see [rayPlane]). */
+    const val PARALLEL_EPS = 1e-9
 
     // ---- vertex welding: an indexed mesh, in deterministic insertion order ----
 

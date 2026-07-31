@@ -32,9 +32,17 @@ import kotlin.math.pow
 import kotlin.math.sin
 
 /**
- * Draws a [Document] to a [DrawTarget] through a [Camera]. Pure: projects world->screen,
- * tessellates arcs to polylines, clips infinite lines/rays to the viewport. Invalid nodes
- * (OP-3) simply produce no value and are skipped (hidden).
+ * Draws a [Document] to a [DrawTarget] through a [PlaneProjection]. Pure: projects the active space's
+ * plane coordinates to screen, tessellates arcs to polylines, clips infinite lines/rays to the viewport.
+ * Invalid nodes (OP-3) simply produce no value and are skipped (hidden).
+ *
+ * **One renderer, two projections** (edit-in-3D slice 1). The projection used to be the 2D [Camera], and
+ * the whole of the generalization is that every world→screen step now goes through the interface: the
+ * canvas passes its camera (a similarity — the exact case, and the one every golden covers), while the 3D
+ * view passes a [PlanePerspective] and gets the very same drawing laid onto the working plane in the 3D
+ * scene, arcs tessellated in plane space and projected vertex by vertex. Nothing was forked, because
+ * *what* is drawn — every element of the active space, the selection, the tool's previews, the snap
+ * markers, the section-inputs context — is not a question a projection has any part in.
  */
 object SceneRenderer {
     private const val POINT_PX = 4.0
@@ -99,10 +107,16 @@ object SceneRenderer {
     /** Screen length of a drawn frame axis — a marker, so it does not scale with the drawing. */
     private const val FRAME_AXIS_PX = 22.0
 
+    /**
+     * The whole drawing, on a target of its own: [begin], [draw], [end].
+     *
+     * Split from [draw] so the 3D view can lay the same drawing *over* an already-begun frame (the solids
+     * the painter's projector has just shaded) without a second `begin` clearing them away.
+     */
     fun render(
         doc: Document,
         ev: Evaluator,
-        cam: Camera,
+        proj: PlaneProjection,
         target: DrawTarget,
         wPx: Double,
         hPx: Double,
@@ -126,8 +140,45 @@ object SceneRenderer {
         scaleBar: Boolean = false,
     ) {
         target.begin(wPx, hPx)
-        val view = worldViewRect(cam, wPx, hPx)
-        if (grid) drawGrid(cam, target, view)
+        draw(
+            doc, ev, proj, target, wPx, hPx, grid, highlight, preview, selected, snap, joins, closing,
+            terminal, dimmed, marquee, frames, picked, emphasis, previews, inputs, dependents, spotlight,
+            scaleBar,
+        )
+        target.end()
+    }
+
+    fun draw(
+        doc: Document,
+        ev: Evaluator,
+        proj: PlaneProjection,
+        target: DrawTarget,
+        wPx: Double,
+        hPx: Double,
+        grid: Boolean = false,
+        highlight: Vec2? = null,
+        preview: Pair<Vec2, Vec2>? = null,
+        selected: Set<Element> = emptySet(),
+        snap: Vec2? = null,
+        joins: List<Vec2> = emptyList(),
+        closing: List<Pair<Vec2, Vec2>> = emptyList(),
+        terminal: Vec2? = null,
+        dimmed: Set<Element> = emptySet(),
+        marquee: Pair<Vec2, Vec2>? = null,
+        frames: List<FrameValue> = emptyList(),
+        picked: Set<Element> = emptySet(),
+        emphasis: List<Segment> = emptyList(),
+        previews: List<PreviewShape> = emptyList(),
+        inputs: Set<Element> = emptySet(),
+        dependents: Set<Element> = emptySet(),
+        spotlight: Set<Element> = emptySet(),
+        scaleBar: Boolean = false,
+    ) {
+        val view = proj.viewRect(wPx, hPx).let { Rect(it.first, it.second) }
+        // The grid is stated in *screen* pixels (about 40 of them per cell), so it exists only where a pixel
+        // means one length everywhere: on the canvas. The 3D view has a ground grid of its own, drawn in the
+        // world by [Scene3.furniture], which is the same statement made where perspective can carry it.
+        if (grid && proj.similarity) drawGrid(proj, target, view)
         // Reference context of a sketch space (OP-17): **the part's section at this plane**, in the space's
         // own (u, v), plus a datum's hinge line (GitHub #6) — so the user can see where the plane is, and
         // where the material is, before drawing on it. A face space's plane lies *on* a face, so its section
@@ -138,21 +189,21 @@ object SceneRenderer {
         // input** lands ([Document.sectionCandidateNear]) — one rule: what is visible is pickable. Ghosting
         // the *other* spaces is deliberately not attempted (see DESIGN.md).
         val tip = doc.facePartTip(ev)
-        drawChain(doc.spaceContext(doc.activeSpace, ev), cam, target, faceStyle)
+        drawChain(doc.spaceContext(doc.activeSpace, ev), proj, target, faceStyle)
         for (el in doc.elements) {
             if (!el.visible) continue
             // one canvas shows one space (OP-17): everything else belongs to a different coordinate system
             if (el.space != doc.activeSpace.name) continue
             val style = if (el in dimmed) Styles.DIMMED else el.style
             when (val v = ev.valueOf(el.ref)) {
-                is PointValue -> target.dot(cam.worldToScreen(v.p), POINT_PX, style.stroke)
-                is SegmentValue -> target.polyline(listOf(cam.worldToScreen(v.seg.a), cam.worldToScreen(v.seg.b)), style)
-                is LineValue -> clipLine(v.line, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), style) }
-                is RayValue -> clipRay(v.ray, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), style) }
-                is CircleValue -> target.circle(cam.worldToScreen(v.circle.center), v.circle.radius * cam.scale, style)
-                is ArcValue -> target.polyline(tessellate(v.arc).map { cam.worldToScreen(it) }, style)
-                is BezierValue -> target.polyline(GeomMath.tessellateBezier(v.bezier).map { cam.worldToScreen(it) }, style)
-                is LoopValue -> drawChain(v.loop.elements, cam, target, style)
+                is PointValue -> dot(proj, target, v.p, style.stroke)
+                is SegmentValue -> poly(proj, target, listOf(v.seg.a, v.seg.b), style)
+                is LineValue -> clipLine(v.line, view)?.let { poly(proj, target, listOf(it.a, it.b), style) }
+                is RayValue -> clipRay(v.ray, view)?.let { poly(proj, target, listOf(it.a, it.b), style) }
+                is CircleValue -> proj.drawCircle(target, v.circle, style)
+                is ArcValue -> poly(proj, target, proj.arcPoints(v.arc), style)
+                is BezierValue -> poly(proj, target, GeomMath.tessellateBezier(v.bezier), style)
+                is LoopValue -> drawChain(v.loop.elements, proj, target, style)
                 is RegionValue -> {
                     // A thick path's footprint is drawn by the *plan convention* (OP-21): faces broken at
                     // every interval, jamb lines across them. The region itself stays whole — an opening
@@ -162,10 +213,10 @@ object SceneRenderer {
                     if (plan != null) {
                         // the plan's pieces keep their kinds since the OP-21 extension, so a curved wall
                         // draws as the arcs it is made of rather than as a barrel of chords
-                        drawChain(plan, cam, target, style)
+                        drawChain(plan, proj, target, style)
                     } else {
-                        drawChain(v.region.outer.elements, cam, target, style)
-                        for (h in v.region.holes) drawChain(h.elements, cam, target, style)
+                        drawChain(v.region.outer.elements, proj, target, style)
+                        for (h in v.region.holes) drawChain(h.elements, proj, target, style)
                     }
                 }
                 // A solid's home is the 3D view; in plan it leaves a **footprint hint** — the boundary
@@ -173,65 +224,66 @@ object SceneRenderer {
                 // shaded or hidden-line view is a *chosen* projection, which is the 3D view's job, and
                 // the hint is what makes the solid pickable here — hence selectable and deletable in
                 // the one view that has picking.
-                is SolidValue -> drawFootprintHint(v, cam, target, style)
-                is PointSetValue -> v.set.points.forEach { target.dot(cam.worldToScreen(it), POINT_PX, style.stroke) }
+                is SolidValue -> drawFootprintHint(v, proj, target, style)
+                is PointSetValue -> v.set.points.forEach { dot(proj, target, it, style.stroke) }
                 // a dimension's value is a scalar (OP-4), so what is drawn is the graphic it prescribes
-                is ScalarValue -> el.annotation?.let { drawDimension(it, ev, cam, target, style) }
+                is ScalarValue -> el.annotation?.let { drawDimension(it, ev, proj, target, style) }
                 else -> {}
             }
         }
         // a selected dimension's own graphic on top, so the annotation being edited reads as picked
         for (el in selected) {
             if (!el.visible || el.space != doc.activeSpace.name) continue
-            el.annotation?.let { drawDimension(it, ev, cam, target, selectionStyle, withText = false) }
+            el.annotation?.let { drawDimension(it, ev, proj, target, selectionStyle, withText = false) }
         }
         // geometry an armed tool has picked, restated in the pick colour — so a boundary being traced shows
         // how much of it is already in, and a click that hit nothing is visibly a click that added nothing
-        for (el in picked) emphasize(doc, el, ev, cam, target, view, pickStyle, pickRing, tip)
+        for (el in picked) emphasize(doc, el, ev, proj, target, view, pickStyle, pickRing, tip)
         // The selection's **inputs** and **dependents** (see [Dependencies]), under the selection itself so
         // the thing that was clicked still reads as the subject. Same emphasis vocabulary as everything else
         // — the piece restated on top of itself — because they are the same kind of statement about an
         // element, made about a different relation.
-        for (el in inputs) emphasize(doc, el, ev, cam, target, view, inputStyle, inputRing, tip)
-        for (el in dependents) emphasize(doc, el, ev, cam, target, view, dependentStyle, dependentRing, tip)
+        for (el in inputs) emphasize(doc, el, ev, proj, target, view, inputStyle, inputRing, tip)
+        for (el in dependents) emphasize(doc, el, ev, proj, target, view, dependentStyle, dependentRing, tip)
         // the selection, redrawn on top: what delete removes and — when it is a single element — what
         // the inspector's numeric fields refer to. Every kind is highlighted, since a marquee (OP-16)
         // takes whatever it covers and a selection that shows only its points would be unreadable.
-        for (el in selected) emphasize(doc, el, ev, cam, target, view, selectionStyle, selectionRing, tip)
+        for (el in selected) emphasize(doc, el, ev, proj, target, view, selectionStyle, selectionRing, tip)
         // A selection that owns no element at all: an opening's jamb (OP-21) is part of the plan *drawing*,
         // so what the emphasis restates is that drawing — the two reveal lines and the gap between them.
         // Same vocabulary as every other selection (the piece drawn again on top of itself), which is what
         // makes "this opening is what the fields refer to" legible without a marker of its own.
-        for (s in emphasis) target.polyline(listOf(cam.worldToScreen(s.a), cam.worldToScreen(s.b)), selectionStyle)
+        for (s in emphasis) poly(proj, target, listOf(s.a, s.b), selectionStyle)
         // a selected placed group's frame (OP-16 step 2): its origin and axes, drawn in the group's own
         // orientation — modest, because it is not geometry, but visible, because it is what a drag writes
         for (f in frames) {
-            val o = cam.worldToScreen(f.origin)
-            val ax = cam.worldToScreen(f.toWorld(Vec2(FRAME_AXIS_PX / cam.scale, 0.0)))
-            val ay = cam.worldToScreen(f.toWorld(Vec2(0.0, FRAME_AXIS_PX / cam.scale)))
-            target.polyline(listOf(o, ax), frameStyle)
-            target.polyline(listOf(o, ay), frameStyle)
+            // the axis is a *pixel-long* mark, so its plane length is read off the local scale at the origin
+            // it is drawn from — one number under a similarity, the perspective scale there in the 3D view
+            val mm = FRAME_AXIS_PX / proj.scaleAt(f.origin)
+            val o = proj.toScreen(f.origin) ?: continue
+            poly(proj, target, listOf(f.origin, f.toWorld(Vec2(mm, 0.0))), frameStyle)
+            poly(proj, target, listOf(f.origin, f.toWorld(Vec2(0.0, mm))), frameStyle)
             target.circle(o, 3.0, frameStyle)
         }
         // What the armed tool would build if the next click happened here (`ToolDef.preview`) — the ortho
         // band's own style, because it is the same promise about the same click, and drawn *before* the band
         // so the two can never disagree about who is on top.
-        for (s in previews) drawPreview(s, cam, target, view)
+        for (s in previews) drawPreview(s, proj, target, view)
         // rubber band of a marquee in progress — the rectangle whose contents the release will select
         marquee?.let { (a, b) ->
-            val p = cam.worldToScreen(a)
-            val q = cam.worldToScreen(b)
-            target.polyline(listOf(p, Vec2(q.x, p.y), q, Vec2(p.x, q.y), p), marqueeStyle)
+            val p = proj.toScreen(a)
+            val q = proj.toScreen(b)
+            if (p != null && q != null) target.polyline(listOf(p, Vec2(q.x, p.y), q, Vec2(p.x, q.y), p), marqueeStyle)
         }
         // rubber-band preview of the next ortho-path leg
-        preview?.let { target.polyline(listOf(cam.worldToScreen(it.first), cam.worldToScreen(it.second)), previewStyle) }
+        preview?.let { poly(proj, target, listOf(it.first, it.second), previewStyle) }
         // and of a *closed* loop: what the click will make, including the corner it moves into line
         for (seg in closing) {
-            target.polyline(listOf(cam.worldToScreen(seg.first), cam.worldToScreen(seg.second)), previewStyle)
+            poly(proj, target, listOf(seg.first, seg.second), previewStyle)
         }
         // snap marker: a small square where a placing click would land (and what it would link to)
         snap?.let {
-            val c = cam.worldToScreen(it)
+            val c = proj.toScreen(it) ?: return@let
             val r = 5.0
             target.polyline(
                 listOf(Vec2(c.x - r, c.y - r), Vec2(c.x + r, c.y - r), Vec2(c.x + r, c.y + r), Vec2(c.x - r, c.y + r), Vec2(c.x - r, c.y - r)),
@@ -240,7 +292,7 @@ object SceneRenderer {
         }
         // corners a release would join away: crossed out, because that is what happens to them
         for (j in joins) {
-            val c = cam.worldToScreen(j)
+            val c = proj.toScreen(j) ?: continue
             val r = 6.0
             target.polyline(listOf(Vec2(c.x - r, c.y - r), Vec2(c.x + r, c.y + r)), joinStyle)
             target.polyline(listOf(Vec2(c.x - r, c.y + r), Vec2(c.x + r, c.y - r)), joinStyle)
@@ -253,7 +305,7 @@ object SceneRenderer {
         // square) or as the magnet halo (rings), and pixel-sized like every other mark, since it is a
         // statement about the gesture rather than geometry.
         terminal?.let {
-            val c = cam.worldToScreen(it)
+            val c = proj.toScreen(it) ?: return@let
             for (r in listOf(6.0, 10.0)) {
                 target.polyline(
                     listOf(Vec2(c.x, c.y - r), Vec2(c.x + r, c.y), Vec2(c.x, c.y + r), Vec2(c.x - r, c.y), Vec2(c.x, c.y - r)),
@@ -263,14 +315,44 @@ object SceneRenderer {
         }
         // weld magnet: a double ring around the point a dragged point will snap/join onto
         highlight?.let {
-            val s = cam.worldToScreen(it)
+            val s = proj.toScreen(it) ?: return@let
             target.circle(s, 11.0, haloOuter)
             target.circle(s, 6.0, haloInner)
         }
         // ...and last, the element a name in the panel is being hovered: nothing may hide it
-        for (el in spotlight) emphasize(doc, el, ev, cam, target, view, spotlightStyle, spotlightRing, tip)
-        if (scaleBar) drawScaleBar(cam, target, hPx)
-        target.end()
+        for (el in spotlight) emphasize(doc, el, ev, proj, target, view, spotlightStyle, spotlightRing, tip)
+        // the ruler states a length in pixels, so it says something true only under a similarity — the same
+        // rule as the grid, one line above
+        if (scaleBar && proj.similarity) drawScaleBar(proj.scaleAt(Vec2(0.0, 0.0)), target, hPx)
+    }
+
+    /**
+     * A plane-space polyline drawn on screen, or **nothing at all** when one of its vertices has no image.
+     *
+     * Dropping the whole primitive is the honest choice under perspective: a segment straddling the eye
+     * plane has two halves that project to opposite edges of the screen, and joining them would draw a line
+     * across the view that exists nowhere in the model. Near-plane clipping of every piece would be a
+     * second projection pipeline, which is the one thing this engine does not have (OP-12). The 2D camera
+     * never returns null, so the canvas path is exactly the map it always was.
+     */
+    private fun poly(
+        proj: PlaneProjection,
+        target: DrawTarget,
+        points: List<Vec2>,
+        style: Style,
+    ) {
+        val screen = ArrayList<Vec2>(points.size)
+        for (p in points) screen.add(proj.toScreen(p) ?: return)
+        target.polyline(screen, style)
+    }
+
+    private fun dot(
+        proj: PlaneProjection,
+        target: DrawTarget,
+        at: Vec2,
+        color: String,
+    ) {
+        proj.toScreen(at)?.let { target.dot(it, POINT_PX, color) }
     }
 
     /**
@@ -282,22 +364,22 @@ object SceneRenderer {
      */
     private fun drawPreview(
         s: PreviewShape,
-        cam: Camera,
+        proj: PlaneProjection,
         target: DrawTarget,
         view: Rect,
     ) {
         when (s) {
-            is PreviewShape.Dot -> target.dot(cam.worldToScreen(s.at), POINT_PX, previewStyle.stroke)
-            is PreviewShape.Seg -> target.polyline(listOf(cam.worldToScreen(s.seg.a), cam.worldToScreen(s.seg.b)), previewStyle)
+            is PreviewShape.Dot -> dot(proj, target, s.at, previewStyle.stroke)
+            is PreviewShape.Seg -> poly(proj, target, listOf(s.seg.a, s.seg.b), previewStyle)
             is PreviewShape.Ln ->
-                clipLine(s.line, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), previewStyle) }
+                clipLine(s.line, view)?.let { poly(proj, target, listOf(it.a, it.b), previewStyle) }
             is PreviewShape.Ry ->
-                clipRay(s.ray, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), previewStyle) }
-            is PreviewShape.Circ -> target.circle(cam.worldToScreen(s.circle.center), s.circle.radius * cam.scale, previewStyle)
-            is PreviewShape.ArcS -> target.polyline(tessellate(s.arc).map { cam.worldToScreen(it) }, previewStyle)
-            is PreviewShape.Bez -> target.polyline(GeomMath.tessellateBezier(s.bezier).map { cam.worldToScreen(it) }, previewStyle)
-            is PreviewShape.Path -> target.polyline(s.points.map { cam.worldToScreen(it) }, previewStyle)
-            is PreviewShape.Dim -> drawGraphic(s.graphic, cam, target, previewStyle, withText = true)
+                clipRay(s.ray, view)?.let { poly(proj, target, listOf(it.a, it.b), previewStyle) }
+            is PreviewShape.Circ -> proj.drawCircle(target, s.circle, previewStyle)
+            is PreviewShape.ArcS -> poly(proj, target, proj.arcPoints(s.arc), previewStyle)
+            is PreviewShape.Bez -> poly(proj, target, GeomMath.tessellateBezier(s.bezier), previewStyle)
+            is PreviewShape.Path -> poly(proj, target, s.points, previewStyle)
+            is PreviewShape.Dim -> drawGraphic(s.graphic, proj, target, previewStyle, withText = true)
         }
     }
 
@@ -311,7 +393,7 @@ object SceneRenderer {
         doc: Document,
         el: Element,
         ev: Evaluator,
-        cam: Camera,
+        proj: PlaneProjection,
         target: DrawTarget,
         view: Rect,
         style: Style,
@@ -322,24 +404,24 @@ object SceneRenderer {
         // the same substitution picking makes (OP-17): in a face space the part that face belongs to *is*
         // the face rectangle, so that is what a pick of it highlights
         doc.partOutlineOf(el, ev, tip)?.let { r ->
-            target.polyline((r + r.first()).map { cam.worldToScreen(it) }, style)
+            poly(proj, target, r + r.first(), style)
             return
         }
         if (el.space != doc.activeSpace.name) return
         when (val v = ev.valueOf(el.ref)) {
-            is PointValue -> target.circle(cam.worldToScreen(v.p), 7.0, ringStyle)
-            is SegmentValue -> target.polyline(listOf(cam.worldToScreen(v.seg.a), cam.worldToScreen(v.seg.b)), style)
+            is PointValue -> proj.toScreen(v.p)?.let { target.circle(it, 7.0, ringStyle) }
+            is SegmentValue -> poly(proj, target, listOf(v.seg.a, v.seg.b), style)
             is LineValue ->
-                clipLine(v.line, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), style) }
+                clipLine(v.line, view)?.let { poly(proj, target, listOf(it.a, it.b), style) }
             is RayValue ->
-                clipRay(v.ray, view)?.let { target.polyline(listOf(cam.worldToScreen(it.a), cam.worldToScreen(it.b)), style) }
-            is CircleValue -> target.circle(cam.worldToScreen(v.circle.center), v.circle.radius * cam.scale, style)
-            is ArcValue -> target.polyline(tessellate(v.arc).map { cam.worldToScreen(it) }, style)
-            is BezierValue -> target.polyline(GeomMath.tessellateBezier(v.bezier).map { cam.worldToScreen(it) }, style)
-            is LoopValue -> drawChain(v.loop.elements, cam, target, style)
+                clipRay(v.ray, view)?.let { poly(proj, target, listOf(it.a, it.b), style) }
+            is CircleValue -> proj.drawCircle(target, v.circle, style)
+            is ArcValue -> poly(proj, target, proj.arcPoints(v.arc), style)
+            is BezierValue -> poly(proj, target, GeomMath.tessellateBezier(v.bezier), style)
+            is LoopValue -> drawChain(v.loop.elements, proj, target, style)
             is RegionValue -> {
-                drawChain(v.region.outer.elements, cam, target, style)
-                for (h in v.region.holes) drawChain(h.elements, cam, target, style)
+                drawChain(v.region.outer.elements, proj, target, style)
+                for (h in v.region.holes) drawChain(h.elements, proj, target, style)
             }
             else -> {}
         }
@@ -357,13 +439,13 @@ object SceneRenderer {
      */
     private fun drawFootprintHint(
         v: SolidValue,
-        cam: Camera,
+        proj: PlaneProjection,
         target: DrawTarget,
         style: Style,
     ) {
         for (region in v.solid.feature.footprint) {
-            drawChain(region.outer.elements, cam, target, style)
-            for (h in region.holes) drawChain(h.elements, cam, target, style)
+            drawChain(region.outer.elements, proj, target, style)
+            for (h in region.holes) drawChain(h.elements, proj, target, style)
         }
     }
 
@@ -382,12 +464,12 @@ object SceneRenderer {
     private fun drawDimension(
         ann: DimensionAnnotation,
         ev: Evaluator,
-        cam: Camera,
+        proj: PlaneProjection,
         target: DrawTarget,
         style: Style,
         withText: Boolean = true,
     ) {
-        drawGraphic(ann.graphic(ev) ?: return, cam, target, style, withText)
+        drawGraphic(ann.graphic(ev) ?: return, proj, target, style, withText)
     }
 
     /**
@@ -397,24 +479,35 @@ object SceneRenderer {
      */
     private fun drawGraphic(
         g: DimensionGraphic,
-        cam: Camera,
+        proj: PlaneProjection,
         target: DrawTarget,
         style: Style,
         withText: Boolean,
     ) {
-        for (s in g.lines) target.polyline(listOf(cam.worldToScreen(s.a), cam.worldToScreen(s.b)), style)
-        g.arc?.let { arc -> target.polyline(tessellate(arc).map { cam.worldToScreen(it) }, style) }
-        for (a in g.arrows) drawArrow(cam.worldToScreen(a.tip), screenDir(cam, a.tip, a.along), target, style)
+        for (s in g.lines) poly(proj, target, listOf(s.a, s.b), style)
+        g.arc?.let { arc -> poly(proj, target, proj.arcPoints(arc), style) }
+        for (a in g.arrows) {
+            proj.toScreen(a.tip)?.let { drawArrow(it, screenDir(proj, a.tip, a.along), target, style) }
+        }
         if (!withText) return
-        target.text(cam.worldToScreen(g.textAt) + screenDir(cam, g.textAt, g.textUp) * TEXT_GAP_PX, g.text, style, g.textAnchor)
+        val at = proj.toScreen(g.textAt) ?: return
+        target.text(at + screenDir(proj, g.textAt, g.textUp) * TEXT_GAP_PX, g.text, style, g.textAnchor)
     }
 
-    /** A world direction at [from] as a unit *screen* direction — the camera's y flip included. */
+    /**
+     * A plane direction at [from] as a unit *screen* direction — the y flip included, and under perspective
+     * the local turn as well, which is exactly why it is measured rather than derived: an arrowhead has to
+     * point along the line it terminates however that line is projected.
+     */
     private fun screenDir(
-        cam: Camera,
+        proj: PlaneProjection,
         from: Vec2,
-        worldDir: Vec2,
-    ): Vec2 = (cam.worldToScreen(from + worldDir) - cam.worldToScreen(from)).normalized()
+        planeDir: Vec2,
+    ): Vec2 {
+        val a = proj.toScreen(from) ?: return Vec2(0.0, 0.0)
+        val b = proj.toScreen(from + planeDir) ?: return Vec2(0.0, 0.0)
+        return (b - a).normalized()
+    }
 
     /** An open arrowhead at [tip] pointing [along] (a unit screen direction): two barbs, no fill. */
     private fun drawArrow(
@@ -437,10 +530,14 @@ object SceneRenderer {
     ) = Vec2(v.x * cos(a) - v.y * sin(a), v.x * sin(a) + v.y * cos(a))
 
     /**
-     * An arc as a screen-ready polyline. The step count is the renderer's own (fixed per full turn, so
+     * An arc as a **plane-space** polyline at the 2D canvas' own step count (fixed per full turn, so
      * goldens do not depend on the camera); the sampling itself is `GeomMath`'s, shared with the
      * world-space tolerance-driven tessellation the 3D layer needs (OP-17) — one place for the maths,
      * two policies for how finely to apply it.
+     *
+     * Still public and still the canvas' policy, because [HitTest] measures a pick against these very
+     * chords: what the canvas draws is what the canvas picks. The *drawing* asks the projection instead
+     * ([PlaneProjection.arcPoints]), which is where the 3D view's finer, tolerance-driven count lives.
      */
     fun tessellate(arc: Arc): List<Vec2> = GeomMath.sampleArc(arc, GeomMath.renderArcSteps(arc))
 
@@ -451,18 +548,15 @@ object SceneRenderer {
      */
     private fun drawChain(
         elements: List<ProfileElement>,
-        cam: Camera,
+        proj: PlaneProjection,
         target: DrawTarget,
         style: Style,
     ) {
         for (el in elements) when (el) {
-            is ProfileElement.Seg ->
-                target.polyline(listOf(cam.worldToScreen(el.segment.a), cam.worldToScreen(el.segment.b)), style)
-            is ProfileElement.ArcE -> target.polyline(tessellate(el.arc).map { cam.worldToScreen(it) }, style)
-            is ProfileElement.BezierE ->
-                target.polyline(GeomMath.tessellateBezier(el.bezier).map { cam.worldToScreen(it) }, style)
-            is ProfileElement.CircleE ->
-                target.circle(cam.worldToScreen(el.circle.center), el.circle.radius * cam.scale, style)
+            is ProfileElement.Seg -> poly(proj, target, listOf(el.segment.a, el.segment.b), style)
+            is ProfileElement.ArcE -> poly(proj, target, proj.arcPoints(el.arc), style)
+            is ProfileElement.BezierE -> poly(proj, target, GeomMath.tessellateBezier(el.bezier), style)
+            is ProfileElement.CircleE -> proj.drawCircle(target, el.circle, style)
         }
     }
 
@@ -519,54 +613,44 @@ object SceneRenderer {
      * geometry stays a golden of geometry (`Editor.showScaleBar`, set by the shell like `showGrid`).
      */
     private fun drawScaleBar(
-        cam: Camera,
+        scale: Double,
         target: DrawTarget,
         hPx: Double,
     ) {
-        val mm = scaleBarLength(cam.scale)
-        val px = mm * cam.scale
+        val mm = scaleBarLength(scale)
+        val px = mm * scale
         val x0 = SCALE_BAR_MARGIN_PX
         val y = hPx - SCALE_BAR_MARGIN_PX
         target.polyline(listOf(Vec2(x0, y), Vec2(x0 + px, y)), scaleBarStyle)
         target.polyline(listOf(Vec2(x0, y - SCALE_BAR_TICK_PX), Vec2(x0, y)), scaleBarStyle)
         target.polyline(listOf(Vec2(x0 + px, y - SCALE_BAR_TICK_PX), Vec2(x0 + px, y)), scaleBarStyle)
-        target.text(Vec2(x0 + px / 2.0, y - SCALE_BAR_TICK_PX - 3.0), scaleBarLabel(cam.scale), scaleBarStyle, TextAnchor.MIDDLE)
+        target.text(Vec2(x0 + px / 2.0, y - SCALE_BAR_TICK_PX - 3.0), scaleBarLabel(scale), scaleBarStyle, TextAnchor.MIDDLE)
     }
 
     private const val SCALE_BAR_MARGIN_PX = 14.0
     private const val SCALE_BAR_TICK_PX = 5.0
 
     private fun drawGrid(
-        cam: Camera,
+        proj: PlaneProjection,
         target: DrawTarget,
         view: Rect,
     ) {
-        val step = niceStep(cam.scale)
+        val step = niceStep(proj.scaleAt(view.lo))
         var x = floor(view.lo.x / step) * step
         while (x <= view.hi.x) {
             val style = if (abs(x) < step * 0.5) axisStyle else gridStyle
-            target.polyline(listOf(cam.worldToScreen(Vec2(x, view.lo.y)), cam.worldToScreen(Vec2(x, view.hi.y))), style)
+            poly(proj, target, listOf(Vec2(x, view.lo.y), Vec2(x, view.hi.y)), style)
             x += step
         }
         var y = floor(view.lo.y / step) * step
         while (y <= view.hi.y) {
             val style = if (abs(y) < step * 0.5) axisStyle else gridStyle
-            target.polyline(listOf(cam.worldToScreen(Vec2(view.lo.x, y)), cam.worldToScreen(Vec2(view.hi.x, y))), style)
+            poly(proj, target, listOf(Vec2(view.lo.x, y), Vec2(view.hi.x, y)), style)
             y += step
         }
     }
 
     private data class Rect(val lo: Vec2, val hi: Vec2)
-
-    private fun worldViewRect(
-        cam: Camera,
-        wPx: Double,
-        hPx: Double,
-    ): Rect {
-        val a = cam.screenToWorld(Vec2(0.0, 0.0))
-        val b = cam.screenToWorld(Vec2(wPx, hPx))
-        return Rect(Vec2(min(a.x, b.x), min(a.y, b.y)), Vec2(max(a.x, b.x), max(a.y, b.y)))
-    }
 
     private fun clipLine(
         line: Line,

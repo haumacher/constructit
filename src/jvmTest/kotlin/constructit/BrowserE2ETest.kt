@@ -4,6 +4,7 @@ import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Page
 import com.microsoft.playwright.Playwright
 import constructit.editor.Tools
+import constructit.geom.Vec2
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.io.File
 import java.nio.file.Paths
@@ -917,6 +918,10 @@ class BrowserE2ETest {
             )
 
             // ---- and the hole, in the view that can show it ----
+            //
+            // SELECT first, deliberately: with a tool armed the 3D view is an *editing* view and a plain drag
+            // belongs to that tool (edit-in-3D slice 1), so "drag to orbit" has to say which mode it means.
+            page.click("#tool-select")
             page.click("#v-3d")
             page.waitForSelector("#canvas3:visible")
             val c3 = box.x + box.width * 0.5
@@ -1108,6 +1113,8 @@ class BrowserE2ETest {
             page.mouse().click(cx, cy + 40.0) // the rectangle's lower edge, in the plane's own coordinates
             assertTrue(solids() == 2, "the boss should be a solid of its own; tree: ${tree()}, status: ${status()}")
 
+            // SELECT first: a plain drag in the 3D view belongs to an armed tool now (edit-in-3D slice 1)
+            page.click("#tool-select")
             page.click("#v-3d")
             page.waitForSelector("#canvas3:visible")
             page.mouse().move(cx, cy)
@@ -1127,5 +1134,128 @@ class BrowserE2ETest {
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()
         }
+    }
+
+    /**
+     * **Drawing in the 3D view, in real Chrome** (edit-in-3D slice 1): the rectangle tool armed, both corners
+     * clicked *in the 3D viewport* on the plan, with a Ctrl-orbit in between — and the drawing that comes out
+     * is the one the same two plane positions produce on the 2D canvas.
+     *
+     * Only a browser can answer the parts this is here for: the two canvases really stack (the sketch layer
+     * paints over the WebGL one, and the pixels prove it), the 3D canvas really routes a plain drag to the
+     * tool while Ctrl+drag really orbits instead, and the *document* that results is the app's own — read back
+     * through its Copy button, which is `DocumentFormat.save` verbatim.
+     *
+     * Served over http, because the clipboard is how the app hands its script out and permissions cannot be
+     * granted to a `file:` origin. The comparison is [assertSameConstruction]: the same steps, ids and names
+     * exactly, the numbers to a tolerance far under anything the drawing can express, since one route to a
+     * plane point is a similarity and the other a perspective divide, and because a synthetic mouse lands on
+     * whole pixels.
+     */
+    @Test
+    fun drawingOnTheWorkingPlaneInThe3DView() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val dist = File("build/dist/js/productionExecutable")
+        assertTrue(File(dist, "index.html").exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+        val server = serve(dist)
+        val url = "http://127.0.0.1:${server.address.port}/index.html"
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val context =
+                browser.newContext(
+                    com.microsoft.playwright.Browser.NewContextOptions()
+                        .setViewportSize(1000, 700)
+                        .setPermissions(listOf("clipboard-read", "clipboard-write")),
+                )
+            val page = context.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+
+            /** The drawing as the app itself writes it: its own Copy button, read back off the clipboard. */
+            fun script(): String {
+                page.click("#f-copy")
+                // the file actions report in their own line, and the wait is on *that*: a clipboard write is
+                // asynchronous, so reading it back before the note appears would race the browser
+                page.waitForCondition { (page.querySelector("#file-note").textContent() ?: "").contains("to the clipboard") }
+                return page.evaluate("() => navigator.clipboard.readText()") as String
+            }
+
+            fun status() = page.querySelector("#status").textContent()
+
+            page.navigate(url)
+            page.waitForSelector("#canvas")
+            val box = page.querySelector("#canvas").boundingBox()
+
+            // ---- the 3D view, with a tool armed: an editing view ----
+            page.click("#v-3d")
+            page.waitForSelector("#canvas3:visible")
+            page.click("#tool-${Tools.RECTANGLE}")
+            assertTrue(status().contains("Hold Ctrl to orbit"), "the view says it is drawing now; got: ${status()}")
+            val emptyOverlay = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+
+            val cx = box.x + box.width * 0.5
+            val cy = box.y + box.height * 0.5
+            page.mouse().click(cx - 120.0, cy + 60.0)
+            page.mouse().move(cx + 60.0, cy - 20.0)
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/21-drawing-in-3d.png")))
+            val previewing = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
+            assertTrue(previewing != emptyOverlay, "the sketch layer over the 3D canvas should be painting the preview")
+
+            // ---- Ctrl+drag orbits mid-gesture, and the tool is still armed afterwards ----
+            val posed = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
+            page.keyboard().down("Control")
+            page.mouse().move(cx + 200.0, cy)
+            page.mouse().down()
+            page.mouse().move(cx + 260.0, cy - 30.0)
+            page.mouse().move(cx + 300.0, cy - 50.0)
+            page.mouse().up()
+            page.keyboard().up("Control")
+            assertTrue(
+                (page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String) != posed,
+                "Ctrl+drag should orbit the 3D view",
+            )
+            assertTrue(status().contains("Hold Ctrl to orbit"), "…and hand the tool back; got: ${status()}")
+
+            // ---- the second corner, through the camera the orbit left behind ----
+            page.mouse().click(cx + 40.0, cy - 40.0)
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/22-drawn-in-3d.png")))
+            val drawnIn3d = script()
+            assertTrue(drawnIn3d.contains("orthostart"), "the rectangle was drawn by clicking in the 3D view: $drawnIn3d")
+            assertTrue(page.querySelectorAll("#tree .item").size >= 4, "…and its corners are in the tree")
+
+            // the plane coordinates it recorded — the two clicks that made it, as the document has them
+            val corners =
+                Regex("ortho(?:start|vertex) (-?[0-9.eE+-]+),(-?[0-9.eE+-]+)")
+                    .findAll(drawnIn3d)
+                    .map { Vec2(it.groupValues[1].toDouble(), it.groupValues[2].toDouble()) }
+                    .toList()
+            assertTrue(corners.size == 4, "a closed rectangle has four corners: $corners")
+
+            // ---- the same two positions, clicked on the 2D canvas of a fresh page ----
+            page.navigate(url)
+            page.waitForSelector("#canvas")
+            val w = (page.evaluate("() => document.querySelector('#canvas').width") as Number).toDouble()
+            val h = (page.evaluate("() => document.querySelector('#canvas').height") as Number).toDouble()
+
+            // the shell's own camera: the origin centred, 4 px/mm (`Camera.centered`)
+            fun screenOf(p: Vec2) = Pair(box.x + p.x * 4.0 + w / 2.0, box.y - p.y * 4.0 + h / 2.0)
+            page.click("#tool-${Tools.RECTANGLE}")
+            for (p in listOf(corners[0], corners[2])) {
+                val (sx, sy) = screenOf(p)
+                page.mouse().click(sx, sy)
+            }
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/23-same-drawn-in-2d.png")))
+            // A millimetre of tolerance, and it is the *browser's*: a synthetic pointer lands on whole pixels,
+            // which is a quarter of a millimetre at the canvas' 4 px/mm, and an ortho corner is made of two of
+            // them. Everything else — the steps, the ids, the names, the structure — is compared exactly.
+            assertSameConstruction(script(), drawnIn3d, tol = 1.0)
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+        server.stop(0)
     }
 }

@@ -33,6 +33,18 @@ private const val REPEAT_CLICK_PX = CLICK_SLOP_PX
 /** What the status line says when the active parameter is switched off (see [Editor.clickScalar]). */
 private const val NO_ACTIVE_PARAMETER = "no parameter active — tools use their defaults"
 
+/**
+ * What a gesture in the 3D view says when its ray never reaches the working plane (see [Editor.enter]) —
+ * the plane is edge-on to the cursor there, or it lies behind the eye.
+ *
+ * A refusal with a reason rather than a silent no-op, and never a coordinate: this is the one place where
+ * "where did the user point" genuinely has no answer, and inventing one would place geometry nowhere
+ * anybody pointed.
+ */
+private const val OFF_PLANE_NOTE =
+    "Nothing to point at there: the cursor's ray misses the working plane (it is edge-on, or the plane " +
+        "is behind the view). Orbit until the plane faces you."
+
 /** How many panel picks are remembered — no tool asks for more scalars than this. */
 private const val SCALAR_PICK_MEMORY = 4
 
@@ -357,6 +369,23 @@ class Editor(
     }
 
     var camera: Camera = Camera.centered(canvasW, canvasH)
+
+    /**
+     * **Who maps screen pixels to the active plane's own (u, v)** — null for the 2D canvas, whose [camera]
+     * *is* that mapping, and a [PlanePerspective] while the 3D view is doing the editing (edit-in-3D
+     * slice 1).
+     *
+     * This is the whole of what the controller learns about the 3D view, and it is deliberately not about
+     * 3D at all: the editor goes on receiving gestures in plane coordinates, as the jvmTest suite has
+     * always driven it, and what varies is only who computed them. One field, because the *same* projection
+     * has to answer for the events and for the drawing ([render]) — a cursor that lands somewhere the
+     * drawing does not agree with would be a bug no test could see.
+     */
+    var pointing: PlaneProjection? = null
+
+    /** [pointing] when the 3D view is editing, the 2D camera otherwise — the one accessor both paths use. */
+    private fun proj(): PlaneProjection = pointing ?: camera
+
     var toolId: String = Tools.SELECT
         private set
 
@@ -581,9 +610,31 @@ class Editor(
     var statusHint: String = ""
         private set
 
-    private val tolPx = 10.0
+    /** How near a click has to land, in **screen pixels** — the one number the pick tolerance is stated in. */
+    val tolPx = 10.0
 
-    private fun tolWorld() = tolPx / camera.scale
+    /**
+     * Where the current gesture is, in plane coordinates — the position the *local* pick tolerance is taken
+     * at. Written once per pointer event by [enter], which is the one door every gesture comes through.
+     */
+    private var gestureAt: Vec2? = null
+
+    /**
+     * **The tolerance rule**: a click counts as landing on geometry within [tolPx] *pixels* of it, so the
+     * plane-space radius is those pixels divided by the local scale at [at].
+     *
+     * Under the 2D camera the local scale is one number and this is the constant it always was. Under
+     * perspective it varies across the plane — the far end of a wall can be a third of the scale of the
+     * near end — so it is read at the cursor, once per event, and clamped by the projection so a nearly
+     * edge-on plane cannot silently give a pick a reach of metres ([PlaneProjection.scaleClampedAt] is what
+     * the status line then says out loud).
+     *
+     * Public because it is the assertable half of the rule: a test can compute the very number the pick
+     * used instead of naming a constant of its own.
+     */
+    fun pickToleranceAt(at: Vec2): Double = tolPx / proj().scaleAt(at)
+
+    private fun tolWorld() = pickToleranceAt(gestureAt ?: Vec2(0.0, 0.0))
 
     private fun ev() = Evaluator()
 
@@ -595,8 +646,42 @@ class Editor(
         if (!snapEnabled) {
             SnapResult(world, SnapKind.FREE)
         } else {
-            Snap.resolve(doc, ev(), world, tolWorld(), if (showGrid) SceneRenderer.gridStep(camera.scale) else null, exclude)
+            // the grid a snap rounds to is the one that is *drawn*, so it follows the same local scale the
+            // tolerance does — which in the 3D view is the scale where the cursor is
+            Snap.resolve(doc, ev(), world, tolWorld(), if (showGrid) SceneRenderer.gridStep(proj().scaleAt(world)) else null, exclude)
         }
+
+    /**
+     * The plane point under [screen] — **the one door every pointer gesture comes through**, and the one
+     * place a projection with no answer is turned into a refusal instead of a NaN.
+     *
+     * Three things happen here, once per event: the position is resolved through [proj], remembered as
+     * where the local tolerance is taken ([gestureAt]), and — when the projection had to clamp its scale
+     * there — reported, because a pick that has quietly stopped following the perspective is exactly the
+     * kind of thing a user would otherwise blame on the geometry.
+     */
+    private fun enter(screen: Vec2): Vec2? {
+        val p = proj()
+        val at = p.toPlane(screen)
+        if (at == null) {
+            statusHint = OFF_PLANE_NOTE
+            onChange()
+            return null
+        }
+        gestureAt = at
+        if (p.scaleClampedAt(at)) {
+            statusHint =
+                "That part of ${doc.activeSpace.name} is too far away or too edge-on to point at precisely — " +
+                "the pick tolerance is capped at ${Format.num(pickToleranceAt(at))} mm. Orbit or zoom in."
+        }
+        return at
+    }
+
+    /**
+     * [enter] for a *release*: a gesture that ends off the plane still has to be tidied up (a drag released
+     * past the horizon must not leave the editor mid-drag), so the last position on the plane stands in.
+     */
+    private fun leave(screen: Vec2): Vec2 = proj().toPlane(screen)?.also { gestureAt = it } ?: gestureAt ?: Vec2(0.0, 0.0)
 
     /** The geometry of the path being drawn — never a snap target for its own next vertex. */
     private fun activePathParts(): Set<Element> {
@@ -1691,9 +1776,24 @@ class Editor(
     }
 
     fun render(target: DrawTarget) {
+        target.begin(canvasW, canvasH)
+        draw(target)
+        target.end()
+    }
+
+    /**
+     * The drawing without opening a frame of its own — what the 3D view lays over the shaded solids it has
+     * just painted (edit-in-3D slice 1, see [Viewport3.render]). Identical content either way, because the
+     * projection is the only difference between the two views ([pointing]).
+     */
+    fun draw(
+        target: DrawTarget,
+        wPx: Double = canvasW,
+        hPx: Double = canvasH,
+    ) {
         val ev = ev()
-        SceneRenderer.render(
-            doc, ev, camera, target, canvasW, canvasH, showGrid, haloPos, previewSeg, selected,
+        SceneRenderer.draw(
+            doc, ev, proj(), target, wPx, hPx, showGrid, haloPos, previewSeg, selected,
             snapHint?.pos, joinHints, closePreview, terminalHint,
             previews = toolPreview,
             dimmed = if (dimScaffolding) doc.scaffoldingElements().toHashSet() else emptySet(),
@@ -1726,6 +1826,10 @@ class Editor(
         screen: Vec2,
         deltaY: Double,
     ) {
+        // The wheel is the *view's*, and while the 3D view is doing the editing the view it belongs to is
+        // that one ([Viewport3.wheel] never forwards it here). Zooming the invisible 2D camera instead would
+        // silently move where the next 2D click lands.
+        if (pointing != null) return
         camera = camera.zoomAt(screen, if (deltaY < 0) 1.1 else 1.0 / 1.1)
         onChange()
     }
@@ -1747,12 +1851,16 @@ class Editor(
         terminalHint = null
         // panning is a button, not a mode: it works in every tool, and the shell reports Space+drag here
         if (button == PointerButton.MIDDLE) {
+            // ...except in the 3D view, where "move the drawing under the cursor" is the 3D camera's own pan
+            // (Space+drag there too — one habit, two views) and panning a 2D camera nobody is looking through
+            // would do nothing visible
+            if (pointing != null) return
             panning = true
             lastScreen = screen
             return
         }
+        val world = enter(screen) ?: return
         if (toolId == Tools.SELECT) {
-            val world = camera.screenToWorld(screen)
             // one search and one ranking: what this press grabs and what a repeat click cycles through are
             // the same list, so the precedence is written down once (see [pickAt])
             val pile = pickAt(world)
@@ -1917,23 +2025,23 @@ class Editor(
                 onChange()
                 return
             }
-            pathClick(camera.screenToWorld(screen))
+            pathClick(world)
             return
         }
         if (toolId == Tools.OPENING) {
-            openingClick(camera.screenToWorld(screen))
+            openingClick(world)
             return
         }
         // one click, and a step of its own (OP-17): see [faceClick]
         if (toolId == Tools.SKETCH_ON_FACE) {
-            faceClick(camera.screenToWorld(screen))
+            faceClick(world)
             return
         }
         if (toolId == Tools.BREAK_LEG) {
-            breakClick(camera.screenToWorld(screen))
+            breakClick(world)
             return
         }
-        runToolClick(screen)
+        runToolClick(world)
     }
 
     /** Curve kinds a plain break splits — an ortho leg is a segment too, and is handled before these. */
@@ -2629,8 +2737,8 @@ class Editor(
             onChange()
             return
         }
+        val world = enter(screen) ?: return
         if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {
-            val world = camera.screenToWorld(screen)
             val s = pathSnap(world)
             snapHint = s.takeIf { it.linked }
             // a lingering note would otherwise outrank the snap label, which is about the *next* click
@@ -2641,7 +2749,6 @@ class Editor(
             return
         }
         if (placesAPoint()) {
-            val world = camera.screenToWorld(screen)
             snapHint = snap(world).takeIf { it.linked }
             if (snapHint != null) statusHint = ""
             // the click will land on the snap, so that is where the preview is drawn from
@@ -2653,7 +2760,7 @@ class Editor(
         // exactly as the point-placing branch does — a drag belongs to SELECT, which has no tool to preview,
         // so there is nothing below this that a previewing tool could also want.
         if (doc.toolDef(toolId)?.preview != null) {
-            refreshToolPreview(camera.screenToWorld(screen))
+            refreshToolPreview(world)
             onChange()
             return
         }
@@ -2662,14 +2769,14 @@ class Editor(
                 // one write on the frame source moves the whole group, derived geometry included — the
                 // O(1) move OP-16 is built around, and axis lock applies to it exactly as to a point
                 val g = dragFrame!!
-                g.frameHandle?.drag(axisLockedFrom(camera.screenToWorld(screen) - grabOffset), ev())
+                g.frameHandle?.drag(axisLockedFrom(world - grabOffset), ev())
                 onChange()
             }
             // one opening slides along its leg (OP-21). No axis lock: the handle already has a single
             // direction of its own, exactly as an ortho leg does, so a lock could only make it inert
             dragJamb != null -> {
                 val j = dragJamb!!
-                j.handle(doc).drag(camera.screenToWorld(screen) - grabOffset, ev())
+                j.handle(doc).drag(world - grabOffset, ev())
                 // the clamp is the document's to explain, and it appears and disappears as the drag crosses
                 // the leg's end rather than lingering afterwards
                 statusHint = doc.takeNote() ?: describeJamb(j)
@@ -2677,13 +2784,13 @@ class Editor(
             }
             dragTarget != null -> {
                 val el = dragTarget!!
-                val world = axisLocked(camera.screenToWorld(screen) - grabOffset, el)
-                el.handle?.drag(world, ev())
+                val at = axisLocked(world - grabOffset, el)
+                el.handle?.drag(at, ev())
                 // one seam for every route that can turn a host — an endpoint, a whole leg, a junction the
                 // handle delegated to (OP-20): whatever the drag wrote, the riders are re-solved after it
                 doc.compensateRiders(dragRiders)
                 // a free point and an open path end can connect on release; nothing else can
-                if (canConnect(el)) updateMagnet(el, world) else clearMagnet()
+                if (canConnect(el)) updateMagnet(el, at) else clearMagnet()
                 // a jog dragged shut is *visually* already a single leg, so nothing needs to change
                 // yet — but mark the corners that releasing will remove, and say so (OP-19)
                 val flattened = flattenedEnds(el)
@@ -2695,7 +2802,7 @@ class Editor(
                 onChange()
             }
             marqueeFrom != null -> {
-                marqueeTo = camera.screenToWorld(screen)
+                marqueeTo = world
                 onChange()
             }
         }
@@ -2709,7 +2816,7 @@ class Editor(
             // a press-and-release on empty space is a click, and a plain click on nothing deselects —
             // a Shift+click there adds nothing and so leaves the selection alone
             when {
-                movedSince(screen) -> finishMarquee(from, camera.screenToWorld(screen))
+                movedSince(screen) -> finishMarquee(from, leave(screen))
                 !marqueeAdds -> clearSelection()
             }
             resetCycle() // neither a marquee nor a deselect is a step of any pick cycle
@@ -2766,7 +2873,7 @@ class Editor(
                 onChange()
             }
             cycleAt = screen
-            cycleWorld = camera.screenToWorld(screen)
+            cycleWorld = leave(screen)
             cycleIndex = i
             cycleCount = pile.candidates.size
         } else if (moved) {
@@ -3264,9 +3371,8 @@ class Editor(
     /** The structural count [tool] will build with — see [count]. Zero for a tool that needs none. */
     private fun toolCount(tool: ToolDef): Int = if (tool.minCount == 0) 0 else maxOf(count, tool.minCount)
 
-    private fun runToolClick(screen: Vec2) {
+    private fun runToolClick(world: Vec2) {
         val tool = doc.toolDef(toolId) ?: return
-        val world = camera.screenToWorld(screen)
         // a tool that cuts *the part of this face space* (OP-17) has nothing to cut in the plan — refused
         // here rather than at completion, so the reason is the one the user reads
         if (tool.facePartOperand && doc.facePartTip() == null) {

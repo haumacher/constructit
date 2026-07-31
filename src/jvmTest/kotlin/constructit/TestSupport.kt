@@ -76,6 +76,36 @@ fun assertManifold(
 }
 
 /**
+ * Two construction scripts as **the same construction**: identical token for token, with the numbers
+ * compared numerically instead of textually.
+ *
+ * Deliberately not a byte comparison, and only for one purpose — comparing the *same* gestures made through
+ * two different projections (edit-in-3D slice 1). Both routes resolve a click to the same plane point by
+ * different arithmetic — the canvas by a similarity whose scale is a power of two, the 3D view by a
+ * perspective divide — so they agree to about 1e-14 mm and not to the last bit of a double. [tol] defaults to
+ * 1e-9 mm: a million times below the three decimals the panel reads numbers at, and far below
+ * `GeomMath.TESS_TOL_MM`, the tolerance the geometry itself is built with. Everything else is compared
+ * exactly, which is what "the same document" means — the same steps in the same order, the same element ids,
+ * the same references, the same names.
+ */
+fun assertSameConstruction(
+    expected: String,
+    actual: String,
+    tol: Double = 1e-9,
+) {
+    val number = Regex("-?\\d+(?:\\.\\d+)?(?:[eE][-+]?\\d+)?")
+    assertEquals(
+        number.replace(expected, "#"),
+        number.replace(actual, "#"),
+        "the two flows must record the same steps, ids and names",
+    )
+    val want = number.findAll(expected).map { it.value.toDouble() }.toList()
+    val got = number.findAll(actual).map { it.value.toDouble() }.toList()
+    assertEquals(want.size, got.size, "the same numbers in the same places")
+    for (i in want.indices) assertClose(got[i], want[i], tol, "number $i of the script")
+}
+
+/**
  * SVG golden support. On first run (file missing) the golden is written and the check passes;
  * commit the file after inspection. Subsequent runs assert byte-equality (canonical serializer).
  * Delete the file to regenerate.

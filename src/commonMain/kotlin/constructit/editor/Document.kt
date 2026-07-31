@@ -11,6 +11,7 @@ import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Node
 import constructit.core.ParameterNode
+import constructit.core.PlaneValue
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.RayValue
@@ -55,6 +56,7 @@ import constructit.geom.FilletVariant
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
+import constructit.geom.Plane3
 import constructit.geom.PlaneSection
 import constructit.geom.ProfileElement
 import constructit.geom.Section3
@@ -62,6 +64,7 @@ import constructit.geom.Segment
 import constructit.geom.SolidFace
 import constructit.geom.ThickBody
 import constructit.geom.Vec2
+import constructit.geom.Vec3
 import constructit.geom.thickBodyOf
 import constructit.geom.thickNetwork
 import constructit.units.Dimension
@@ -1360,6 +1363,20 @@ class Document {
      * drawn on that face, so they all follow the same derived frame.
      */
     fun activePlane(): PlaneRef = activeSpace.plane ?: cx.planeXY()
+
+    /**
+     * The active working plane as a **frame**, or null when its own parameters make it invalid (OP-3) — a
+     * datum hinged on a line that has been deleted, say.
+     *
+     * The plan needs no evaluation at all: it *is* the world XY plane by construction, so it is answered
+     * without building a node, which keeps a repaint of the plan free of graph traffic. Every other space
+     * asks the evaluator for its one stored plane node, and a null here is what makes the 3D view fall back
+     * to being read-only instead of pointing gestures at a plane that does not exist (edit-in-3D slice 1).
+     */
+    fun activePlane3(ev: Evaluator): Plane3? {
+        val ref = activeSpace.plane ?: return Plane3(Vec3.ZERO, Vec3.X, Vec3.Y)
+        return ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? PlaneValue)?.plane
+    }
 
     /**
      * The nearest solid boundary edge to [at]: the solid, and which of its boundary pieces (OP-8).

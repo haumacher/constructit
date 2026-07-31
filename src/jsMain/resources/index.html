@@ -45,9 +45,14 @@
         #palette .tool.icon.active .tkey { color: rgba(255,255,255,.85); }
 
         #canvas-area { flex: 1; position: relative; background: #fff; }
-        #canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
-        /* the 3D viewport shares the canvas area; exactly one of the two is shown at a time */
-        #canvas3 { display: block; width: 100%; height: 100%; cursor: grab; }
+        /* Both canvases fill the area and are *stacked*: in the 2D view only the first is shown, and in the
+           3D view the 2D one becomes the transparent sketch layer over the WebGL one (edit-in-3D slice 1) —
+           which is why it must not take the pointer there, since the 3D canvas is what routes the gestures. */
+        #canvas, #canvas3 { display: block; position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+        /* the sketch layer is above the shaded solids, whatever order the two elements are in */
+        #canvas { cursor: crosshair; z-index: 1; }
+        #canvas3 { cursor: grab; z-index: 0; }
+        #canvas.overlay { pointer-events: none; }
         #canvas[hidden], #canvas3[hidden] { display: none; }
         #view-mode button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
         #view-mode button:hover { background: #f0f0f0; }

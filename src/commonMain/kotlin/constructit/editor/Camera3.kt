@@ -1,5 +1,6 @@
 package constructit.editor
 
+import constructit.geom.Ray3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
 import kotlin.math.PI
@@ -194,6 +195,38 @@ data class Camera3(
 
     /** How far [p] lies along the viewing direction — the painter's algorithm's sort key. */
     fun viewDepth(p: Vec3): Double = (p - eye).dot(forward())
+
+    /**
+     * The focal length **in pixels**: how many pixels one millimetre covers at unit depth, i.e. the one
+     * number the whole perspective scale is made of (`px/mm = focalPx / depth` for a face-on surface).
+     *
+     * Only the height is needed, exactly as [panBy] argues: pixels are square, so the vertical field of
+     * view fixes the pixel size in both directions and reading the width as well would let a wrong aspect
+     * ratio leak into a scale.
+     */
+    fun focalPx(hPx: Double): Double = hPx / (2.0 * tan(fovY / 2.0))
+
+    /**
+     * The world ray through screen position [s] — the **inverse of [project]**, and the whole of what makes
+     * the 3D view an editing view (edit-in-3D slice 1): a pointer position becomes a ray, and where that
+     * ray meets the working plane is a coordinate every existing tool already understands.
+     *
+     * Derived from [projectWith]'s own arithmetic rather than by inverting the matrix, so the two cannot
+     * drift apart: `project` maps a camera-space point to `(focalPx·X/d, −focalPx·Y/d)` about the viewport
+     * centre, so a screen offset of `(dx, dy)` from the centre is the direction
+     * `right·(dx/focalPx) + up·(−dy/focalPx) + forward`. The origin is the eye and [Ray3.dir] is unit, so
+     * the ray parameter is millimetres.
+     */
+    fun unproject(
+        s: Vec2,
+        wPx: Double,
+        hPx: Double,
+    ): Ray3 {
+        val f = focalPx(hPx)
+        val dx = (s.x - wPx / 2.0) / f
+        val dy = -(s.y - hPx / 2.0) / f
+        return Ray3(eye, (right() * dx + up() * dy + forward()).normalized())
+    }
 
     // ---- gestures: each one writes exactly one of the four numbers ----
 
