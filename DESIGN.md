@@ -6427,7 +6427,8 @@ the "STEP into the slicer" trend is unreachable from here by design.
 
 **JT (ISO 14306, Siemens) — a separate project by the user's decision, session 22.** After reading the
 spec the user judged it *"a separate project — but a doable one"*: a standalone **Kotlin multiplatform JT
-library** (read + write), not a ConstructIt export route. What binds the two projects is the seam, and it
+library** (read + write), not a ConstructIt export route — now real: **https://github.com/haumacher/kotlinJT**,
+whose issue #1 is the scope contract mirroring this note. What binds the two projects is the seam, and it
 already exists in this entry: the library's top-layer façade takes the same **format-agnostic scene**
 (named nodes, transforms, indexed-triangle meshes per LOD, simple materials, units explicit in the model)
 that the GLB writer and the three.js preview consume — so when the library exists, ConstructIt feeds it
