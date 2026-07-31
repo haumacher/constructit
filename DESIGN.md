@@ -6220,7 +6220,29 @@ parameter moves this?" is the same question one type up and will want the same a
 speaks **millimetres always**, which is the display-unit half of OP-7 (a bar that switched to metres would be
 answering that question in one corner of one view).
 
-**The numbered queue is empty.** What remains is the parked list below, each item recorded at its source.
+**Queued in session 21 (user-directed): the loft — the multi-section solid, general from the first
+slice.** The one solid class the toolset cannot produce is the one whose cross-section *changes* along
+the sweep: every solid today is a prism (extrude), a surface of revolution (revolve), or a boolean of
+those, and the simplest counterexample is a pyramid. (There is a construction trick — a square pyramid
+is the intersection of two perpendicular triangular prisms — but cross-space boolean gestures are parked,
+and the trick expresses a workaround, not intent.) The generic operation is the **loft**: an ordered list
+of section profiles on datum planes (which exist since session 16), a **point allowed as a terminal
+section** (pyramid = base polygon → apex; cone = circle → apex; frustum = polygon → smaller polygon),
+**guide curves** shaping the run between sections, and the section-to-section **vertex correspondence /
+seam as the one discrete choice**, scored at creation and riding `signs=` (OP-1/OP-18), never re-scored
+on replay. The apex is a *constructed point*, so the solid stays a pure function of its sections and its
+apex like everything else in the DAG — drag the apex and the pyramid follows (GeoGebra's
+`Pyramid(polygon, apex)` is the construction-flavored precedent; feature CAD's Loft/Multi-Section
+Solid/Blend is the mechanism precedent). Honesty classes carry over unchanged: polygon→polygon and
+polygon→point lofts have exactly planar facets (exact class, watertight by construction, assertManifold
+holds); curved sections and guide-curve runs are ruled/tessellated and flagged **approximated**, exactly
+the bargain Bézier offsets already make (OP-15). Scope is the user's directive, quoted because it is the
+standing everything-generic rule applied to a new solid: *"Include also \[guide curves / more than two
+sections\] — we are building a general tool that cannot extend when the first drawing is not possible."*
+Pyramids are the example, not the feature.
+
+Otherwise the numbered queue is empty; what remains is the parked list below, each item recorded at its
+source.
 
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
