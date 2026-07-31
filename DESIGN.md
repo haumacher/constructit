@@ -6471,7 +6471,23 @@ Exactness: plane ∩ planar facet is an exact segment (the pyramid's section squ
 and mesh-route solids are approximated and flagged (OP-15). The acceptance scenario, the user's own:
 select a pyramid face as working plane, use its three edges as inputs to the session-17 LLL circle —
 inscribed-circle center — and drill there; then a datum at height *h*, whose section square anchors a
-construction that stays put when the apex or the height moves. What this deliberately does not build:
+construction that stays put when the apex or the height moves. Two additions from the user's follow-up,
+both in this package. **(i) The offset-plane gesture.** `Construction.planeOffset(plane, distance)` — "the
+parametric datum plane" — has existed since the seam work, but only as a DSL node: the hinge+angle tool
+cannot produce a parallel plane, because a hinge line always lies *in* its base space. A *Datum (offset)*
+tool (base plane + a scalar distance, the distance an ordinary parameter) closes it, and closes the plane
+vocabulary with it: hinge+angle composed with offset reaches **every** plane in 3D, parametrically — the
+user's height *h* is a scalar, so editing it slides the plane and every construction anchored on its
+section. **(ii) The conic honesty line, asserted.** An inclined plane ∩ cylinder is a true ellipse, and
+the curve vocabulary (segments, arcs, cubic Béziers) contains no conic — nor could a Bézier say it exactly.
+So section curves are **exact** where the cut is a segment (planar facets) or an axis-perpendicular circle
+(structural from the profile), and **approximated and flagged** where a curved face meets an inclined
+plane — exact at every sample, chords between, OP-15's standing bargain. Test requirements, the user's own:
+the offset gesture round-trips and its parameter slides the section; the inclined cylinder section asserts
+the approximated flag and sampled points on the true ellipse to 1e-9; the perpendicular cut asserts the
+exact circle. First-class conics (ellipse arcs) would move that boundary but ripple through intersections,
+offsets and hit-testing — a **future extension**, recorded here, not part of this package. What this
+deliberately does not build:
 face-space *creation* by 3D click (that is edit-in-3D slice 2; this item consumes the same provenance
 mechanism in the 2D editor first, which is the cheaper place to grow it).
 
