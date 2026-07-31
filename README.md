@@ -189,6 +189,23 @@ gesture (a 45° miter through a plate: exactly the wedge, watertight). Planes co
 another plane — and the file records the line and the angle, never the frame, so a part edited since comes back
 with its planes where they now are.
 
+**The solid whose cross-section changes: the loft.** A prism and a revolve both sweep *one* profile, so the
+simplest shape they cannot make is a pyramid. *Extrude to point* is that gesture — click an area, type a
+height, click where the apex belongs, and the apex is a **real point of the drawing**: drag it and the pyramid
+leans (same volume, Cavalieri), retype the height and it grows, click an *existing* point and the pyramid and
+whatever else uses that point move together. A circle instead of a polygon is a cone. *Loft (sections)* is the
+general form: click sections in order — outlines, wall footprints, circles, or a point to end the run — and
+they may live on **different sketch planes**, so a frustum is the plan's square and a square on a plane
+parallel to it (*Sketch plane* takes an offset for exactly that). Three or more sections blend piecewise, and
+an **open curve** among the picks is a **guide** the run follows instead of the straight ruling — it has to
+pass through corresponding points of the sections it spans, and says by how much it misses when it does not.
+Where you click each section starts its boundary **correspondence**, which is the one choice a loft carries:
+the preview draws the rails before you commit, the choice is written into the file, and a reload is the solid
+you chose rather than the one today's geometry would score. Polygon runs are **exact** — the acceptance
+pyramid is 300000 mm³ and the frustum 392000 mm³, to the last digit, with planar facets — while a curved
+section or guide is flagged **approximated**, the same bargain a Bézier offset makes. A loft is a solid like
+any other: cut it, fuse it, dimension its footprint, chain features onto it.
+
 Mesh export is next. See [`DESIGN.md`](DESIGN.md) for the full design record and open questions.
 
 ## Build & run

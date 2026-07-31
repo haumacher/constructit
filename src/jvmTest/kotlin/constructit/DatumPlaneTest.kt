@@ -453,6 +453,79 @@ class DatumPlaneTest {
         assertEquals(second.name, ed.doc.elements.last { it.kind == ElementKind.CIRCLE }.space)
     }
 
+    // ---- the parallel case: a datum moved along its own normal (the loft's stack of sections) ----
+
+    /**
+     * **0° and an offset is the parallel plane** — the one thing a hinge and an angle cannot state, and what a
+     * stack of loft sections needs: at 0° a datum *is* the space it came from, so the plane 60 mm above the
+     * plan is that plane offset along its own normal.
+     */
+    @Test
+    fun anOffsetDatumIsTheParallelPlaneCase() {
+        val ed = sketch()
+        ed.setTool(Tools.SKETCH_PLANE)
+        ed.type("0")
+        ed.type("60")
+        ed.click(Vec2(50.0, 30.0))
+        val space = ed.activeSpace
+        assertTrue(space.isDatum, "still a datum: a line, an angle and now an offset")
+        val p = Evaluator().plane(assertNotNull(space.plane))
+        assertClose(p.normal.z, 1.0, msg = "parallel to the plan, normal and all")
+        assertClose(p.origin.z, 60.0, msg = "and 60 mm along that normal")
+        val world = p.toWorld(Vec2(20.0, 5.0))
+        assertClose(world.z, 60.0, msg = "so everything drawn here is 60 mm up")
+        assertClose(world.x, 20.0, msg = "with the plan's own x")
+        assertClose(world.y, 35.0, msg = "and y measured from the hinge, as an unoffset datum's would be")
+        assertTrue(ed.statusHint.contains("offset"), "the space's note says it is offset: ${ed.statusHint}")
+        assertTrue(ed.doc.spaceLabel(space).contains("60"), "and so does the space list: ${ed.doc.spaceLabel(space)}")
+    }
+
+    /** The offset is a parameter like the angle: retype it and the plane slides, with its drawing on it. */
+    @Test
+    fun theOffsetIsALiveParameter() {
+        val ed = sketch()
+        ed.setTool(Tools.SKETCH_PLANE)
+        ed.type("0")
+        ed.type("60")
+        ed.click(Vec2(50.0, 30.0))
+        val entry = assertNotNull(ed.activeSpace.offset, "the space knows which parameter moves it")
+        ed.doc.setParameter(entry, Quantity.mm(15.0))
+        assertClose(Evaluator().plane(assertNotNull(ed.activeSpace.plane)).origin.z, 15.0, msg = "the plane followed the number")
+        assertClose(ed.doc.spaceOffsetMm(ed.activeSpace), 15.0)
+    }
+
+    /**
+     * The offset rides the step as `offset="name"`, byte-equal — and a script written **without** one is a
+     * datum through its hinge, which is every datum written before offsets existed (OP-18: a new argument
+     * changes no stored literal's meaning, so there is no version bump and nothing to migrate).
+     */
+    @Test
+    fun theOffsetRidesTheStepAndAScriptWithoutOneStillLoads() {
+        val ed = sketch()
+        ed.setTool(Tools.SKETCH_PLANE)
+        ed.type("0")
+        ed.type("60")
+        ed.click(Vec2(50.0, 30.0))
+        val text = DocumentFormat.save(ed.doc)
+        assertTrue(Regex("sketchspace \"plane1\" line=e\\d+ angle=\"angle\" offset=\"offset\"").containsMatchIn(text), text)
+        assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save must be byte-equal")
+
+        // the pre-offset form, as a permanent load test: same two steps, no `offset=`
+        val old =
+            """
+            constructit 2
+            point 20,30 -> e1
+            point 80,30 -> e2
+            tool segment pts=e1,e2 clicks=20,30;80,30 -> e3
+            param "angle" = 0deg
+            sketchspace "plane1" line=e3 angle="angle"
+            """.trimIndent() + "\n"
+        val back = DocumentFormat.load(old)
+        val plane = Evaluator().plane(assertNotNull(assertNotNull(back.spaceNamed("plane1")).plane))
+        assertClose(plane.origin.z, 0.0, msg = "a datum with no offset goes through its hinge, as it always did")
+        assertEquals(null, back.spaceNamed("plane1")!!.offset, "and carries no offset parameter at all")
+    }
+
     // ---- persistence (OP-18) ----
 
     /** The step is a description — the line, the angle's parameter, the part — and it round-trips. */

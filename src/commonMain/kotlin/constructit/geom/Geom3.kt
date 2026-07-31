@@ -97,6 +97,33 @@ data class Plane3(val origin: Vec3, val u: Vec3, val v: Vec3) {
  */
 data class Sketch3(val plane: Plane3, val regions: List<Region>)
 
+/**
+ * One **section of a loft** (OP-17's third feature): an area on its own plane, or a single point.
+ *
+ * The point is what makes a pyramid and a cone the same operation as a frustum — the degenerate end of the
+ * run, not a special feature — and it is an ordinary constructed position, so dragging the point that places
+ * it moves the apex and the solid follows like everything else in the DAG.
+ */
+sealed interface LoftSection {
+    /** An area section: [sketch] is one region on one plane, exactly what `sketchOn` produces. */
+    data class Area(val sketch: Sketch3) : LoftSection
+
+    /** A terminal point section — the apex of a pyramid or a cone. */
+    data class Apex(val at: Vec3) : LoftSection
+}
+
+/**
+ * A **guide curve** of a loft: [pieces] read in the 2D coordinates of [plane].
+ *
+ * A guide is an ordinary drawn curve on an ordinary sketch plane — which is what makes it reachable by
+ * clicking (draw it on a datum plane that cuts the sections) and what keeps it parametric: the plane is the
+ * space's own plane node, so tilting the datum bends the guide and the loft with it. Where the guide attaches
+ * is *not* stored: it is the boundary point it passes through, resolved inside `compute` (a value), which is
+ * why a guide that stops honouring its sections makes the loft invalid with a reason instead of silently
+ * shaping something else (OP-3).
+ */
+data class LoftGuide(val plane: Plane3, val pieces: List<ProfileElement>)
+
 /** One mesh triangle, as indices into [Mesh3.vertices], wound counter-clockwise seen from outside. */
 data class Tri(val a: Int, val b: Int, val c: Int)
 
@@ -186,7 +213,49 @@ sealed interface Feature3 {
     data class MeshBoolean(val kind: BoolOp) : Feature3 {
         override val footprint: List<Region> get() = emptyList()
     }
+
+    /**
+     * A **loft**: the ordered [sections] blended pairwise, optionally shaped by [guides] (OP-17).
+     *
+     * The one solid class a prism, a revolve and their booleans cannot make — the one whose cross-section
+     * *changes* along the run. A pyramid is `[area, apex]`, a cone `[circle, apex]`, a frustum
+     * `[area, area]`, and three or more sections blend piecewise between consecutive pairs; nothing here is a
+     * case, which is the point (the queue entry's *"pyramids are the example, not the feature"*).
+     *
+     * [seams] is the **one discrete choice** this feature carries: per section, which of its boundary pieces
+     * the correspondence starts at (an index into the loop's pieces, in provenance order — the same durable
+     * name `sideFace` uses). Scored once from the gesture and then persisted in the tool step's `signs=`
+     * (OP-1/OP-18), because re-scoring it on replay would let a rotated section come back as a different
+     * solid. What is *not* a choice is the **winding**: it is fixed by construction so the shell comes out
+     * closed and outward — see [Geom3.loft].
+     *
+     * The plan it shows is its **first area section**, which is the section a footprint hint is drawn from and
+     * the coordinates a pick of the solid measures against.
+     */
+    data class Loft(
+        val sections: List<LoftSection>,
+        val seams: List<Int>,
+        val guides: List<LoftGuide>,
+    ) : Feature3 {
+        override val footprint: List<Region>
+            get() = (sections.firstOrNull { it is LoftSection.Area } as? LoftSection.Area)?.sketch?.regions ?: emptyList()
+
+        /**
+         * OP-15's honesty class, read off the feature: **exact** while every section boundary and every guide
+         * is made of straight pieces (the facets are then the solid, and its volume is analytic), and
+         * **approximated** as soon as one of them is curved — a circle section is a polygon of chords, and a
+         * curved guide's rails are sampled, exactly the bargain a Bézier offset already makes.
+         */
+        val approximated: Boolean
+            get() =
+                sections.any { s -> s is LoftSection.Area && s.sketch.regions.any { curvedBoundary(it) } } ||
+                    guides.any { g -> g.pieces.any { it !is ProfileElement.Seg } }
+    }
 }
+
+/** Whether any boundary piece of [region] is curved — OP-15's question, asked structurally. */
+private fun curvedBoundary(region: Region): Boolean =
+    (listOf(region.outer) + region.holes).any { l -> l.elements.any { it !is ProfileElement.Seg } }
 
 /**
  * A solid: its analytic [feature] **plus** the [mesh] derived from it.
@@ -748,6 +817,603 @@ object Geom3 {
         return Solid3(Feature3.Revolution(sketch, axisOrigin, axis, angle), mb.build()) to null
     }
 
+    // ---- the loft: an ordered run of sections, optionally shaped by guides (OP-17's third feature) ----
+    // The one solid whose cross-section *changes* along the sweep, and therefore the one that needs a
+    // correspondence between boundaries rather than a single profile. Everything value-dependent is here,
+    // inside one function of values (OP-21's rule); the node above it only says which sections there are.
+
+    /** One area section resolved to values: its polygon, in the loft's own winding and seam order. */
+    private class LoftPrep(
+        val plane: Plane3,
+        var poly: List<Vec2>,
+        var starts: List<Int>,
+        val tess: TessRegion,
+    )
+
+    /** A guide resolved to values: its world polyline and where it meets each section it spans. */
+    private class LoftRail(
+        val poly: List<Vec3>,
+        val cum: List<Double>,
+        /** section index → (that section's boundary parameter, this guide's own arc parameter) */
+        val touch: Map<Int, Pair<Double, Double>>,
+        /** the boundary parameter this guide controls — the same in every section it spans, by definition */
+        val param: Double,
+    )
+
+    /**
+     * A **loft**: [sections] in order, blended pairwise, shaped by [guides], with [seams] saying where each
+     * section's boundary correspondence starts (OP-17).
+     *
+     * Three decisions make this one function rather than a family of features:
+     *
+     * 1. **One global boundary parameter set.** Every area section's boundary is parameterized by normalized
+     *    arc length *from its own seam vertex*, and the union of every section's own vertex parameters is
+     *    sampled on **all** of them. So corresponding points are the same parameter, sections with different
+     *    corner counts (a square and a tessellated circle) need no special case, and — the reason it is global
+     *    rather than per band — the ring an interior section hands to the band below it is the same ring it
+     *    hands to the band above, which is what keeps the shell free of T-junctions. Every added sample lies
+     *    *on* the boundary, so nothing about the shape is approximated by adding them.
+     * 2. **The winding is not a choice.** Each section is oriented against the run (the direction from one
+     *    section's centre to the next) so that all boundaries turn the same way about it; the side walls then
+     *    wind exactly as an extrude's do and the caps close them. The mirrored correspondence — the "flip" a
+     *    feature-CAD loft offers — makes rails *cross* (two squares turned into each other meet in the middle),
+     *    which is a self-intersecting solid, so it is not offered: what is left as the seam's freedom is the
+     *    rotational offset, which is the choice a user actually makes.
+     * 3. **A guide displaces the run, and cannot move the sections.** A guide contributes its deviation from
+     *    its own chord, `D(t) = G(t) − ((1−t)·G(0) + t·G(1))`, which is zero at both ends *by construction* —
+     *    so a guide bends the rails between two sections and can never drag a section off its plane. Several
+     *    guides blend **linearly between adjacent ones** on the (circular) boundary parameter, a partition of
+     *    unity: with one guide the whole run follows it, with several each rail follows its own and neither
+     *    reaches past its neighbours (see [weightsAt]).
+     *
+     * Refused with a reason and healing (OP-3): fewer than two sections; a point section anywhere but at an
+     * end; a section that is not one hole-free area; a section enclosing no area; two sections at the same
+     * place; a section plane edge-on to the run; a **ruling that does not advance** along the run, which is
+     * what "two section planes cross inside the solid" looks like locally; two **rails that meet** in mid-run,
+     * which is what a seam turned too far produces (see [crossingRails]); and a guide that does not pass
+     * through corresponding points of a consecutive run of sections. What is *not* detected is stated in
+     * DESIGN.md: a shell that self-intersects for a reason no rail shows.
+     */
+    fun loft(
+        sections: List<LoftSection>,
+        seams: List<Int> = emptyList(),
+        guides: List<LoftGuide> = emptyList(),
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<Solid3?, String?> {
+        if (sections.size < 2) {
+            return null to "a loft needs at least two sections — one area and a point make a pyramid or a cone"
+        }
+        val apexes = sections.indices.filter { sections[it] is LoftSection.Apex }
+        if (apexes.size > 1) return null to "only one of a loft's sections may be a point — a run between two points has no volume"
+        if (apexes.any { it != 0 && it != sections.size - 1 }) {
+            return null to "a point may only be a loft's first or last section, not one inside the run"
+        }
+
+        // ---- every section as values: an area's polygon and piece starts, or an apex position ----
+        val preps = arrayOfNulls<LoftPrep>(sections.size)
+        val centres = arrayOfNulls<Vec3>(sections.size)
+        for ((k, s) in sections.withIndex()) {
+            when (s) {
+                is LoftSection.Apex -> centres[k] = s.at
+                is LoftSection.Area -> {
+                    if (s.sketch.regions.size != 1) {
+                        return null to "a loft's section is one area, and section ${k + 1} has ${s.sketch.regions.size}"
+                    }
+                    val region = s.sketch.regions[0]
+                    if (region.holes.isNotEmpty()) {
+                        return null to
+                            "section ${k + 1} has a hole, and a loft pairs one boundary with one boundary — " +
+                            "loft the outer boundaries and subtract a loft of the holes"
+                    }
+                    val (tess, why) = tessellateRegion(region, tolMm)
+                    if (tess == null) return null to "section ${k + 1}: ${why ?: "cannot be tessellated"}"
+                    if (abs(tessArea(tess)) <= AREA_EPS) return null to "section ${k + 1} encloses no area"
+                    val (poly, starts) = loopWithStarts(region.outer, tolMm)
+                    if (poly.size < 3) return null to "section ${k + 1} tessellates to fewer than three corners"
+                    preps[k] = LoftPrep(s.sketch.plane, poly, starts, tess)
+                    centres[k] = s.sketch.plane.toWorld(averageOf(poly))
+                }
+            }
+        }
+
+        // ---- the run, and the winding it fixes ----
+        val runs = ArrayList<Vec3>(sections.size - 1)
+        for (k in 0 until sections.size - 1) {
+            val d = centres[k + 1]!! - centres[k]!!
+            if (d.length() <= WELD_TOL) {
+                return null to "sections ${k + 1} and ${k + 2} sit at the same place, so the loft has no direction to run in"
+            }
+            runs.add(d.normalized())
+        }
+        val hand = IntArray(sections.size)
+        for (k in sections.indices) {
+            val p = preps[k] ?: continue
+            val r = if (k < runs.size) runs[k] else runs[k - 1]
+            val n = p.plane.normal.normalized()
+            if (abs(n.dot(r)) <= Vec3.EPS) {
+                val neighbour = if (k < runs.size) sections[k + 1] else sections[k - 1]
+                return null to
+                    if (neighbour is LoftSection.Apex) {
+                        "the apex lies in section ${k + 1}'s own plane, so the loft has no height"
+                    } else {
+                        "section ${k + 1}'s plane runs along the loft, so its shell would fold through itself"
+                    }
+            }
+            if (n.dot(r) * polygonArea(p.poly) < 0.0) {
+                val last = p.poly.size - 1
+                p.starts = p.starts.map { last - it }
+                p.poly = p.poly.reversed()
+            }
+            hand[k] = if (polygonArea(p.poly) >= 0.0) 1 else -1
+            // the seam: which boundary piece the correspondence starts at, taken verbatim (OP-1/OP-18) and
+            // read modulo the piece count, so a stored choice always resolves to *a* vertex of this boundary
+            val off = seams.getOrElse(k) { 0 }.mod(p.starts.size)
+            val s0 = p.starts[off]
+            p.poly = List(p.poly.size) { p.poly[(s0 + it) % p.poly.size] }
+        }
+
+        // ---- one global parameter set, sampled on every section ----
+        val cums = preps.map { it?.let { p -> cumulativeOf(p.poly) } }
+        val perims = preps.indices.map { cums[it]?.last() ?: 0.0 }
+        val minPerim = perims.filter { it > 0.0 }.minOrNull() ?: return null to "a loft needs at least one area section"
+        // params closer together than a corner is wide are one parameter: the sampled points would weld in the
+        // mesh but not in a cap's triangulation, and that difference is exactly a crack
+        val paramTol = (10.0 * RegionBool.EPS / minPerim).coerceAtMost(1e-6)
+        val sorted = ArrayList<Double>()
+        for (k in sections.indices) {
+            val p = preps[k] ?: continue
+            val cum = cums[k]!!
+            for (j in p.poly.indices) sorted.add(cum[j] / perims[k])
+        }
+        sorted.sort()
+        val us = ArrayList<Double>(sorted.size)
+        for (v in sorted) if (us.isEmpty() || v - us.last() > paramTol) us.add(v)
+        if (us.size > 1 && (1.0 - us.last()) + us.first() <= paramTol) us.removeAt(us.size - 1)
+        if (us.size < 3) return null to "the loft's boundaries give fewer than three rails"
+        val ring2 = preps.indices.map { k -> preps[k]?.let { p -> us.map { u -> pointAtParam(p.poly, cums[k]!!, u) } } }
+        val ringW =
+            sections.indices.map { k ->
+                val p = preps[k]
+                if (p == null) us.map { centres[k]!! } else ring2[k]!!.map { p.plane.toWorld(it) }
+            }
+
+        // ---- the guides: where each one meets which sections, and what it may therefore shape ----
+        val rails = ArrayList<LoftRail>(guides.size)
+        for ((gi, g) in guides.withIndex()) {
+            val (rail, why) = railOf(gi, g, sections, preps, cums, perims, tolMm)
+            if (rail == null) return null to (why ?: "cannot honour guide ${gi + 1}")
+            rails.add(rail)
+        }
+
+        // ---- the shell ----
+        val mb = MeshBuilder()
+        val m = us.size
+        for (k in 0 until sections.size - 1) {
+            // Two ways a band can be folded rather than swept, both refused before a triangle is emitted: a
+            // ruling that runs *backwards* (which is what two section planes crossing inside the solid looks
+            // like where it matters), and two rails that meet (which is what a seam turned too far does).
+            // Neither is asked of an apex band: every rail of one legitimately ends at the same point.
+            if (preps[k] != null && preps[k + 1] != null) {
+                for (j in 0 until m) {
+                    if ((ringW[k + 1][j] - ringW[k][j]).dot(runs[k]) <= WELD_TOL) {
+                        return null to
+                            "sections ${k + 1} and ${k + 2} fold into each other — their planes cross inside the " +
+                            "loft, so its shell would pass through itself"
+                    }
+                }
+                val fold = crossingRails(ringW[k], ringW[k + 1])
+                if (fold != null) {
+                    return null to
+                        "the seam pairs sections ${k + 1} and ${k + 2} so that their rails cross " +
+                        "(the ones at ${percent(us[fold.first])} and ${percent(us[fold.second])} of the boundary meet " +
+                        "in mid-run), which would fold the shell through itself — start the correspondence at " +
+                        "another vertex"
+                }
+            }
+            val here = rails.filter { it.touch.containsKey(k) && it.touch.containsKey(k + 1) }
+            val steps = if (here.isEmpty()) 1 else here.maxOf { stepsOf(it, k) }
+            val rows =
+                (0..steps).map { i ->
+                    val t = i.toDouble() / steps
+                    val bows = here.map { bowOf(it, k, t) }
+                    (0 until m).map { j ->
+                        var p = ringW[k][j] * (1.0 - t) + ringW[k + 1][j] * t
+                        if (here.isNotEmpty()) {
+                            val w = weightsAt(here.map { it.param }, us[j])
+                            for ((gi, bow) in bows.withIndex()) p += bow * w[gi]
+                        }
+                        p
+                    }
+                }
+            for (i in 0 until steps) {
+                for (j in 0 until m) {
+                    val j2 = (j + 1) % m
+                    mb.triangle(rows[i][j], rows[i][j2], rows[i + 1][j2])
+                    mb.triangle(rows[i][j], rows[i + 1][j2], rows[i + 1][j])
+                }
+            }
+        }
+        // The caps are the terminal sections, triangulated and **conformed to the sampled ring** — the same
+        // T-junction rule a prism's caps follow (see [prismMesh]): the band's first row runs through every
+        // sampled parameter, so the cap has to as well or the shell has a crack in it.
+        for (k in listOf(0, sections.size - 1)) {
+            val p = preps[k] ?: continue
+            val (tris, why) = triangulate(p.tess)
+            if (tris == null) return null to "section ${k + 1}: ${why ?: "cannot be triangulated"}"
+            val (split, why2) = splitToRequired(tris, ring2[k]!!)
+            if (split == null) return null to (why2 ?: "cannot close section ${k + 1}")
+            // a cap triangle maps to the world with its normal along +plane.normal; the outward one is against
+            // the run at the first section and along it at the last, and `hand` is which of the two that is
+            val asIs = if (k == 0) hand[k] < 0 else hand[k] > 0
+            for (t in split) {
+                val a = p.plane.toWorld(t.a)
+                val b = p.plane.toWorld(t.b)
+                val c = p.plane.toWorld(t.c)
+                if (asIs) mb.triangle(a, b, c) else mb.triangle(a, c, b)
+            }
+        }
+        return Solid3(Feature3.Loft(sections, seams, guides), mb.build()) to null
+    }
+
+    /**
+     * [loop] as a polygon plus, per boundary piece, the polygon index that piece **starts at** — which is the
+     * seam's own durable name (OP-8's provenance order, the same one `sideFace` indexes).
+     *
+     * Consecutive pieces share an endpoint, so a piece's start is the previous piece's last point; the closing
+     * duplicate is dropped exactly as [tessellateLoop] drops it.
+     */
+    private fun loopWithStarts(
+        loop: Loop,
+        tolMm: Double,
+    ): Pair<List<Vec2>, List<Int>> {
+        val pts = ArrayList<Vec2>()
+        val starts = ArrayList<Int>()
+        for (e in loop.elements) {
+            starts.add(if (pts.isEmpty()) 0 else pts.size - 1)
+            for (p in GeomMath.tessellatePiece(e, tolMm)) {
+                if (pts.isEmpty() || (p - pts.last()).length() > WELD_TOL) pts.add(p)
+            }
+        }
+        while (pts.size > 1 && (pts.first() - pts.last()).length() <= WELD_TOL) pts.removeAt(pts.size - 1)
+        val n = max(1, pts.size)
+        return pts to starts.map { it % n }
+    }
+
+    private fun averageOf(poly: List<Vec2>): Vec2 {
+        var s = Vec2(0.0, 0.0)
+        for (p in poly) s += p
+        return s * (1.0 / poly.size)
+    }
+
+    /** Cumulative arc length of a closed polygon: `size + 1` entries, the last one its perimeter. */
+    private fun cumulativeOf(poly: List<Vec2>): List<Double> {
+        val cum = ArrayList<Double>(poly.size + 1)
+        cum.add(0.0)
+        for (i in poly.indices) cum.add(cum.last() + (poly[(i + 1) % poly.size] - poly[i]).length())
+        return cum
+    }
+
+    /** The boundary point at normalized arc length [u] — *on* the polygon, so it approximates nothing. */
+    private fun pointAtParam(
+        poly: List<Vec2>,
+        cum: List<Double>,
+        u: Double,
+    ): Vec2 {
+        val target = u.mod(1.0) * cum.last()
+        var i = 0
+        while (i < poly.size - 1 && cum[i + 1] < target) i++
+        val len = cum[i + 1] - cum[i]
+        val a = poly[i]
+        val b = poly[(i + 1) % poly.size]
+        if (len <= WELD_TOL) return a
+        return a + (b - a) * ((target - cum[i]) / len)
+    }
+
+    /** Cumulative arc length of an open 3D polyline. */
+    private fun cumulative3(poly: List<Vec3>): List<Double> {
+        val cum = ArrayList<Double>(poly.size)
+        cum.add(0.0)
+        for (i in 0 until poly.size - 1) cum.add(cum.last() + (poly[i + 1] - poly[i]).length())
+        return cum
+    }
+
+    /** The point of an open polyline at arc length [s], clamped to its ends. */
+    private fun pointAtArc(
+        poly: List<Vec3>,
+        cum: List<Double>,
+        s: Double,
+    ): Vec3 {
+        if (poly.size == 1) return poly[0]
+        val t = s.coerceIn(0.0, cum.last())
+        var i = 0
+        while (i < poly.size - 2 && cum[i + 1] < t) i++
+        val len = cum[i + 1] - cum[i]
+        if (len <= WELD_TOL) return poly[i]
+        return poly[i] + (poly[i + 1] - poly[i]) * ((t - cum[i]) / len)
+    }
+
+    /**
+     * The guide [g] resolved against the sections: which of them it passes through, at which boundary
+     * parameter, and where along itself — or null with the reason it cannot be honoured.
+     *
+     * A guide is *found* rather than declared, and that is deliberate: where it attaches is a value, so a guide
+     * that a parameter edit pulls off a section makes the loft invalid **with that as the reason** and heals
+     * when it is pulled back (OP-3), instead of quietly shaping something else.
+     */
+    private fun railOf(
+        gi: Int,
+        g: LoftGuide,
+        sections: List<LoftSection>,
+        preps: Array<LoftPrep?>,
+        cums: List<List<Double>?>,
+        perims: List<Double>,
+        tolMm: Double,
+    ): Pair<LoftRail?, String?> {
+        val flat = ArrayList<Vec2>()
+        for (e in g.pieces) {
+            for (p in GeomMath.tessellatePiece(e, tolMm)) {
+                if (flat.isEmpty() || (p - flat.last()).length() > WELD_TOL) flat.add(p)
+            }
+        }
+        if (flat.size < 2) return null to "guide ${gi + 1} is not a curve — it has no length to run along"
+        val poly = flat.map { g.plane.toWorld(it) }
+        val cum = cumulative3(poly)
+        if (cum.last() <= WELD_TOL) return null to "guide ${gi + 1} has no length"
+        val touch = HashMap<Int, Pair<Double, Double>>()
+        for (k in sections.indices) {
+            val p = preps[k] ?: continue
+            val hit = crossing(poly, cum, p, cums[k]!!, tolMm) ?: continue
+            touch[k] = hit
+        }
+        if (touch.size < 2) {
+            return null to
+                "guide ${gi + 1} passes through ${touch.size} of the loft's sections — a guide must pass through " +
+                "the corresponding point of at least two of them"
+        }
+        val spanned = touch.keys.sorted()
+        if (spanned.last() - spanned.first() + 1 != spanned.size) {
+            return null to
+                "guide ${gi + 1} skips section ${(spanned.first()..spanned.last()).first { it !in touch }.plus(1)} — " +
+                "a guide shapes a consecutive run of sections"
+        }
+        val ref = touch[spanned.first()]!!.first
+        for (k in spanned) {
+            val u = touch[k]!!.first
+            val off = circularDistance(u, ref) * perims[k]
+            if (off > max(tolMm, 10.0 * WELD_TOL)) {
+                return null to
+                    "guide ${gi + 1} meets section ${spanned.first() + 1} at ${percent(ref)} of its boundary but " +
+                    "section ${k + 1} at ${percent(u)} — that is ${round(off * 100.0) / 100.0} mm along section " +
+                    "${k + 1}'s boundary from the corresponding point, and a guide must pass through " +
+                    "corresponding points"
+            }
+        }
+        return LoftRail(poly, cum, touch, ref) to null
+    }
+
+    /**
+     * Where the polyline [poly] meets section [p]'s boundary: the boundary parameter and the guide's own arc
+     * parameter, or null when it does not come within [tolMm] of it.
+     *
+     * Found through the section's **plane** first (a guide that shapes a run has to leave that plane, so it
+     * crosses it), then measured against the boundary polygon there — which is what makes "passes through the
+     * boundary" a question with one answer rather than a search over two curves.
+     */
+    private fun crossing(
+        poly: List<Vec3>,
+        cum: List<Double>,
+        p: LoftPrep,
+        cumP: List<Double>,
+        tolMm: Double,
+    ): Pair<Double, Double>? {
+        val n = p.plane.normal.normalized()
+        val o = p.plane.origin
+        val candidates = ArrayList<Pair<Vec3, Double>>()
+        for (i in poly.indices) {
+            val d = (poly[i] - o).dot(n)
+            if (abs(d) <= max(tolMm, 10.0 * WELD_TOL)) candidates.add(poly[i] to cum[i])
+            if (i == poly.size - 1) continue
+            val d2 = (poly[i + 1] - o).dot(n)
+            if (d * d2 < 0.0) {
+                val f = d / (d - d2)
+                candidates.add(poly[i] + (poly[i + 1] - poly[i]) * f to cum[i] + (cum[i + 1] - cum[i]) * f)
+            }
+        }
+        var best: Pair<Double, Double>? = null
+        var bestDist = Double.MAX_VALUE
+        for ((x, s) in candidates) {
+            val local = Vec2((x - o).dot(p.plane.u), (x - o).dot(p.plane.v))
+            val (dist, u) = nearestOnPolygon(local, p.poly, cumP)
+            if (dist < bestDist) {
+                bestDist = dist
+                best = u to s / cum.last()
+            }
+        }
+        return if (bestDist <= max(tolMm, 10.0 * WELD_TOL)) best else null
+    }
+
+    /** The distance from [q] to the closed polygon [poly], and the normalized parameter of the nearest point. */
+    private fun nearestOnPolygon(
+        q: Vec2,
+        poly: List<Vec2>,
+        cum: List<Double>,
+    ): Pair<Double, Double> {
+        var bestDist = Double.MAX_VALUE
+        var bestU = 0.0
+        for (i in poly.indices) {
+            val a = poly[i]
+            val b = poly[(i + 1) % poly.size]
+            val d = b - a
+            val len = d.length()
+            val t = if (len <= WELD_TOL) 0.0 else ((q - a).dot(d) / (len * len)).coerceIn(0.0, 1.0)
+            val at = a + d * t
+            val dist = (q - at).length()
+            if (dist < bestDist) {
+                bestDist = dist
+                bestU = (cum[i] + len * t) / cum.last()
+            }
+        }
+        return bestDist to bestU
+    }
+
+    /**
+     * The first pair of **rails that meet** between two rings, or null when none do.
+     *
+     * A rail lies on the loft's surface, so two of them meeting anywhere but at a shared end is the surface
+     * passing through itself — which is exactly what a seam turned too far produces (pair two squares corner to
+     * *opposite* corner and the two diagonal rails cross in mid-run). Refusing it is the watertight-or-refused
+     * doctrine applied where a triangle count cannot see the problem: such a shell is closed and consistently
+     * wound, and still not a solid.
+     *
+     * What this does **not** claim is that the surface is free of self-intersection everywhere — two rails may
+     * pass close without meeting while the patch between them folds. That limit is recorded in DESIGN.md; the
+     * degenerate cases a user actually reaches are the ones where rails meet.
+     */
+    private fun crossingRails(
+        a: List<Vec3>,
+        b: List<Vec3>,
+    ): Pair<Int, Int>? {
+        val m = a.size
+        for (i in 0 until m) {
+            val lo1 = Vec3(min(a[i].x, b[i].x), min(a[i].y, b[i].y), min(a[i].z, b[i].z))
+            val hi1 = Vec3(max(a[i].x, b[i].x), max(a[i].y, b[i].y), max(a[i].z, b[i].z))
+            for (j in i + 1 until m) {
+                // a shared end is not a meeting: adjacent rails of a collapsing run legitimately share one
+                if ((a[i] - a[j]).length() <= WELD_TOL || (b[i] - b[j]).length() <= WELD_TOL) continue
+                val lo2 = Vec3(min(a[j].x, b[j].x), min(a[j].y, b[j].y), min(a[j].z, b[j].z))
+                val hi2 = Vec3(max(a[j].x, b[j].x), max(a[j].y, b[j].y), max(a[j].z, b[j].z))
+                if (hi1.x < lo2.x - WELD_TOL || hi2.x < lo1.x - WELD_TOL) continue
+                if (hi1.y < lo2.y - WELD_TOL || hi2.y < lo1.y - WELD_TOL) continue
+                if (hi1.z < lo2.z - WELD_TOL || hi2.z < lo1.z - WELD_TOL) continue
+                if (segmentDistance(a[i], b[i], a[j], b[j]) <= 10.0 * WELD_TOL) return i to j
+            }
+        }
+        return null
+    }
+
+    /** The closest distance between two 3D segments — the standard clamped-parameter form. */
+    private fun segmentDistance(
+        p1: Vec3,
+        q1: Vec3,
+        p2: Vec3,
+        q2: Vec3,
+    ): Double {
+        val d1 = q1 - p1
+        val d2 = q2 - p2
+        val r = p1 - p2
+        val a = d1.dot(d1)
+        val e = d2.dot(d2)
+        val f = d2.dot(r)
+        var s: Double
+        var t: Double
+        if (a <= Vec3.EPS && e <= Vec3.EPS) return r.length()
+        if (a <= Vec3.EPS) {
+            s = 0.0
+            t = (f / e).coerceIn(0.0, 1.0)
+        } else {
+            val c = d1.dot(r)
+            if (e <= Vec3.EPS) {
+                t = 0.0
+                s = (-c / a).coerceIn(0.0, 1.0)
+            } else {
+                val b = d1.dot(d2)
+                val denom = a * e - b * b
+                s = if (denom > Vec3.EPS) ((b * f - c * e) / denom).coerceIn(0.0, 1.0) else 0.0
+                t = (b * s + f) / e
+                if (t < 0.0) {
+                    t = 0.0
+                    s = (-c / a).coerceIn(0.0, 1.0)
+                } else if (t > 1.0) {
+                    t = 1.0
+                    s = ((b - c) / a).coerceIn(0.0, 1.0)
+                }
+            }
+        }
+        return ((p1 + d1 * s) - (p2 + d2 * t)).length()
+    }
+
+    /** Distance between two boundary parameters, the short way round — the parameter is circular. */
+    private fun circularDistance(
+        a: Double,
+        b: Double,
+    ): Double {
+        val d = abs(a.mod(1.0) - b.mod(1.0))
+        return min(d, 1.0 - d)
+    }
+
+    /**
+     * How finely a band shaped by [rail] is sampled along the run: the guide's **own** tessellation between the
+     * two sections, which is where its curvature already is (OP-15's determinism rule — no adaptive pass).
+     */
+    private fun stepsOf(
+        rail: LoftRail,
+        k: Int,
+    ): Int {
+        val a = rail.touch[k]!!.second * rail.cum.last()
+        val b = rail.touch[k + 1]!!.second * rail.cum.last()
+        val lo = min(a, b)
+        val hi = max(a, b)
+        val inner = rail.cum.count { it > lo + WELD_TOL && it < hi - WELD_TOL }
+        return max(4, inner + 1)
+    }
+
+    /** A guide's deviation from its own chord at run parameter [t] — zero at both sections, by construction. */
+    private fun bowOf(
+        rail: LoftRail,
+        k: Int,
+        t: Double,
+    ): Vec3 {
+        val total = rail.cum.last()
+        val a = rail.touch[k]!!.second * total
+        val b = rail.touch[k + 1]!!.second * total
+        val g = pointAtArc(rail.poly, rail.cum, a + (b - a) * t)
+        val g0 = pointAtArc(rail.poly, rail.cum, a)
+        val g1 = pointAtArc(rail.poly, rail.cum, b)
+        return g - (g0 * (1.0 - t) + g1 * t)
+    }
+
+    /**
+     * How much each guide shapes the rail at boundary parameter [u]: **linear between adjacent guides**, on the
+     * circular parameter.
+     *
+     * A partition of unity by construction, and the three properties that matter fall out of it: a guide's own
+     * rail follows it *exactly* (its weight is 1 there), a guide has no influence past its neighbours (so
+     * shaping one side of a duct leaves the other side straight), and a **single** guide weighs 1 everywhere —
+     * which is not a special case but the same rule with one guide either side, and it means one guide displaces
+     * the whole run rather than denting it at one parameter. An inverse-distance blend was the alternative and
+     * is worse in exactly one visible way: every guide would bulge the far side of the section too.
+     */
+    private fun weightsAt(
+        params: List<Double>,
+        u: Double,
+    ): List<Double> {
+        val n = params.size
+        if (n == 1) return listOf(1.0)
+        val order = params.indices.sortedBy { params[it] }
+        val w = DoubleArray(n)
+        for (idx in order.indices) {
+            val i = order[idx]
+            val j = order[(idx + 1) % n]
+            val span = (params[j] - params[i]).mod(1.0)
+            if (span <= 1e-12) continue
+            val f = (u - params[i]).mod(1.0)
+            if (f <= span + 1e-12) {
+                val t = (f / span).coerceIn(0.0, 1.0)
+                w[i] += 1.0 - t
+                w[j] += t
+                return w.toList()
+            }
+        }
+        val best = params.indices.minByOrNull { circularDistance(u, params[it]) } ?: 0
+        w[best] = 1.0
+        return w.toList()
+    }
+
+    private fun percent(u: Double): String {
+        val v = round(u.mod(1.0) * 1000.0) / 10.0
+        return "$v%"
+    }
+
     // ---- exact prismatic booleans (OP-22) ----
     // A boolean between two solids extruded along the SAME axis decomposes into z-breakpoints times 2D
     // region booleans, and is therefore *exact* — no BSP split, no coplanar-face heuristic, no repair
@@ -776,6 +1442,10 @@ object Geom3 {
             is Feature3.Prism -> feature to null
             is Feature3.Revolution -> null to NOT_PRISMATIC
             is Feature3.MeshBoolean -> null to NOT_PRISMATIC
+            // A loft's whole point is that its cross-section changes along the run, so it is a prism only in
+            // the degenerate case that is an extrude anyway — refused rather than approximated, like a
+            // revolve, and the general engine (OP-9) takes it from here.
+            is Feature3.Loft -> null to NOT_PRISMATIC
             is Feature3.Extrusion -> oneSlab(feature, tolMm)
         }
 
@@ -804,6 +1474,7 @@ object Geom3 {
             is Feature3.Prism -> feature.plane
             is Feature3.Revolution -> null
             is Feature3.MeshBoolean -> null
+            is Feature3.Loft -> null
         }
 
     private fun oneSlab(
@@ -1184,6 +1855,11 @@ object Geom3 {
             // are *rotated* frames, and naming them TOP/BOTTOM would invent a convention this slice has
             // no use for. The cut is recorded in DESIGN.md under OP-17.
             is Feature3.Revolution -> null to "a revolved solid has no top or bottom face"
+            // Deliberately refused, for the reason a revolve's caps are: a loft's end faces *are* planes (its
+            // terminal sections'), but their frames are the sections' own — which may be tilted relative to
+            // each other and absent altogether at an apex — so naming one TOP would invent a convention this
+            // slice has no use for. A datum plane reaches any of them (DESIGN.md, the loft's note).
+            is Feature3.Loft -> null to "a lofted solid has no named top or bottom face — put a datum plane where you want to sketch"
             // A general boolean's result is a mesh (OP-9's sink rule): its faces are emergent, not
             // constructed, so there is nothing here that a provenance accessor could name.
             is Feature3.MeshBoolean -> null to "a general boolean's result is mesh-only, so it has no named faces (OP-9)"
@@ -1228,6 +1904,7 @@ object Geom3 {
             is Feature3.Prism -> Triple(feature.plane, feature.minZ, feature.maxZ)
             is Feature3.Revolution -> null
             is Feature3.MeshBoolean -> null
+            is Feature3.Loft -> null
         }
 
     /**
@@ -1363,6 +2040,11 @@ object Geom3 {
                 return null to "a revolved solid has no prismatic cross-section; sectioning one needs an analytic revolve section (OP-17)"
             is Feature3.MeshBoolean ->
                 return null to "a general boolean's result is mesh-only, so it has no analytic cross-section (OP-9); slicing its mesh is a separate operation"
+            // A loft is not a stack of areas over height intervals — its area varies *continuously* along the
+            // run — so it has no slab to answer with. Refused rather than interpolated: the honest answer is
+            // an analytic loft section, which is its own piece of work (DESIGN.md, the loft's note).
+            is Feature3.Loft ->
+                return null to "a lofted solid has no prismatic cross-section, because its area changes along the run; sectioning one needs an analytic loft section (OP-17)"
             is Feature3.Extrusion -> {
                 plane = feature.sketch.plane
                 // [Slab] is borrowed here as a plain (interval, areas) carrier and never escapes this

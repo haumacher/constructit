@@ -648,10 +648,11 @@ object DocumentFormat {
      * Replay a sketch space (OP-17). Two variants, one step kind:
      *
      * - a **face**: `sketchspace "name" el=e7 piece=2` — which solid, which boundary piece;
-     * - a **datum**: `sketchspace "name" line=e3 angle="tilt" part=e5` — which line it hinges on, which
-     *   parameter holds its angle, and which solid a *Cut* there subtracts from (GitHub #6). Told apart by
-     *   `line=`, and no version bump goes with it: an argument that never existed cannot have meant
-     *   something else, so no stored literal changes meaning (OP-18's doctrine).
+     * - a **datum**: `sketchspace "name" line=e3 angle="tilt" offset="lift" part=e5` — which line it hinges
+     *   on, which parameter holds its angle, which parameter (if any) moves it along its own normal — the
+     *   parallel case a stack of loft sections needs — and which solid a *Cut* there subtracts from
+     *   (GitHub #6). Told apart by `line=`, and no version bump goes with either argument: one that never
+     *   existed cannot have meant something else, so no stored literal changes meaning (OP-18's doctrine).
      *
      * Either way the step carries the *description* of the frame and never the frame itself, so the plane is
      * re-derived on load and a part edited since comes back with its faces where they now are. The piece
@@ -672,6 +673,7 @@ object DocumentFormat {
         var line: Element? = null
         var part: Element? = null
         var angle: ScalarEntry? = null
+        var offset: ScalarEntry? = null
         for (w in words.drop(2)) {
             val v = w.substringAfter('=', "")
             when (w.substringBefore('=')) {
@@ -679,17 +681,16 @@ object DocumentFormat {
                 "piece" -> piece = v.toIntOrNull() ?: throw LoadError("malformed piece index '$v'")
                 "line" -> line = byName[v] ?: throw LoadError("unknown element '$v'")
                 "part" -> part = byName[v] ?: throw LoadError("unknown element '$v'")
-                "angle" ->
-                    angle =
-                        unquote(v).let { n ->
-                            doc.scalars.firstOrNull { it.name == n } ?: throw LoadError("unknown scalar '$n'")
-                        }
+                "angle" -> angle = namedScalar(doc, v)
+                // the parallel case (a datum moved along its own normal) — a *new* argument, so no stored
+                // literal changes meaning and no version bump goes with it (OP-18's doctrine)
+                "offset" -> offset = namedScalar(doc, v)
                 else -> throw LoadError("unknown sketchspace argument '${w.substringBefore('=')}'")
             }
         }
         if (line != null) {
             val a = angle ?: throw LoadError("a datum sketch plane is missing 'angle='")
-            doc.createDatumSpace(line, a.ref, named = name, part = part)
+            doc.createDatumSpace(line, a.ref, named = name, part = part, offset = offset?.ref)
                 ?: throw LoadError("'${doc.nameOf(line)}' carries no line to place a sketch plane on")
             return
         }
@@ -697,6 +698,15 @@ object DocumentFormat {
         doc.createFaceSpace(on, piece, named = name)
             ?: throw LoadError("'${words.getOrNull(2)}' has no planar side face #${piece + 1}")
     }
+
+    /** The panel entry a step names by name — a scalar is addressed by its name in the file (OP-18). */
+    private fun namedScalar(
+        doc: Document,
+        v: String,
+    ): ScalarEntry =
+        unquote(v).let { n ->
+            doc.scalars.firstOrNull { it.name == n } ?: throw LoadError("unknown scalar '$n'")
+        }
 
     /**
      * Replay a **pattern** (OP-23): `pattern "P1" circular ref=e2 centre=e1 count=6`.

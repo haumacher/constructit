@@ -195,6 +195,16 @@ object Icons {
     val REVOLVE =
         dashed("M6 2.5 L6 21.5") + """<ellipse cx="6" cy="17" rx="12" ry="3.4" opacity=".45"/>""" + rect(10.0, 8.0, 8.0, 9.0)
 
+    /** Extrude to a point: a base, and every corner of it rising to one dot — the pyramid, as a gesture. */
+    val EXTRUDE_TO_POINT =
+        path("M4 18 L12 21.5 L20 18 L12 14.5 Z", """opacity=".5"""") + path("M4 18 L12 3") + path("M20 18 L12 3") +
+            path("M12 21.5 L12 3", """opacity=".3"""") + dot(12.0, 3.0)
+
+    /** Loft: two sections of different size, and the rails that run between them. */
+    val LOFT =
+        path("M3 19 L12 22 L21 19 L12 16 Z", """opacity=".5"""") + path("M7.5 5 L12 6.6 L16.5 5 L12 3.4 Z") +
+            path("M3 19 L7.5 5") + path("M21 19 L16.5 5") + path("M12 22 L12 6.6", """opacity=".3"""")
+
     val SECTION = rect(5.0, 6.0, 14.0, 13.0) + dashed("M2 12 L22 12") + path("M5 12 L19 12")
 
     val CUT =

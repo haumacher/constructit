@@ -212,6 +212,88 @@ object Previews {
         return body?.let { regionShapes(it.region) } ?: emptyList()
     }
 
+    // ---- the loft (OP-17): what the run will look like, and which corner meets which ----
+
+    /**
+     * *Extrude to point*: the pyramid's own edges, from every corner of the picked area to the cursor.
+     *
+     * Drawn in the plan, where the height is not visible — so what the picture says is exactly what the click
+     * decides here, which is *where the apex stands*. The height is a number in the panel and says so.
+     */
+    fun extrudeToPoint(c: PreviewContext): List<PreviewShape> {
+        val area = c.element(0) ?: return emptyList()
+        val pieces = c.doc.loftSeamPoints(area, c.ev) ?: return emptyList()
+        val apex = c.point(0) ?: c.cursor
+        return pieces.map { PreviewShape.Seg(Segment(GeomMath.startOf(it), apex)) } + PreviewShape.Dot(apex)
+    }
+
+    /**
+     * *Loft*: the **seam** the next click would score, and the correspondence it makes with the section picked
+     * before it — a dot on the vertex the click chooses, and the rails between the two boundaries.
+     *
+     * This is the one preview that exists to make a *discrete choice* visible before it is committed (the same
+     * reason the fillet's does), and it runs the same scoring the build runs: the boundary piece whose start is
+     * nearest the cursor. The rails are drawn only when the previous section is in the **same** sketch space,
+     * because two boundaries on two planes have no honest common picture in one of them — across a switch the
+     * dot is what there is to show, and the status line carries the rest.
+     */
+    fun loft(c: PreviewContext): List<PreviewShape> {
+        val hover = c.under { c.doc.loftRoleOf(it) != null } ?: return emptyList()
+        if (c.doc.loftRoleOf(hover) != Document.LoftRole.SECTION) return emptyList()
+        val pieces = c.doc.loftSeamPoints(hover, c.ev) ?: return emptyList()
+        val seam = seamNear(pieces, c.cursor)
+        val out = ArrayList<PreviewShape>()
+        out.add(PreviewShape.Dot(GeomMath.startOf(pieces[seam])))
+        val previous = c.picks.elements.lastOrNull { c.doc.loftRoleOf(it) == Document.LoftRole.SECTION }
+        if (previous != null && previous !== hover && previous.space == hover.space) {
+            val before = c.doc.loftSeamPoints(previous, c.ev)
+            val click = c.picks.clicks.getOrNull(c.picks.elements.indexOfFirst { it === previous })
+            if (before != null) {
+                val a = railPoints(before, seamNear(before, click ?: GeomMath.startOf(before[0])))
+                val b = railPoints(pieces, seam)
+                for (i in a.indices) out.add(PreviewShape.Seg(Segment(a[i], b[i])))
+            }
+        }
+        return out
+    }
+
+    /** How many rails a loft preview draws: enough to read the twist, few enough to read the drawing. */
+    private const val RAIL_SAMPLES = 12
+
+    /** The boundary piece whose start is nearest [at] — the seam scoring, run one frame early. */
+    private fun seamNear(
+        pieces: List<ProfileElement>,
+        at: Vec2,
+    ): Int = pieces.indices.minByOrNull { (GeomMath.startOf(pieces[it]) - at).length() } ?: 0
+
+    /** [RAIL_SAMPLES] points spread by arc length round a boundary, starting at piece [seam]. */
+    private fun railPoints(
+        pieces: List<ProfileElement>,
+        seam: Int,
+    ): List<Vec2> {
+        val poly = ArrayList<Vec2>()
+        for (k in pieces.indices) {
+            for (p in GeomMath.tessellatePiece(pieces[(seam + k) % pieces.size])) {
+                if (poly.isEmpty() || (p - poly.last()).length() > 1e-7) poly.add(p)
+            }
+        }
+        while (poly.size > 1 && (poly.first() - poly.last()).length() <= 1e-7) poly.removeAt(poly.size - 1)
+        if (poly.size < 2) return List(RAIL_SAMPLES) { poly.firstOrNull() ?: Vec2(0.0, 0.0) }
+        val cum = ArrayList<Double>(poly.size + 1)
+        cum.add(0.0)
+        for (i in poly.indices) cum.add(cum.last() + (poly[(i + 1) % poly.size] - poly[i]).length())
+        val total = cum.last()
+        return (0 until RAIL_SAMPLES).map { s ->
+            val target = total * s / RAIL_SAMPLES
+            var i = 0
+            while (i < poly.size - 1 && cum[i + 1] < target) i++
+            val len = cum[i + 1] - cum[i]
+            val a = poly[i]
+            val b = poly[(i + 1) % poly.size]
+            if (len <= 1e-9) a else a + (b - a) * ((target - cum[i]) / len)
+        }
+    }
+
     private fun carrierPieceOf(v: constructit.core.Value): ProfileElement? =
         when (v) {
             is SegmentValue -> ProfileElement.Seg(v.seg)

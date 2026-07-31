@@ -26,6 +26,7 @@ import constructit.dsl.CircleRef
 import constructit.dsl.Construction
 import constructit.dsl.FrameRef
 import constructit.dsl.LineRef
+import constructit.dsl.LoftPart
 import constructit.dsl.LoopRef
 import constructit.dsl.PlaneRef
 import constructit.dsl.PointRef
@@ -38,12 +39,14 @@ import constructit.dsl.ScalarRef
 import constructit.dsl.SegmentRef
 import constructit.dsl.SolidRef
 import constructit.dsl.instance
+import constructit.dsl.resultOf
 import constructit.dsl.roundedRect
 import constructit.dsl.valueOf
 import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
+import constructit.geom.Feature3
 import constructit.geom.FilletLeg
 import constructit.geom.FilletMath
 import constructit.geom.FilletVariant
@@ -136,6 +139,16 @@ class SketchSpace(
     val hinge: Element? = null,
     /** DATUM only: the live angle between this plane and [from]'s — retyping it tilts the plane. */
     val angle: ScalarEntry? = null,
+    /**
+     * DATUM only: the live distance this plane is moved along its **own normal** after being tilted, or null
+     * for one that goes through its hinge (which is every datum written before offsets existed).
+     *
+     * The parallel case, which the hinge-and-angle form cannot state at all: a datum at 0° *is* the space it
+     * came from, so a plane parallel to the plan and 60 mm above it needs one more number. It is a parameter
+     * like the angle — retype it and the plane slides, taking every feature sketched on it along — and it is
+     * what makes a stack of loft sections reachable by clicking (see `Document.createDatumSpace`).
+     */
+    val offset: ScalarEntry? = null,
     /** DATUM only: the name of the space this plane was rotated out of (spaces compose). */
     val from: String = Document.PLAN_SPACE,
 ) {
@@ -1232,6 +1245,7 @@ class Document {
         angle: ScalarRef?,
         named: String? = null,
         part: Element? = null,
+        offset: ScalarRef? = null,
     ): SketchSpace? {
         if (!line.isLinear) return null
         val name = named ?: nextDatumName()
@@ -1239,6 +1253,9 @@ class Document {
         val base = activeSpace
         // the angle is a panel parameter either way: the tool's typed one, or the 90° its slot defaults to
         val entry = angle?.let { scalarEntryFor(it) } ?: newParameter("angle", Quantity.deg(90.0))
+        // ...and the offset only exists when it was asked for: a datum through its hinge is the ordinary case
+        // and must keep writing exactly the step it always wrote (OP-18)
+        val shift = offset?.takeIf { evalMm(it) != 0.0 }?.let { scalarEntryFor(it) }
         // the part is the file's answer on a replay and the drawing's answer live — never re-derived on load
         val cuts = part ?: if (replayingVersion != null) null else datumPartOf(line)
         // the journal must be *in the base space* before this step, or a replay would rotate the datum out
@@ -1250,10 +1267,12 @@ class Document {
             Arg.Label(name),
             Arg.Keyed("line", Arg.El(line)),
             Arg.Keyed("angle", Arg.Sc(entry)),
+            *(if (shift == null) emptyArray() else arrayOf(Arg.Keyed("offset", Arg.Sc(shift)))),
             *(if (cuts == null) emptyArray() else arrayOf(Arg.Keyed("part", Arg.El(cuts)))),
         ) {
-            val plane = cx.datumPlane(activePlane(), carrierLine(line), entry.ref)
-            val space = SketchSpace(name, plane, cuts, hinge = line, angle = entry, from = base.name)
+            val hinged = cx.datumPlane(activePlane(), carrierLine(line), entry.ref)
+            val plane = if (shift == null) hinged else cx.planeOffset(hinged, shift.ref)
+            val space = SketchSpace(name, plane, cuts, hinge = line, angle = entry, offset = shift, from = base.name)
             spaces.add(space)
             activeSpace = space
             space
@@ -1306,9 +1325,13 @@ class Document {
             space.isPlan -> "plan"
             space.isDatum ->
                 "${space.name} (${Format.num(spaceAngleDeg(space))}° on ${space.hinge?.let { nameOf(it) }}" +
+                    (space.offset?.let { ", ${Format.num(evalMm(it.ref))} mm off" } ?: "") +
                     (if (space.from == PLAN_SPACE) ")" else ", from ${space.from})")
             else -> "${space.name} (face of ${space.anchor?.let { nameOf(it) }})"
         }
+
+    /** A datum space's offset along its own normal in mm, as it stands (0 when it has none). */
+    fun spaceOffsetMm(space: SketchSpace): Double = space.offset?.let { evalMm(it.ref) } ?: 0.0
 
     /** A datum space's angle in degrees, as it stands (0 for any other space). */
     fun spaceAngleDeg(space: SketchSpace): Double =
@@ -6454,6 +6477,208 @@ class Document {
         val plane = if (space.isFace) on else cx.planeOffset(on, cx.neg(depth))
         val tool = add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
         return add(cx.subtract(part.ref as SolidRef, tool.ref as SolidRef), ElementKind.SOLID, Styles.SOLID)
+    }
+
+    // ---- the loft: a run of sections, and the pyramid gesture that is its two-section case (OP-17) ----
+
+    /** What a loft pick **is**, told apart from the element itself and never from a value (see [loftRoleOf]). */
+    enum class LoftRole {
+        /** An area — an outline, a wall footprint, a closed curve or a closed chain: one section of the run. */
+        SECTION,
+
+        /** A point: the apex that ends the run, at the point's own sketch plane. */
+        APEX,
+
+        /** An **open** curve: a guide the run follows between the sections it passes through. */
+        GUIDE,
+    }
+
+    /**
+     * Which part of a loft the element [el] is, or null when it can be none.
+     *
+     * Told apart **structurally** — by kind, by the step that built it, by whether its path is closed — and
+     * deliberately not by a value: the classification decides how many sections the node has, so a replay must
+     * reach the same answer as the click did (OP-21's structure-at-build-time rule). Anything that *bounds an
+     * area* is a section, which is why a circle is a section and never a guide: a guide runs *between*
+     * sections, so it is the open curves that are left.
+     */
+    fun loftRoleOf(el: Element): LoftRole? =
+        when {
+            el.isPoint -> LoftRole.APEX
+            el.isArea || boundaryPiecesOf(el) != null -> LoftRole.SECTION
+            el.isCurve -> LoftRole.GUIDE
+            else -> null
+        }
+
+    /** The plane of the space [name] — what a section drawn there is embedded on (OP-17). */
+    private fun planeOfSpace(name: String): PlaneRef = spaceNamed(name)?.plane ?: cx.planeXY()
+
+    /**
+     * The **loft** over [picks]: the sections in the order they were clicked, an apex where one of them is a
+     * point, and a guide for every open curve among them (OP-17's third feature).
+     *
+     * One node, one element. The two things worth stating about the gesture:
+     *
+     * - **Each section is embedded on the plane of the space it was drawn in**, not on the active one. That is
+     *   what makes a loft across sketch planes an ordinary construction rather than a new concept: the picks
+     *   may come from the plan and from two datum planes, and the solid is a function of all three planes, so
+     *   tilting a datum reshapes it. The element itself is stamped into the **first section's** space, because
+     *   that is the space its footprint hint is drawn in and the coordinates a pick of it measures against.
+     * - **Where each section was clicked scores its seam** — which boundary piece the correspondence starts at
+     *   — once, here, and the step then restates it in `signs=` (OP-1/OP-18). A replay hands the signs back and
+     *   nothing is scored again, because the vertex nearest a click moves when the section does.
+     *
+     * Refused by name (and nothing built) when a pick is none of the three, when fewer than two sections were
+     * picked, or when a section bounds no area right now. Everything *geometric* — a fold, a guide that misses
+     * its corresponding point, a section with no area — is the node's own business and is reported as the
+     * reason it is invalid, so it heals when the drawing moves (OP-3).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun loftSolid(
+        picks: List<Element>,
+        clicks: List<Vec2>,
+        signs: List<Int> = emptyList(),
+    ): Element? {
+        val roles =
+            picks.map { el ->
+                loftRoleOf(el) ?: run {
+                    note = "Loft: ${nameOf(el)} is neither an area, a point nor a curve, so it can be no part of a loft"
+                    return null
+                }
+            }
+        val sections = roles.count { it != LoftRole.GUIDE }
+        if (sections < 2) {
+            note =
+                "Loft: pick at least two sections — areas on their own sketch planes, or an area and a point " +
+                "for an apex end (Extrude to point does that in one gesture)"
+            return null
+        }
+        val parts = ArrayList<LoftPart>()
+        val seams = ArrayList<Int>()
+        var homeSpace: String? = null
+        for ((i, el) in picks.withIndex()) {
+            when (roles[i]) {
+                LoftRole.SECTION -> {
+                    val region =
+                        regionOf(el) ?: run {
+                            note = "Loft: ${nameOf(el)} bounds no area, so it is no section"
+                            return null
+                        }
+                    if (homeSpace == null) homeSpace = el.space
+                    parts.add(LoftPart.Area(cx.sketchOn(planeOfSpace(el.space), region)))
+                    seams.add(signs.getOrNull(seams.size) ?: seamOf(region, clicks.getOrNull(i)))
+                }
+                LoftRole.APEX -> {
+                    parts.add(LoftPart.Apex(planeOfSpace(el.space), el.ref as PointRef, cx.const(0.0.mm)))
+                    // a point has no boundary to start a correspondence at, and the list is indexed by section
+                    seams.add(0)
+                }
+                LoftRole.GUIDE -> parts.add(LoftPart.Guide(planeOfSpace(el.space), el.ref))
+            }
+        }
+        val el = add(cx.loft(parts, seams), ElementKind.SOLID, Styles.SOLID)
+        if (homeSpace != null) el.space = homeSpace
+        registerSigns(el, seams)
+        note = loftNote(el, roles)
+        return el
+    }
+
+    /**
+     * The pyramid/cone gesture: the area [el] run to a **point** [apex] standing [height] off the sketch plane
+     * (OP-17). The two-section case of [loftSolid], with the apex placed by the same kind of scalar an extrude's
+     * depth is.
+     *
+     * The apex is an ordinary point element — a fresh one where the click found nothing, the existing one where
+     * it hit a point — so it is draggable in the plan and *shared* when it was clicked, and the pyramid follows
+     * it either way (OP-5). Which way the height goes is the operation's business and follows *Extrude*'s own
+     * rule: on a face space a positive height builds **outward**, because a face plane's normal points into the
+     * material; in the plan and on a datum it follows the plane's own normal.
+     */
+    fun extrudeToPoint(
+        el: Element,
+        apex: PointRef,
+        height: ScalarRef,
+        at: Vec2? = null,
+        signs: List<Int> = emptyList(),
+    ): Element? {
+        val region =
+            regionOf(el) ?: run {
+                note = "Extrude to point: ${nameOf(el)} bounds no area"
+                return null
+            }
+        val space = activeSpace
+        val plane = activePlane()
+        val lift = if (space.isFace) cx.neg(height) else height
+        val seam = signs.firstOrNull() ?: seamOf(region, at)
+        val solid =
+            add(
+                cx.loft(listOf(LoftPart.Area(cx.sketchOn(plane, region)), LoftPart.Apex(plane, apex, lift)), listOf(seam, 0)),
+                ElementKind.SOLID,
+                Styles.SOLID,
+            )
+        registerSigns(solid, listOf(seam, 0))
+        note = loftNote(solid, listOf(LoftRole.SECTION, LoftRole.APEX))
+        return solid
+    }
+
+    /**
+     * The seam a click at [at] scores on [region]: the index of the boundary piece whose **start** is nearest
+     * it (OP-8's provenance order, the same durable name a side face has).
+     *
+     * A piece index rather than a tessellated-vertex index on purpose: the piece count is structural, so the
+     * stored choice still means the same corner after the section is stretched, retyped or re-tessellated.
+     */
+    private fun seamOf(
+        region: RegionRef,
+        at: Vec2?,
+    ): Int {
+        val r = (Evaluator().valueOf(region) as? RegionValue)?.region ?: return 0
+        val starts = r.outer.elements.map { GeomMath.startOf(it) }
+        if (at == null || starts.isEmpty()) return 0
+        return starts.indices.minByOrNull { (starts[it] - at).length() } ?: 0
+    }
+
+    /** What a finished loft says about itself: what it is made of, and its honesty class (OP-15). */
+    private fun loftNote(
+        el: Element,
+        roles: List<LoftRole>,
+    ): String {
+        val ev = Evaluator()
+        val sections = roles.count { it != LoftRole.GUIDE }
+        val guides = roles.count { it == LoftRole.GUIDE }
+        val apex = roles.any { it == LoftRole.APEX }
+        val what =
+            buildString {
+                append("Loft ${nameOf(el)} over $sections section${if (sections == 1) "" else "s"}")
+                if (apex) append(" (the last one a point — an apex)")
+                if (guides > 0) append(", shaped by $guides guide${if (guides == 1) "" else "s"}")
+            }
+        val result = ev.resultOf(el.ref)
+        if (result is EvalResult.Invalid) return "$what — invalid right now: ${result.reason}"
+        val feature = (ev.valueOf(el.ref) as? SolidValue)?.solid?.feature as? Feature3.Loft
+        return if (feature?.approximated == true) {
+            "$what — approximated (a curved section or guide is sampled, OP-15), so its volume is too"
+        } else {
+            "$what — exact: every facet is planar, so its volume is analytic (OP-15)"
+        }
+    }
+
+    /**
+     * The **boundary piece starts** of the area [el], as values — what a preview marks as the seam a click
+     * would score, and what it draws the correspondence between (see [Previews]).
+     *
+     * Values only, no node built: a preview runs on every hover, and a graph that grew a region node per frame
+     * would be the wrong kind of cheap (the same rule [closesALoop] follows).
+     */
+    fun loftSeamPoints(
+        el: Element,
+        ev: Evaluator,
+    ): List<ProfileElement>? {
+        (ev.valueOf(el.ref) as? RegionValue)?.let { return it.region.outer.elements }
+        (ev.valueOf(el.ref) as? LoopValue)?.let { return it.loop.elements }
+        val pieces = boundaryPiecesOf(el) ?: return null
+        val parts = pieces.map { profilePieceOf(ev.valueOf(it.ref) ?: return null) ?: return null }
+        return GeomMath.chainLoop(parts).first?.elements
     }
 
     /**

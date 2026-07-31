@@ -39,6 +39,8 @@ import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.Line
+import constructit.geom.LoftGuide
+import constructit.geom.LoftSection
 import constructit.geom.Loop
 import constructit.geom.MeshBool
 import constructit.geom.Plane3
@@ -101,6 +103,35 @@ typealias FrameRef = Ref<FrameValue>
 typealias PlaneRef = Ref<PlaneValue>
 typealias SketchRef = Ref<SketchValue>
 typealias SolidRef = Ref<SolidValue>
+
+/**
+ * One input of a [Construction.loft] — a section of the run, or a guide that shapes it (OP-17).
+ *
+ * Which part each input *is* is **structure**, fixed when the node is built, and the values are read inside
+ * `compute` (OP-21's rule): the loft node's input list is this list flattened, and the loft's own closure
+ * walks the same layout back. So a three-section loft with two guides is one node with one recompute, and the
+ * count of sections is not something a value can change.
+ */
+sealed interface LoftPart {
+    /** An area section: [sketch] is one region on the plane of the space it was drawn in. */
+    class Area(val sketch: SketchRef) : LoftPart
+
+    /**
+     * A **point** section: [point] read in [plane]'s own 2D coordinates, lifted [height] mm along its normal.
+     *
+     * Both are ordinary nodes, which is the whole of "the apex is a constructed point": drag the point and the
+     * pyramid leans, retype the height and it grows, and clicking an existing point *shares* it, so two solids
+     * can hang off one apex (OP-5 — sharing a node is equality).
+     */
+    class Apex(val plane: PlaneRef, val point: PointRef, val height: ScalarRef) : LoftPart
+
+    /**
+     * A **guide** curve: [curve] read in [plane]'s coordinates — a segment, an arc, a Bézier, a profile or a
+     * loop. Where it attaches is not stated here; it is the boundary point it passes through, found inside
+     * `compute` (see [constructit.geom.Geom3.loft]).
+     */
+    class Guide(val plane: PlaneRef, val curve: Ref<*>) : LoftPart
+}
 
 /**
  * Builder for a construction DAG. Generates stable ids; supports macro instantiation with
@@ -1647,6 +1678,82 @@ class Construction {
                     a,
                 )
             if (solid == null) EvalResult.Invalid(why ?: "cannot revolve") else EvalResult.Ok(SolidValue(solid))
+        }
+
+    /**
+     * A **loft**: [parts] — the sections in order, plus any guides — with [seams] saying where each section's
+     * boundary correspondence starts (OP-17's third feature).
+     *
+     * One node for the whole solid, exactly as [extrude] is one: the sections are its inputs, so the pyramid
+     * follows its apex and the frustum follows both its outlines with no rebuild anywhere (OP-21). What is
+     * structural is *which* parts there are — a section added is a different construction, so the tool that
+     * built this is re-run rather than the node edited — and what is a value is everything else, including
+     * where a guide meets a section.
+     *
+     * [seams] is the one discrete choice, one entry per section: the index of the boundary piece the
+     * correspondence starts at. Scored once from the gesture and thereafter taken verbatim from the tool step's
+     * `signs=` (OP-1/OP-18), never re-scored, because the vertex nearest a click moves when the section does.
+     */
+    fun loft(
+        parts: List<LoftPart>,
+        seams: List<Int> = emptyList(),
+    ): SolidRef {
+        val refs = ArrayList<Ref<*>>()
+        for (p in parts) {
+            when (p) {
+                is LoftPart.Area -> refs.add(p.sketch)
+                is LoftPart.Apex -> {
+                    refs.add(p.plane)
+                    refs.add(p.point)
+                    refs.add(p.height)
+                }
+                is LoftPart.Guide -> {
+                    refs.add(p.plane)
+                    refs.add(p.curve)
+                }
+            }
+        }
+        val layout = parts.toList()
+        return op(*refs.toTypedArray()) { args ->
+            var i = 0
+            val sections = ArrayList<LoftSection>()
+            val guides = ArrayList<LoftGuide>()
+            for (p in layout) {
+                when (p) {
+                    is LoftPart.Area -> sections.add(LoftSection.Area((args[i++] as SketchValue).sketch))
+                    is LoftPart.Apex -> {
+                        val plane = (args[i++] as PlaneValue).plane
+                        val at = pt(args[i++])
+                        val h = sc(args[i++]).requireDim(Dimension.LENGTH, "apex height").mm
+                        sections.add(LoftSection.Apex(plane.toWorld(at) + plane.normal.normalized() * h))
+                    }
+                    is LoftPart.Guide -> {
+                        val plane = (args[i++] as PlaneValue).plane
+                        val curve = args[i++]
+                        val pieces =
+                            guidePieces(curve)
+                                ?: return@op EvalResult.Invalid(
+                                    "a loft's guide must be a curve — a segment, an arc, a Bézier or a chain of them",
+                                )
+                        guides.add(LoftGuide(plane, pieces))
+                    }
+                }
+            }
+            val (solid, why) = Geom3.loft(sections, seams, guides)
+            if (solid == null) EvalResult.Invalid(why ?: "cannot loft these sections") else EvalResult.Ok(SolidValue(solid))
+        }
+    }
+
+    /** A guide's value as boundary pieces — the curve kinds a loft can follow. */
+    private fun guidePieces(v: Value): List<ProfileElement>? =
+        when (v) {
+            is SegmentValue -> listOf(ProfileElement.Seg(v.seg))
+            is ArcValue -> listOf(ProfileElement.ArcE(v.arc))
+            is BezierValue -> listOf(ProfileElement.BezierE(v.bezier))
+            is CircleValue -> listOf(ProfileElement.CircleE(v.circle))
+            is ProfileValue -> v.profile.elements
+            is LoopValue -> v.loop.elements
+            else -> null
         }
 
     // ---- booleans between prismatic solids (OP-22) ----

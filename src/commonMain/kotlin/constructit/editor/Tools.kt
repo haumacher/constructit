@@ -59,6 +59,14 @@ enum class SlotKind {
     EXTRACTABLE,
     AREA,
     SOLID,
+
+    /**
+     * A **part of a loft** (OP-17): anything that bounds an area (a section), a point (an apex), or an *open*
+     * curve (a guide). One slot for the three, because the loft tool collects them in one repeating gesture and
+     * which one a pick is is a question about the element, not about the click — `Document.loftRoleOf` answers
+     * it structurally, so a replay classifies exactly as the click did.
+     */
+    LOFT_PART,
 }
 
 /**
@@ -285,6 +293,17 @@ class ToolDef(
      * so a tool gets one only when its operation has a picture.
      */
     val icon: String? = null,
+    /**
+     * Whether this tool's picks **survive a change of sketch space** (OP-17).
+     *
+     * False for every tool but one, and that is the honest default: 2D coordinates only mean something in one
+     * space, so a half-collected pick list normally names geometry the new space cannot address, and dropping it
+     * is what keeps a canvas showing one space. A **loft** is the exception by nature — its sections live on
+     * different planes, and a tool that could not span them could not build the frustum between two datum
+     * planes at all — so it declares that it spans spaces, each pick keeps the space it was made in, and each
+     * recorded click stays in *that* space's coordinates (see [Editor.setActiveSpace]).
+     */
+    val crossSpace: Boolean = false,
     val build: (Document, Picks, List<ScalarRef>) -> Unit,
 ) {
     /** What slot [i] is for: this tool's own word ([slotNames]) or the slot kind's generic one. */
@@ -397,6 +416,13 @@ object Tools {
     // Solids — the 2D->3D seam (OP-17)
     const val EXTRUDE = "extrude"
     const val REVOLVE = "revolve"
+
+    /**
+     * The **loft**: a run of sections on their own sketch planes (OP-17's third feature), and its everyday
+     * special case — an area run to a **point**, which is a pyramid or a cone.
+     */
+    const val LOFT = "loft"
+    const val EXTRUDE_TO_POINT = "extrudepoint"
 
     // ...and back down again: a sketch on a solid's face, and a solid's section as 2D geometry
     const val EXTRUDE_ON_FACE = "extrudeface"
@@ -543,6 +569,13 @@ object Tools {
             // (OP-13) since the 3D view has no picking yet.
             ToolDef(EXTRUDE, "Extrude", ToolCategory.SOLIDS, listOf(SlotKind.AREA), scalars = listOf(len("depth")), shortcut = 'E', help = "Type a depth (or pick a parameter in the panel), then click an outline or wall footprint: it becomes a solid, shown in the 3D view.", slotNames = listOf("profile"), icon = Icons.EXTRUDE) { d, p, s -> d.extrudeSolid(p.elements[0], s[0]) },
             ToolDef(REVOLVE, "Revolve", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.LINE), scalars = listOf(ang("angle")), help = "Type a angle (or pick a parameter in the panel), click an outline or footprint, then a line to spin it about (the profile must not cross the axis).", slotNames = listOf("profile", "axis"), icon = Icons.REVOLVE) { d, p, s -> d.revolveSolid(p.elements[0], p.elements[1], s[0]) },
+            // ----- the loft (OP-17): the one solid whose cross-section changes along the run. Two tools, one
+            // feature: *Extrude to point* is the pyramid/cone gesture (an area, a height, an apex position, and
+            // the apex is a real point element so it stays draggable), and *Loft* is the general one — a
+            // repeating pick over sections that may live on **different sketch planes**, with an open curve
+            // among the picks meaning "guide". Where each section is clicked scores its seam, once (OP-1).
+            ToolDef(EXTRUDE_TO_POINT, "Extrude to point (pyramid, cone)", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.POINT), scalars = listOf(len("height")), preview = Previews::extrudeToPoint, help = "Type a height (or pick a parameter in the panel), click an outline, footprint or circle, then click where its apex belongs: the area runs to that point — a pyramid from a polygon, a cone from a circle. Clicking an existing point shares it; drag the apex afterwards for an oblique one, or retype the height.", slotNames = listOf("profile", "apex"), icon = Icons.EXTRUDE_TO_POINT) { d, p, s -> d.extrudeToPoint(p.elements[0], p.points[0], s[0], p.clicks.firstOrNull(), p.signs) },
+            ToolDef(LOFT, "Loft (sections)", ToolCategory.SOLIDS, listOf(SlotKind.LOFT_PART), repeating = true, minPicks = 2, crossSpace = true, preview = Previews::loft, help = "Click the sections in order — an outline, a wall footprint, a circle, or a point for an apex end — then press Enter (or click the first section again). Sections may lie on different sketch planes: switch the plane between clicks and the picks are kept. An *open* curve among the picks is a guide the run follows, and it must pass through corresponding points of the sections it spans. Where you click on each section starts its boundary correspondence, so click near the corner that should meet the one you clicked before — the preview draws the rails.", slotNames = listOf("section, apex point or guide"), icon = Icons.LOFT) { d, p, _ -> d.loftSolid(p.elements, p.clicks, p.signs) },
             // ----- and back down again (OP-17's downward direction). *Extrude on face* is the
             // sketch->feature->sketch loop as one gesture: the plan is drawn in the same 2D space, and the
             // tool only says which solid's top face it is stacked on (through `facePlane`, OP-8).
@@ -559,7 +592,7 @@ object Tools {
             // *defaulted* angle slot, so the gesture is one click and typing a number first tilts the plane.
             // It records its own `sketchspace` step, like the face tool, and does not replicate: a sketch
             // space is organisation, not geometry an orbit could fan (OP-23).
-            ToolDef(SKETCH_PLANE, "Sketch plane (line + angle)", ToolCategory.SOLIDS, listOf(SlotKind.LINE), scalars = listOf(ang("angle", 90.0)), recordsSteps = true, replicates = false, help = "Type an angle (90° if you type none), then click a line, segment or wall leg: the 2D view switches to a new sketch plane through that line, tilted by that angle out of the space you are in. u runs along the line, v rises out of the old plane; Extrude builds along the new plane's normal and Cut goes the other way, so a negative angle swaps them. The angle stays a parameter — retype it and the plane tilts, with everything drawn on it.", slotNames = listOf("hinge line")) { d, p, s -> d.createDatumSpace(p.elements[0], s.firstOrNull()) },
+            ToolDef(SKETCH_PLANE, "Sketch plane (line + angle)", ToolCategory.SOLIDS, listOf(SlotKind.LINE), scalars = listOf(ang("angle", 90.0), len("offset", 0.0)), recordsSteps = true, replicates = false, help = "Type an angle (90° if you type none) — and, if you want the plane moved off the line, an offset after it — then click a line, segment or wall leg: the 2D view switches to a new sketch plane through that line, tilted by that angle out of the space you are in and shifted along its own normal by the offset. So 0° with an offset is a plane *parallel* to the one you are in, which is what a stack of loft sections wants. u runs along the line, v rises out of the old plane; Extrude builds along the new plane's normal and Cut goes the other way, so a negative angle swaps them. Both numbers stay parameters — retype either and the plane moves, with everything drawn on it.", slotNames = listOf("hinge line")) { d, p, s -> d.createDatumSpace(p.elements[0], s.firstOrNull(), offset = s.getOrNull(1)) },
             // `facePartOperand` makes elements[0] the part being cut — the *tip* of its boolean chain as it
             // stands, resolved by the editor and recorded in the step, so cuts chain instead of forking
             // it **does** replicate, and as a *chain*: the part operand is re-resolved per copy, so a Cut on one
@@ -680,6 +713,7 @@ object Tools {
             SlotKind.SIDE -> "side"
             SlotKind.AREA -> "area"
             SlotKind.SOLID -> "solid"
+            SlotKind.LOFT_PART -> "section, apex or guide"
         }
 
     /** The glyph a palette button shows for [id] — [SELECT]'s included, which is not a [ToolDef]. */

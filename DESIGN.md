@@ -456,6 +456,9 @@ auto-uniquified so wiring is unambiguous — see *Usability — click budgets*):
   tool id is where a `tool` step stores one)
 - Solids (the seam, OP-17): Extrude (an area + a depth parameter), Revolve (an area + an in-plane axis
   line + an angle parameter) — see *Implementation status (as built — the seam's tools and the viewport)*
+- Solids whose section *changes* (OP-17): Extrude to point (an area + a height + an apex point → a pyramid or
+  a cone) and Loft (an ordered run of sections on their own sketch planes, a point allowed at either end, open
+  curves among the picks acting as guides) — see *Implementation status (as built — the loft)*
 - Solids, downward (OP-17): Extrude on face (a solid + an area + a depth — the sketch→feature→sketch loop
   as one gesture, through `facePlane`), Section (a solid + a height → an ordinary 2D area, exact for
   prisms) — see *Implementation status (as built — the seam downward)*
@@ -3622,9 +3625,106 @@ click and typing a number first is what tilts it. `DatumPlaneTest` is the record
   - **No datum from a 3D edge**, only from a line in a sketch — the issue's own scope. A solid's edges are not
     addressable objects yet (that is Manifold face/edge provenance, OP-9), and the one 3D-derived plane a click
     can reach is already `sideFacePlane`'s.
-  - **No parallel-offset datum** (a plane at a distance from the active one, with no hinge): it would be a
-    second tool for `planeOffset`, and nothing has asked for it — *Extrude on face* and *Section* cover the
-    stacking cases the plan actually reaches.
+  - ~~**No parallel-offset datum**~~ — **reversed in session 23, by the loft.** The recorded reason was:
+
+    > **No parallel-offset datum** (a plane at a distance from the active one, with no hinge): it would be a
+    > second tool for `planeOffset`, and nothing has asked for it — *Extrude on face* and *Section* cover the
+    > stacking cases the plan actually reaches.
+
+    The loft asked for it, and neither of the two named alternatives answers: a **section of a loft** is not
+    a plane to draw on, and *Extrude on face* raises a prism from a face rather than giving somewhere to
+    *sketch*. So a loft between two parallel planes — the frustum, the commonest multi-section solid there
+    is — had no gesture at all, which is exactly the failure mode the user's scope directive names. It cost
+    no second tool either: the *Sketch plane* tool gained an **offset** slot (a defaulted length, so its
+    one-click gesture is unchanged), the step gained `offset="name"`, and "0° plus an offset" *is* the
+    parallel plane, because a datum at 0° is the space it came from. See the loft's note below.
+
+### Implementation status (as built — the loft: a run of sections, and the point that ends it)
+
+The third feature of the seam, and the first one that is not a sweep of *one* profile: **`loft(parts, seams)`**
+takes an ordered list of sections — each an area on its own sketch plane, or a **point** — plus any number of
+guide curves, and blends consecutive pairs. A pyramid is `[area, apex]`, a cone `[circle, apex]`, a frustum
+`[area, area]`, a waisted column three areas; none of them is a case in the code. `LoftTest` is the record and
+`LoftToolTest` the gesture record; `Geom3.loft` is the whole of the geometry, in one function of values.
+
+- **One node, and its structure is the parts list.** `LoftPart.Area | Apex | Guide` is flattened into the op
+  node's input list and the closure walks the same layout back, so *which* parts there are is fixed at build
+  time and everything else is a value (OP-21's rule): a parameter edit — the apex height, a section's corner, a
+  datum's angle — recomputes this one node and rebuilds nothing. The apex is `(plane, 2D point, height)`, which
+  is what makes it *a point of the drawing*: drag it and the pyramid leans, click an existing point and it is
+  **shared**, one node with two consumers (OP-5).
+- **Correspondence: one global boundary parameter.** Every section's boundary is parameterized by normalized
+  arc length from its own **seam vertex**, and the union of all sections' vertex parameters is sampled on all of
+  them. That single decision buys three things: sections with different corner counts (a square and a
+  tessellated circle) need no special case; corresponding points are *the same number* on every section, which
+  is what makes a guide's "must pass through corresponding points" statable at all; and an interior section
+  hands the *same* ring to the band below it as to the band above, which is what keeps the shell free of
+  T-junctions. Every added sample lies **on** the boundary, so nothing about the shape is approximated by it.
+  The caps are conformed to that ring with the very `splitToRequired` a prism's caps use — the same crack, the
+  same cure (OP-22's note).
+- **The seam is the one discrete choice, and it is a *boundary piece index*.** Which piece of a section's loop
+  the correspondence starts at, scored **once** from where the section was clicked (the nearest piece start) and
+  then restated by the tool step's `signs=`, one entry per section, replayed verbatim (OP-1/OP-18). A piece
+  index rather than a tessellated-vertex index deliberately: the piece count is structural, so the stored
+  choice still means *that corner* after the section is stretched or re-tessellated — the same durable name
+  `sideFacePlane(solid, piece)` already uses. Clicking a different corner of the upper section is a different
+  solid, and each reloads as its own (`theSeamChoiceIsRecordedAndReplayedVerbatim`).
+- **The winding is *not* a choice, and that is a decision.** A feature-CAD loft offers a "flip" beside the
+  rotational offset; here each section is oriented against the run (centre to centre) so that all boundaries
+  turn the same way about it, and the side walls then wind exactly as an extrude's do. The mirrored
+  correspondence is not withheld out of laziness: it makes rails **cross** — pair two squares corner to
+  *opposite* corner and the two diagonal rails meet in mid-run — which is a shell that is closed, consistently
+  wound, and passing through itself. `crossingRails` refuses precisely that, by name and with the fix in the
+  message ("start the correspondence at another vertex"), because a triangle count cannot see it and
+  `assertManifold` would pass it.
+- **Guides: found, not declared.** A guide is an ordinary curve on an ordinary sketch plane (draw it on a datum
+  that cuts the sections), and *where it attaches* is a value: `compute` crosses it with each section's plane,
+  measures the crossing against that section's boundary, and requires the touch parameters to **agree** across
+  a consecutive run of at least two sections. So a guide that a parameter edit pulls off a section makes the
+  loft invalid *with that as the reason* and heals when it is pulled back (OP-3) — the numbers are in the
+  message, as percentages of each boundary and as millimetres along it. Its effect is its **deviation from its
+  own chord**, `D(t) = G(t) − ((1−t)·G(0) + t·G(1))`, which is zero at both ends by construction: a guide bends
+  the run and can never drag a section off its plane. Several guides blend **linearly between adjacent ones** on
+  the circular boundary parameter — a partition of unity, so each guide's own rail follows it exactly and none
+  reaches past its neighbours. With **one** guide that rule makes the weight 1 everywhere, i.e. the whole run
+  follows it: the sections slide along the guide, which is Cavalieri and therefore volume-preserving, and the
+  test says so rather than leaving it to be discovered.
+- **Honesty classes, read off the feature (OP-15).** `Feature3.Loft.approximated` is false exactly while every
+  section boundary and every guide is made of straight pieces — and then the mesh **is** the solid: the
+  acceptance pyramid is 300000 mm³ and the frustum 392000 mm³ to 1e-6, with five and six planar faces. A curved
+  section or a curved guide makes it approximated, and the cone's volume is asserted against the inscribed
+  polygon its own tessellation is made of, never against πr²h/3. The status line says which class the solid is
+  in the moment it is built.
+- **Two gestures, and the cross-space pick flow.** *Extrude to point* is the pyramid/cone gesture (a height, an
+  area, and a click for the apex, which becomes a real point element). *Loft* is the general one: a repeating
+  pick where **anything bounding an area is a section, a point is the apex, and an *open* curve is a guide** —
+  told apart structurally by `Document.loftRoleOf`, so a replay classifies exactly as the click did. Sections
+  live on different planes, so the tool declares `crossSpace` and its picks **survive a change of sketch space**
+  (the one tool that does; the status line says so, since the canvas is then showing a different drawing). Each
+  pick keeps the space it was made in — the section is embedded on *that* space's plane, and its recorded click
+  stays in *that* space's coordinates — and the solid is stamped into its **first section's** space, which is
+  where its footprint hint means something.
+- **A loft is a solid like any other, with nothing downstream special-casing it.** It goes into boolean chains
+  (no common axis, so the general engine takes it — OP-9), *Cut* on a datum plane drills it and a second cut
+  chains onto the first by the ordinary tip rule (OP-17), its footprint draws and picks in plan, its dependency
+  rows name its sections' legs and its apex. Three accessors decline, each by name and each pointing at what
+  does work: `prismatic` (a loft's cross-section changes along the run, so it has no slab algebra), `facePlane`
+  (its end faces are its sections' own frames, tilted and sometimes absent — *"put a datum plane where you want
+  to sketch"*), and `sectionAt` (an analytic loft section is its own piece of work). Each is the same shape of
+  refusal a revolve's caps already are.
+- **Cuts in this slice, deliberately:**
+  - **A section is one hole-free area.** A section with a hole is refused with the construction that does work
+    named in the message (loft the outer boundaries, loft the holes, subtract) — a correspondence per ring is a
+    second seam mechanism, and it has not been asked for.
+  - **No proof of global non-self-intersection.** Refused are the degeneracies a user reaches: a zero-area
+    section, two sections at the same place, a section plane edge-on to the run, a **ruling that does not
+    advance** along it (which is what two section planes crossing inside the solid looks like locally), and
+    rails that meet. A shell that folds for a reason no rail shows is not detected — the honest sibling of
+    OP-21's "no mitre limit".
+  - **An analytic loft section, and named end faces**, both above.
+  - **No offset/scale-only section** (the "loft this outline to a scaled copy" shortcut): the copy is an
+    ordinary construction (Scale, then loft the two), and a tool for it would be a second way to say the same
+    thing.
 
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
@@ -5415,6 +5515,47 @@ Three broad families (see OP-9 decision above):
   **26 new tests** (`TAttachmentTest`, `WallExtendTest`), **954 → 980 green**, every existing golden
   byte-identical, ktlint clean, the JS bundle built and all six browser E2E flows passing.
 
+- **Session 23 — the loft: the solid whose cross-section changes, general from the first slice.** The queue
+  entry asked for the multi-section solid *with* guides and *with* more than two sections, on the user's
+  standing rule (*"we are building a general tool that cannot extend when the first drawing is not
+  possible"*), and the pyramid was named as the example rather than the feature. It ships as **one** op node
+  and two gestures. Five things worth recording, four of them decisions the entry did not contain.
+  (1) **The correspondence is a single global boundary parameter, not a pairwise one.** Parameterizing every
+  section by normalized arc length from its own seam vertex and sampling *all* of them on the union of their
+  vertex parameters answers three separate questions at once: a square lofts to a tessellated circle with no
+  case, "corresponding point" becomes literally *the same number* on every section (which is what makes a
+  guide's rule statable), and an interior section hands the same ring to both of its bands — a per-band merge
+  would have left a T-junction, i.e. a crack, exactly where the pairwise formulation looks natural.
+  (2) **Half of the promised discrete choice turned out not to be a choice.** The entry named "vertex
+  correspondence / seam" and feature CAD offers a winding flip beside the rotational offset. The flip makes
+  rails **cross** (two squares paired corner to *opposite* corner meet in mid-run), and the result is a shell
+  that is closed, consistently wound, positive in volume — and passing through itself, which `assertManifold`
+  cannot see. So the winding is fixed by construction and the crossing case is refused *by name* with the fix
+  in the message. Watertight-or-refused had to grow a check that is not a triangle count.
+  (3) **A guide is *found*, never declared.** Storing "this guide attaches at vertex 3" would have frozen a
+  fact about the geometry; instead `compute` crosses the guide with each section's plane and requires the touch
+  parameters to agree, so a guide pulled off its section is an ordinary invalid-with-a-reason that heals (OP-3)
+  and says, in millimetres, how far off it is. Its effect is its deviation from **its own chord**, which is
+  zero at both ends by construction — a guide can bend the run and can never drag a section off its plane —
+  and several guides blend linearly between adjacent ones, which makes a single guide carry the whole run
+  (volume-preserving, Cavalieri again) rather than dent it at one parameter.
+  (4) **The commonest loft of all had no gesture, and the missing piece was one number.** A frustum wants two
+  *parallel* planes, and session 16 had recorded "no parallel-offset datum … nothing has asked for it". The
+  loft asked. The reversal cost a defaulted `offset` slot on the *Sketch plane* tool and an `offset="name"`
+  argument on its step — no version bump, since an argument that never existed cannot have meant something
+  else — and "0° plus an offset" *is* the parallel plane. Reversals are recorded with the rationale they
+  replace, so the old bullet is quoted where it stood.
+  (5) **A cross-space gesture, declared rather than assumed.** One canvas shows one space, and a tool's picks
+  are dropped when the space changes — for good reasons that do not hold for a loft, whose sections live on
+  different planes by nature. So `ToolDef.crossSpace` is the exception, spoken in the status line (picks
+  surviving a switch is otherwise invisible), with each pick keeping the space it was made in and each
+  recorded click keeping *that* space's coordinates. Nothing downstream knows what a loft is: it enters
+  boolean chains through the general engine, *Cut* drills it on a datum plane and chains by the ordinary tip
+  rule, its footprint hint draws and picks in its first section's space, and the three accessors it genuinely
+  lacks decline by name.
+  **44 new tests** (`LoftTest` 21, `LoftToolTest` 20, plus the datum-offset trio), **981 → 1025 green**, every
+  existing golden byte-identical, ktlint clean, the JS bundle built and all six browser E2E flows passing.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -6362,26 +6503,41 @@ junction — with the honest route named (break the curves where the junction is
 session-18 parked items are untouched: there is still **no mitre limit**, and a footprint that takes the
 kernel route is still **approximated**.
 
-**Queued in session 21 (user-directed): the loft — the multi-section solid, general from the first
-slice.** The one solid class the toolset cannot produce is the one whose cross-section *changes* along
-the sweep: every solid today is a prism (extrude), a surface of revolution (revolve), or a boolean of
-those, and the simplest counterexample is a pyramid. (There is a construction trick — a square pyramid
-is the intersection of two perpendicular triangular prisms — but cross-space boolean gestures are parked,
-and the trick expresses a workaround, not intent.) The generic operation is the **loft**: an ordered list
-of section profiles on datum planes (which exist since session 16), a **point allowed as a terminal
-section** (pyramid = base polygon → apex; cone = circle → apex; frustum = polygon → smaller polygon),
-**guide curves** shaping the run between sections, and the section-to-section **vertex correspondence /
-seam as the one discrete choice**, scored at creation and riding `signs=` (OP-1/OP-18), never re-scored
-on replay. The apex is a *constructed point*, so the solid stays a pure function of its sections and its
-apex like everything else in the DAG — drag the apex and the pyramid follows (GeoGebra's
-`Pyramid(polygon, apex)` is the construction-flavored precedent; feature CAD's Loft/Multi-Section
-Solid/Blend is the mechanism precedent). Honesty classes carry over unchanged: polygon→polygon and
-polygon→point lofts have exactly planar facets (exact class, watertight by construction, assertManifold
-holds); curved sections and guide-curve runs are ruled/tessellated and flagged **approximated**, exactly
-the bargain Bézier offsets already make (OP-15). Scope is the user's directive, quoted because it is the
-standing everything-generic rule applied to a new solid: *"Include also \[guide curves / more than two
-sections\] — we are building a general tool that cannot extend when the first drawing is not possible."*
-Pyramids are the example, not the feature.
+**Retired in session 23: the loft — the multi-section solid, general from the first slice.** The queue
+entry, quoted so what was promised and what shipped can be compared:
+
+> **Queued in session 21 (user-directed): the loft — the multi-section solid, general from the first
+> slice.** The one solid class the toolset cannot produce is the one whose cross-section *changes* along
+> the sweep: every solid today is a prism (extrude), a surface of revolution (revolve), or a boolean of
+> those, and the simplest counterexample is a pyramid. (There is a construction trick — a square pyramid
+> is the intersection of two perpendicular triangular prisms — but cross-space boolean gestures are parked,
+> and the trick expresses a workaround, not intent.) The generic operation is the **loft**: an ordered list
+> of section profiles on datum planes (which exist since session 16), a **point allowed as a terminal
+> section** (pyramid = base polygon → apex; cone = circle → apex; frustum = polygon → smaller polygon),
+> **guide curves** shaping the run between sections, and the section-to-section **vertex correspondence /
+> seam as the one discrete choice**, scored at creation and riding `signs=` (OP-1/OP-18), never re-scored
+> on replay. The apex is a *constructed point*, so the solid stays a pure function of its sections and its
+> apex like everything else in the DAG — drag the apex and the pyramid follows (GeoGebra's
+> `Pyramid(polygon, apex)` is the construction-flavored precedent; feature CAD's Loft/Multi-Section
+> Solid/Blend is the mechanism precedent). Honesty classes carry over unchanged: polygon→polygon and
+> polygon→point lofts have exactly planar facets (exact class, watertight by construction, assertManifold
+> holds); curved sections and guide-curve runs are ruled/tessellated and flagged **approximated**, exactly
+> the bargain Bézier offsets already make (OP-15). Scope is the user's directive, quoted because it is the
+> standing everything-generic rule applied to a new solid: *"Include also \[guide curves / more than two
+> sections\] — we are building a general tool that cannot extend when the first drawing is not possible."*
+> Pyramids are the example, not the feature.
+
+All of it ships, guides and N sections included, as **one** node and two gestures — see *the loft: a run of
+sections, and the point that ends it* under OP-17. Three things the entry did not foresee, each recorded
+there: the **winding half of the seam is not a choice** (the mirrored correspondence makes rails cross, i.e.
+a closed shell that passes through itself, so it is refused by name and the seam's freedom is the rotational
+offset alone); the correspondence needed **one global boundary parameter** over all sections rather than a
+pairwise one, which is what keeps an interior section's two bands crack-free and what makes "a guide passes
+through corresponding points" a statable rule; and the parallel-plane case — the frustum, the commonest
+multi-section solid of all — had **no gesture** until the datum plane gained an *offset*, so that recorded
+cut is reversed with its old rationale quoted (under OP-17's datum note). What remains cut is stated with the
+work: a section is one **hole-free** area, a loft has no analytic **section** and no named end **face**, and
+self-intersection is refused only where a rail or a ruling shows it.
 
 **Queued in session 21, behind the loft (user-directed): editing in the 3D view, on a working plane.**
 The user's design, adopted whole: the 2D/3D split stops being "author here, inspect there" — the 3D view

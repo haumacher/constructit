@@ -843,10 +843,22 @@ class Editor(
      * Show [name] and draw into it. The selection and any half-collected picks are dropped, because they
      * name elements of a space whose coordinates this one does not share — the same reason a canvas shows
      * one space at a time.
+     *
+     * **Unless the armed tool spans spaces** ([ToolDef.crossSpace]), which exactly one does: a loft's sections
+     * live on different planes, so its picks are kept and each keeps the space it was made in. The status line
+     * says so, because picks surviving a switch is otherwise invisible — the canvas is showing a different
+     * drawing and the earlier sections are not in it.
      */
     fun setActiveSpace(name: String): Boolean {
         if (name == doc.activeSpace.name) return true
         val target = doc.spaceNamed(name) ?: return false
+        val tool = doc.toolDef(toolId)
+        val spanning = tool != null && tool.crossSpace && filledSlots > 0
+        val keptPoints = pickedPoints.toList()
+        val keptElements = pickedElements.toList()
+        val keptClicks = pickedClicks.toList()
+        val keptLandings = pickedLandings.toList()
+        val keptSlots = filledSlots
         spaceCameras[doc.activeSpace.name] = camera
         finishPath()
         doc.activeSpace = target
@@ -854,6 +866,16 @@ class Editor(
         resetPicks()
         camera = spaceCameras[name] ?: cameraFor(target)
         statusHint = spaceNote(target)
+        if (spanning) {
+            pickedPoints.addAll(keptPoints)
+            pickedElements.addAll(keptElements)
+            pickedClicks.addAll(keptClicks)
+            pickedLandings.addAll(keptLandings)
+            filledSlots = keptSlots
+            statusHint =
+                "${tool!!.label}: $keptSlots pick${if (keptSlots == 1) "" else "s"} kept across the switch to " +
+                "${doc.spaceLabel(target)} — carry on picking here. ${tool.help}"
+        }
         onChange()
         return true
     }
@@ -865,7 +887,9 @@ class Editor(
             // a datum plane (GitHub #6): the hinge, the angle, and the one thing its sign decides
             space.isDatum ->
                 "Sketching on ${space.name}, a datum plane on ${space.hinge?.let { doc.nameOf(it) }} at " +
-                    "${Format.num(doc.spaceAngleDeg(space))}° from ${space.from}: u runs along that line, v rises out of " +
+                    "${Format.num(doc.spaceAngleDeg(space))}° from ${space.from}" +
+                    (space.offset?.let { ", offset ${Format.num(doc.spaceOffsetMm(space))} mm along its own normal" } ?: "") +
+                    ": u runs along that line, v rises out of " +
                     "${space.from} as the angle grows. Extrude builds along this plane's normal, Cut the other way — " +
                     "a negative angle swaps them. Retype the angle to tilt the plane and everything on it." +
                     (if (space.anchor == null) " Nothing here to cut into: its line is part of no solid." else "")
@@ -3177,14 +3201,25 @@ class Editor(
      */
     private fun toolScalars(tool: ToolDef): List<ScalarEntry>? {
         val need = tool.scalars.size
-        if (scalarPicks.size < need) return if (tool.scalarsOptional) emptyList() else null
+        if (scalarPicks.size < need && !tool.scalarsOptional) return null
         val picks = scalarPicks.takeLast(need)
         // A **defaulted** slot is not waiting for anything (ScalarSlot.default), so it must not silently
         // adopt a pick that was meant for something else — and a length picked into a dimensionless ratio
-        // would only make the point invalid (OP-7). A pick counts here when it is the kind of number the
-        // slot asks for; anything else means "use the default", which is what the status line then names.
-        if (tool.scalarsOptional && picks.zip(tool.scalars).any { (e, s) -> dimensionOf(e.ref) != s.dim }) return emptyList()
-        return picks
+        // would only make the point invalid (OP-7). So the longest **prefix** of picks whose dimensions are
+        // what the slots ask for is what the tool gets, and every slot past it means "use the default".
+        //
+        // A prefix rather than all-or-nothing, which is what it used to be: with *two* defaulted slots (the
+        // datum plane's angle and its offset) all-or-nothing threw away a typed angle whenever no offset
+        // followed it, so the tool silently built with its default instead of with the number just typed.
+        if (!tool.scalarsOptional) return picks
+        // Matched from the **most recent** pick backwards, because a panel pick made for an earlier tool may
+        // still be sitting in the list: the longest suffix of the picks that fits the slots from the first one
+        // on is what was meant here, and everything past it takes its default.
+        for (k in minOf(need, picks.size) downTo 1) {
+            val tail = picks.takeLast(k)
+            if (tail.indices.all { dimensionOf(tail[it].ref) == tool.scalars[it].dim }) return tail
+        }
+        return emptyList()
     }
 
     /** What is still missing for [tool]'s scalar inputs, in the user's terms. */
@@ -3262,6 +3297,9 @@ class Editor(
                 SlotKind.AREA -> pickElement(world, doc.areaPickFilter(ev()))
                 // the boolean slot (OP-22): a solid, picked in 2D by the footprint hint it draws
                 SlotKind.SOLID -> pickElement(world) { it.kind == ElementKind.SOLID }
+                // a loft's slot (OP-17): a section, an apex point or a guide curve, told apart by the document
+                // (`loftRoleOf`) rather than by the click — so one repeating slot collects the whole feature
+                SlotKind.LOFT_PART -> pickElement(world) { doc.loftRoleOf(it) != null }
                 SlotKind.SIDE -> true // captures the click position only; creates nothing
             }
         // existing-only slots do NOT create anything on a miss — just hint and wait
