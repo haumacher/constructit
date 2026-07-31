@@ -6283,7 +6283,8 @@ Deliberately out, stated so it is not looked for: **STEP export** — the kernel
 exact B-rep for solids, so exact-geometry export would be either dishonest or a compliance project, and
 the "STEP into the slicer" trend is unreachable from here by design.
 
-**Appearance, scoped in session 21 — three tiers in, one recorded non-goal.** For viewing, the modeler's
+**Appearance, scoped in session 21 — three tiers queued, the fourth a future extension (corrected the
+same session).** For viewing, the modeler's
 job is to *assign* appearance, never to render it — rendering (lighting, shadows, reflections) is
 precisely what the GLB export delegates to real PBR viewers. The tiers, in queue order: **Tier 1, a
 material per solid** (base color, roughness, metallic — a handful of numbers, one panel row) rides the
@@ -6293,11 +6294,17 @@ stores a material reference plus a projection rule (planar/box/cylindrical), and
 per-vertex UVs from mesh positions — no UV tools in the app, the bitmap embedded in the GLB. **Tier 3,
 per-face assignment**, waits deliberately for edit-in-3D's slice 2, because naming a face durably is the
 same face-ID provenance mechanism that click-a-working-plane needs — one mechanism, two consumers, built
-once. And the non-goal, recorded at the user's word before a line of it could be asked for: **Tier 4 — a
-material editor, bitmap import UI, UV unwrapping — is out, permanently.** That is DCC territory, off the
-paradigm whose value is the construction workflow; the stated alternative is the escape hatch the GLB
-export *is* — open it in Blender (or any PBR pipeline) and go as far as taste demands. A refusal with a
-reason and an alternative, per the standing doctrine.
+once. **Tier 4 — a material editor, bitmap import, UV control — is deferred as a future extension, not
+refused.** The first recording of this entry called it "out, permanently" with "open the GLB in Blender
+(or any PBR pipeline)" as the stated alternative; the user overruled that within the hour, and the
+reversal is recorded with its reason, which is stronger than the rationale it replaces: an external DCC
+is **not parametric** — every material placement, every unwrap done there is throwaway the moment a
+parameter moves, so "do it in Blender" is never an alternative for anything living downstream of
+parameters. It is the recorded-never-discovered rule one level up: when high-fidelity appearance is
+wanted beyond the tiers above, it will have to be *parametric appearance* — materials as named values,
+projections bound to construction geometry, replayable like every other step. And the general lesson,
+stated as the user stated it: there are no permanent non-goals in this design record, only "future
+extensions at best/worst" — work whose time has not come.
 
 Otherwise the numbered queue is empty; what remains is the parked list below, each item recorded at its
 source.
