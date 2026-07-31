@@ -105,6 +105,12 @@ probe at least once — check these before blaming the delivery:
 - **API drift**: `assertClose(actual, expected, tol, msg)` uses `msg=`; quantities are
   dimension-checked (`.mm` throws on an angle — use `.value`/`.deg`); collections get renamed
   (grep before writing).
+- **Undo layering**: an *uncheckpointed* live edit (`doc.setParameter`, a direct node mutation)
+  reverts on the FIRST undo — the previous checkpoint is one more press away. Assert the layer
+  you actually expect.
+- **Stale handles after undo/reload**: undo (and any journal re-stamp) rebuilds the Document —
+  every `Element`/`ScalarEntry` handle fetched before it now reads the OLD graph. Re-fetch from
+  `ed.doc` after any operation that reloads.
 - **Runtime vs script ids** are unified now (the naming authority) — but user reports predating
   it may mix them; decode against a fresh load.
 - Playwright: check the canvas bounding box before computing world→screen (a small viewport
