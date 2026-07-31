@@ -6241,6 +6241,29 @@ standing everything-generic rule applied to a new solid: *"Include also \[guide 
 sections\] — we are building a general tool that cannot extend when the first drawing is not possible."*
 Pyramids are the example, not the feature.
 
+**Queued in session 21, behind the loft (user-directed): editing in the 3D view, on a working plane.**
+The user's design, adopted whole: the 2D/3D split stops being "author here, inspect there" — the 3D view
+becomes an *editing* view on one condition, an active **working plane**. Every mouse position in the 3D
+viewport casts a ray that intersects that plane, giving exact 2D coordinates in the plane's own space, so
+every existing tool gesture translates losslessly and the inverse map draws the sketch back onto the plane
+inside the 3D scene; choosing the working plane itself becomes a 3D gesture (click the surface to work
+on); a modifier keeps orbit/pan available without leaving the tool. Nothing about the *model* changes — it
+is a second projection into the same editor: the `Editor` is already a pure headless controller driven by
+pointer gestures in the active space's coordinates, and the working-plane concept already exists
+(`activeSpace`, `activePlane()`, face spaces, session 16's datum planes), so the feature is a **projection
+seam, not a new controller**. Four pieces: (1) Camera3 unproject-to-ray and ray ∩ `activeSpace.plane` →
+plane 2D coords, fed to the same `pointerDown/Move/Up` the test suite drives; (2) the active space's
+sketch drawn *in* the 3D view — under perspective, arcs must tessellate in plane space with per-vertex
+projection (what the solid painter already does), not in screen space; (3) pick tolerances stay screen
+pixels, converted through the *local* px→mm scale at the cursor's plane point (perspective makes it vary);
+(4) click-a-face plane selection — ray–triangle picking against the tessellated solids, the face's plane
+becoming/activating a face space, with the click recorded as a durable choice, which is exactly the parked
+**Manifold face-ID provenance + 3D picking** item (the provenance is the hard part, the ray-cast is easy).
+Slices, each whole: (1) edit-in-3D on the current active plane (ray seam, in-plane sketch rendering, all
+tools, modifier-gated orbit; the plane chosen the existing way); (2) click-a-face working-plane selection
+(3D picking + face provenance as a recorded choice); (3) what that unlocks — the parked cross-space
+two-operand boolean gets its gesture, and datum/loft-section placement in 3D.
+
 Otherwise the numbered queue is empty; what remains is the parked list below, each item recorded at its
 source.
 
