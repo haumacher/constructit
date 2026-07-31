@@ -107,7 +107,10 @@ first-class goal and the current implementation focus.
   A wall's carrier need not be rectilinear: *Thicken* takes **any connected network of curves** —
   segments, arcs, Béziers — with the side (left/right/centred) chosen per curve, and where three or
   more walls meet the footprint resolves by the cyclic order of the curves there, so a T-junction is
-  one area with no overlap and no sliver. Arc walls offset to real concentric arcs; a Bézier's offset
+  one area with no overlap and no sliver. Curves need not meet end to end: a partition whose end lands
+  **part-way along** another wall's carrier joins it there, with no seam. And a wall is **extensible** —
+  click it with *Thicken*, then click the curves to add: the wall keeps its identity, its thickness and
+  its openings, and the solids and dimensions built on it follow, in one undo step. Arc walls offset to real concentric arcs; a Bézier's offset
   is honestly sampled. A footprint's corners are extractable as ordinary snappable points.
   In plan the wall stays whole and the gap is drawn as the convention it is — faces broken, jambs
   shown — while *Cut openings* turns the same description into the 3D cut: one subtracted box per

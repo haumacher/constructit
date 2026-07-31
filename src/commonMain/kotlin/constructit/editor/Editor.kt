@@ -737,6 +737,19 @@ class Editor(
      */
     private var pickedGroup: Group? = null
 
+    /**
+     * The wall this *Thicken* application is **extending** (GitHub #7), when its first pick was one.
+     *
+     * The picks themselves are the ordinary ones — the wall's existing carrier curves are seeded into
+     * [pickedElements] and every later click appends to them exactly as for a new wall — so what this holds is
+     * only *where the result goes*: committing re-stamps this wall's own step instead of building a second
+     * element (see [Document.thickNetworkExtension]). Gesture state, hence dropped by [resetPicks].
+     */
+    private var extending: ThickNetwork? = null
+
+    /** The wall the armed tool is extending, for the shell and for tests. */
+    val extendingWall: ThickNetwork? get() = extending
+
     /** Why the last pick was refused, when there is a better reason than "that click hit nothing". */
     private var pickRefusal: String? = null
 
@@ -925,6 +938,7 @@ class Editor(
         pickedSides.clear()
         filledSlots = 0
         pickedGroup = null
+        extending = null
         pickRefusal = null
         dragTarget = null
         dragFrame = null
@@ -2951,12 +2965,98 @@ class Editor(
     }
 
     /**
+     * Try to begin an **extension** at [world]: the *Thicken* tool's first click landing on a wall that is
+     * already there (GitHub #7). Returns whether the click was consumed — by entering extension mode, or by a
+     * refusal that says why, since a silent no-op on a click that plainly hit a wall is the worst answer.
+     *
+     * The wall's existing carrier curves and sides are seeded into the ordinary pick lists, so every later
+     * click appends exactly as it does for a new wall and nothing downstream of here has a second case.
+     */
+    private fun startExtension(world: Vec2): Boolean {
+        // Alt has always meant *leave the model as I put it* (it declines a pattern's orbit), and it means the
+        // same thing here: build a new wall over these curves rather than growing the one already on them.
+        if (!snapEnabled) return false
+        val hit = HitTest.nearest(doc, ev(), world, tolWorld()) { doc.thickNetworkOf(it) != null } ?: return false
+        val tn = doc.thickNetworkOf(hit) ?: return false
+        val base =
+            doc.thickNetworkBase(tn) ?: run {
+                // an ortho-carrier wall names the tool that *does* extend it — never a silent refusal
+                statusHint = doc.takeNote() ?: "That wall cannot be extended with ${doc.toolDef(toolId)?.label}"
+                onChange()
+                return true
+            }
+        extending = tn
+        pickedElements.addAll(base.curves)
+        pickedClicks.addAll(base.clicks)
+        base.curves.forEach { pickedLandings.add(null) }
+        pickedSides.addAll(base.sides.map { it.ordinal })
+        filledSlots = base.curves.size
+        // the wall's own thickness, not whatever is in the tool's field: shown in the panel, so the number the
+        // user reads is the number the wall has (the step keeps it either way)
+        activeScalar = base.thickness
+        val n = base.curves.size
+        statusHint =
+            "Extending wall ${doc.displayName(tn.footprint)} ($n carrier curve${if (n == 1) "" else "s"}, " +
+            "thickness ${base.thickness.name}): click the curves to add — Enter (or the wall again) re-stamps " +
+            "it, Esc leaves it as it is"
+        onChange()
+        return true
+    }
+
+    /** Why a click that hit no curve was not the wall pick it looks like (GitHub #7). */
+    private fun midSequenceWallPick(
+        tool: ToolDef,
+        world: Vec2,
+    ): String? {
+        if (!tool.extendsResult || filledSlots == 0) return null
+        val hit = HitTest.nearest(doc, ev(), world, tolWorld()) { doc.thickNetworkOf(it) != null } ?: return null
+        if (doc.thickNetworkOf(hit) === extending) return null
+        return "Pick the wall first to extend it: ${doc.displayName(hit)} is a wall, not a carrier curve. " +
+            "Press Enter to finish this one, then click ${doc.displayName(hit)} as the first pick."
+    }
+
+    /**
+     * Commit an extension: the wall's own `tool thicken` step, **re-stamped** over the grown carrier set and
+     * replayed (GitHub #7). No element is created, so every dependent — an opening, a dimension, a solid —
+     * follows the enlarged footprint by recompute, and the whole gesture is one undo step.
+     */
+    private fun finishWallExtension(tn: ThickNetwork): Boolean {
+        val was = tn.legCount
+        val name = doc.nameOf(tn.footprint)
+        val text =
+            doc.thickNetworkExtension(tn, pickedElements.toList(), pickedSides.map { Tools.sideOf(it) }, pickedClicks.toList())
+        val said = doc.takeNote() // read before the adopt below replaces the document that said it
+        if (text == null) {
+            statusHint = said ?: "Extending $name was refused"
+            resetPicks()
+            onChange()
+            return true
+        }
+        val fresh =
+            try {
+                DocumentFormat.load(text)
+            } catch (e: Exception) {
+                statusHint = "Extending $name failed: ${e.message}"
+                resetPicks()
+                onChange()
+                return true
+            }
+        adopt(fresh)
+        checkpoint()
+        statusHint = said ?: "Wall $name: $was -> ${tn.legCount} carrier curves"
+        onChange()
+        return true
+    }
+
+    /**
      * Finish a repeating tool (Enter, or clicking the first pick again). Builds from whatever has been
      * collected; too few picks just cancels, since a boundary of one curve is not a boundary.
      */
     fun finishRepeatingTool(): Boolean {
         val tool = doc.toolDef(toolId) ?: return false
         if (!tool.repeating || filledSlots == 0) return false
+        // a wall picked first is being *extended*: the result goes back into its own step (GitHub #7)
+        extending?.let { return finishWallExtension(it) }
         val picks =
             Picks(
                 pickedPoints.toList(),
@@ -3118,9 +3218,15 @@ class Editor(
             return
         }
         pickRefusal = null
+        // **The first pick may be an existing result**, which extends it instead of building a new one
+        // (GitHub #7). Only the first: a wall clicked mid-sequence is not a carrier curve, and says so.
+        if (tool.extendsResult && filledSlots == 0 && startExtension(world)) return
         // a repeating tool closes when the first pick is clicked again — the boundary is complete
-        if (tool.repeating && filledSlots >= 2) {
-            val again = HitTest.nearest(doc, ev(), world, tolWorld()) { it === pickedElements.firstOrNull() }
+        if (tool.repeating && (filledSlots >= 2 || extending != null)) {
+            val again =
+                HitTest.nearest(doc, ev(), world, tolWorld()) {
+                    it === pickedElements.firstOrNull() || (extending != null && it === extending?.footprint)
+                }
             if (again != null) {
                 finishRepeatingTool()
                 return
@@ -3164,7 +3270,7 @@ class Editor(
             // count is the worst of the three possible answers: the drawing does not change, so nothing on
             // screen distinguishes "that curve is in" from "that click landed in space". A pick that hit
             // something and was *refused* has a better reason of its own, and says that instead.
-            val refused = pickRefusal
+            val refused = pickRefusal ?: midSequenceWallPick(tool, world)
             statusHint =
                 when {
                     refused != null -> refused

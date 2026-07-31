@@ -616,6 +616,22 @@ class ThickNetwork(
 }
 
 /**
+ * What an existing wall hands the *Thicken* tool when it is picked to be **extended** (GitHub #7): the
+ * carrier [curves] it already has in order, the [clicks] that made them, their [sides], and the wall's own
+ * [thickness] parameter — which the tool then shows and keeps, instead of the value typed into its own field.
+ *
+ * A description of the gesture so far, deliberately: the tool goes on collecting picks exactly as it does for
+ * a new wall, and what makes the difference is only where the result is written (see
+ * [Document.thickNetworkExtension]).
+ */
+class ThickExtension internal constructor(
+    val curves: List<Element>,
+    val clicks: List<Vec2>,
+    val sides: List<Justification>,
+    val thickness: ScalarEntry,
+)
+
+/**
  * One **jamb** (reveal) line of an interval, exactly as the plan convention draws it (OP-21): which
  * [interval] it belongs to, which of that interval's two edges ([atEnd]), and where the line runs *now*.
  *
@@ -6092,6 +6108,177 @@ class Document {
         return tn
     }
 
+    // ---- extending a wall: the same step, re-stamped over more carrier curves (GitHub #7, OP-23) ----
+
+    /**
+     * What a wall was built from, as the *Thicken* tool needs it to keep collecting: the carrier [curves] in
+     * order, the [clicks] that scored their sides, the [sides] themselves and the wall's own [thickness].
+     *
+     * Null — with [note] set, by name — when this wall cannot be extended by *Thicken* at all: an **ortho
+     * carrier** (one the *Wall* tool drew) has no `tool thicken` step to re-stamp, and its carrier is a
+     * polyline of vertices rather than a set of picked curves, so growing it is the *Wall* tool's gesture.
+     */
+    fun thickNetworkBase(tn: ThickNetwork): ThickExtension? {
+        val carrier =
+            tn.carrier as? ThickCarrier.Network ?: run {
+                note =
+                    "Can't extend ${nameOf(tn.footprint)} with Thicken: it is a rectilinear path drawn with the " +
+                    "Wall tool — extend that path with the Wall tool (click its open end to resume), or thicken " +
+                    "its legs with Thicken to get a wall this can grow"
+                return null
+            }
+        val step = creatingStep(tn.footprint)
+        if (step == null || step.kind != "tool" || (step.args.firstOrNull() as? Arg.Text)?.s != Tools.THICKEN) {
+            note =
+                "Can't extend ${nameOf(tn.footprint)}: no `tool thicken` step declares it, so there is none to " +
+                "re-stamp — thicken the new curves as a wall of their own"
+            return null
+        }
+        val ev = Evaluator()
+        // one click per curve, which is what the step records. A hand-written script may carry fewer; a
+        // curve's own start then stands in for the click, because what a thicken click encodes is the side
+        // (and the side is carried separately, in `signs=`).
+        val recorded = (step.args.firstOrNull { it is Arg.Keyed && it.key == "clicks" } as? Arg.Keyed)?.let { (it.value as? Arg.Positions)?.ps }.orEmpty()
+        val clicks =
+            carrier.curves.mapIndexed { i, el ->
+                recorded.getOrNull(i) ?: (ev.valueOf(el.ref)?.let { carrierPieceOf(it) }?.let { GeomMath.startOf(it) } ?: Vec2(0.0, 0.0))
+            }
+        return ThickExtension(
+            carrier.curves.toList(),
+            clicks,
+            carrier.sides.toList(),
+            scalarEntryFor(tn.thickness),
+        )
+    }
+
+    /**
+     * The script [tn]'s own `tool thicken` step **re-stamped** over [curves] with [sides] and [clicks] — the
+     * whole of what extending a wall is (GitHub #7). Null with [note] set when it is refused.
+     *
+     * A carrier-set change is an **edit**, not a new feature: the same reasoning OP-23 applied to a pattern's
+     * count applies here, and it buys the same three things. The footprint element keeps its identity (its
+     * step still declares it, so its script name, its style and everything built on it follow the enlarged
+     * wall), the wall's own thickness parameter stays the wall's (the step's `scalar=` is untouched), and the
+     * whole thing is one undo step, because the substrate of undo is the saved script (OP-18).
+     *
+     * **Journal ordering.** A curve may have been drawn *after* the wall, and a step may only name what an
+     * earlier step declared — so the re-stamped step moves to just after the last element it now references.
+     * It cannot move past anything built *on* the wall, and if a curve was drawn after such a thing the
+     * extension is refused by name rather than producing a script that will not load.
+     *
+     * This document is left exactly as it was: what comes back is text, and the caller decides to adopt it
+     * (which is also what makes a failure to re-load harmless).
+     */
+    fun thickNetworkExtension(
+        tn: ThickNetwork,
+        curves: List<Element>,
+        sides: List<Justification>,
+        clicks: List<Vec2>,
+    ): String? {
+        val base = thickNetworkBase(tn) ?: return null
+        if (curves.size <= base.curves.size) {
+            note = "Extending ${nameOf(tn.footprint)}: click at least one more curve than it already has"
+            return null
+        }
+        if (curves.any { !it.isCurve }) {
+            note = "Extending ${nameOf(tn.footprint)}: a wall's carrier is curves — segments, arcs or Béziers"
+            return null
+        }
+        // a step may only name what an earlier step **declared** (OP-18), so a curve the file does not
+        // declare cannot join a carrier set — refused here rather than written as a dangling reference
+        curves.firstOrNull { creatingStep(it) == null }?.let {
+            note =
+                "Can't extend ${nameOf(tn.footprint)} with ${nameOf(it)}: no step declares it, so the file " +
+                "would have nothing to call it"
+            return null
+        }
+        val step = creatingStep(tn.footprint) ?: return null
+        // A curve **built on this very wall** (through its key points, say) cannot be one of its carriers: the
+        // step would have to come both before and after the wall's own. Refused by name, since the drawing
+        // makes it look perfectly reachable.
+        val downstream = dependentSteps(step) - step
+        curves.firstOrNull { el -> downstream.any { s -> s.creates.any { it === el } } }?.let {
+            note =
+                "Can't extend ${nameOf(tn.footprint)} over ${nameOf(it)}: ${nameOf(it)} is built on that wall, " +
+                "so the wall cannot be built on it in turn"
+            return null
+        }
+        val ev = Evaluator()
+        // Refused **before** anything is rewritten, and with the reason the footprint node itself would give:
+        // the added curve has to be part of the same connected network (a T counts), and the thickness has to
+        // still fit the arcs it follows (OP-3's reason, asked up front).
+        val pieces =
+            curves.mapIndexed { i, el ->
+                val piece =
+                    ev.valueOf(el.ref)?.let { carrierPieceOf(it) } ?: run {
+                        note = "Extending ${nameOf(tn.footprint)}: ${nameOf(el)} has no curve to follow right now"
+                        return null
+                    }
+                CarrierCurve(piece, sides.getOrElse(i) { Justification.CENTER })
+            }
+        val (body, why) = thickNetwork(pieces, scalarMm(tn.thickness, ev))
+        if (body == null) {
+            note = "Can't extend ${nameOf(tn.footprint)}: ${why ?: "the wall has no footprint then"}"
+            return null
+        }
+        val at = journal.indexOfFirst { it === step }
+        val moveTo = curves.mapNotNull { el -> journal.indexOfFirst { s -> s.creates.any { it === el } }.takeIf { it >= 0 } }.maxOrNull() ?: at
+        val grown = Step("tool", step.args.map { rewritten(it, curves, clicks) })
+        grown.creates.addAll(step.creates)
+        grown.createsScalars.addAll(step.createsScalars)
+        val previous = journal.toList()
+        val signsBefore = storedSigns(step)
+        val was = nameOf(tn.footprint)
+        // which curve dragged the step forward, for the note — the one no earlier step declares
+        val afterEl = curves.firstOrNull { el -> journal.indexOfFirst { s -> s.creates.any { it === el } } == moveTo }
+        journal[at] = grown
+        if (moveTo > at) {
+            // The wall's step moves **with everything built on it**, in order. It has to move at all because a
+            // step may only name what an earlier one declared; it has to take its dependents along because
+            // they may only name *it* after it — and nothing outside that set can be waiting on them, since
+            // anything that were would itself be one of them. So this is one block move, not a reshuffle.
+            val block = (listOf(grown) + (dependentSteps(grown) - grown).sortedBy { s -> journal.indexOfFirst { it === s } })
+            journal.removeAll { s -> block.any { it === s } }
+            val landing = journal.indexOfFirst { s -> previous.indexOfFirst { it === s } == moveTo } + 1
+            journal.addAll(landing, block)
+        }
+        // the per-curve sides ride the step's `signs=` (OP-18), so the grown list has to be in place for the
+        // save exactly as it is for a fresh wall
+        registerSigns(tn.footprint, sides.map { it.ordinal })
+        nameCache = null // the names are the journal's order, and the order just changed
+        try {
+            val now = nameOf(tn.footprint)
+            val moved =
+                if (now == was) {
+                    ""
+                } else {
+                    " — its step moved after ${afterEl?.let { nameOf(it) } ?: "the curves it now names"}, " +
+                        "so the wall is $now from here on"
+                }
+            note =
+                "Wall $was: ${base.curves.size} -> ${curves.size} carrier curves$moved" +
+                if (body.approximated) " (its offsets are approximated — OP-15)" else ""
+            return DocumentFormat.save(this)
+        } finally {
+            journal.clear()
+            journal.addAll(previous)
+            registerSigns(tn.footprint, signsBefore)
+            nameCache = null
+        }
+    }
+
+    /** One argument of a `tool thicken` step, with the carrier set and the clicks it names grown. */
+    private fun rewritten(
+        arg: Arg,
+        curves: List<Element>,
+        clicks: List<Vec2>,
+    ): Arg =
+        when {
+            arg is Arg.Keyed && arg.key == "els" -> Arg.Keyed("els", Arg.Els(curves))
+            arg is Arg.Keyed && arg.key == "clicks" -> Arg.Keyed("clicks", Arg.Positions(clicks))
+            else -> arg
+        }
+
     // ---- the 2D->3D seam as tools (OP-17) ----
 
     /**
@@ -6482,13 +6669,28 @@ class Document {
         for (side in 0..1) {
             for (i in 0 until body.legCount) {
                 val leg = body.legs[i]
-                val run = leg.runs[side]
-                var cursor = GeomMath.startOf(run.first())
-                for (a in perLeg[i]) {
-                    out.addAll(subRun(run, cursor, leg.facePoint(a.position, side)))
-                    cursor = leg.facePoint(a.position + a.width, side) // solid piece, then the gap
+                // one run per side, until a T-attachment splits the leg — and then the face on the branch's
+                // side has a *gap* where the branch's material joins, which must not be bridged (that bridge
+                // is exactly the seam line a wall drawn as two networks showed, GitHub #7). So each run is
+                // drawn on its own, with the openings that fall in its own span of the leg (see [FaceRun]).
+                val runs = leg.runs[side]
+                for (run in runs) {
+                    val here =
+                        if (runs.size == 1) {
+                            perLeg[i]
+                        } else {
+                            perLeg[i].filter { it.position < run.to - Vec2.EPS && it.position + it.width > run.from + Vec2.EPS }
+                        }
+                    val pieces = run.pieces
+                    var cursor = GeomMath.startOf(pieces.first())
+                    for (a in here) {
+                        val from = if (runs.size == 1) a.position else maxOf(a.position, run.from)
+                        val to = if (runs.size == 1) a.position + a.width else minOf(a.position + a.width, run.to)
+                        out.addAll(subRun(pieces, cursor, leg.facePoint(from, side)))
+                        cursor = leg.facePoint(to, side) // solid piece, then the gap
+                    }
+                    out.addAll(subRun(pieces, cursor, GeomMath.endOf(pieces.last())))
                 }
-                out.addAll(subRun(run, cursor, GeomMath.endOf(run.last())))
             }
         }
         for (j in body.joins) if ((j.b - j.a).length() > Vec2.EPS) out.add(ProfileElement.Seg(j))

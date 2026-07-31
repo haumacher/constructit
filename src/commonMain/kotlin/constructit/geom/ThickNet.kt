@@ -17,8 +17,24 @@ import kotlin.math.sin
 data class CarrierCurve(val piece: ProfileElement, val side: Justification)
 
 /**
+ * One continuous stretch of one face of a [ThickLeg]: the boundary [pieces], trimmed corner to corner and
+ * oriented along the leg, plus the span of the leg's own arc length ([from]..[to]) they cover.
+ *
+ * A leg has exactly **one** run per face until a *T-attachment* splits it (see `thickNetwork`): an endpoint
+ * of another carrier landing in this leg's interior is a vertex of the fat graph, so this leg's faces are
+ * mitred against the branch there — and on the branch's side the face has a genuine **gap**, which is the
+ * branch's own material. Keeping the runs separate rather than concatenating them is what lets the plan draw
+ * that gap instead of bridging it with a seam line across the junction.
+ */
+class FaceRun internal constructor(
+    val pieces: List<ProfileElement>,
+    val from: Double,
+    val to: Double,
+)
+
+/**
  * One leg of a thick carrier, resolved to values: the oriented carrier [piece], its arc [length], the two
- * signed face [offsets] (ascending; + is left of the walk direction) and the two **trimmed** offset runs
+ * signed face [offsets] (ascending; + is left of the walk direction) and the **trimmed** offset runs
  * the footprint boundary actually uses, in the leg's own direction.
  *
  * This is the one thing the plan convention, the jambs and the interval features all measure along, and it
@@ -32,8 +48,12 @@ class ThickLeg internal constructor(
     val piece: ProfileElement,
     val offsets: List<Double>,
     val length: Double,
-    /** The two offset runs, trimmed corner to corner and oriented along the leg; index by side. */
-    val runs: List<List<ProfileElement>>,
+    /**
+     * Each face's boundary runs, trimmed corner to corner and oriented along the leg — index by side, then
+     * in leg order. One per side for an ordinary leg, one per **T-split span** for a leg that another
+     * carrier ends on (see [FaceRun]).
+     */
+    val runs: List<List<FaceRun>>,
     private val samples: List<Vec2>?,
     private val cum: List<Double>?,
 ) {
@@ -215,6 +235,13 @@ private const val WELD = 1e-6
  * tangents. That one rule covers a dangling end (*k*=1, whose neighbour is itself, so the corner is the
  * cap), an ordinary corner (*k*=2, the mitre) and a **branch** (*k*≥3, one ordinary corner per angularly
  * adjacent pair) — which is the T/L junction cleanup OP-21 deferred, with no 2D boolean in it.
+ *
+ * A vertex is **not** only where two carriers share an endpoint. An endpoint that lands in the *interior* of
+ * another carrier is a vertex too, and it **splits that carrier** there ([tSplits]) — which is what makes a
+ * partition wall drawn onto a hull wall one network instead of two abutting ones (GitHub #7). The split is a
+ * *value*, exactly like the welding and the cyclic order: only the count of carrier curves and their sides
+ * are structural, so dragging the T apart makes this invalid with a reason and pushing it back heals it
+ * (OP-3). Once split, a T needs no rule of its own — it is the *k*=3 branch above, three ordinary mitres.
  */
 fun thickNetwork(
     curves: List<CarrierCurve>,
@@ -228,6 +255,24 @@ fun thickNetwork(
         }
     }
 
+    val lengths = DoubleArray(curves.size)
+    val offsets = ArrayList<List<Double>>(curves.size)
+    for ((i, c) in curves.withIndex()) {
+        val len = carrierLength(c.piece)
+        if (len < Vec2.EPS) return null to "carrier ${i + 1} has zero length"
+        lengths[i] = len
+        offsets.add(c.side.offsets(thickness))
+    }
+
+    // the edges of the fat graph: every carrier, cut at every T-attachment on it. A carrier nothing ends on
+    // is one edge, which is what it always was.
+    val edges = ArrayList<Edge>()
+    for (i in curves.indices) {
+        for (part in splitCarrier(curves[i].piece, tSplits(curves, lengths, i), lengths[i])) {
+            edges.add(Edge(i, part.piece, part.from, part.to))
+        }
+    }
+
     val verts = ArrayList<Vec2>()
 
     fun vertexId(p: Vec2): Int {
@@ -236,35 +281,31 @@ fun thickNetwork(
         return verts.size - 1
     }
 
-    val tail = IntArray(curves.size)
-    val head = IntArray(curves.size)
-    val lengths = DoubleArray(curves.size)
-    val offsets = ArrayList<List<Double>>(curves.size)
-    for ((i, c) in curves.withIndex()) {
-        val len = carrierLength(c.piece)
-        if (len < Vec2.EPS) return null to "carrier ${i + 1} has zero length"
-        lengths[i] = len
-        offsets.add(c.side.offsets(thickness))
-        tail[i] = vertexId(GeomMath.startOf(c.piece))
-        head[i] = vertexId(GeomMath.endOf(c.piece))
-        if (tail[i] == head[i]) return null to "carrier ${i + 1} starts and ends at the same point, so it closes on itself"
+    val tail = IntArray(edges.size)
+    val head = IntArray(edges.size)
+    for ((e, edge) in edges.withIndex()) {
+        tail[e] = vertexId(GeomMath.startOf(edge.piece))
+        head[e] = vertexId(GeomMath.endOf(edge.piece))
+        if (tail[e] == head[e]) {
+            return null to "carrier ${edge.carrier + 1} starts and ends at the same point, so it closes on itself"
+        }
     }
-    disconnection(curves.size, tail, head, verts.size)?.let { return null to it }
+    disconnection(edges, tail, head, verts.size)?.let { return null to it }
 
-    // two directed half-edges per curve: 2i forward, 2i+1 reversed
-    val n = curves.size * 2
+    // two directed half-edges per edge: 2e forward, 2e+1 reversed
+    val n = edges.size * 2
     val to = IntArray(n) { if (it % 2 == 0) head[it / 2] else tail[it / 2] }
     val from = IntArray(n) { if (it % 2 == 0) tail[it / 2] else head[it / 2] }
     val walls = ArrayList<OffsetWall>(n)
     for (h in 0 until n) {
-        val i = h / 2
+        val e = edges[h / 2]
         val forward = h % 2 == 0
-        val piece = if (forward) curves[i].piece else GeomMath.reverse(curves[i].piece)
+        val piece = if (forward) e.piece else GeomMath.reverse(e.piece)
         // a half-edge's *left* wall: reversing a curve mirrors the direction and the sign together
-        val off = if (forward) offsets[i][1] else -offsets[i][0]
+        val off = if (forward) offsets[e.carrier][1] else -offsets[e.carrier][0]
         walls.add(
             offsetWall(piece, off)
-                ?: return null to "carrier ${i + 1} is thicker than the arc it follows, so it has no inner face",
+                ?: return null to "carrier ${e.carrier + 1} is thicker than the arc it follows, so it has no inner face",
         )
     }
 
@@ -307,37 +348,59 @@ fun thickNetwork(
     for (start in 0 until n) {
         if (seen[start]) continue
         val chain = ArrayList<ProfileElement>()
+        // whether each piece merely **continues** the one before it along the same carrier — the far face of
+        // a T-split, where the walk passes through the junction rather than turning at it (see [merged])
+        val continues = ArrayList<Boolean>()
         var h = start
         var guard = 0
+        var through = false
         while (!seen[h] && guard++ <= n) {
             seen[h] = true
             // a run that came out empty (its two corners coincide) is not a boundary piece; keeping it
             // would break every tangent the checks below read, exactly as a repeated point would
-            chain.addAll(runs[h].filter { (GeomMath.endOf(it) - GeomMath.startOf(it)).length() > WELD })
+            val pieces = runs[h].filter { (GeomMath.endOf(it) - GeomMath.startOf(it)).length() > WELD }
+            for ((k, p) in pieces.withIndex()) {
+                chain.add(p)
+                continues.add(k == 0 && through)
+            }
             val g = next[h]
             val a = GeomMath.endOf(runs[h].last())
             val b = GeomMath.startOf(runs[g].first())
+            through = passesThrough(edges, h, g)
             if ((b - a).length() > WELD) {
                 chain.add(ProfileElement.Seg(Segment(a, b)))
+                continues.add(false)
                 joins.add(Segment(a, b))
+                through = false
             }
             h = g
         }
         if (h != start) return null to "the wall boundary does not close at this network's junctions"
         if (chain.size < 2) return null to "a wall face of this network is degenerate"
+        // the walk's last step re-enters the ring's first piece, so its pass-through belongs to that piece
+        if (chain.isNotEmpty()) continues[0] = through
         // The walk keeps material on its **right** — a half-edge's left wall is the boundary the material
         // lies under — so every ring comes back with the opposite handedness to OP-14's convention. They
         // all flip together, which is what keeps the outer/hole classification below a question of sign.
-        loops.add(GeomMath.reverseLoop(Loop(chain)))
+        loops.add(GeomMath.reverseLoop(Loop(merged(chain, continues))))
     }
 
+    // One leg per **carrier curve**, whatever a T-attachment did to it: a leg is the thing an opening's
+    // position is measured along, so its arithmetic stays that of the whole carrier and a split cannot move
+    // an interval. What the split changes is only how many face runs the leg has (see [FaceRun]).
     val legs =
         curves.indices.map { i ->
+            val own = edges.indices.filter { edges[it].carrier == i }
             leg(
                 curves[i].piece,
                 offsets[i],
                 lengths[i],
-                listOf(runs[i * 2 + 1].reversed().map { GeomMath.reverse(it) }, runs[i * 2]),
+                (0..1).map { side ->
+                    own.map { e ->
+                        val chain = if (side == 1) runs[e * 2] else runs[e * 2 + 1].reversed().map { GeomMath.reverse(it) }
+                        FaceRun(chain, edges[e].from, edges[e].to)
+                    }
+                },
             )
         }
     val sampled = legs.any { it.approximated }
@@ -377,8 +440,12 @@ fun thickBodyOf(f: ThickFaces): Pair<ThickBody?, String?> {
         (0 until f.legCount).map { i ->
             val runs =
                 (0..1).map { side ->
-                    listOf<ProfileElement>(
-                        ProfileElement.Seg(Segment(f.faces[side][i], f.faces[side][(i + 1) % f.faces[side].size])),
+                    listOf(
+                        FaceRun(
+                            listOf(ProfileElement.Seg(Segment(f.faces[side][i], f.faces[side][(i + 1) % f.faces[side].size]))),
+                            0.0,
+                            f.legLengths[i],
+                        ),
                     )
                 }
             val start = f.legs[i].origin
@@ -409,6 +476,278 @@ fun carrierLength(e: ProfileElement): Double =
         is ProfileElement.BezierE ->
             GeomMath.tessellateBezier(e.bezier).let { pts -> (0 until pts.size - 1).sumOf { (pts[it + 1] - pts[it]).length() } }
     }
+
+// ---- T-attachments: the vertices that are not endpoints ----
+
+/**
+ * Whether the walk's step from [h] to [g] merely **passes through** a T-split: the two half-edges are two
+ * spans of *one* carrier, travelled the same way, so what looks like a junction to the graph is no corner at
+ * all on this face — the branch joins on the other side.
+ */
+private fun passesThrough(
+    edges: List<Edge>,
+    h: Int,
+    g: Int,
+): Boolean = g != (h xor 1) && h % 2 == g % 2 && edges[h / 2].carrier == edges[g / 2].carrier
+
+/**
+ * [chain] with every pass-through corner ([continues]) closed up again: two collinear segments become one,
+ * two arcs of one circle become one arc.
+ *
+ * Why it matters rather than being cosmetic: a boundary vertex with **zero turning** is a corner the drawing
+ * would show, an extra `regionCorner` accessor would address, and — worst — a cap triangulation could produce
+ * a zero-area triangle from. So a split leaves the far face exactly the single face it was before, which is
+ * also what keeps an unsplit network's boundary bit-identical (there are no pass-throughs then, and this is a
+ * no-op).
+ */
+private fun merged(
+    chain: List<ProfileElement>,
+    continues: List<Boolean>,
+): List<ProfileElement> {
+    if (continues.none { it }) return chain
+    // a ring has no first piece: rotate until the walk *turns* into index 0, so the merge can run linearly
+    var shift = 0
+    while (shift < chain.size && continues[shift]) shift++
+    if (shift >= chain.size) return chain
+    val order = (chain.indices).map { (it + shift) % chain.size }
+    val out = ArrayList<ProfileElement>(chain.size)
+    for (i in order) {
+        val join = if (continues[i]) mergeTwo(out.lastOrNull(), chain[i]) else null
+        if (join != null) out[out.size - 1] = join else out.add(chain[i])
+    }
+    return out
+}
+
+/** [a] and [b] as one piece when they are the same straight line or the same circle, else null. */
+private fun mergeTwo(
+    a: ProfileElement?,
+    b: ProfileElement,
+): ProfileElement? {
+    if (a == null) return null
+    if (a is ProfileElement.Seg && b is ProfileElement.Seg) {
+        val da = (a.segment.b - a.segment.a).normalized()
+        val db = (b.segment.b - b.segment.a).normalized()
+        if (abs(da.cross(db)) > 1e-9 || da.dot(db) <= 0.0) return null
+        return ProfileElement.Seg(Segment(a.segment.a, b.segment.b))
+    }
+    if (a is ProfileElement.ArcE && b is ProfileElement.ArcE) {
+        if (a.arc.ccw != b.arc.ccw) return null
+        if ((a.arc.center - b.arc.center).length() > WELD || abs(a.arc.radius - b.arc.radius) > WELD) return null
+        return ProfileElement.ArcE(Arc(a.arc.center, a.arc.radius, a.arc.startAngle, b.arc.endAngle, a.arc.ccw))
+    }
+    return null
+}
+
+/** One edge of the fat graph: a whole carrier, or one span of one that a T-attachment split. */
+private class Edge(
+    val carrier: Int,
+    val piece: ProfileElement,
+    val from: Double,
+    val to: Double,
+)
+
+/** One span of a carrier: the [piece] itself, and the carrier arc lengths it covers. */
+private class CarrierPart(
+    val piece: ProfileElement,
+    val from: Double,
+    val to: Double,
+)
+
+/**
+ * Where carrier [i] is **split by a T-attachment**: the arc lengths at which another carrier's endpoint lands
+ * in its interior, ascending and deduplicated.
+ *
+ * The three degenerate configurations collapse to the plain-weld case rather than double-splitting, and all
+ * three by the same arithmetic: an endpoint at (or within [WELD] of) the host's own end is not interior, two
+ * endpoints at one spot are one split, and an endpoint off the host is no split at all.
+ */
+private fun tSplits(
+    curves: List<CarrierCurve>,
+    lengths: DoubleArray,
+    i: Int,
+): List<Double> {
+    val host = curves[i].piece
+    val out = ArrayList<Double>()
+    for (j in curves.indices) {
+        if (j == i) continue
+        for (p in listOf(GeomMath.startOf(curves[j].piece), GeomMath.endOf(curves[j].piece))) {
+            val d = interiorParam(host, p, lengths[i]) ?: continue
+            if (out.none { abs(it - d) <= WELD }) out.add(d)
+        }
+    }
+    out.sort()
+    return out
+}
+
+/**
+ * How far along [host] the point [p] lies **strictly inside** it (to within [WELD]), or null.
+ *
+ * Exact for a segment (the perpendicular foot) and for an arc (the angle about its centre, which also rules
+ * out a point on the circle but past the arc's sweep). For a Bézier the parameter is the nearest-point search
+ * the *Break* tool already uses and the arc length is the sampled map — OP-15's approximated class, which a
+ * Bézier leg is in already, so the flag stays honest.
+ */
+private fun interiorParam(
+    host: ProfileElement,
+    p: Vec2,
+    length: Double,
+): Double? {
+    val d =
+        when (host) {
+            is ProfileElement.Seg -> {
+                val dir = (host.segment.b - host.segment.a).normalized()
+                val t = (p - host.segment.a).dot(dir)
+                if ((host.segment.a + dir * t - p).length() > WELD) return null
+                t
+            }
+            is ProfileElement.ArcE -> {
+                if (abs((p - host.arc.center).length() - host.arc.radius) > WELD) return null
+                ThickLeg.sweepFrom(
+                    atan2(p.y - host.arc.center.y, p.x - host.arc.center.x) - host.arc.startAngle,
+                    host.arc.ccw,
+                ) * host.arc.radius
+            }
+            is ProfileElement.BezierE -> {
+                val t = GeomMath.bezierNearestParam(host.bezier, p)
+                if ((GeomMath.bezierPointAt(host.bezier, t) - p).length() > WELD) return null
+                bezierLength(host.bezier, t)
+            }
+            is ProfileElement.CircleE -> return null
+        }
+    return d.takeIf { it > WELD && it < length - WELD }
+}
+
+/** [piece] cut at every arc length in [at] (which is strictly interior and ascending) — one part when empty. */
+private fun splitCarrier(
+    piece: ProfileElement,
+    at: List<Double>,
+    length: Double,
+): List<CarrierPart> {
+    if (at.isEmpty()) return listOf(CarrierPart(piece, 0.0, length))
+    val bounds = listOf(0.0) + at + listOf(length)
+    return (0 until bounds.size - 1).map { k ->
+        CarrierPart(
+            subCarrier(piece, bounds[k], bounds[k + 1], atStart = k == 0, atEnd = k == bounds.size - 2),
+            bounds[k],
+            bounds[k + 1],
+        )
+    }
+}
+
+/**
+ * The stretch of [piece] between arc lengths [a] and [b].
+ *
+ * The carrier's *own* ends are taken verbatim ([atStart], [atEnd]) rather than recomputed from the arc
+ * length, so a split leaves the outer endpoints bit-identical to the unsplit carrier and the vertex a
+ * neighbour welds onto cannot drift by a rounding.
+ */
+private fun subCarrier(
+    piece: ProfileElement,
+    a: Double,
+    b: Double,
+    atStart: Boolean,
+    atEnd: Boolean,
+): ProfileElement =
+    when (piece) {
+        is ProfileElement.Seg -> {
+            val dir = (piece.segment.b - piece.segment.a).normalized()
+            ProfileElement.Seg(
+                Segment(
+                    if (atStart) piece.segment.a else piece.segment.a + dir * a,
+                    if (atEnd) piece.segment.b else piece.segment.a + dir * b,
+                ),
+            )
+        }
+        is ProfileElement.ArcE -> {
+            val turn = if (piece.arc.ccw) 1.0 else -1.0
+            ProfileElement.ArcE(
+                Arc(
+                    piece.arc.center,
+                    piece.arc.radius,
+                    if (atStart) piece.arc.startAngle else piece.arc.startAngle + turn * a / piece.arc.radius,
+                    if (atEnd) piece.arc.endAngle else piece.arc.startAngle + turn * b / piece.arc.radius,
+                    piece.arc.ccw,
+                ),
+            )
+        }
+        is ProfileElement.BezierE ->
+            ProfileElement.BezierE(
+                subBezier(
+                    piece.bezier,
+                    if (atStart) 0.0 else bezierParam(piece.bezier, a),
+                    if (atEnd) 1.0 else bezierParam(piece.bezier, b),
+                ),
+            )
+        is ProfileElement.CircleE -> piece
+    }
+
+/** The tessellation of [b] with the cumulative chord lengths beside it — the sampled arc-length map. */
+private fun bezierCum(b: Bezier): Pair<List<Vec2>, List<Double>> {
+    val pts = GeomMath.tessellateBezier(b)
+    val cum = ArrayList<Double>(pts.size)
+    var acc = 0.0
+    cum.add(0.0)
+    for (i in 0 until pts.size - 1) {
+        acc += (pts[i + 1] - pts[i]).length()
+        cum.add(acc)
+    }
+    return pts to cum
+}
+
+/** Arc length at parameter [t] of [b], on the sampled map — the inverse of [bezierParam]. */
+private fun bezierLength(
+    b: Bezier,
+    t: Double,
+): Double {
+    val (pts, cum) = bezierCum(b)
+    val n = pts.size - 1
+    val x = (t * n).coerceIn(0.0, n.toDouble())
+    val i = minOf(x.toInt(), n - 1)
+    return cum[i] + (cum[i + 1] - cum[i]) * (x - i)
+}
+
+/** Parameter of [b] at arc length [d], on the same sampled map. */
+private fun bezierParam(
+    b: Bezier,
+    d: Double,
+): Double {
+    val (pts, cum) = bezierCum(b)
+    val n = pts.size - 1
+    var i = 0
+    while (i < n - 1 && cum[i + 1] < d) i++
+    val span = cum[i + 1] - cum[i]
+    val local = if (span < Vec2.EPS) 0.0 else (d - cum[i]) / span
+    return ((i + local) / n).coerceIn(0.0, 1.0)
+}
+
+/** The stretch of [b] between parameters [t0] and [t1] — **de Casteljau**, so the part *is* the curve. */
+private fun subBezier(
+    b: Bezier,
+    t0: Double,
+    t1: Double,
+): Bezier {
+    val rest = if (t0 <= 0.0) b else splitBezier(b, t0).second
+    if (t1 >= 1.0) return rest
+    val u = if (t0 <= 0.0) t1 else (t1 - t0) / (1.0 - t0)
+    return splitBezier(rest, u.coerceIn(0.0, 1.0)).first
+}
+
+private fun splitBezier(
+    b: Bezier,
+    t: Double,
+): Pair<Bezier, Bezier> {
+    fun at(
+        p: Vec2,
+        q: Vec2,
+    ) = p + (q - p) * t
+    val p01 = at(b.p0, b.p1)
+    val p12 = at(b.p1, b.p2)
+    val p23 = at(b.p2, b.p3)
+    val p012 = at(p01, p12)
+    val p123 = at(p12, p23)
+    val mid = at(p012, p123)
+    return Bezier(b.p0, p01, p012, mid) to Bezier(mid, p123, p23, b.p3)
+}
 
 // ---- the pieces of the walk ----
 
@@ -573,7 +912,7 @@ private fun leg(
     piece: ProfileElement,
     offsets: List<Double>,
     length: Double,
-    runs: List<List<ProfileElement>>,
+    runs: List<List<FaceRun>>,
 ): ThickLeg {
     if (piece !is ProfileElement.BezierE) return ThickLeg(piece, offsets, length, runs, null, null)
     val pts = GeomMath.tessellateBezier(piece.bezier)
@@ -600,13 +939,21 @@ private fun nest(loops: List<Loop>): Region? {
     return Region(loops[outer], loops.indices.filter { it != outer }.map { GeomMath.orient(loops[it], ccw = false) })
 }
 
-/** Null when the curves span one connected graph, otherwise the refusal — by name. */
+/**
+ * Null when the curves span one connected graph, otherwise the refusal — by name.
+ *
+ * Asked of the **edges**, i.e. after every T-attachment has split the carrier it lands on: a partition whose
+ * end sits mid-way along a hull wall is connected to it, and the connectivity question has to be asked over
+ * the same vertex set the walk uses or the two answers could differ. The refusal still names *curves*,
+ * because a carrier is what the user picked.
+ */
 private fun disconnection(
-    count: Int,
+    edges: List<Edge>,
     tail: IntArray,
     head: IntArray,
     vertices: Int,
 ): String? {
+    val count = edges.size
     val parent = IntArray(vertices) { it }
 
     fun find(x: Int): Int {
@@ -627,7 +974,11 @@ private fun disconnection(
     }
     val roots = (0 until count).map { find(tail[it]) }.distinct()
     if (roots.size <= 1) return null
-    val runs = roots.map { r -> (0 until count).filter { find(tail[it]) == r }.joinToString("+") { "curve ${it + 1}" } }
+    val runs =
+        roots.map { r ->
+            (0 until count).filter { find(tail[it]) == r }.map { edges[it].carrier }.distinct().sorted()
+                .joinToString("+") { "curve ${it + 1}" }
+        }
     return "these curves are not connected — they form ${roots.size} separate runs (${runs.joinToString(" / ")}); " +
         "a wall's carrier is one connected network"
 }

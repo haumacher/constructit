@@ -187,6 +187,16 @@ class ToolDef(
      */
     val sidePerPick: Boolean = false,
     /**
+     * Whether this [repeating] tool's **first** pick may be one of its own earlier results, which turns the
+     * invocation into an *extension* of that result rather than a new one (GitHub #7, the OP-21 network
+     * extension). For *Thicken*: click a wall, then click the curves to add, and the wall's own step is
+     * **re-stamped** with the grown carrier set — one edit, one undo (OP-23's precedent).
+     *
+     * Declared here rather than inferred, exactly as [groupOperand] is: it is a promise about what the first
+     * slot accepts and about the fact that committing must not create a second element.
+     */
+    val extendsResult: Boolean = false,
+    /**
      * The smallest sensible [Picks.count] for this tool, or 0 when it needs no count at all — a polygon
      * needs three vertices, an array two instances. Non-zero is what makes the count field apply.
      */
@@ -514,7 +524,7 @@ object Tools {
             ToolDef(ARC_CS, "Arc (centre, ends)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the centre, the start point, then the end (sweeps counter-clockwise).", preview = Previews::arcCentreEnds, slotNames = listOf("centre", "start", "end"), icon = Icons.ARC_CS) { d, p, _ -> d.arcCenterStartEnd(p.points[0], p.points[1], p.points[2]) },
             ToolDef(BEZIER, "Bezier curve", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the start, two control points, then the end. Control points may be existing constructed points.", slotNames = listOf("start", "control", "control", "end"), icon = Icons.BEZIER) { d, p, _ -> d.bezierCurve(p.points[0], p.points[1], p.points[2], p.points[3]) },
             ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, followsBoundary = true, shortcut = 'O', help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.", slotNames = listOf("boundary curve"), icon = Icons.OUTLINE) { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
-            ToolDef(THICKEN, "Thicken (wall over curves)", ToolCategory.RESULT, listOf(SlotKind.CURVE), scalars = listOf(len("thickness")), repeating = true, minPicks = 1, sidePerPick = true, replicates = false, preview = Previews::thicken, help = "Type a thickness, set Wall side, then click the curves the wall follows — segments, arcs or Béziers that share their endpoints. The side applies to the next click, so it can change per curve. Enter (or clicking the first curve again) builds it; a disconnected pick is refused.", slotNames = listOf("carrier curve"), icon = Icons.THICKEN) { d, p, s -> d.buildThickNetwork(p.elements, p.signs.map { Tools.sideOf(it) }, s[0]) },
+            ToolDef(THICKEN, "Thicken (wall over curves)", ToolCategory.RESULT, listOf(SlotKind.CURVE), scalars = listOf(len("thickness")), repeating = true, minPicks = 1, sidePerPick = true, replicates = false, extendsResult = true, preview = Previews::thicken, help = "Type a thickness, set Wall side, then click the curves the wall follows — segments, arcs or Béziers that meet end to end, or end part-way along one another (a T joins with no seam). The side applies to the next click, so it can change per curve. Enter (or clicking the first curve again) builds it; a disconnected pick is refused. Click an existing wall first to *extend* it instead: its thickness stays its own and its openings, dimensions and solids follow (Alt on that first click starts a new wall there instead).", slotNames = listOf("carrier curve"), icon = Icons.THICKEN) { d, p, s -> d.buildThickNetwork(p.elements, p.signs.map { Tools.sideOf(it) }, s[0]) },
             ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click a circle or arc, then click inside or outside for the concentric circle.", slotNames = listOf("circle", "side"), icon = Icons.CONCENTRIC) { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at) },
             // rectangular *by construction* — the two other corners share the clicked corners' coordinates,
             // so no gesture and no parameter edit can shear it (see [Document.rectangle])

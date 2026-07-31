@@ -5381,6 +5381,40 @@ Three broad families (see OP-9 decision above):
   browser flow, `panelPolishInBrowser`), **932 → 952 green**, ktlint clean, the JS bundle built and all six
   browser E2E flows passing.
 
+- **Session 22 — walls that join where they actually meet, and walls built one pick at a time (GitHub #7).**
+  The reporter promoted the interior paths of a floor plan into walls and got what the picture showed: three
+  wall footprints abutting with a **seam line at every junction**. The interesting part was the second fact,
+  found while reproducing it: *one* thicken over all seven curves was **refused as "not connected"** — so
+  there was no gesture that produced the right wall at all. Four things worth recording.
+  (1) **The refusal was the diagnosis.** The fat-graph weld unified curve *endpoints*; the partitions attach
+  **mid-leg**, so their junction was invisible to the very machinery that resolves junctions. Naming an
+  endpoint-in-the-interior a **vertex that splits its host** made the whole reported case fall out of the
+  *existing* rule — a T is the *k*=3 branch, three ordinary mitres — with no junction code, no boolean and no
+  special case. The lesson is the one OP-21 keeps re-teaching: the fix belonged in *what the graph is*, not
+  in what to do about a special configuration.
+  (2) **The seam and the split are the same question asked twice.** Splitting a host also splits the face on
+  the branch's side into two runs with a **gap** between them, and the gap is where the branch's material
+  joins. Concatenating the runs would have redrawn the very seam the work exists to remove; keeping them
+  apart draws it right. On the *far* side, where the walk crosses without turning, the two runs are merged
+  back into one piece — otherwise the boundary carries a zero-turning corner, which a plan would draw, a key
+  point would address and a cap triangulation could turn into a degenerate triangle.
+  (3) **An opening had to be unmovable by all of this, and the anchoring rule already guaranteed it.** A
+  `ThickLeg` stayed *one carrier curve* (a split changes only how many face runs it has), so an interval's
+  position is still an arc length on the carrier and its `leg=` index still means the same leg. The
+  alternative — a leg per span — would have renumbered legs the moment a T landed, and every stored opening
+  with it.
+  (4) **"Build it incrementally" was an edit, and OP-23 had already paid for the mechanism.** Extending a
+  wall re-stamps the wall's **own** `tool thicken` step with a grown carrier set: no new element, so the
+  extrude, the dimensions and the openings on it follow by recompute; one undo step, because the saved script
+  is the undo substrate; no format change, because `els=`/`clicks=`/`signs=` already say everything. What it
+  did need was a decision the pattern re-stamp never faced — **journal order**: a curve drawn after the wall
+  forces the step to move, and it moves *with everything built on it*, which is safe precisely because
+  anything that could be waiting on that block is in the block. The two visible consequences are spoken
+  rather than hidden (the wall's script name changes with its position; a curve built *on* the wall can never
+  carry it).
+  **26 new tests** (`TAttachmentTest`, `WallExtendTest`), **954 → 980 green**, every existing golden
+  byte-identical, ktlint clean, the JS bundle built and all six browser E2E flows passing.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -5916,9 +5950,10 @@ coincide, and therefore what the graph even *is*, depends on where the carrier c
 *count* of carrier curves and their sides are structural. Dragging two carrier ends apart makes the
 footprint invalid with a reason rather than silently wrong.
 
-1. **Weld** the curve endpoints into vertices on a `JOIN_TOL` lattice, and check the graph is
-   **connected** — a disconnected pick is refused, by name, before a node is built and again inside
-   `compute` if an edit pulls it apart.
+1. **Weld** the curve endpoints into vertices on a `JOIN_TOL` lattice — *and* every endpoint that lands in
+   the **interior** of another carrier, which splits that carrier there (see *A T-attachment is a vertex
+   too*) — then check the graph is **connected**: a disconnected pick is refused, by name, before a node is
+   built and again inside `compute` if an edit pulls it apart.
 2. Each carrier curve becomes two **directed half-edges**. A half-edge's *left wall* is one offset curve:
    the forward half-edge's left wall is the `+` offset, the reverse half-edge's is the `−` one negated.
 3. At each vertex sort the outgoing half-edges by the **angle of their outgoing tangent**.
@@ -5952,6 +5987,82 @@ constructed to be removed. A cross of four is four. A ring is the *k*=2 case eve
 closed carrier still comes out as `Region(outer, [inner])`. A **figure-8** — two rings sharing one vertex,
 *k*=4 there — comes out as one outer ring with two holes, honestly, and is not refused: it was on the
 candidate-cut list and did not need to be cut.
+
+##### A T-attachment is a vertex too, and a wall grows one pick at a time (GitHub #7 — as built)
+
+The generalized wall answered "*this also nicely defines the joining of walls*" only for walls that share
+**endpoints**. The reporter's floor plan does not: the hull is one ortho ring, the interior partitions are
+runs whose ends `attachortho` puts *part-way along* a hull leg. Two facts followed, and both were wrong for
+the same reason:
+
+- three separate thickenings abutted but never joined, so there was a **seam line at every junction** — and
+  worse,
+- **one** thicken over all seven curves was refused as *"not connected"*, because the weld above only ever
+  unified curve *endpoints*: an endpoint sitting mid-way along another picked curve was invisible to it.
+
+So there was no gesture that produced the right wall at all. Two things, and the first is the one with a
+general lesson.
+
+**1. The T is a vertex, and a vertex splits its host.** An endpoint of one carrier landing in the interior of
+another (within the same `JOIN_TOL`) becomes a graph vertex, and the host carrier is **cut there** into two
+spans. After that, nothing new resolves it: a T is the *k*=3 branch of the walk above — three ordinary
+mitres, one region, no interior edge and no boolean. The split happens **inside the footprint node's
+`compute`**, which is the same rule that made the welding and the cyclic order live there: *where* a split
+lands is a value, only the count of carrier curves and their sides are structural, so dragging the T apart
+makes the footprint invalid **with a reason** and pushing it back heals it (OP-3). Exactness follows the
+carrier kind, as everywhere else: a segment splits at the perpendicular foot and an arc at its own angle
+(both exact); a **Bézier splits by de Casteljau at the sampled arc-length parameter**, which is OP-15's
+approximated class that a Bézier leg is in already, so the flag stays honest rather than being extended.
+
+Three decisions inside it are worth stating, because each was a fork:
+
+- **A `ThickLeg` is still one *carrier curve*, split or not.** The alternative — one leg per span — would
+  have renumbered legs the moment a T landed on one, and a leg index is what an opening's `leg=` records
+  (OP-22). So a leg keeps the whole carrier's arithmetic (`pointAt`, `facePoint`, `distanceAt` are the
+  carrier's), and what the split changes is only how many **face runs** it has: `ThickLeg.runs[side]` is now
+  a list of `FaceRun`s, each carrying the span of carrier arc length it covers. **An opening therefore does
+  not move, vanish or change its jambs when a T lands on its leg** — asserted numerically, both for a T
+  added directly and for one arriving by an extension.
+- **The face runs are kept separate rather than concatenated**, because on the branch's side the face has a
+  genuine **gap** — the branch's own material — and a concatenated run would let the plan draw a straight
+  piece *across* the junction. That bridge is exactly the seam line the reporter saw.
+- **On the far side the pass-through is closed up again.** At a T the walk crosses the split vertex once
+  without turning, which would leave a boundary corner with *zero* turning: a corner the plan would draw, an
+  extra `regionCorner` accessor would address, and a cap triangulation could produce a zero-area triangle
+  from. So two boundary pieces that continue one carrier are merged back into one (two collinear segments
+  into a segment, two arcs of one circle into an arc). An unsplit network has no pass-throughs, so this is a
+  no-op there — which is what keeps every existing footprint bit-identical.
+
+**2. Extending a wall is an *edit* of its own step.** With *Thicken* armed the **first** pick may be an
+existing wall (declared by `ToolDef.extendsResult`): the wall's carrier curves and sides are seeded into the
+ordinary pick lists, the status line names the wall being extended, and every later click appends exactly as
+it does for a new wall — so nothing below the collector has a second case. Committing does not create an
+element: it **re-stamps the wall's own `tool thicken` step** with the grown `els=`/`clicks=`/`signs=` and
+replays the script. That is OP-23's move applied to a carrier set instead of a pattern's count, and it buys
+the same three things. The footprint element keeps its identity, because its own step still declares it —
+so the extrude on it, the dimensions on its key points and the openings on its legs all follow the enlarged
+footprint by ordinary recompute, with no node re-pointing needed at all (the whole document is rebuilt from
+the journal, exactly as a delete or a re-stamp rebuilds it). The **thickness stays the wall's own**: the
+step's `scalar=` is untouched, and the tool reflects that parameter in the panel instead of using its own
+field. And it is **one undo step**, because the substrate of undo is the saved script (OP-18). No format
+change: the grammar is the one `tool thicken` already had.
+
+**Journal ordering**, which is the part that needed a decision. A step may only name what an earlier step
+declared, so a curve drawn *after* the wall means the re-stamped step has to **move** to just after the last
+element it references — and it moves **with everything built on it**, in order, since those steps may only
+name it after it. Nothing outside that block can be waiting on the block, because anything that were would
+itself be in it. Two consequences are stated rather than hidden: the wall's **script name changes** when its
+step moves (a name *is* the journal's order — OP-18), and the status line says so; and a curve that is built
+**on** the wall (through its key points, say) can never be one of its carriers, which is refused by name.
+
+Every refusal here speaks: a disconnected extension pick gives the footprint node's own reason, an
+**ortho-carrier** wall (one the *Wall* tool drew) is refused with the alternative named ("extend that path
+with the Wall tool, or thicken its legs"), and a wall picked **mid-sequence** is refused with the rule ("pick
+the wall first to extend it") rather than joining the carrier set as if it were a curve. On the first click a
+wall footprint **wins over a curve under the same cursor**, because that is what the click means far more
+often than not (the carrier of a centred wall runs through its own footprint) — and **Alt declines it**,
+which is Alt's standing meaning in this application: *leave the model as I put it*, i.e. start a new wall
+here.
 
 ##### When the kernel is used instead, and what that costs
 
@@ -6091,6 +6202,17 @@ its coplanarity is exact, so it keeps it.
   walls whose material overlaps — and that overlap is *not* resolved between two networks. Two thick
   networks that cross still overlap, exactly as two thick paths did. The junction cleanup this delivers is
   for walls of **one** carrier, which is the honest scope of "a wall is a thickness applied to a path".
+  - **Still true, with the reachability half answered** (GitHub #7): two networks that *touch* — end to end
+    or at a T — now have a gesture that makes them **one** carrier, which is what *extend* is for, and the
+    junction then resolves by construction. What is unchanged is the case the sentence is really about: two
+    walls whose material genuinely **overlaps** (they cross in the interior of a curve, or they run over the
+    same curve twice) are still two footprints that overlap, and merging *those* is a boolean, not a
+    junction. An interior–interior crossing is deliberately **not** a vertex: neither curve ends there, so
+    breaking them first (*Break curve*) is the honest way to say "this is a junction" — and until that is
+    done, one thicken over both is refused by name as not connected.
+- **A T splits its host, but nothing splits the *drawing*.** The carrier curve stays the one curve the user
+  drew; the split lives inside the footprint's `compute` and is a value. So the drawing gains no elements,
+  no names and no steps from a junction — which is also why extending a wall creates nothing.
 - **No mitre limit.** A very sharp branch produces a very long spike, exactly as the ortho case always
   has. Stated so it is not mistaken for a bug; capping it is a convention decision (like the
   chamfer-on-arc one) and belongs with the others.
@@ -6219,6 +6341,26 @@ there, because a scalar is not an element and its own panel row already says wha
 parameter moves this?" is the same question one type up and will want the same answer; and the scale bar
 speaks **millimetres always**, which is the display-unit half of OP-7 (a bar that switched to metres would be
 answering that question in one corner of one view).
+
+**Retired in session 22: the reachability half of "two thick networks that cross still overlap", and the
+seam at every wall junction (GitHub #7).** Not a queue line but the first of the three things session 18
+parked, quoted so what is retired and what stands are not confused:
+
+> It leaves three things parked, each stated where it belongs: **two thick networks that cross still
+> overlap** (the junction cleanup is for walls of *one* carrier) …
+
+The junction cleanup *was* for walls of one carrier, and the missing half was that a real floor plan could
+not be made into one carrier at all: interior partitions attach **part-way along** a hull leg, and the weld
+only ever unified curve endpoints, so one thicken over the whole plan was refused as *"not connected"* while
+three separate thickenings abutted with a seam at every junction. Both are gone: a **T-attachment is a
+vertex that splits its host** (inside `compute`, so it is a value and it heals), and *Thicken* can **extend
+an existing wall** by re-stamping that wall's own step — OP-23's move on a carrier set. See *A T-attachment
+is a vertex too, and a wall grows one pick at a time* under OP-21. What of the parked sentence still stands
+is the case it is really about: walls whose material genuinely **overlaps** (crossing in a curve's interior,
+or the same curve thickened twice) are still two footprints, and merging those is a boolean rather than a
+junction — with the honest route named (break the curves where the junction is meant to be). The other two
+session-18 parked items are untouched: there is still **no mitre limit**, and a footprint that takes the
+kernel route is still **approximated**.
 
 **Queued in session 21 (user-directed): the loft — the multi-section solid, general from the first
 slice.** The one solid class the toolset cannot produce is the one whose cross-section *changes* along
