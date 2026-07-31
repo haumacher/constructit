@@ -63,7 +63,11 @@ good delivery contains, in order:
 architecture, not the tests.
 
 **Stalled agents are real.** If a background agent's transcript goes quiet: arm a Monitor on the
-output file's mtime (10-minute quiet threshold, until-loop, not tail -f). On silence: nudge-resume
+output file's mtime (10-minute quiet threshold, until-loop, not tail -f). **The tasks-dir output
+path is a symlink — stat it with `-L`**, or the monitor reads the symlink's own never-changing
+mtime and cries wolf in exact 600s increments (a whole session of false alarms taught this).
+And verify before acting on any event anyway: a quiet transcript with busy gradle daemons is a
+long test run, not a stall. On silence: nudge-resume
 via SendMessage ("Resume exactly where you left off: <last visible step>"). If the transcript
 stays frozen after a resume, the agent is dead — take the remainder over yourself; its committed
 work is usually further along than the last message suggests (check `git status` and run its
