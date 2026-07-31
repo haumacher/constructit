@@ -6283,6 +6283,22 @@ Deliberately out, stated so it is not looked for: **STEP export** — the kernel
 exact B-rep for solids, so exact-geometry export would be either dishonest or a compliance project, and
 the "STEP into the slicer" trend is unreachable from here by design.
 
+**Appearance, scoped in session 21 — three tiers in, one recorded non-goal.** For viewing, the modeler's
+job is to *assign* appearance, never to render it — rendering (lighting, shadows, reflections) is
+precisely what the GLB export delegates to real PBR viewers. The tiers, in queue order: **Tier 1, a
+material per solid** (base color, roughness, metallic — a handful of numbers, one panel row) rides the
+export package above, because five numbers per solid is what makes a GLB render honestly in any viewer.
+**Tier 2, textures by projection**, is an *export-time operator*, not a modeling-time subsystem: the model
+stores a material reference plus a projection rule (planar/box/cylindrical), and the exporter bakes
+per-vertex UVs from mesh positions — no UV tools in the app, the bitmap embedded in the GLB. **Tier 3,
+per-face assignment**, waits deliberately for edit-in-3D's slice 2, because naming a face durably is the
+same face-ID provenance mechanism that click-a-working-plane needs — one mechanism, two consumers, built
+once. And the non-goal, recorded at the user's word before a line of it could be asked for: **Tier 4 — a
+material editor, bitmap import UI, UV unwrapping — is out, permanently.** That is DCC territory, off the
+paradigm whose value is the construction workflow; the stated alternative is the escape hatch the GLB
+export *is* — open it in Blender (or any PBR pipeline) and go as far as taste demands. A refusal with a
+reason and an alternative, per the standing doctrine.
+
 Otherwise the numbered queue is empty; what remains is the parked list below, each item recorded at its
 source.
 
