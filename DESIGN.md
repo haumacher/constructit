@@ -6264,6 +6264,25 @@ tools, modifier-gated orbit; the plane chosen the existing way); (2) click-a-fac
 (3D picking + face provenance as a recorded choice); (3) what that unlocks — the parked cross-space
 two-operand boolean gets its gesture, and datum/loft-section placement in 3D.
 
+**Queued in session 21, at the end of the queue (user-directed): the export package — GLB for viewing,
+3MF + binary STL for printing.** The session-3 directive is hereby *clarified, not reversed*: format work
+was deferred ("no standard compliance is required **yet**"), never banned, and its time is after the
+modeling queue above. All three exports are one package because they are the same export: the
+already-guaranteed-manifold tessellated mesh (OP-9's watertight-or-refused doctrine did the hard part
+years of sessions ago), written three ways, refusing by name for anything that is not a solid.
+**GLB** (glTF 2.0, single binary container) is the viewing half — the "JPEG of 3D": indexed triangle
+mesh, which is what MeshGL already is nearly verbatim; one node per solid named by the naming authority
+(OP-18) so viewers show an honest tree; simple PBR base colors from element styles; glTF is *metres* and
+*+Y-up* by spec, so the writer scales mm→m and turns the Z-up world once at the root node — units and
+orientation are spec'd, not folk convention, which is why this file kind is safe to write without a
+compliance project. **3MF** is the printing half done honestly: units explicit (mm, our canonical base),
+indexed mesh, and the spec *requires* manifold consistent orientation — the doctrine as a file format;
+core spec only (ZIP + one XML model), no materials/settings extensions. **Binary STL** rides along as the
+universal fallback (~50 lines off the same triangles; no units in the format, mm by convention).
+Deliberately out, stated so it is not looked for: **STEP export** — the kernel is mesh-based and holds no
+exact B-rep for solids, so exact-geometry export would be either dishonest or a compliance project, and
+the "STEP into the slicer" trend is unreachable from here by design.
+
 Otherwise the numbered queue is empty; what remains is the parked list below, each item recorded at its
 source.
 
