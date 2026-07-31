@@ -6448,6 +6448,33 @@ projections bound to construction geometry, replayable like every other step. An
 stated as the user stated it: there are no permanent non-goals in this design record, only "future
 extensions at best/worst" — work whose time has not come.
 
+**Queued in session 22, between the loft and edit-in-3D (user-designed): a working plane's context is
+the part's section — and the section is an input.** The user's design, arrived at in two steps and
+adopted whole. First the principle that frames it: **the 2D editor stays the first-order tool even after
+edit-in-3D lands**, precisely because it shows less — one plane, no clutter; the 3D editor is an addition,
+never a replacement. But a non-primary working plane needs its 3D context, at two levels: *(a)* a mental
+anchor, and *(b)* — the load-bearing half — **inputs**: geometry of the part, usable in the construction
+on that plane. Today's context is `Document.faceOutline`, a hardcoded rectangle that only understands an
+extrude's side faces and is "a drawing rather than a node" — display and part-pick only, no refs. The
+general rule replacing it: **the context of a working plane is the part's section at that plane**, and the
+face case is the degenerate section where the plane lies on a face (then the section *is* that face's
+boundary). The user's second step generalized it past faces: a datum plane parallel to the base at a given
+height slices the pyramid, and *"the intersections of the pyramid faces could/should also serve as
+potential anchors"* — so a section curve is an input like a face edge is, and both carry the same honest
+identity: **the face it was cut from** (a corner: the two faces, i.e. the cut edge). Mechanism, per the
+no-solver doctrine: the section is a **compound value with accessors** (OP-6's pattern, like
+`PointSet`+`Select`) — `edge(i)`/`corner(i)` over a deterministically ordered set, a click recording the
+*index* (OP-1/OP-18), never re-scored on replay; provenance is **structural, not mesh-discovered** (an
+extrude's side face is its profile edge, a loft's ruled face is its base-edge/seam pair), with the
+kernel-route boolean solids as the stated honest limit (refused with a reason there, initially).
+Exactness: plane ∩ planar facet is an exact segment (the pyramid's section square is exact); curved faces
+and mesh-route solids are approximated and flagged (OP-15). The acceptance scenario, the user's own:
+select a pyramid face as working plane, use its three edges as inputs to the session-17 LLL circle —
+inscribed-circle center — and drill there; then a datum at height *h*, whose section square anchors a
+construction that stays put when the apex or the height moves. What this deliberately does not build:
+face-space *creation* by 3D click (that is edit-in-3D slice 2; this item consumes the same provenance
+mechanism in the 2D editor first, which is the cheaper place to grow it).
+
 Otherwise the numbered queue is empty; what remains is the parked list below, each item recorded at its
 source.
 
