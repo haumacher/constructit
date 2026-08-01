@@ -1,6 +1,7 @@
 package constructit.editor
 
 import constructit.core.CircleValue
+import constructit.core.EllipseValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
@@ -11,10 +12,12 @@ import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.core.SourceNode
 import constructit.dsl.CircleRef
+import constructit.dsl.EllipseRef
 import constructit.dsl.LineRef
 import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.dsl.valueOf
+import constructit.geom.Conics
 import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.Quantity
@@ -884,4 +887,26 @@ class OnCircleHandle(val circle: CircleRef, private val angle: SourceNode) : Han
     }
 
     override fun fields(): List<HandleField> = listOf(angleField("angle", angle))
+}
+
+/**
+ * Point on an **ellipse** (OP-24): the handle's one DOF is the **parametric angle** `t`, exactly as an
+ * on-circle point's is the polar angle — which is the whole reason position-along a conic is exact here.
+ *
+ * The drag projects the cursor to the nearest point of the ellipse ([Conics.paramOf], Newton on `t`) and
+ * writes that parameter, so the point never leaves the curve however far the cursor strays; the field
+ * writes the same node, so what a number does and what a drag does are one operation (OP-13).
+ */
+class OnEllipseHandle(val ellipse: EllipseRef, private val t: SourceNode) : Handle {
+    override val dragNodes: List<SourceNode> get() = listOf(t)
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        val e = (ev.valueOf(ellipse) as? EllipseValue)?.ellipse ?: return
+        t.value = ScalarValue(Quantity.rad(Conics.paramOf(e, world)))
+    }
+
+    override fun fields(): List<HandleField> = listOf(angleField("parameter", t))
 }

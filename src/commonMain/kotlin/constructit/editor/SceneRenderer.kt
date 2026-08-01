@@ -3,6 +3,8 @@ package constructit.editor
 import constructit.core.ArcValue
 import constructit.core.BezierValue
 import constructit.core.CircleValue
+import constructit.core.EllipseValue
+import constructit.core.EllipticArcValue
 import constructit.core.Evaluator
 import constructit.core.FrameValue
 import constructit.core.LineValue
@@ -16,6 +18,9 @@ import constructit.core.SegmentValue
 import constructit.core.SolidValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
+import constructit.geom.Conics
+import constructit.geom.Ellipse
+import constructit.geom.EllipticArc
 import constructit.geom.GeomMath
 import constructit.geom.Line
 import constructit.geom.ProfileElement
@@ -202,6 +207,8 @@ object SceneRenderer {
                 is RayValue -> clipRay(v.ray, view)?.let { poly(proj, target, listOf(it.a, it.b), style) }
                 is CircleValue -> proj.drawCircle(target, v.circle, style)
                 is ArcValue -> poly(proj, target, proj.arcPoints(v.arc), style)
+                is EllipseValue -> poly(proj, target, tessellate(v.ellipse, true), style)
+                is EllipticArcValue -> poly(proj, target, tessellate(v.arc), style)
                 is BezierValue -> poly(proj, target, GeomMath.tessellateBezier(v.bezier), style)
                 is LoopValue -> drawChain(v.loop.elements, proj, target, style)
                 is RegionValue -> {
@@ -377,6 +384,8 @@ object SceneRenderer {
                 clipRay(s.ray, view)?.let { poly(proj, target, listOf(it.a, it.b), previewStyle) }
             is PreviewShape.Circ -> proj.drawCircle(target, s.circle, previewStyle)
             is PreviewShape.ArcS -> poly(proj, target, proj.arcPoints(s.arc), previewStyle)
+            is PreviewShape.Ell -> poly(proj, target, tessellate(s.ellipse, true), previewStyle)
+            is PreviewShape.EllArc -> poly(proj, target, tessellate(s.arc), previewStyle)
             is PreviewShape.Bez -> poly(proj, target, GeomMath.tessellateBezier(s.bezier), previewStyle)
             is PreviewShape.Path -> poly(proj, target, s.points, previewStyle)
             is PreviewShape.Dim -> drawGraphic(s.graphic, proj, target, previewStyle, withText = true)
@@ -417,6 +426,8 @@ object SceneRenderer {
                 clipRay(v.ray, view)?.let { poly(proj, target, listOf(it.a, it.b), style) }
             is CircleValue -> proj.drawCircle(target, v.circle, style)
             is ArcValue -> poly(proj, target, proj.arcPoints(v.arc), style)
+            is EllipseValue -> poly(proj, target, tessellate(v.ellipse, true), style)
+            is EllipticArcValue -> poly(proj, target, tessellate(v.arc), style)
             is BezierValue -> poly(proj, target, GeomMath.tessellateBezier(v.bezier), style)
             is LoopValue -> drawChain(v.loop.elements, proj, target, style)
             is RegionValue -> {
@@ -542,6 +553,22 @@ object SceneRenderer {
     fun tessellate(arc: Arc): List<Vec2> = GeomMath.sampleArc(arc, GeomMath.renderArcSteps(arc))
 
     /**
+     * An **elliptic arc** as a plane-space polyline, at the same fixed 64-per-full-turn-of-parameter the
+     * circular arc uses (OP-24) — and for the same two reasons: a golden must not depend on the camera,
+     * and [HitTest] measures a pick against these very chords.
+     *
+     * Unlike a circle, an ellipse has no projection-dependent primitive to defer to, so it goes through
+     * [poly] in both views — which is exactly why it needs no `PlaneProjection` case of its own.
+     */
+    fun tessellate(arc: EllipticArc): List<Vec2> = Conics.renderSample(arc)
+
+    /** A whole ellipse as a closed plane-space polyline (its first point repeated at the end). */
+    fun tessellate(
+        e: Ellipse,
+        ccw: Boolean,
+    ): List<Vec2> = Conics.renderSampleWhole(e, ccw)
+
+    /**
      * Draw a boundary chain (a `Loop`, or a `Region`'s outer/hole loop) piece by piece. Each piece
      * becomes a polyline in screen space; the piece dispatch itself stays in `GeomMath`, except for
      * this one — emitting backend primitives is a rendering question, not a geometric one.
@@ -557,6 +584,8 @@ object SceneRenderer {
             is ProfileElement.ArcE -> poly(proj, target, proj.arcPoints(el.arc), style)
             is ProfileElement.BezierE -> poly(proj, target, GeomMath.tessellateBezier(el.bezier), style)
             is ProfileElement.CircleE -> proj.drawCircle(target, el.circle, style)
+            is ProfileElement.EllipticArcE -> poly(proj, target, tessellate(el.arc), style)
+            is ProfileElement.EllipseE -> poly(proj, target, tessellate(el.ellipse, el.ccw), style)
         }
     }
 

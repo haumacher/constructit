@@ -4,6 +4,8 @@ import constructit.core.ArcValue
 import constructit.core.BezierValue
 import constructit.core.CircleValue
 import constructit.core.DirectionValue
+import constructit.core.EllipseValue
+import constructit.core.EllipticArcValue
 import constructit.core.Evaluator
 import constructit.core.FrameValue
 import constructit.core.LineValue
@@ -22,6 +24,7 @@ import constructit.core.SolidValue
 import constructit.dsl.Ref
 import constructit.dsl.valueOf
 import constructit.geom.Bezier
+import constructit.geom.Conics
 import constructit.geom.GeomMath
 import constructit.geom.Line
 import constructit.geom.ProfileElement
@@ -116,6 +119,16 @@ object Svg {
                 is BezierValue -> {
                     sampleChain(listOf(ProfileElement.BezierE(v.bezier)), samples)
                     prepared.add(Prepared("chain", d, listOf(ProfileElement.BezierE(v.bezier))))
+                }
+                // a conic has no SVG primitive of its own here, so it rides the chain path as a polyline
+                // — the same treatment a Bézier gets, and drawn from the same tessellation (OP-24)
+                is EllipseValue -> {
+                    sampleChain(listOf(ProfileElement.EllipseE(v.ellipse)), samples)
+                    prepared.add(Prepared("chain", d, listOf<ProfileElement>(ProfileElement.EllipseE(v.ellipse))))
+                }
+                is EllipticArcValue -> {
+                    sampleChain(listOf(ProfileElement.EllipticArcE(v.arc)), samples)
+                    prepared.add(Prepared("chain", d, listOf<ProfileElement>(ProfileElement.EllipticArcE(v.arc))))
                 }
                 is LineValue -> prepared.add(Prepared("line", d, v.line)) // clipped later; not in bbox
                 is RayValue -> prepared.add(Prepared("ray", d, v.ray))
@@ -226,6 +239,8 @@ object Svg {
                             val s = screen(el.circle.center)
                             sb.append("  <circle cx=\"${fmt(s.x)}\" cy=\"${fmt(s.y)}\" r=\"${fmt(el.circle.radius)}\" fill=\"none\" stroke=\"${p.d.stroke}\" stroke-width=\"${fmt(STROKE_WIDTH)}\"/>\n")
                         }
+                        is ProfileElement.EllipticArcE -> sb.append(polyTag(Conics.renderSample(el.arc), p.d.stroke))
+                        is ProfileElement.EllipseE -> sb.append(polyTag(Conics.renderSampleWhole(el.ellipse, el.ccw), p.d.stroke))
                     }
                 }
             }
@@ -267,6 +282,21 @@ object Svg {
         val s2 = screen(b.p2)
         val s3 = screen(b.p3)
         return "  <path d=\"M ${fmt(s0.x)} ${fmt(s0.y)} C ${fmt(s1.x)} ${fmt(s1.y)} ${fmt(s2.x)} ${fmt(s2.y)} ${fmt(s3.x)} ${fmt(s3.y)}\" fill=\"none\" stroke=\"$stroke\" stroke-width=\"${fmt(STROKE_WIDTH)}\"/>\n"
+    }
+
+    /**
+     * A world polyline as an SVG `polyline` — what a conic draws as (OP-24). SVG has an elliptical-arc
+     * path command, but it speaks the *endpoint* parameterization and would need the sweep and
+     * large-arc flags derived per piece; a polyline at the renderer's own step count is the same picture
+     * the canvas draws, which is the property the goldens are for.
+     */
+    private fun polyTag(
+        pts: List<Vec2>,
+        stroke: String,
+    ): String {
+        if (pts.size < 2) return ""
+        val d = pts.joinToString(" ") { screen(it).let { s -> "${fmt(s.x)},${fmt(s.y)}" } }
+        return "  <polyline points=\"$d\" fill=\"none\" stroke=\"$stroke\" stroke-width=\"${fmt(STROKE_WIDTH)}\"/>\n"
     }
 
     /** Liang-Barsky style clip of an infinite line to an axis-aligned rectangle. */

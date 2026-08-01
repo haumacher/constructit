@@ -482,7 +482,10 @@ class PreviewTest {
                 // the three segments, each picked well clear of the other two
                 SlotKind.LINE, SlotKind.CARRIER, SlotKind.CURVE, SlotKind.SEGMENT ->
                     listOf(Vec2(20.0, 0.0), Vec2(0.0, 20.0), Vec2(-30.0, 30.5))
-                SlotKind.CIRCLE, SlotKind.CENTRIC, SlotKind.GEOMETRY -> listOf(Vec2(-14.0, -20.0))
+                // CENTERED and MEASURABLE take the circle too — a circle has a centre and a length (OP-24
+                // widened both slots so an ellipse can fill them); CONIC has no previewing tool
+                SlotKind.CIRCLE, SlotKind.CENTRIC, SlotKind.GEOMETRY, SlotKind.CENTERED, SlotKind.MEASURABLE, SlotKind.CONIC ->
+                    listOf(Vec2(-14.0, -20.0))
                 // the circle is an area too (a closed curve bounds one, OP-17), which is what an AREA or a
                 // loft-part slot picks here — the scene needs no second area for it
                 SlotKind.AREA, SlotKind.LOFT_PART -> listOf(Vec2(-14.0, -20.0))

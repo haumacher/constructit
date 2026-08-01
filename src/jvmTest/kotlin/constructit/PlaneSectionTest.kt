@@ -205,28 +205,37 @@ class PlaneSectionTest {
     }
 
     /**
-     * An **inclined** plane through a cylinder is a true ellipse, and this vocabulary has no conic — so the
-     * section is sampled and flagged, exact at every sample: each one lies on the ellipse with semi-axes `r`
-     * and `r / cos θ` to 1e-9.
+     * An **inclined** plane through a cylinder is a true ellipse — and since the conics package (OP-24) the
+     * section says so **exactly**: semi-axes `r` and `r / cos θ` to 1e-12, centre where the axis meets the
+     * plane, and the whole section no longer flagged approximated.
+     *
+     * This test replaces `anInclinedCutThroughACylinderIsAFlaggedEllipse`, which asserted the opposite —
+     * that the same cut came back as a flagged fan of chords. Nothing about any *stored file* changed; the
+     * honesty line moved outward by a change in compute, at eval time.
      */
     @Test
-    fun anInclinedCutThroughACylinderIsAFlaggedEllipse() {
+    fun anInclinedCutThroughACylinderIsAnExactEllipse() {
         val solid = solidOf(cylinder(r = 30.0, h = 80.0, at = Vec2(0.0, 100.0)))
         val theta = PI / 6.0
         val plane = Plane3(Vec3.ZERO, Vec3.X, Vec3(0.0, cos(theta), sin(theta)))
         val sec = Section3.sectionOf(solid, plane)
-        assertTrue(sec.approximated, "an inclined cylinder section is a conic, and is flagged")
-        val edge = assertNotNull(sec.edges.firstOrNull { it.sampled != null })
-        val pts = assertNotNull(edge.sampled)
-        assertNull(edge.curve, "no segment, arc or Bézier is an ellipse")
-        val a = 30.0
-        val b = 30.0 / cos(theta)
-        val centre = Vec2(0.0, 100.0 / cos(theta))
-        for (p in pts) {
-            val q = p - centre
-            assertClose((q.x / a) * (q.x / a) + (q.y / b) * (q.y / b), 1.0, 1e-9, "sample $p on the true ellipse")
-        }
-        assertTrue(pts.size > 32, "sampled at the tessellation's own density: ${pts.size}")
+        assertTrue(!sec.approximated, "an inclined cylinder section is an exact conic now")
+        val e = assertNotNull(sec.edges.firstNotNullOfOrNull { it.curve as? ProfileElement.EllipseE }).ellipse
+        assertClose(e.minor, 30.0, 1e-12, "the minor semi-axis is the cylinder's own radius")
+        assertClose(e.major, 30.0 / cos(theta), 1e-12, "the major semi-axis is r / cos θ")
+        assertClose(e.center.x, 0.0, 1e-12)
+        assertClose(e.center.y, 100.0 / cos(theta), 1e-12)
+        assertTrue(sec.edges.none { it.sampled != null }, "nothing about it is sampled any more")
+    }
+
+    /** A cylinder cut so steeply that the plane leaves through its ends is still refused — and sampled. */
+    @Test
+    fun aCylinderCutThatRunsOffItsEndsStaysSampled() {
+        val solid = solidOf(cylinder(r = 30.0, h = 10.0, at = Vec2(0.0, 0.0)))
+        val theta = PI / 3.0
+        val plane = Plane3(Vec3(0.0, 0.0, 5.0), Vec3.X, Vec3(0.0, cos(theta), sin(theta)))
+        val sec = Section3.sectionOf(solid, plane)
+        assertTrue(sec.edges.none { it.curve is ProfileElement.EllipseE }, "the cut is not one whole ellipse")
     }
 
     /** A cut **along** a cylinder's axis is two rulings — straight and exact, but two curves for one index. */

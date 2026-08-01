@@ -19,19 +19,32 @@ first-class goal and the current implementation focus.
 
 ## Highlights
 
-- **Construction DAG** — strongly-typed nodes (points, lines, rays, segments, circles, arcs,
-  directions, profiles, scalars) with memoized evaluation and transitive invalid-propagation.
-- **Deterministic intersections** — an intersection is an ordered solution set + a `Select(sign)`
-  node, so branch choice is stable across recompute, undo and reload (no continuity tracking).
+- **Construction DAG** — strongly-typed nodes (points, lines, rays, segments, circles, arcs, **ellipses and
+  elliptic arcs**, Béziers, directions, profiles, scalars) with memoized evaluation and transitive
+  invalid-propagation.
+- **Deterministic intersections** — an intersection is an ordered solution set + a `Select` node, so branch
+  choice is stable across recompute, undo and reload (no continuity tracking). Two conics cross in **up to
+  four** points; the set is ordered by parametric angle on the first operand and the branch is stored as an
+  index, so it never re-decides itself, and a branch that stops existing goes invalid *with a reason* and
+  heals rather than silently becoming another point.
 - **Unit-aware scalars** — dimensional analysis over Length / Angle / Dimensionless (+ Area /
   Volume); base units mm and rad.
 - **Rich 2D tool set** — points, midpoints (or any ratio along a span), intersections, projections, perpendiculars, parallels,
   bisectors, tangents (from a point / common), fillets (between lines, circles and arcs alike) and
   chamfers, circles (centre+point / centre+radius / 3-point / **3 tangents** — the incircle and the three
-  excircles of three lines), arcs, rectangles (rounded or not) and regular
+  excircles of three lines), arcs, **ellipses and elliptic arcs**, rectangles (rounded or not) and regular
   polygons, transforms (mirror / rotate / scale / translate), linear and circular **arrays**, and
   measurements. Any tool that wants a line takes a segment or ray, and any tool that wants a circle takes
-  an **arc** — the carrier is what the construction is about.
+  an **arc** — the carrier is what the construction is about, and an elliptic arc likewise carries its whole
+  ellipse.
+- **Conics are first-class, and exact where it counts.** An ellipse is centre + axis end + a second
+  semi-axis, every one of them a node: click an existing point and it is shared, bind the axis end to a
+  line's direction and the ellipse turns with that line. A point riding an ellipse lives at its **parametric
+  angle**, so its position, tangent and normal are exact trigonometry — nothing forces arc length to be the
+  parameter. Areas are exact too (a whole ellipse encloses π·a·b to the last bit). What is honestly
+  *approximate* is only what is genuinely metric, and it says so: a conic's measured **length** is computed
+  to a stated tolerance (an elliptic integral has no closed form), and a wall thickened over an elliptic
+  carrier is flagged, because an ellipse's offset is not an ellipse.
 - **Live previews — what the click will make, before you make it.** Every drawing, transform, rounding and
   dimension tool paints its result under the cursor as you move: the growing circle, the circumcircle through
   your two picks and the pointer, the rectangle's outline, ghost copies of what a mirror or an array would
@@ -220,7 +233,7 @@ Where you click each section starts its boundary **correspondence**, which is th
 the preview draws the rails before you commit, the choice is written into the file, and a reload is the solid
 you chose rather than the one today's geometry would score. Polygon runs are **exact** — the acceptance
 pyramid is 300000 mm³ and the frustum 392000 mm³, to the last digit, with planar facets — while a curved
-section or guide is flagged **approximated**, the same bargain a Bézier offset makes. A loft is a solid like
+section or guide is flagged **approximated**, the same bargain a Bézier or an ellipse offset makes. A loft is a solid like
 any other: cut it, fuse it, dimension its footprint, chain features onto it.
 
 **A working plane's context is the part's section — and the section is an input.** Drawing on a plane that is
@@ -316,12 +329,15 @@ did not previously complete at all. What the measuring produced:
   picks are highlighted on the canvas and a click that hits nothing says so. The recorded step still lists
   every piece in order, so nothing is re-discovered when the file is reloaded.
 
-1108 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included — down to opening the
+1138 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included — down to opening the
 preview panel and catching a real GLB download.
 
-**Mesh export is done** (GLB / 3MF / binary STL, plus the in-app three.js preview and a material per solid).
-Planned next: conics as first-class curves (an ellipse arc, which is what would make an inclined section of a
-cylinder exact instead of flagged), picking a face in the 3D view to choose the working plane (edit-in-3D's
+**Mesh export is done** (GLB / 3MF / binary STL, plus the in-app three.js preview and a material per solid),
+and **conics are first class**: an ellipse and an elliptic arc are curve values like any other — drawn,
+ridden, broken, traced, extruded and thickened — with line ∩ ellipse a two-branch set and conic ∩ conic a
+four-branch one, and with the inclined section of a cylinder now an **exact** ellipse (semi-axes r and
+r/cos θ) that constructions can be anchored on, instead of a flagged fan of chords.
+Planned next: picking a face in the 3D view to choose the working plane (edit-in-3D's
 second slice) — which is also what per-face materials wait on — textures by projection at export time, regions
 with holes from traced outlines, and line styles in the render seam. Deliberately not planned: **STEP export**,
 because the kernel is mesh-based and holds no exact B-rep for a solid, so exact-geometry export would be either

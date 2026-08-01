@@ -39,6 +39,22 @@ enum class SlotKind {
      * land beyond its ends.
      */
     CIRCLE,
+
+    /**
+     * Anything carrying a whole **ellipse**: an ellipse or an elliptic arc (`Document.carrierEllipse`) —
+     * the third member of the [LINE]/[CIRCLE] family (OP-24), and it accepts an arc for the same reason
+     * they do: every conic op is about the carrier.
+     */
+    CONIC,
+
+    /** Anything with a **centre**: a circle, an arc, an ellipse or an elliptic arc. */
+    CENTERED,
+
+    /**
+     * Anything with a **measurable length**: a segment, an arc, an ellipse or an elliptic arc. A slot of
+     * its own rather than [CURVE], because an infinite line and a ray have no length to measure.
+     */
+    MEASURABLE,
     SEGMENT,
     GEOMETRY,
     ON_CIRCLE_POINT,
@@ -359,6 +375,7 @@ object Tools {
     const val INTERSECT = "intersect"
     const val PROJECT = "project"
     const val POINT_ON_CIRCLE = "ptoncircle"
+    const val POINT_ON_ELLIPSE = "ptonellipse"
     const val POINT_ON_LINE = "ptonline"
     const val POINT_AT_DIST = "ptatdist"
     const val POINT_XY = "ptxy"
@@ -388,6 +405,15 @@ object Tools {
     const val CIRCLE_3 = "circle3"
     const val ARC_3 = "arc3"
     const val ARC_CS = "arccs"
+
+    /**
+     * The conic family (OP-24): an ellipse from three points, an ellipse from two points and a typed
+     * semi-axis, and an elliptic arc. Three ids because the *inputs* differ, exactly as `CIRCLE` and
+     * `CIRCLE_R` are two ids for one shape.
+     */
+    const val ELLIPSE = "ellipse"
+    const val ELLIPSE_AB = "ellipseab"
+    const val ELLIPTIC_ARC = "ellipticarc"
     const val CONCENTRIC = "concentric"
     const val BEZIER = "bezier"
 
@@ -517,12 +543,16 @@ object Tools {
             // placement), so it rides `dofs=` exactly as the `pointoncurve` step's does — the click stays the
             // *choice* it always was (which curve, which side). See [DocumentFormat.restate].
             ToolDef(POINT_ON_CIRCLE, "Point on circle", ToolCategory.POINTS, listOf(SlotKind.CIRCLE), replicates = false, help = "Click a circle or arc to add a point on it; drag it around the circle in Select mode (on an arc it rides the whole circle).", slotNames = listOf("circle"), icon = Icons.POINT_ON_CIRCLE) { d, p, _ -> d.pointOnCircle(p.elements[0], p.at, p.dofs.firstOrNull()) },
+            // the conic twin of *Point on circle* (OP-24): the rider's freedom is the **parametric angle**
+            // `t` (x = a·cos t, y = b·sin t in the ellipse's own frame), which is exact — nothing forces
+            // arc length to be the parameter. Its `dofs=` rides the same seam every other rider's does.
+            ToolDef(POINT_ON_ELLIPSE, "Point on ellipse", ToolCategory.POINTS, listOf(SlotKind.CONIC), replicates = false, help = "Click an ellipse or elliptic arc to add a point on it; drag it round the curve in Select mode. Its position is the parametric angle t, which is exact — the point, the tangent and the normal there are plain trigonometry.", slotNames = listOf("ellipse"), icon = Icons.POINT_ON_ELLIPSE) { d, p, _ -> d.pointOnEllipse(p.elements[0], p.at, p.dofs.firstOrNull()) },
             ToolDef(POINT_ON_LINE, "Point on line", ToolCategory.POINTS, listOf(SlotKind.LINE), replicates = false, help = "Click a line to add a point on it; drag it along the line in Select mode.", slotNames = listOf("line"), icon = Icons.POINT_ON_LINE) { d, p, _ -> d.pointOnLine(p.elements[0], p.at, p.dofs.firstOrNull()) },
             ToolDef(POINT_AT_DIST, "Point at distance", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click the reference point, then click the line on the side you want.", slotNames = listOf("reference point", "line")) { d, p, s -> d.pointAlongLine(p.elements[0], p.points[0], s[0], p.at) },
             // no slots at all: its inputs are both scalars, so it is complete as soon as the panel has
             // supplied x and y and a click merely says "now"
             ToolDef(POINT_XY, "Point (x, y)", ToolCategory.POINTS, emptyList(), scalars = listOf(len("x"), len("y")), help = "Type x, then y (or pick two parameters in the panel), then click anywhere: the point follows both, so editing either moves it.", icon = Icons.POINT_XY) { d, _, s -> d.pointFromCoordinates(s[0], s[1]) },
-            ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTRIC), help = "Click a circle or arc to add its centre point.", slotNames = listOf("circle"), icon = Icons.CENTRE) { d, p, _ -> d.centerOf(p.elements[0]) },
+            ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTERED), help = "Click a circle, arc, ellipse or elliptic arc to add its centre point.", slotNames = listOf("circle or ellipse"), icon = Icons.CENTRE) { d, p, _ -> d.centerOf(p.elements[0]) },
             ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.EXTRACTABLE), help = "Click a curve to add its defining points (endpoints, centre) — or a wall footprint / traced area for its corners, which are then snappable and dimensionable like any point. Works on mirrored and derived geometry too.", slotNames = listOf("curve or area"), icon = Icons.KEY_POINTS) { d, p, _ -> d.extractPoints(p.elements[0]) },
             ToolDef(JOIN, "Join points", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), replicates = false, help = "Click the point to keep, then a free point to weld onto it (they become one).", slotNames = listOf("kept point", "welded point"), icon = Icons.JOIN) { d, p, _ -> d.weld(p.elements[1], p.elements[0]) },
             // the offset is the tool's own DOF, restated on save through `dofs=` exactly as a dimension's
@@ -548,6 +578,14 @@ object Tools {
             ToolDef(CIRCLE_LLL, "Circle (3 tangents)", ToolCategory.CURVES, listOf(SlotKind.LINE, SlotKind.LINE, SlotKind.LINE, SlotKind.SIDE), preview = Previews::circle3Tangents, help = "Click three lines (or segments, rays, wall legs), then click near the circle you want: three lines have four tangent circles — the inscribed one and the three outside it.", slotNames = listOf("tangent line", "tangent line", "tangent line", "which circle"), icon = Icons.CIRCLE_LLL) { d, p, _ -> d.circleFrom3Tangents(p.elements[0], p.elements[1], p.elements[2], p.at, p.signs) },
             ToolDef(ARC_3, "Arc (3 points)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click start, a point on the arc, then the end.", preview = Previews::arc3, slotNames = listOf("start", "through", "end"), icon = Icons.ARC_3) { d, p, _ -> d.arc3(p.points[0], p.points[1], p.points[2]) },
             ToolDef(ARC_CS, "Arc (centre, ends)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the centre, the start point, then the end (sweeps counter-clockwise).", preview = Previews::arcCentreEnds, slotNames = listOf("centre", "start", "end"), icon = Icons.ARC_CS) { d, p, _ -> d.arcCenterStartEnd(p.points[0], p.points[1], p.points[2]) },
+            // ----- conics (OP-24): the drawing half of first-class ellipses. Every input a node — the
+            // centre, the axis end (which fixes the orientation *and* the first semi-axis, so binding it to
+            // a line's direction turns the ellipse with that line) and the second semi-axis, as a third
+            // click or as a typed scalar. Two tools, exactly as Circle has two, so neither build has to
+            // guess which reading a gesture meant.
+            ToolDef(ELLIPSE, "Ellipse (centre, axis, point)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), preview = Previews::ellipse, help = "Click the centre, then the end of one axis (which sets that semi-axis and the ellipse's orientation), then a point giving the other semi-axis. Clicking existing points shares them, so an ellipse can follow the construction that placed them.", slotNames = listOf("centre", "axis end", "second axis point"), icon = Icons.ELLIPSE) { d, p, _ -> d.ellipse(p.points[0], p.points[1], p.points[2]) },
+            ToolDef(ELLIPSE_AB, "Ellipse (centre, axis, semi-axis)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(len("semi-axis")), preview = Previews::ellipseAB, help = "Type the second semi-axis (or pick a parameter in the panel), then click the centre and the end of the first axis — which sets that semi-axis and the ellipse's orientation.", slotNames = listOf("centre", "axis end"), icon = Icons.ELLIPSE) { d, p, s -> d.ellipseCAB(p.points[0], p.points[1], s[0]) },
+            ToolDef(ELLIPTIC_ARC, "Elliptic arc", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), scalars = listOf(len("semi-axis")), preview = Previews::ellipticArc, help = "Type the second semi-axis, then click the centre, the end of the first axis, and the two points the arc runs between — they are projected onto the ellipse, so they need not sit exactly on it. The arc sweeps counter-clockwise in the parameter from the first to the second.", slotNames = listOf("centre", "axis end", "start", "end"), icon = Icons.ELLIPTIC_ARC) { d, p, s -> d.ellipticArc(p.points[0], p.points[1], s[0], p.points[2], p.points[3]) },
             ToolDef(BEZIER, "Bezier curve", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the start, two control points, then the end. Control points may be existing constructed points.", slotNames = listOf("start", "control", "control", "end"), icon = Icons.BEZIER) { d, p, _ -> d.bezierCurve(p.points[0], p.points[1], p.points[2], p.points[3]) },
             ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, followsBoundary = true, shortcut = 'O', help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.", slotNames = listOf("boundary curve"), icon = Icons.OUTLINE) { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
             ToolDef(THICKEN, "Thicken (wall over curves)", ToolCategory.RESULT, listOf(SlotKind.CURVE), scalars = listOf(len("thickness")), repeating = true, minPicks = 1, sidePerPick = true, replicates = false, extendsResult = true, preview = Previews::thicken, help = "Type a thickness, set Wall side, then click the curves the wall follows — segments, arcs or Béziers that meet end to end, or end part-way along one another (a T joins with no seam). The side applies to the next click, so it can change per curve. Enter (or clicking the first curve again) builds it; a disconnected pick is refused. Click an existing wall first to *extend* it instead: its thickness stays its own and its openings, dimensions and solids follow (Alt on that first click starts a new wall there instead).", slotNames = listOf("carrier curve"), icon = Icons.THICKEN) { d, p, s -> d.buildThickNetwork(p.elements, p.signs.map { Tools.sideOf(it) }, s[0]) },
@@ -643,7 +681,7 @@ object Tools {
             // answer, so the measure and annotate tools decline the orbit (OP-23)
             ToolDef(DISTANCE, "Distance", ToolCategory.MEASURE, listOf(SlotKind.POINT, SlotKind.POINT), replicates = false, help = "Click two points to measure their distance.", slotNames = listOf("from", "to"), icon = Icons.DISTANCE) { d, p, _ -> d.measureDistance(p.points[0], p.points[1]) },
             ToolDef(ANGLE, "Angle", ToolCategory.MEASURE, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), replicates = false, help = "Click a point, the vertex, then another point.", slotNames = listOf("point", "vertex", "point")) { d, p, _ -> d.measureAngle(p.points[0], p.points[1], p.points[2]) },
-            ToolDef(LENGTH, "Length", ToolCategory.MEASURE, listOf(SlotKind.SEGMENT), replicates = false, help = "Click a segment to measure its length.", slotNames = listOf("segment")) { d, p, _ -> d.measureLength(p.elements[0]) },
+            ToolDef(LENGTH, "Length", ToolCategory.MEASURE, listOf(SlotKind.MEASURABLE), replicates = false, help = "Click a segment, an arc, an ellipse or an elliptic arc to measure its length. Exact for the first two; a conic's length is computed numerically to a stated tolerance, and the status line says so (OP-15).", slotNames = listOf("curve")) { d, p, _ -> d.measureLength(p.elements[0]) },
             ToolDef(RADIUS, "Radius", ToolCategory.MEASURE, listOf(SlotKind.CIRCLE), replicates = false, help = "Click a circle or arc to measure its radius.", slotNames = listOf("circle")) { d, p, _ -> d.measureRadius(p.elements[0]) },
             ToolDef(COORD_X, "X coordinate", ToolCategory.MEASURE, listOf(SlotKind.POINT), replicates = false, help = "Click a point to read its x coordinate.", slotNames = listOf("point")) { d, p, _ -> d.measureX(p.points[0]) },
             ToolDef(COORD_Y, "Y coordinate", ToolCategory.MEASURE, listOf(SlotKind.POINT), replicates = false, help = "Click a point to read its y coordinate.", slotNames = listOf("point")) { d, p, _ -> d.measureY(p.points[0]) },
@@ -656,7 +694,7 @@ object Tools {
             ToolDef(EXTENT_Z, "Extent (Z)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), replicates = false, help = "Click a solid to measure its height along Z.", slotNames = listOf("solid")) { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.Z) },
             // ----- Annotate: dimensions (OP-4) — the graphic shows a measurement, and drives nothing -----
             ToolDef(DIM_LINEAR, "Linear dimension", ToolCategory.ANNOTATE, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT, SlotKind.SIDE), shortcut = 'M', replicates = false, preview = Previews::linearDimension, help = "Click two points, then click where the dimension line should sit (drag it later, or type the offset).", slotNames = listOf("from", "to", "placement"), icon = Icons.DIM_LINEAR) { d, p, _ -> d.linearDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
-            ToolDef(DIM_RADIAL, "Radial dimension", ToolCategory.ANNOTATE, listOf(SlotKind.CENTRIC, SlotKind.SIDE), replicates = false, preview = Previews::radialDimension, help = "Click a circle or arc, then click where the leader and its radius should sit.", slotNames = listOf("circle", "placement"), icon = Icons.DIM_RADIAL) { d, p, _ -> d.radialDimension(p.elements[0], p.at, p.dofs) },
+            ToolDef(DIM_RADIAL, "Radial dimension", ToolCategory.ANNOTATE, listOf(SlotKind.CENTERED, SlotKind.SIDE), replicates = false, preview = Previews::radialDimension, help = "Click a circle or arc, then click where the leader and its radius should sit. An ellipse declines by name — it has no single radius.", slotNames = listOf("circle", "placement"), icon = Icons.DIM_RADIAL) { d, p, _ -> d.radialDimension(p.elements[0], p.at, p.dofs) },
             ToolDef(DIM_ANGULAR, "Angular dimension", ToolCategory.ANNOTATE, listOf(SlotKind.LINE, SlotKind.LINE, SlotKind.SIDE), replicates = false, preview = Previews::angularDimension, help = "Click two lines, then click inside the angle you mean — that sector is what the dimension names.", slotNames = listOf("line", "line", "placement"), icon = Icons.DIM_ANGULAR) { d, p, _ -> d.angularDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
         )
 
@@ -707,6 +745,9 @@ object Tools {
             SlotKind.CURVE, SlotKind.EXTRACTABLE -> "curve"
             SlotKind.LINE -> "line"
             SlotKind.CIRCLE, SlotKind.CENTRIC -> "circle"
+            SlotKind.CONIC -> "ellipse"
+            SlotKind.CENTERED -> "circle or ellipse"
+            SlotKind.MEASURABLE -> "curve"
             SlotKind.SEGMENT -> "segment"
             SlotKind.GEOMETRY -> "geometry"
             SlotKind.CARRIER -> "leg"

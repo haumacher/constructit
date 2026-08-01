@@ -2,6 +2,8 @@ package constructit
 
 import constructit.core.Evaluator
 import constructit.dsl.SolidRef
+import constructit.dsl.ellipse
+import constructit.dsl.point
 import constructit.dsl.solid
 import constructit.dsl.valueOf
 import constructit.editor.Document
@@ -296,15 +298,23 @@ class SectionInputTest {
     }
 
     /**
-     * An **inclined** cut through the same cylinder is a true ellipse, which this vocabulary has no name for:
-     * the section draws (flagged, sampled, exact at every sample — `PlaneSectionTest` checks the ellipse
-     * itself) and the *input* accessor **refuses by name**, saying what is exact instead.
+     * An **inclined** cut through the same cylinder is a true ellipse — and since the conics package (OP-24)
+     * it is an ordinary construction input.
      *
-     * That is the conic honesty line, asserted from the side that matters: no construction is ever silently
-     * anchored on a chord.
+     * This test **replaces** `anInclinedCutThroughACylinderRefusesToBeAnInput`, whose whole point was the
+     * refusal it asserted, quoted here so the retirement is legible:
+     *
+     * > *"An **inclined** cut through the same cylinder is a true ellipse, which this vocabulary has no name
+     * > for: the section draws (flagged, sampled, exact at every sample) and the *input* accessor **refuses
+     * > by name**, saying what is exact instead. That is the conic honesty line, asserted from the side that
+     * > matters: no construction is ever silently anchored on a chord."*
+     *
+     * The rule it protected is untouched — no construction is anchored on a chord — but the cut is no longer
+     * a chord: it is an exact ellipse, so anchoring on it anchors on the curve the part actually has. What
+     * still refuses is named by its own test above.
      */
     @Test
-    fun anInclinedCutThroughACylinderRefusesToBeAnInput() {
+    fun anInclinedCutThroughACylinderIsAnExactEllipseInput() {
         val c = constructit.dsl.Construction()
         val solid =
             c.extrude(
@@ -316,14 +326,18 @@ class SectionInputTest {
         val section = c.section(solid, plane)
         val ev = Evaluator()
         val s = assertNotNull((ev.valueOf(section) as? constructit.core.SectionValue)?.section)
-        assertTrue(s.approximated, "an inclined cylinder section is a conic, and is flagged")
-        val i = s.edges.indexOfFirst { it.sampled != null }
-        assertTrue(i >= 0, "…and drawn: ${s.edges.map { it.reason }}")
+        assertTrue(!s.approximated, "an inclined cylinder section is exact now")
+        val i = s.edges.indexOfFirst { it.curve is constructit.geom.ProfileElement.EllipseE }
+        assertTrue(i >= 0, "…and named: ${s.edges.map { it.reason }}")
+        val e = Evaluator().ellipse(c.sectionEllipse(section, i))
+        assertClose(e.minor, 30.0, 1e-12, "the cylinder's own radius")
+        assertClose(e.major, 30.0 / kotlin.math.cos(kotlin.math.PI / 6.0), 1e-12, "r / cos 30°")
+        // and it is a real input: its centre is a point of the drawing, downstream of the solid and the plane
+        val centre = Evaluator().point(c.ellipseCenter(c.sectionEllipse(section, i)))
+        assertClose(centre.y, 100.0 / kotlin.math.cos(kotlin.math.PI / 6.0), 1e-12)
+        // asking for the wrong *kind* still refuses by name, exactly as it does for a segment-vs-arc mix-up
         val why = Evaluator().eval(c.sectionSegment(section, i).node)
-        assertTrue(why is constructit.core.EvalResult.Invalid, "a chord is not the curve, so it is not an input")
-        val reason = (why as constructit.core.EvalResult.Invalid).reason
-        assertTrue(reason.contains("ellipse"), reason)
-        assertTrue(reason.contains("perpendicular"), "and it names what is exact: $reason")
+        assertTrue(why is constructit.core.EvalResult.Invalid, "an ellipse is not a straight edge")
     }
 
     /**

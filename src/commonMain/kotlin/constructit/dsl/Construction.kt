@@ -4,6 +4,8 @@ import constructit.core.ArcValue
 import constructit.core.BezierValue
 import constructit.core.CircleValue
 import constructit.core.DirectionValue
+import constructit.core.EllipseValue
+import constructit.core.EllipticArcValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
@@ -34,7 +36,10 @@ import constructit.geom.Bezier
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
 import constructit.geom.Circle
+import constructit.geom.Conics
 import constructit.geom.Direction
+import constructit.geom.Ellipse
+import constructit.geom.EllipticArc
 import constructit.geom.Feature3
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
@@ -89,6 +94,10 @@ typealias LineRef = Ref<LineValue>
 typealias SegmentRef = Ref<SegmentValue>
 typealias CircleRef = Ref<CircleValue>
 typealias ArcRef = Ref<ArcValue>
+
+/** A first-class conic (OP-24): an ellipse, and a piece of one trimmed by parametric angle. */
+typealias EllipseRef = Ref<EllipseValue>
+typealias EllipticArcRef = Ref<EllipticArcValue>
 typealias PointSetRef = Ref<PointSetValue>
 typealias RayRef = Ref<RayValue>
 typealias DirectionRef = Ref<DirectionValue>
@@ -447,6 +456,177 @@ class Construction {
             }
         }
 
+    // ---- conics (OP-24) ----
+    // Every input a node, exactly as a circle's centre and radius are: the centre is a point, the
+    // orientation *and* the first semi-axis come from a second point, and the second semi-axis is
+    // either a scalar or a third point. So binding the axis-end point onto a line's direction turns
+    // the ellipse with that line, and sharing the `b` parameter makes two ellipses equally tall by
+    // construction (OP-5 — sharing a node is equality).
+
+    /**
+     * The ellipse centred at [center] whose own +u axis runs through [axisEnd] — which fixes both the
+     * orientation and the semi-axis `a` — with semi-axis `b` given as a scalar.
+     *
+     * The frame is deliberately the *picked* one and is never renormalised to `a ≥ b`; see [Ellipse].
+     */
+    fun ellipseCAB(
+        center: PointRef,
+        axisEnd: PointRef,
+        b: ScalarRef,
+    ): EllipseRef =
+        op(center, axisEnd, b) {
+            val c = pt(it[0])
+            val d = pt(it[1]) - c
+            val a = d.length()
+            val bb = sc(it[2]).requireDim(Dimension.LENGTH, "semi-axis").mm
+            when {
+                a < Vec2.EPS -> EvalResult.Invalid("an ellipse's axis end coincides with its centre, so it has no size and no direction")
+                bb <= 0.0 -> EvalResult.Invalid("an ellipse needs a positive second semi-axis")
+                else -> EvalResult.Ok(EllipseValue(Ellipse(c, a, bb, d.angle())))
+            }
+        }
+
+    /**
+     * The same ellipse with `b` read off a **third point**: the distance of [bPoint] from the axis through
+     * [center] and [axisEnd]. A point rather than a number, so the third click is as much a node as the
+     * first two — drag it and the ellipse gets taller.
+     */
+    fun ellipseCAP(
+        center: PointRef,
+        axisEnd: PointRef,
+        bPoint: PointRef,
+    ): EllipseRef =
+        op(center, axisEnd, bPoint) {
+            val c = pt(it[0])
+            val d = pt(it[1]) - c
+            val a = d.length()
+            if (a < Vec2.EPS) {
+                return@op EvalResult.Invalid("an ellipse's axis end coincides with its centre, so it has no size and no direction")
+            }
+            val u = d * (1.0 / a)
+            val bb = abs((pt(it[2]) - c).cross(u))
+            if (bb <= Vec2.EPS) {
+                EvalResult.Invalid("the third point lies on the ellipse's own axis, so there is no second semi-axis")
+            } else {
+                EvalResult.Ok(EllipseValue(Ellipse(c, a, bb, d.angle())))
+            }
+        }
+
+    /**
+     * The point of [ellipse] at **parametric angle** [t] — the exact position-along an ellipse offers
+     * (OP-24), and the DOF a rider on one stores. Plain trigonometry, so it is as exact as a point on a
+     * circle at a given angle.
+     */
+    fun pointOnEllipse(
+        ellipse: EllipseRef,
+        t: ScalarRef,
+    ): PointRef =
+        op(ellipse, t) {
+            val e = (it[0] as EllipseValue).ellipse
+            val a = sc(it[1]).requireDim(Dimension.ANGLE, "parameter").base
+            EvalResult.Ok(PointValue(Conics.pointAt(e, a)))
+        }
+
+    /** The tangent line of [ellipse] at parametric angle [t] — exact, and a line like any other. */
+    fun tangentOnEllipse(
+        ellipse: EllipseRef,
+        t: ScalarRef,
+    ): LineRef =
+        op(ellipse, t) {
+            val e = (it[0] as EllipseValue).ellipse
+            val a = sc(it[1]).requireDim(Dimension.ANGLE, "parameter").base
+            val d = Conics.tangentAt(e, a)
+            if (d.length() < Vec2.EPS) {
+                EvalResult.Invalid("the ellipse is degenerate, so it has no tangent there")
+            } else {
+                EvalResult.Ok(LineValue(Line(Conics.pointAt(e, a), d.normalized())))
+            }
+        }
+
+    /** The (outward) normal line of [ellipse] at parametric angle [t] — exact. */
+    fun normalOnEllipse(
+        ellipse: EllipseRef,
+        t: ScalarRef,
+    ): LineRef =
+        op(ellipse, t) {
+            val e = (it[0] as EllipseValue).ellipse
+            val a = sc(it[1]).requireDim(Dimension.ANGLE, "parameter").base
+            EvalResult.Ok(LineValue(Line(Conics.pointAt(e, a), Conics.normalAt(e, a))))
+        }
+
+    private fun carrierEllipse(v: Value): Ellipse? =
+        when (v) {
+            is EllipseValue -> v.ellipse
+            is EllipticArcValue -> v.arc.ellipse
+            else -> null
+        }
+
+    /**
+     * The piece of [curve] between [from] and [to], swept counter-clockwise **in the parameter** unless
+     * [ccw] is false (OP-24) — the exact twin of [arcBetween], accepting an ellipse or an elliptic arc
+     * as the carrier.
+     *
+     * Both cut points are **projected to the nearest point of the ellipse** rather than required to lie
+     * on it, for the reason [segmentBetween] gives: a cut point is normally constructed *from* the curve,
+     * so exact incidence is unattainable in floating point. [ccw] is a stored discrete branch choice
+     * exactly like a `Select` sign (OP-1) — which of the two ways round is meant is decided once.
+     */
+    fun ellipticArcBetween(
+        curve: Ref<*>,
+        from: PointRef,
+        to: PointRef,
+        ccw: Boolean = true,
+    ): EllipticArcRef =
+        op(curve, from, to) {
+            val e = carrierEllipse(it[0]) ?: return@op EvalResult.Invalid("not an elliptic curve")
+            val t0 = Conics.paramOf(e, pt(it[1]))
+            val t1 = Conics.paramOf(e, pt(it[2]))
+            val arc = EllipticArc(e, t0, t1, ccw)
+            if (abs(Conics.sweep(arc)) < Vec2.EPS) {
+                EvalResult.Invalid("degenerate trim: the cut points coincide")
+            } else {
+                EvalResult.Ok(EllipticArcValue(arc))
+            }
+        }
+
+    /** The whole ellipse an elliptic arc lies on — the carrier coercion a measurement or a rider needs. */
+    fun ellipseOfArc(a: EllipticArcRef): EllipseRef =
+        op(a) { EvalResult.Ok(EllipseValue((it[0] as EllipticArcValue).arc.ellipse)) }
+
+    fun ellipseCenter(e: EllipseRef): PointRef =
+        op(e) { EvalResult.Ok(PointValue((it[0] as EllipseValue).ellipse.center)) }
+
+    /**
+     * The point of [e] at parametric angle `k·π/2` — its four **axis endpoints** (OP-24's key points):
+     * `k = 0` and `2` are the ends of the `a` axis, `1` and `3` of the `b` axis. `k` is structural, like
+     * every other sub-entity index (OP-8).
+     */
+    fun ellipseAxisPoint(
+        e: EllipseRef,
+        k: Int,
+    ): PointRef =
+        op(e) { EvalResult.Ok(PointValue(Conics.pointAt((it[0] as EllipseValue).ellipse, k * kotlin.math.PI / 2.0))) }
+
+    /** The semi-axis of [e] along its own +u — the one its axis-end point sets (a length, exact). */
+    fun measureSemiAxisA(e: EllipseRef): ScalarRef =
+        op(e) { EvalResult.Ok(ScalarValue(Quantity.mm((it[0] as EllipseValue).ellipse.a))) }
+
+    /** The semi-axis of [e] perpendicular to its own +u (a length, exact). */
+    fun measureSemiAxisB(e: EllipseRef): ScalarRef =
+        op(e) { EvalResult.Ok(ScalarValue(Quantity.mm((it[0] as EllipseValue).ellipse.b))) }
+
+    /**
+     * The **measured length** of an elliptic arc (OP-4) — numeric, to [Conics.LENGTH_TOL_MM], and the one
+     * genuinely approximate reading of a conic in this package (OP-15). Everything else about an elliptic
+     * arc — where a point on it is, which way it leaves, what area it encloses — is exact.
+     */
+    fun measureEllipticArcLength(a: EllipticArcRef): ScalarRef =
+        op(a) { EvalResult.Ok(ScalarValue(Quantity.mm(Conics.arcLength((it[0] as EllipticArcValue).arc)))) }
+
+    /** The whole circumference of [e] — the same numeric integral over a full turn (OP-15). */
+    fun measureCircumference(e: EllipseRef): ScalarRef =
+        op(e) { EvalResult.Ok(ScalarValue(Quantity.mm(Conics.circumference((it[0] as EllipseValue).ellipse)))) }
+
     // ---- intersections & selection (OP-1) ----
 
     fun intersectCC(
@@ -466,6 +646,37 @@ class Construction {
         c: CircleRef,
     ): PointSetRef =
         op(line, c) { EvalResult.Ok(PointSetValue(GeomMath.intersectLC((it[0] as LineValue).line, (it[1] as CircleValue).circle))) }
+
+    /** Line ∩ ellipse (OP-24): the ordinary two-branch set, ordered along the line's own direction. */
+    fun intersectLE(
+        line: LineRef,
+        e: EllipseRef,
+    ): PointSetRef =
+        op(line, e) { EvalResult.Ok(PointSetValue(Conics.intersectLE((it[0] as LineValue).line, (it[1] as EllipseValue).ellipse))) }
+
+    /**
+     * Circle ∩ ellipse (OP-24): **up to four** solutions, ordered by ascending parametric angle on the
+     * **circle** — the first operand, which is the convention [Conics.intersect] states.
+     */
+    fun intersectCE(
+        c: CircleRef,
+        e: EllipseRef,
+    ): PointSetRef =
+        op(c, e) {
+            EvalResult.Ok(PointSetValue(Conics.intersect(Conics.ofCircle((it[0] as CircleValue).circle), (it[1] as EllipseValue).ellipse)))
+        }
+
+    /**
+     * Ellipse ∩ ellipse (OP-24): **up to four** solutions, ordered by ascending parametric angle on the
+     * first operand — see [Conics.intersect] for the quartic and for why that ordering is the one.
+     */
+    fun intersectEE(
+        e1: EllipseRef,
+        e2: EllipseRef,
+    ): PointSetRef =
+        op(e1, e2) {
+            EvalResult.Ok(PointSetValue(Conics.intersect((it[0] as EllipseValue).ellipse, (it[1] as EllipseValue).ellipse)))
+        }
 
     /**
      * Pick a branch from a solution set. sign >= 0 -> first (left), sign < 0 -> last (right).
@@ -489,6 +700,48 @@ class Construction {
                 else -> EvalResult.Ok(PointValue(pts.last()))
             }
         }
+
+    /**
+     * Pick branch [index] of a solution set — the **four-branch** form of [select] (OP-1, OP-24).
+     *
+     * An *index*, not a pair of composed binary signs, and the difference is not cosmetic. The
+     * session-17 LLL circle stores two signs because its construction genuinely factors into two
+     * independent binary choices, one per bisector, each with a geometric meaning of its own. A quartic
+     * intersection factors into nothing: its four points are one ordered set (the ordering convention is
+     * [Conics.intersect]'s), so two binary signs would only re-encode an index — and would re-encode it
+     * *worse*, because when a parameter edit leaves two solutions instead of four, "which composed pair
+     * survived" has no answer while "index 2 of a two-element set" has a clean one: invalid, with a
+     * reason, healing the moment the fourth solution comes back (OP-3). A step's `signs=` already carries
+     * arbitrary integers, so this needed no new file argument.
+     *
+     * The index is **structural** and taken verbatim on replay; the *ordering* is a stated function of
+     * the operands' values. So a branch never silently becomes another branch — but an edit that
+     * re-sorts the set does move which point index 1 names, which is what an ordered solution set means
+     * and is recorded as such.
+     */
+    fun selectAt(
+        set: PointSetRef,
+        index: Int,
+        emptyReason: String = "empty intersection",
+    ): PointRef =
+        op(set) {
+            val pts = (it[0] as PointSetValue).set.points
+            when {
+                pts.isEmpty() -> EvalResult.Invalid(emptyReason)
+                index < 0 || index >= pts.size ->
+                    EvalResult.Invalid(
+                        "this crossing has ${pts.size} solution(s) now, so branch ${index + 1} is gone — " +
+                            "move the curves back until it exists, or take the intersection again",
+                    )
+                else -> EvalResult.Ok(PointValue(pts[index]))
+            }
+        }
+
+    /** How many solutions [set] currently holds — what a four-branch intersection asks before it selects. */
+    fun solutionCount(
+        set: PointSetRef,
+        ev: Evaluator,
+    ): Int = ((ev.eval(set.node) as? EvalResult.Ok)?.value as? PointSetValue)?.set?.points?.size ?: 0
 
     // ---- measurements (OP-4) ----
 
@@ -833,6 +1086,13 @@ class Construction {
             EvalResult.Ok(ScalarValue(Quantity.mm((s.b - s.a).length())))
         }
 
+    /** The arc length of a circular arc — **exact**, `r·|sweep|`, unlike its elliptic cousin (OP-15). */
+    fun measureArcLength(a: ArcRef): ScalarRef =
+        op(a) {
+            val arc = (it[0] as ArcValue).arc
+            EvalResult.Ok(ScalarValue(Quantity.mm(abs(GeomMath.sweep(arc)) * arc.radius)))
+        }
+
     fun measureRadius(circle: CircleRef): ScalarRef =
         op(circle) { EvalResult.Ok(ScalarValue(Quantity.mm(cir(it[0]).radius))) }
 
@@ -1109,7 +1369,8 @@ class Construction {
                         is SegmentValue -> ProfileElement.Seg(v.seg)
                         is ArcValue -> ProfileElement.ArcE(v.arc)
                         is BezierValue -> ProfileElement.BezierE(v.bezier)
-                        else -> throw IllegalArgumentException("profile element must be a segment, arc or Bézier")
+                        is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
+                        else -> throw IllegalArgumentException("profile element must be a segment, arc, Bézier or elliptic arc")
                     }
                 }
             EvalResult.Ok(ProfileValue(Profile(elems)))
@@ -1293,7 +1554,9 @@ class Construction {
                         is ArcValue -> ProfileElement.ArcE(v.arc)
                         is CircleValue -> ProfileElement.CircleE(v.circle)
                         is BezierValue -> ProfileElement.BezierE(v.bezier)
-                        else -> return@op EvalResult.Invalid("a loop piece must be a segment, an arc, a circle or a Bézier")
+                        is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
+                        is EllipseValue -> ProfileElement.EllipseE(v.ellipse)
+                        else -> return@op EvalResult.Invalid("a loop piece must be a segment, an arc, a circle, an ellipse or a Bézier")
                     }
                 elems.add(e)
             }
@@ -1446,6 +1709,8 @@ class Construction {
                     is ArcValue -> ProfileElement.ArcE(v.arc)
                     is BezierValue -> ProfileElement.BezierE(v.bezier)
                     is CircleValue -> ProfileElement.CircleE(v.circle)
+                    is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
+                    is EllipseValue -> ProfileElement.EllipseE(v.ellipse)
                     else -> return null
                 }
             CarrierCurve(piece, sides.getOrElse(i) { Justification.CENTER })
@@ -1756,6 +2021,8 @@ class Construction {
             is ArcValue -> listOf(ProfileElement.ArcE(v.arc))
             is BezierValue -> listOf(ProfileElement.BezierE(v.bezier))
             is CircleValue -> listOf(ProfileElement.CircleE(v.circle))
+            is EllipticArcValue -> listOf(ProfileElement.EllipticArcE(v.arc))
+            is EllipseValue -> listOf(ProfileElement.EllipseE(v.ellipse))
             is ProfileValue -> v.profile.elements
             is LoopValue -> v.loop.elements
             else -> null
@@ -1966,6 +2233,28 @@ class Construction {
             }
         }
 
+    /**
+     * Curve [index] of [section] as an **ellipse** (OP-24) — see [sectionSegment] for the kind rule.
+     *
+     * This is the accessor the conics package exists to make possible: an inclined plane through a
+     * cylinder cuts a true ellipse, and since session 27 that ellipse is computed analytically rather
+     * than sampled, so it is a legal construction input like any other section curve.
+     */
+    fun sectionEllipse(
+        section: SectionRef,
+        index: Int,
+    ): EllipseRef =
+        op(section) {
+            when (val e = sectionEdgeAt(it[0], index, "ellipse")) {
+                is EvalResult.Invalid -> e
+                else ->
+                    when (val c = (e as EvalResult.Ok).value) {
+                        is EllipseValue -> EvalResult.Ok(c)
+                        else -> EvalResult.Invalid("section curve ${index + 1} is not an ellipse any more — take the input again")
+                    }
+            }
+        }
+
     /** Curve [index] of [section] as a **circle** — see [sectionSegment] for the kind rule. */
     fun sectionCircle(
         section: SectionRef,
@@ -1987,7 +2276,10 @@ class Construction {
      * shares stated once: an index past the set, a face the plane no longer cuts, a face cut in several
      * pieces, a section with no structural pedigree at all (the mesh route), and the **conic** line: a curve
      * that is exact only at its samples is refused as an input by name, because a chord is not the curve and
-     * a construction anchored on one would be tangent to something that is not there (OP-15).
+     * a construction anchored on one would be tangent to something that is not there (OP-15). Since the
+     * conics package (OP-24) an inclined cylinder cut is **not** in that class any more — it is an exact
+     * ellipse and an ordinary input — so what is left there is the genuinely unnameable: a twisted band's
+     * cut, and a cylinder's cut that runs off the ends of the material.
      */
     private fun sectionEdgeAt(
         v: Value,
@@ -2004,15 +2296,17 @@ class Construction {
         e.reason?.let { return EvalResult.Invalid(it) }
         if (e.sampled != null) {
             return EvalResult.Invalid(
-                "${e.provenance} is cut into a curve this drawing has no name for (an inclined plane through a " +
-                    "cylinder is a true ellipse), so it draws but cannot be used as a $want — cut perpendicular to " +
-                    "the axis for the exact circle, or anchor on a flat face's edge",
+                "${e.provenance} is cut into a curve this drawing has no name for, so it draws but cannot be used " +
+                    "as a $want — an inclined cut of a cylinder is an exact ellipse and can be anchored on, but a " +
+                    "cut that leaves the material through its ends, or one through a ruled face, cannot",
             )
         }
         return when (val c = e.curve) {
             is ProfileElement.Seg -> EvalResult.Ok(SegmentValue(c.segment))
             is ProfileElement.ArcE -> EvalResult.Ok(ArcValue(c.arc))
             is ProfileElement.CircleE -> EvalResult.Ok(CircleValue(c.circle))
+            is ProfileElement.EllipseE -> EvalResult.Ok(EllipseValue(c.ellipse))
+            is ProfileElement.EllipticArcE -> EvalResult.Ok(EllipticArcValue(c.arc))
             else -> EvalResult.Invalid("${e.provenance} has no curve to take as a $want")
         }
     }
@@ -2137,6 +2431,12 @@ class Construction {
             EvalResult.Ok(PointValue(arc.center + Vec2(arc.radius * kotlin.math.cos(arc.startAngle), arc.radius * kotlin.math.sin(arc.startAngle))))
         }
 
+    fun ellipticArcStart(a: EllipticArcRef): PointRef =
+        op(a) { EvalResult.Ok(PointValue(Conics.start((it[0] as EllipticArcValue).arc))) }
+
+    fun ellipticArcEnd(a: EllipticArcRef): PointRef =
+        op(a) { EvalResult.Ok(PointValue(Conics.end((it[0] as EllipticArcValue).arc))) }
+
     fun arcEnd(a: ArcRef): PointRef =
         op(a) {
             val arc = (it[0] as ArcValue).arc
@@ -2165,6 +2465,10 @@ fun Evaluator.segment(ref: SegmentRef): Segment = (valueOf(ref) as SegmentValue)
 fun Evaluator.circle(ref: CircleRef): Circle = (valueOf(ref) as CircleValue).circle
 
 fun Evaluator.arc(ref: ArcRef): Arc = (valueOf(ref) as ArcValue).arc
+
+fun Evaluator.ellipse(ref: EllipseRef): Ellipse = (valueOf(ref) as EllipseValue).ellipse
+
+fun Evaluator.ellipticArc(ref: EllipticArcRef): EllipticArc = (valueOf(ref) as EllipticArcValue).arc
 
 fun Evaluator.ray(ref: RayRef): Ray = (valueOf(ref) as RayValue).ray
 

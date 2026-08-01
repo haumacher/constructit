@@ -1003,7 +1003,12 @@ class Editor(
         val curves = s.edges.count { it.curve != null }
         val corners = s.corners.count { it.at != null }
         val sampled = s.edges.count { it.approximated }
-        val exact = if (sampled == 0) "exact" else "$sampled of them approximated (a conic has no name here)"
+        val exact =
+            if (sampled == 0) {
+                "exact"
+            } else {
+                "$sampled of them approximated (a ruled face's cut has no name here; a cylinder's has, since conics)"
+            }
         return " Its section is $curves curve${if (curves == 1) "" else "s"} and $corners corner" +
             "${if (corners == 1) "" else "s"} ($exact) — click one while a tool is collecting to use it as an input."
     }
@@ -2080,7 +2085,8 @@ class Editor(
 
     /** Curve kinds a plain break splits — an ortho leg is a segment too, and is handled before these. */
     private fun breakableKind(el: Element): Boolean =
-        el.kind == ElementKind.SEGMENT || el.kind == ElementKind.ARC || el.kind == ElementKind.BEZIER
+        el.kind == ElementKind.SEGMENT || el.kind == ElementKind.ARC || el.kind == ElementKind.BEZIER ||
+            el.isElliptic
 
     /**
      * One click of the Break tool, **dispatched by what it landed on**: an ortho leg keeps the jog logic
@@ -3328,8 +3334,8 @@ class Editor(
                 stop = "the boundary rejoins ${doc.nameOf(step.piece)}, which is already in it"
                 break
             }
-            if (step.piece.kind == ElementKind.CIRCLE) {
-                stop = "${doc.nameOf(step.piece)} continues there, but which arc of a whole circle the boundary takes is a choice — click it"
+            if (step.piece.kind == ElementKind.CIRCLE || step.piece.kind == ElementKind.ELLIPSE) {
+                stop = "${doc.nameOf(step.piece)} continues there, but which piece of a closed curve the boundary takes is a choice — click it"
                 break
             }
             chain.add(step.piece to step.at)
@@ -3455,6 +3461,11 @@ class Editor(
                 SlotKind.LINE -> pickElement(world) { it.isLinear } // a segment or ray also carries a line
                 // ...and an arc also carries a circle: the twin coercion, so a circle slot takes one
                 SlotKind.CIRCLE -> pickElement(world) { it.isCentric }
+                // ...and the same coercion a third time, for the conics (OP-24)
+                SlotKind.CONIC -> pickElement(world) { it.isElliptic }
+                SlotKind.CENTERED -> pickElement(world) { it.hasCentre }
+                SlotKind.MEASURABLE ->
+                    pickElement(world) { it.kind == ElementKind.SEGMENT || it.kind == ElementKind.ARC || it.isElliptic }
                 SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
                 SlotKind.GEOMETRY -> pickGeometry(world, tool)
                 SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.handle is OnCircleHandle }
@@ -3672,7 +3683,7 @@ class Editor(
             when (slot) {
                 SlotKind.EXISTING_POINT -> Document.SectionInput.CORNER
                 SlotKind.LINE, SlotKind.SEGMENT, SlotKind.CURVE, SlotKind.CARRIER, SlotKind.CIRCLE, SlotKind.CENTRIC,
-                SlotKind.EXTRACTABLE,
+                SlotKind.EXTRACTABLE, SlotKind.CONIC, SlotKind.CENTERED, SlotKind.MEASURABLE,
                 -> Document.SectionInput.EDGE
                 SlotKind.GEOMETRY -> null
                 else -> return false
@@ -3690,6 +3701,10 @@ class Editor(
             when (slot) {
                 SlotKind.LINE, SlotKind.SEGMENT -> k == ElementKind.SEGMENT
                 SlotKind.CIRCLE, SlotKind.CENTRIC -> k == ElementKind.CIRCLE || k == ElementKind.ARC
+                SlotKind.CONIC -> k == ElementKind.ELLIPSE || k == ElementKind.ELLIPTIC_ARC
+                SlotKind.CENTERED ->
+                    k == ElementKind.CIRCLE || k == ElementKind.ARC || k == ElementKind.ELLIPSE || k == ElementKind.ELLIPTIC_ARC
+                SlotKind.MEASURABLE -> k != ElementKind.DERIVED_POINT && k != ElementKind.LINE
                 SlotKind.CARRIER, SlotKind.CURVE, SlotKind.EXTRACTABLE -> k != ElementKind.DERIVED_POINT
                 // a geometry slot (mirror, rotate, array) takes whatever the section offers: a corner is a
                 // point and a section curve is a curve, and both are ordinary operands once materialized

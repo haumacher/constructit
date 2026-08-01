@@ -3,6 +3,8 @@ package constructit.editor
 import constructit.core.ArcValue
 import constructit.core.BezierValue
 import constructit.core.CircleValue
+import constructit.core.EllipseValue
+import constructit.core.EllipticArcValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
@@ -26,6 +28,8 @@ import constructit.dsl.ArcRef
 import constructit.dsl.BezierRef
 import constructit.dsl.CircleRef
 import constructit.dsl.Construction
+import constructit.dsl.EllipseRef
+import constructit.dsl.EllipticArcRef
 import constructit.dsl.FrameRef
 import constructit.dsl.LineRef
 import constructit.dsl.LoftPart
@@ -49,6 +53,7 @@ import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
+import constructit.geom.Conics
 import constructit.geom.Feature3
 import constructit.geom.FilletLeg
 import constructit.geom.FilletMath
@@ -91,6 +96,15 @@ enum class ElementKind {
 
     /** A cubic Bézier (OP-15) — a curve like any other, pickable and trimmable-adjacent. */
     BEZIER,
+
+    /**
+     * A whole **ellipse** (OP-24) — a first-class conic, closed like a circle, so it bounds an area by
+     * itself and can be picked wherever a curve is wanted.
+     */
+    ELLIPSE,
+
+    /** A piece of an ellipse, trimmed by parametric angle (OP-24). */
+    ELLIPTIC_ARC,
 
     /** A closed boundary: the result layer's own element (OP-14). */
     OUTLINE,
@@ -224,7 +238,8 @@ class Element(
     val selectable: Boolean get() = true
     val isCurve: Boolean get() =
         kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT ||
-            kind == ElementKind.RAY || kind == ElementKind.ARC || kind == ElementKind.BEZIER
+            kind == ElementKind.RAY || kind == ElementKind.ARC || kind == ElementKind.BEZIER ||
+            kind == ElementKind.ELLIPSE || kind == ElementKind.ELLIPTIC_ARC
 
     /** An output of the construction rather than scaffolding for it (OP-14). */
     val isResult: Boolean get() = kind == ElementKind.OUTLINE || kind == ElementKind.AREA || kind == ElementKind.SOLID
@@ -254,6 +269,19 @@ class Element(
      * carrier line may land beyond its ends.
      */
     val isCentric: Boolean get() = kind == ElementKind.CIRCLE || kind == ElementKind.ARC
+
+    /**
+     * Ellipse / elliptic arc — anything that determines a **carrier ellipse** (OP-24).
+     *
+     * The third member of the [isLinear]/[isCentric] family, and it exists for the same reason: every
+     * conic op is about the carrier, and an elliptic arc has one (`Document.carrierEllipse`). A point
+     * derived that way may land off the arc's swept range, exactly as one on a segment's carrier line may
+     * land beyond its ends.
+     */
+    val isElliptic: Boolean get() = kind == ElementKind.ELLIPSE || kind == ElementKind.ELLIPTIC_ARC
+
+    /** Anything with a **centre**: a circle, an arc, an ellipse or an elliptic arc. */
+    val hasCentre: Boolean get() = isCentric || isElliptic
 }
 
 /**
@@ -1285,6 +1313,9 @@ class Document {
         when (e.curve) {
             is ProfileElement.ArcE -> ElementKind.ARC
             is ProfileElement.CircleE -> ElementKind.CIRCLE
+            // since session 27 an inclined cut through a cylinder is an exact ellipse, not a chord fan (OP-24)
+            is ProfileElement.EllipseE -> ElementKind.ELLIPSE
+            is ProfileElement.EllipticArcE -> ElementKind.ELLIPTIC_ARC
             else -> ElementKind.SEGMENT
         }
 
@@ -1296,9 +1327,9 @@ class Document {
         val e = section.edges.getOrNull(index) ?: return "that curve is no longer part of the section"
         e.reason?.let { return it }
         if (e.sampled != null) {
-            return "${e.provenance} is cut into a curve this drawing has no name for — an inclined plane through a " +
-                "curved face is a conic, so it draws but cannot be anchored on; cut perpendicular to the axis for " +
-                "the exact circle, or take a flat face's edge"
+            return "${e.provenance} is cut into a curve this drawing has no name for, so it draws but cannot be " +
+                "anchored on — an inclined cut of a cylinder is an exact ellipse and *can* be, but a cut that " +
+                "leaves the material through its ends, or one through a ruled face, cannot"
         }
         return null
     }
@@ -1348,6 +1379,7 @@ class Document {
                     when (section?.edges?.getOrNull(index)?.curve) {
                         is ProfileElement.ArcE -> add(cx.sectionArc(node, index), ElementKind.ARC, Styles.CONSTRUCT)
                         is ProfileElement.CircleE -> add(cx.sectionCircle(node, index), ElementKind.CIRCLE, Styles.CONSTRUCT)
+                        is ProfileElement.EllipseE -> add(cx.sectionEllipse(node, index), ElementKind.ELLIPSE, Styles.CONSTRUCT)
                         else -> add(cx.sectionSegment(node, index), ElementKind.SEGMENT, Styles.CONSTRUCT)
                     }
                 }
@@ -2091,6 +2123,11 @@ class Document {
     @Suppress("UNCHECKED_CAST")
     private fun carrierCircle(el: Element): CircleRef =
         if (el.kind == ElementKind.ARC) cx.circleOfArc(el.ref as ArcRef) else el.ref as CircleRef
+
+    /** Coerce an ellipse/elliptic-arc element to its whole **carrier ellipse** — [carrierCircle]'s twin (OP-24). */
+    @Suppress("UNCHECKED_CAST")
+    private fun carrierEllipse(el: Element): EllipseRef =
+        if (el.kind == ElementKind.ELLIPTIC_ARC) cx.ellipseOfArc(el.ref as EllipticArcRef) else el.ref as EllipseRef
 
     // ---- free points & scalars ----
 
@@ -3902,6 +3939,13 @@ class Document {
 
         /** An angle about a circle's centre — already relative to the circle, so nothing re-anchors it. */
         CIRCLE_ANGLE,
+
+        /**
+         * The **parametric angle** on an ellipse (OP-24) — the same kind of freedom [CIRCLE_ANGLE] is, and
+         * absolute for the same reason: it is measured in the ellipse's own frame, which no edit to the
+         * curve's *extent* can move, because an ellipse has no ends to stretch.
+         */
+        ELLIPSE_PARAM,
     }
 
     /**
@@ -4136,6 +4180,47 @@ class Document {
                     val pick = options.minByOrNull { abs(atan2(sin(it - current), cos(it - current))) } ?: base
                     aNode.value = ScalarValue(Quantity.rad(pick))
                     true
+                }
+            }
+        }
+        if (curve.isElliptic) {
+            val er = carrierEllipse(curve)
+            val e = (ev.eval(er.node) as? EvalResult.Ok)?.value as? EllipseValue ?: return null
+            // the parametric angle in the ellipse's own frame: absolute, exactly as a circle's polar angle
+            // is, and the DOF that makes position-along a conic exact (OP-24)
+            val tNode = SourceNode(nextId(prefix + "p"), ScalarValue(Quantity.rad(Conics.paramOf(e.ellipse, at))))
+            return Rider(
+                cx.pointOnEllipse(er, Ref<ScalarValue>(tNode)),
+                OnEllipseHandle(er, tNode),
+                tNode,
+                RiderForm.ELLIPSE_PARAM,
+                placeable = { true },
+            ) { axis, value ->
+                // one coordinate of P(t) is `A cos t + B sin t + c`, so placing it is a closed-form solve —
+                // the ellipse's version of the circle's two-angles-per-coordinate rule, keeping the branch
+                // nearer where the rider already sits
+                val el2 = ((Evaluator().eval(er.node) as? EvalResult.Ok)?.value as? EllipseValue)?.ellipse
+                if (el2 == null) {
+                    false
+                } else {
+                    val co = cos(el2.rotation)
+                    val si = sin(el2.rotation)
+                    val ca = if (axis == 0) el2.a * co else el2.a * si
+                    val cb = if (axis == 0) -el2.b * si else el2.b * co
+                    val k = value - (if (axis == 0) el2.center.x else el2.center.y)
+                    val r = kotlin.math.hypot(ca, cb)
+                    if (r < Vec2.EPS || abs(k) > r) {
+                        false
+                    } else {
+                        val phase = atan2(cb, ca)
+                        val d = acos((k / r).coerceIn(-1.0, 1.0))
+                        val current = (tNode.value as ScalarValue).q.base
+                        val pick =
+                            listOf(phase + d, phase - d)
+                                .minByOrNull { abs(atan2(sin(it - current), cos(it - current))) } ?: (phase + d)
+                        tNode.value = ScalarValue(Quantity.rad(pick))
+                        true
+                    }
                 }
             }
         }
@@ -4647,6 +4732,9 @@ class Document {
         when (el.kind) {
             ElementKind.CIRCLE -> addDerived(cx.circleCenter(el.ref as CircleRef))
             ElementKind.ARC -> addDerived(cx.arcCenter(el.ref as ArcRef))
+            // an ellipse has a centre like any conic (OP-24); what it has *not* got is a radius, which is
+            // why the radial dimension declines one by name rather than casting
+            ElementKind.ELLIPSE, ElementKind.ELLIPTIC_ARC -> addDerived(cx.ellipseCenter(carrierEllipse(el)))
             else -> null
         }
 
@@ -4831,42 +4919,86 @@ class Document {
     }
 
     /**
+     * Point that slides along an **ellipse** (OP-24), created at the parametric angle of the click.
+     *
+     * The exact twin of [pointOnCircle], and exact in the same sense: the parameter is measured in the
+     * ellipse's own frame, so it is already absolute — an ellipse has no ends whose move could re-anchor
+     * it — and the point, the tangent and the normal at it are plain trigonometry.
+     */
+    fun pointOnEllipse(
+        ellipse: Element,
+        at: Vec2,
+        dof: Quantity? = null,
+    ): PointRef? {
+        val rider = riderOn(ellipse, at, "") ?: return null
+        return addRider(ellipse, rider, dof)
+    }
+
+    /**
      * Intersect two curves. Segments/rays are treated as their carrier line. Branch count
-     * follows the pair type (line-like ∩ line-like: 1 point, else: 2).
+     * follows the pair type (line-like ∩ line-like: 1 point, a conic pair: up to 4, else 2).
      */
     fun intersect(
         a: Element,
         b: Element,
     ): List<PointRef> {
-        val (set, lineLine) = intersectionSet(a, b) ?: return emptyList()
+        val c = intersectionSet(a, b) ?: return emptyList()
         val refs = ArrayList<PointRef>()
-        refs.add(cx.select(set, +1))
-        if (!lineLine) refs.add(cx.select(set, -1))
+        if (c.byIndex) {
+            // The count is **structural per extraction**, exactly as *Key points* over a footprint's corners
+            // is (OP-21) and a Bézier's controls are: four crossed ellipses give four points, two give two,
+            // and taking the intersection again after a reshape gives the branches there are then. Creating
+            // four accessors regardless would put two permanently invalid points in the drawing.
+            val n = cx.solutionCount(c.set, Evaluator())
+            for (i in 0 until n) refs.add(cx.selectAt(c.set, i))
+        } else {
+            refs.add(cx.select(c.set, +1))
+            if (c.branches > 1) refs.add(cx.select(c.set, -1))
+        }
         refs.forEach { addDerived(it) }
         return refs
     }
 
-    /** The intersection solution set of [a] and [b], plus whether it holds a single branch. */
+    /**
+     * One crossing's ordered solution set, how many branches its pair type admits, and **how a branch is
+     * addressed** — by sign for the one- and two-branch families, by index for the quartic ones (OP-1,
+     * OP-24; see `Construction.selectAt` for why an index rather than composed binary signs).
+     *
+     * Which of the two a step's `signs=` integer means is decided by the *pair kinds*, which are structural
+     * (the step names both elements), so the two encodings can never be confused: a sign is ±1, an index is
+     * 0…3.
+     */
+    private class Crossing(val set: PointSetRef, val branches: Int, val byIndex: Boolean)
+
+    /** The intersection solution set of [a] and [b], with its branch discipline. */
     @Suppress("UNCHECKED_CAST")
     private fun intersectionSet(
         a: Element,
         b: Element,
-    ): Pair<PointSetRef, Boolean>? {
+    ): Crossing? {
         val aLin = a.isLinear
         val bLin = b.isLinear
         // an arc intersects through its carrier circle, exactly as a segment does through its carrier line
         val aCirc = a.isCentric
         val bCirc = b.isCentric
-        val lineLine = aLin && bLin
-        val set: PointSetRef =
-            when {
-                lineLine -> cx.intersectLL(carrierLine(a), carrierLine(b))
-                aCirc && bCirc -> cx.intersectCC(carrierCircle(a), carrierCircle(b))
-                aLin && bCirc -> cx.intersectLC(carrierLine(a), carrierCircle(b))
-                aCirc && bLin -> cx.intersectLC(carrierLine(b), carrierCircle(a))
-                else -> return null
-            }
-        return set to lineLine
+        // ...and an elliptic arc through its carrier ellipse, the same coercion a third time (OP-24)
+        val aEll = a.isElliptic
+        val bEll = b.isElliptic
+        return when {
+            aLin && bLin -> Crossing(cx.intersectLL(carrierLine(a), carrierLine(b)), 1, false)
+            aCirc && bCirc -> Crossing(cx.intersectCC(carrierCircle(a), carrierCircle(b)), 2, false)
+            aLin && bCirc -> Crossing(cx.intersectLC(carrierLine(a), carrierCircle(b)), 2, false)
+            aCirc && bLin -> Crossing(cx.intersectLC(carrierLine(b), carrierCircle(a)), 2, false)
+            // a line meets an ellipse in a quadratic: the ordinary two-branch set, ordered along the line's
+            // own direction — the very convention `intersectLC` uses, so a sign means one thing
+            aLin && bEll -> Crossing(cx.intersectLE(carrierLine(a), carrierEllipse(b)), 2, false)
+            aEll && bLin -> Crossing(cx.intersectLE(carrierLine(b), carrierEllipse(a)), 2, false)
+            // ...and a conic meets an ellipse in a **quartic**: up to four, addressed by index
+            aCirc && bEll -> Crossing(cx.intersectCE(carrierCircle(a), carrierEllipse(b)), 4, true)
+            aEll && bCirc -> Crossing(cx.intersectCE(carrierCircle(b), carrierEllipse(a)), 4, true)
+            aEll && bEll -> Crossing(cx.intersectEE(carrierEllipse(a), carrierEllipse(b)), 4, true)
+            else -> null
+        }
     }
 
     /**
@@ -4895,7 +5027,8 @@ class Document {
         stored: Int? = null,
         remember: Boolean = false,
     ): PointRef? {
-        val (set, lineLine) = intersectionSet(a, b) ?: return null
+        val crossing = intersectionSet(a, b) ?: return null
+        val set = crossing.set
 
         // only where a *step* can restate them: the same helper serves the Outline tracer's handovers, which
         // are re-derived from that tool's own clicks and own no `signs=` of their own
@@ -4909,12 +5042,19 @@ class Document {
         }
         // a restated branch is taken as it stands — invalid included, which is ordinary invalidity (OP-3) and
         // not licence to pick the other one
-        if (stored != null) return keep(stored, cx.select(set, stored))
+        if (stored != null) {
+            return keep(stored, if (crossing.byIndex) cx.selectAt(set, stored) else cx.select(set, stored))
+        }
         val ev = Evaluator()
-        val candidates = if (lineLine) listOf(+1) else listOf(+1, -1)
+        val candidates =
+            when {
+                crossing.byIndex -> (0 until cx.solutionCount(set, ev)).toList()
+                crossing.branches > 1 -> listOf(+1, -1)
+                else -> listOf(+1)
+            }
         val best =
             candidates
-                .map { it to cx.select(set, it) }
+                .map { it to (if (crossing.byIndex) cx.selectAt(set, it) else cx.select(set, it)) }
                 .mapNotNull { (sign, ref) ->
                     ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? PointValue)?.let { Triple(sign, ref, (it.p - near).length()) }
                 }.minByOrNull { it.third } ?: return null
@@ -4942,6 +5082,7 @@ class Document {
         when {
             el.isLinear -> pointOnLine(el, at, dof)
             el.kind == ElementKind.CIRCLE -> pointOnCircle(el, at, dof)
+            el.kind == ElementKind.ELLIPSE -> pointOnEllipse(el, at, dof)
             else -> null
         }
 
@@ -4975,6 +5116,17 @@ class Document {
                 // a spline's defining points *are* its four controls (OP-15), inner ones included — which is
                 // what lets a derived Bézier be split as a construction over its own controls (see [breakCurve])
                 ElementKind.BEZIER -> (0..3).map { cx.bezierControl(el.ref as BezierRef, it) }
+                // an ellipse's defining points are its centre and its four axis endpoints — the vertices
+                // and co-vertices, which is what a conic's key points are (OP-24)
+                ElementKind.ELLIPSE ->
+                    listOf(cx.ellipseCenter(el.ref as EllipseRef)) + (0..3).map { cx.ellipseAxisPoint(el.ref as EllipseRef, it) }
+                // an elliptic arc adds its own two ends, exactly as a circular arc does
+                ElementKind.ELLIPTIC_ARC ->
+                    listOf(
+                        cx.ellipseCenter(carrierEllipse(el)),
+                        cx.ellipticArcStart(el.ref as EllipticArcRef),
+                        cx.ellipticArcEnd(el.ref as EllipticArcRef),
+                    )
                 else -> emptyList()
             }
         refs.forEach { addDerived(it) }
@@ -5582,8 +5734,9 @@ class Document {
             ElementKind.SEGMENT -> breakSegmentAt(el, world)
             ElementKind.ARC -> breakArcAt(el, world)
             ElementKind.BEZIER -> breakBezierAt(el, world)
+            ElementKind.ELLIPTIC_ARC, ElementKind.ELLIPSE -> breakEllipticAt(el, world)
             else -> {
-                note = "${nameOf(el)} is not a segment, an arc or a Bézier"
+                note = "${nameOf(el)} is not a segment, an arc, a Bézier or a conic"
                 null
             }
         }
@@ -5747,6 +5900,102 @@ class Document {
         val h1 = add(cx.arcBetween(ref, cx.arcStart(ref), rider, ccw), ElementKind.ARC, Styles.CURVE)
         val h2 = add(cx.arcBetween(ref, rider, cx.arcEnd(ref), ccw), ElementKind.ARC, Styles.CURVE)
         return listOf(split, h1, h2)
+    }
+
+    /**
+     * Split an **ellipse or an elliptic arc** at the click's parametric angle (OP-24) — the exact mirror of
+     * [breakArcAt], with one thing said about the closed case.
+     *
+     * An *arc* splits into the two pieces between the cut and its own ends. A *whole ellipse* has no ends,
+     * so one cut would leave one piece that closes on itself; it is therefore cut at the click **and at
+     * its antipode**, `t + π` — which is not a second freedom but the *same* one, since the antipodal
+     * point is a construction over the rider's own parameter. Dragging the rider swings both cuts
+     * together and the two half-ellipses stay a partition of the whole.
+     *
+     * Both halves are `ellipticArcBetween` on the **same carrier**, so they follow the ellipse however its
+     * centre, axes or orientation move, and the sweep direction is stored verbatim (OP-1).
+     */
+    private fun breakEllipticAt(
+        el: Element,
+        world: Vec2,
+    ): BreakResult? {
+        val ev = Evaluator()
+        val ellipse =
+            when (val v = ev.valueOf(el.ref)) {
+                is EllipseValue -> v.ellipse
+                is EllipticArcValue -> v.arc.ellipse
+                else -> null
+            } ?: run {
+                note = "${nameOf(el)} has no position to split (its construction is invalid)"
+                return null
+            }
+        val t = Conics.paramOf(ellipse, world)
+        val arcValue = (ev.valueOf(el.ref) as? EllipticArcValue)?.arc
+        if (arcValue != null) {
+            if (!Conics.contains(arcValue, t)) {
+                note = "That point is not on ${nameOf(el)}'s sweep — click on the arc itself"
+                return null
+            }
+            val sweep = abs(Conics.sweep(arcValue))
+            val from = abs(atan2(sin(t - arcValue.startT), cos(t - arcValue.startT)))
+            val to = abs(atan2(sin(t - arcValue.endT), cos(t - arcValue.endT)))
+            if (sweep < Vec2.EPS || from / sweep <= breakEndSlack || to / sweep <= breakEndSlack) {
+                note = "Click away from ${nameOf(el)}'s ends — a break there would leave a zero-length piece"
+                return null
+            }
+        }
+        val consumers = consumersOf(el)
+        val made =
+            breakEllipse(el, Quantity.rad(t), arcValue?.ccw ?: true) ?: run {
+                note = "${nameOf(el)} could not be split there"
+                return null
+            }
+        return settle(el, made[0], made.drop(1), consumers, detached = false, why = "the two pieces share it as their carrier")
+    }
+
+    /**
+     * The recorded half of a conic break — one step, because everything it makes hangs off the conic it
+     * names and its own [t] (the rider's parametric angle: **state**, hence restated on save, OP-18).
+     * [ccw] is the sweep direction, stored verbatim (OP-1).
+     */
+    fun breakEllipse(
+        el: Element,
+        t: Quantity,
+        ccw: Boolean,
+    ): List<Element>? =
+        recording("breakellipse", Arg.El(el), Arg.Num(t), Arg.Text(if (ccw) "ccw" else "cw")) {
+            breakEllipseNow(el, t, ccw)
+        }
+
+    private fun breakEllipseNow(
+        el: Element,
+        t: Quantity,
+        ccw: Boolean,
+    ): List<Element>? {
+        if (!el.isElliptic) return null
+        val carrier = carrierEllipse(el)
+        val ev = Evaluator()
+        val ellipse = (ev.valueOf(carrier) as? EllipseValue)?.ellipse ?: return null
+        val a = t.requireDim(Dimension.ANGLE, "split parameter").base
+        val at = Conics.pointAt(ellipse, a)
+        // a rider on the carrier ellipse: the click is *where*, the parameter is *what it holds* — the same
+        // split of choice and state every other rider's step makes (OP-18)
+        val rider = pointOnEllipse(el, at, t) ?: return null
+        val split = elementFor(rider) ?: return null
+        val param = riderParam(split) ?: return null
+        return if (el.kind == ElementKind.ELLIPSE) {
+            // the antipode is the *same* freedom, half a turn on — see this function's own note
+            val other = cx.pointOnEllipse(carrier, cx.add(Ref<ScalarValue>(param), cx.const(Quantity.rad(kotlin.math.PI))))
+            val h1 = add(cx.ellipticArcBetween(carrier, rider, other, ccw), ElementKind.ELLIPTIC_ARC, Styles.CURVE)
+            val h2 = add(cx.ellipticArcBetween(carrier, other, rider, ccw), ElementKind.ELLIPTIC_ARC, Styles.CURVE)
+            listOf(split, h1, h2)
+        } else {
+            @Suppress("UNCHECKED_CAST")
+            val ref = el.ref as EllipticArcRef
+            val h1 = add(cx.ellipticArcBetween(carrier, cx.ellipticArcStart(ref), rider, ccw), ElementKind.ELLIPTIC_ARC, Styles.CURVE)
+            val h2 = add(cx.ellipticArcBetween(carrier, rider, cx.ellipticArcEnd(ref), ccw), ElementKind.ELLIPTIC_ARC, Styles.CURVE)
+            listOf(split, h1, h2)
+        }
     }
 
     /**
@@ -6147,6 +6396,7 @@ class Document {
             is SegmentValue -> listOf(v.seg.a, v.seg.b)
             is ArcValue -> listOf(GeomMath.arcStart(v.arc), GeomMath.arcEnd(v.arc))
             is BezierValue -> listOf(v.bezier.p0, v.bezier.p3)
+            is EllipticArcValue -> listOf(Conics.start(v.arc), Conics.end(v.arc))
             else -> emptyList()
         }
 
@@ -6172,6 +6422,20 @@ class Document {
         if (piece.kind == ElementKind.BEZIER) {
             val b = (ev.valueOf(piece.ref) as? BezierValue)?.bezier ?: return null
             return (b.p0 + b.p1 * 3.0 + b.p2 * 3.0 + b.p3) * 0.125
+        }
+        (ev.valueOf(piece.ref) as? EllipticArcValue)?.arc?.let { ea ->
+            // the same rule in the conic's own parameter: the mid-parameter of whichever way round stays
+            // inside the arc's sweep (OP-24)
+            val e = ea.ellipse
+            val t0 = Conics.paramOf(e, from)
+            val t1 = Conics.paramOf(e, to)
+            val ccwMid = t0 + norm2pi(t1 - t0) * 0.5
+            val cwMid = t0 - norm2pi(t0 - t1) * 0.5
+            return when {
+                Conics.contains(ea, ccwMid) -> Conics.pointAt(e, ccwMid)
+                Conics.contains(ea, cwMid) -> Conics.pointAt(e, cwMid)
+                else -> null
+            }
         }
         val arc = (ev.valueOf(piece.ref) as? ArcValue)?.arc ?: return null
         val a0 = (from - arc.center).angle()
@@ -6241,6 +6505,13 @@ class Document {
                 val ref = el.ref as BezierRef
                 listOf(v.bezier.p0 to { cx.bezierStart(ref) }, v.bezier.p3 to { cx.bezierEnd(ref) })
             }
+            // an elliptic arc is trimmed to two cut points, so it publishes them as accessors exactly as
+            // a circular arc does (OP-24)
+            is EllipticArcValue -> {
+                @Suppress("UNCHECKED_CAST")
+                val ref = el.ref as EllipticArcRef
+                listOf(Conics.start(v.arc) to { cx.ellipticArcStart(ref) }, Conics.end(v.arc) to { cx.ellipticArcEnd(ref) })
+            }
             else -> emptyList()
         }
 
@@ -6271,10 +6542,29 @@ class Document {
             if (ev.valueOf(ref) !is BezierValue) return null
             return listOf(addDerived(cx.bezierStart(ref)), addDerived(cx.bezierEnd(ref)))
         }
-        val (set, lineLine) = intersectionSet(a, b) ?: return null
-        if (lineLine) return null // two lines meet once: they cannot bound an area on their own
-        val first = cx.select(set, +1)
-        val second = cx.select(set, -1)
+        // an **elliptic arc** is the same case: it is trimmed to two cut points of its own, so the two
+        // meetings are its own ends rather than an intersection to be found (OP-24)
+        val conic =
+            if (a.kind == ElementKind.ELLIPTIC_ARC) {
+                a
+            } else if (b.kind == ElementKind.ELLIPTIC_ARC) {
+                b
+            } else {
+                null
+            }
+        if (conic != null) {
+            @Suppress("UNCHECKED_CAST")
+            val ref = conic.ref as EllipticArcRef
+            if (ev.valueOf(ref) !is EllipticArcValue) return null
+            return listOf(addDerived(cx.ellipticArcStart(ref)), addDerived(cx.ellipticArcEnd(ref)))
+        }
+        val crossing = intersectionSet(a, b) ?: return null
+        if (crossing.branches < 2) return null // two lines meet once: they cannot bound an area on their own
+        val set = crossing.set
+        // the boundary tracer names *two* meetings of a pair, which is all a handover needs — the first and
+        // the last of the ordered set, whichever discipline addresses its branches
+        val first = if (crossing.byIndex) cx.selectAt(set, 0) else cx.select(set, +1)
+        val second = if (crossing.byIndex) cx.selectAt(set, cx.solutionCount(set, ev) - 1) else cx.select(set, -1)
         val p1 = (ev.valueOf(first) as? PointValue)?.p ?: return null
         val p2 = (ev.valueOf(second) as? PointValue)?.p ?: return null
         if ((p1 - p2).length() < GeomMath.JOIN_TOL) return null // tangent: one meeting only
@@ -6308,6 +6598,21 @@ class Document {
     ): Ref<*>? {
         if (el.isLinear) return cx.segmentBetween(el.ref, from, to)
         if (el.kind == ElementKind.BEZIER) return el.ref
+        if (el.isElliptic) {
+            // the conic twin of the arc trim below: which way round is decided by where the user clicked,
+            // in the ellipse's **own parameter**, and then stored (OP-1)
+            val e =
+                when (val v = ev.valueOf(el.ref)) {
+                    is EllipseValue -> v.ellipse
+                    is EllipticArcValue -> v.arc.ellipse
+                    else -> return null
+                }
+            val t0 = Conics.paramOf(e, (ev.valueOf(from) as? PointValue)?.p ?: return null)
+            val t1 = Conics.paramOf(e, (ev.valueOf(to) as? PointValue)?.p ?: return null)
+            val ccwSweep = norm2pi(t1 - t0)
+            val toClick = norm2pi(Conics.paramOf(e, near) - t0)
+            return cx.ellipticArcBetween(el.ref, from, to, ccw = toClick <= ccwSweep)
+        }
         if (el.kind != ElementKind.CIRCLE && el.kind != ElementKind.ARC) return null
         val centre =
             when (val v = ev.valueOf(el.ref)) {
@@ -6452,7 +6757,8 @@ class Document {
         note =
             if (body?.approximated == true) {
                 "Wall over ${curves.size} curve${if (curves.size == 1) "" else "s"} — its offsets are " +
-                    "approximated (a Bézier's offset is not a Bézier, OP-15), so its area and its solid are too"
+                    "approximated (a Bézier's offset is not a Bézier, and an ellipse's is not an ellipse — " +
+                    "OP-15), so its area and its solid are too"
             } else {
                 "Wall over ${curves.size} curve${if (curves.size == 1) "" else "s"}"
             }
@@ -6672,7 +6978,8 @@ class Document {
      * drawing where two constructions cross would then acquire areas the user never built.
      */
     fun boundaryPiecesOf(el: Element): List<Element>? {
-        if (el.kind == ElementKind.CIRCLE) return listOf(el)
+        // a whole ellipse closes by itself, exactly as a circle does (OP-24)
+        if (el.kind == ElementKind.CIRCLE || el.kind == ElementKind.ELLIPSE) return listOf(el)
         if (!el.isCurve) return null
         legOf(el)?.let { (path, _) -> if (path.closed) return path.legs.toList() }
         val step = creatingStep(el) ?: return null
@@ -6702,6 +7009,8 @@ class Document {
             is ArcValue -> ProfileElement.ArcE(v.arc)
             is CircleValue -> ProfileElement.CircleE(v.circle)
             is BezierValue -> ProfileElement.BezierE(v.bezier)
+            is EllipseValue -> ProfileElement.EllipseE(v.ellipse)
+            is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
             else -> null
         }
 
@@ -7195,6 +7504,8 @@ class Document {
             is SegmentValue -> ProfileElement.Seg(v.seg)
             is ArcValue -> ProfileElement.ArcE(v.arc)
             is BezierValue -> ProfileElement.BezierE(v.bezier)
+            is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
+            is EllipseValue -> ProfileElement.EllipseE(v.ellipse)
             else -> null
         }
 
@@ -7605,6 +7916,48 @@ class Document {
         start: PointRef,
         end: PointRef,
     ) = add(cx.arcCenterStartEnd(center, start, end), ElementKind.ARC, Styles.CURVE)
+
+    // ---- conics (OP-24) ----
+
+    /**
+     * The ellipse centred at [center] whose own axis runs through [axisEnd] — which fixes the orientation
+     * *and* the first semi-axis — with the second read off the third point [bPoint].
+     *
+     * Three clicks, three nodes, and nothing else: bind [axisEnd] onto a point of a line's direction and
+     * the ellipse turns with that line; share [bPoint] with a second ellipse and the two are equally tall
+     * by construction (OP-5).
+     */
+    fun ellipse(
+        center: PointRef,
+        axisEnd: PointRef,
+        bPoint: PointRef,
+    ) = add(cx.ellipseCAP(center, axisEnd, bPoint), ElementKind.ELLIPSE, Styles.CURVE)
+
+    /** The same ellipse with the second semi-axis given as a scalar — [ellipse]'s typed twin. */
+    fun ellipseCAB(
+        center: PointRef,
+        axisEnd: PointRef,
+        b: ScalarRef,
+    ) = add(cx.ellipseCAB(center, axisEnd, b), ElementKind.ELLIPSE, Styles.CURVE)
+
+    /**
+     * An **elliptic arc**: the ellipse's own inputs, plus the two points its ends are taken from — which
+     * are projected onto the carrier exactly as a circular arc's cut points are ([Construction.arcBetween]).
+     *
+     * One creation, not two: the carrier ellipse is an ordinary node with no element of its own, the same
+     * way *Arc (centre, ends)* builds an arc without leaving a circle behind.
+     */
+    fun ellipticArc(
+        center: PointRef,
+        axisEnd: PointRef,
+        b: ScalarRef,
+        start: PointRef,
+        end: PointRef,
+    ) = add(
+        cx.ellipticArcBetween(cx.ellipseCAB(center, axisEnd, b), start, end, ccw = true),
+        ElementKind.ELLIPTIC_ARC,
+        Styles.CURVE,
+    )
 
     // ---- relational constructions ----
 
@@ -8752,7 +9105,33 @@ class Document {
         b: PointRef,
     ) = measurement("angle", cx.measureAngle(a, v, b))
 
-    fun measureLength(seg: Element) = measurement("len", cx.measureLength(seg.ref as SegmentRef))
+    /**
+     * The measured length of a curve (OP-4) — a segment's, an arc's, an elliptic arc's or an ellipse's
+     * whole circumference.
+     *
+     * Exact for the first two and **computed to a stated tolerance** for the conics (OP-15): an elliptic
+     * integral has no closed form, so the status line says so where a conic is measured, and says nothing
+     * where the number is exact. That asymmetry *is* the honesty line — construction exact, measurement
+     * approximate — and it is stated once, here, rather than left for a reader to infer.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun measureLength(seg: Element): ScalarEntry? =
+        when (seg.kind) {
+            ElementKind.SEGMENT -> measurement("len", cx.measureLength(seg.ref as SegmentRef))
+            ElementKind.ARC -> measurement("len", cx.measureArcLength(seg.ref as ArcRef))
+            ElementKind.ELLIPTIC_ARC ->
+                measurement("len", cx.measureEllipticArcLength(seg.ref as EllipticArcRef)).also {
+                    note = "${it.name} is computed numerically to ±${Conics.LENGTH_TOL_MM} mm — an elliptic arc's length has no closed form (OP-15)"
+                }
+            ElementKind.ELLIPSE ->
+                measurement("len", cx.measureCircumference(seg.ref as EllipseRef)).also {
+                    note = "${it.name} is computed numerically to ±${Conics.LENGTH_TOL_MM} mm — an ellipse's circumference has no closed form (OP-15)"
+                }
+            else -> {
+                note = "${nameOf(seg)} has no length to measure"
+                null
+            }
+        }
 
     fun measureRadius(circle: Element) = measurement("radius", cx.measureRadius(carrierCircle(circle)))
 
@@ -8836,6 +9215,10 @@ class Document {
         at: Vec2,
         dofs: List<Quantity> = emptyList(),
     ): Element? {
+        if (curve.isElliptic) {
+            note = "${nameOf(curve)} is an ellipse, which has no single radius — dimension the distance between its axis points (Key points), or measure its length"
+            return null
+        }
         if (!curve.isCentric) return null
         val circle = carrierCircle(curve)
         val ref = cx.measureRadius(circle)

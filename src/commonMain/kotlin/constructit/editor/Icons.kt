@@ -33,6 +33,13 @@ object Icons {
         r: Double,
     ) = """<circle cx="$x" cy="$y" r="$r"/>"""
 
+    private fun oval(
+        x: Double,
+        y: Double,
+        rx: Double,
+        ry: Double,
+    ) = """<ellipse cx="$x" cy="$y" rx="$rx" ry="$ry"/>"""
+
     private fun path(
         d: String,
         extra: String = "",
@@ -77,6 +84,9 @@ object Icons {
 
     val POINT_ON_CIRCLE = ring(12.0, 12.0, 7.5) + dot(17.3, 6.7, 2.6)
 
+    /** A point riding an ellipse: the curve, and the mark at its parametric angle (OP-24). */
+    val POINT_ON_ELLIPSE = oval(12.0, 12.0, 9.0, 5.5) + dot(18.4, 8.1, 2.6)
+
     val POINT_XY = path("M4 20 L20 20") + path("M4 20 L4 4") + dashed("M15 9 L15 20") + dashed("M15 9 L4 9") + dot(15.0, 9.0, 2.4)
 
     val JOIN = ring(16.5, 12.0, 4.2) + dot(16.5, 12.0, 2.2) + dot(4.5, 12.0, 2.2) + path("M6.8 12 L11 12") + path("M9.4 10.2 L11.4 12 L9.4 13.8")
@@ -100,6 +110,15 @@ object Icons {
     val ARC_3 = path("M4 17 A 8.5 8.5 0 0 1 20 17") + dot(4.0, 17.0, 2.0) + dot(12.0, 11.4, 2.0) + dot(20.0, 17.0, 2.0)
 
     val ARC_CS = path("M19 18 A 12 12 0 0 0 7 6") + ghost("M7 18 L19 18") + ghost("M7 18 L7 6") + dot(7.0, 18.0, 2.0) + dot(19.0, 18.0, 2.0) + dot(7.0, 6.0, 2.0)
+
+    /** The ellipse's operation: the two axes that define it, and the curve they make (OP-24). */
+    val ELLIPSE =
+        oval(12.0, 12.0, 9.0, 5.5) + ghost("M12 12 L21 12") + ghost("M12 12 L12 6.5") +
+            dot(12.0, 12.0, 2.0) + dot(21.0, 12.0, 2.0) + dot(12.0, 6.5, 2.0)
+
+    val ELLIPTIC_ARC =
+        path("M21 12 A 9 5.5 0 0 0 12 6.5") + ghost("M12 12 L21 12") + ghost("M12 12 L12 6.5") +
+            dot(12.0, 12.0, 2.0) + dot(21.0, 12.0, 2.0) + dot(12.0, 6.5, 2.0)
 
     val BEZIER =
         ghost("M4 19 L4 7") + ghost("M20 5 L20 17") + path("M4 19 C 4 7, 20 17, 20 5") +

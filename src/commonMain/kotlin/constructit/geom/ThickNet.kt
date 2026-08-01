@@ -4,6 +4,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.sin
 
 /**
@@ -155,11 +156,18 @@ class ThickLeg internal constructor(
         while (i < cs.size - 2 && cs[i + 1] < d) i++
         val span = cs[i + 1] - cs[i]
         val local = if (span < Vec2.EPS) 0.0 else (d - cs[i]) / span
-        val b =
-            (piece as? ProfileElement.BezierE)?.bezier
-                ?: return pts[i] + (pts[i + 1] - pts[i]) * local to (pts[i + 1] - pts[i]).normalized()
-        val t = ((i + local) / (pts.size - 1)).coerceIn(0.0, 1.0)
-        return GeomMath.bezierPointAt(b, t) to GeomMath.bezierTangentAt(b, t).normalized()
+        val u = ((i + local) / (pts.size - 1)).coerceIn(0.0, 1.0)
+        return when (val e = piece) {
+            is ProfileElement.BezierE ->
+                GeomMath.bezierPointAt(e.bezier, u) to GeomMath.bezierTangentAt(e.bezier, u).normalized()
+            // the samples are at equal *parametric* steps, so `u` is the parameter fraction directly: the
+            // arc-length→parameter map is the sampled part and the point it lands on is the curve's own
+            is ProfileElement.EllipticArcE ->
+                (e.arc.startT + Conics.sweep(e.arc) * u).let { t ->
+                    Conics.pointAt(e.arc.ellipse, t) to Conics.walkTangent(e.arc, t)
+                }
+            else -> pts[i] + (pts[i + 1] - pts[i]) * local to (pts[i + 1] - pts[i]).normalized()
+        }
     }
 
     private fun nearestOnSamples(p: Vec2): Double {
@@ -475,7 +483,15 @@ fun carrierLength(e: ProfileElement): Double =
         is ProfileElement.CircleE -> 2 * PI * e.circle.radius
         is ProfileElement.BezierE ->
             GeomMath.tessellateBezier(e.bezier).let { pts -> (0 until pts.size - 1).sumOf { (pts[it + 1] - pts[it]).length() } }
+        // an elliptic integral: numeric to a stated tolerance (OP-15), which is what puts an elliptic
+        // carrier in the same approximated class a Bézier carrier is in
+        is ProfileElement.EllipticArcE -> Conics.arcLength(e.arc)
+        is ProfileElement.EllipseE -> Conics.circumference(e.ellipse)
     }
+
+/** How many samples an elliptic carrier's offset and its arc-length map are built on (OP-15, OP-24). */
+internal fun ellipticSteps(arc: EllipticArc): Int =
+    max(GeomMath.BEZIER_STEPS, Conics.chordSteps(arc.ellipse, Conics.sweep(arc), GeomMath.TESS_TOL_MM))
 
 // ---- T-attachments: the vertices that are not endpoints ----
 
@@ -612,7 +628,13 @@ private fun interiorParam(
                 if ((GeomMath.bezierPointAt(host.bezier, t) - p).length() > WELD) return null
                 bezierLength(host.bezier, t)
             }
-            is ProfileElement.CircleE -> return null
+            is ProfileElement.EllipticArcE -> {
+                val t = Conics.paramOf(host.arc.ellipse, p)
+                if ((Conics.pointAt(host.arc.ellipse, t) - p).length() > WELD) return null
+                if (!Conics.contains(host.arc, t)) return null
+                Conics.arcLength(EllipticArc(host.arc.ellipse, host.arc.startT, t, host.arc.ccw))
+            }
+            is ProfileElement.CircleE, is ProfileElement.EllipseE -> return null
         }
     return d.takeIf { it > WELD && it < length - WELD }
 }
@@ -678,7 +700,18 @@ private fun subCarrier(
                     if (atEnd) 1.0 else bezierParam(piece.bezier, b),
                 ),
             )
-        is ProfileElement.CircleE -> piece
+        is ProfileElement.EllipticArcE -> {
+            val e = piece.arc.ellipse
+            ProfileElement.EllipticArcE(
+                EllipticArc(
+                    e,
+                    if (atStart) piece.arc.startT else Conics.paramAtDistance(e, piece.arc.startT, if (piece.arc.ccw) a else -a),
+                    if (atEnd) piece.arc.endT else Conics.paramAtDistance(e, piece.arc.startT, if (piece.arc.ccw) b else -b),
+                    piece.arc.ccw,
+                ),
+            )
+        }
+        is ProfileElement.CircleE, is ProfileElement.EllipseE -> piece
     }
 
 /** The tessellation of [b] with the cumulative chord lengths beside it — the sampled arc-length map. */
@@ -794,7 +827,14 @@ private fun offsetWall(
             val pieces = (0 until poly.size - 1).map { ProfileElement.Seg(Segment(poly[it], poly[it + 1])) }
             OffsetWall(pieces, piece, null, null, poly)
         }
-        is ProfileElement.CircleE -> null
+        // an ellipse's offset is **not an ellipse** — OP-15's spline rule verbatim, so it is sampled and
+        // the leg (and with it the whole footprint) is flagged approximated
+        is ProfileElement.EllipticArcE -> {
+            val poly = offsetEllipticArc(piece.arc, off)
+            val pieces = (0 until poly.size - 1).map { ProfileElement.Seg(Segment(poly[it], poly[it + 1])) }
+            OffsetWall(pieces, piece, null, null, poly)
+        }
+        is ProfileElement.CircleE, is ProfileElement.EllipseE -> null
     }
 
 /**
@@ -814,6 +854,27 @@ fun offsetBezier(
         GeomMath.bezierPointAt(b, t) + GeomMath.bezierTangentAt(b, t).normalized().perp() * off
     }
 
+/**
+ * An **elliptic arc's** offset at signed distance [off], as a polyline (OP-15's approximated class, OP-24).
+ *
+ * The same bargain [offsetBezier] makes, and it is made here for a reason worth naming: the offset of an
+ * ellipse is not an ellipse — it is a sextic — so there is no exact conic to hand back, and inventing one
+ * would be the "plausible-looking wrong answer" this design record keeps refusing. Every sample sits at a
+ * parametric angle of the true curve and is displaced along the **exact** outward normal there, so the
+ * honest claim is precisely "exact at the sample points, chords between".
+ */
+fun offsetEllipticArc(
+    arc: EllipticArc,
+    off: Double,
+): List<Vec2> {
+    val n = ellipticSteps(arc)
+    val sw = Conics.sweep(arc)
+    return (0..n).map { k ->
+        val t = arc.startT + sw * k / n
+        Conics.pointAt(arc.ellipse, t) + Conics.walkTangent(arc, t).perp() * off
+    }
+}
+
 /** The unit direction a half-edge leaves its tail vertex in (its carrier's tangent at the start). */
 private fun outgoingDir(piece: ProfileElement): Vec2 =
     when (piece) {
@@ -824,7 +885,8 @@ private fun outgoingDir(piece: ProfileElement): Vec2 =
             GeomMath.tessellateBezier(piece.bezier).let { pts ->
                 ((pts.firstOrNull { (it - pts[0]).length() > Vec2.EPS } ?: pts.last()) - pts[0]).normalized()
             }
-        is ProfileElement.CircleE -> Vec2(1.0, 0.0)
+        is ProfileElement.EllipticArcE -> Conics.walkTangent(piece.arc, piece.arc.startT)
+        is ProfileElement.CircleE, is ProfileElement.EllipseE -> Vec2(1.0, 0.0)
     }
 
 /**
@@ -914,8 +976,12 @@ private fun leg(
     length: Double,
     runs: List<List<FaceRun>>,
 ): ThickLeg {
-    if (piece !is ProfileElement.BezierE) return ThickLeg(piece, offsets, length, runs, null, null)
-    val pts = GeomMath.tessellateBezier(piece.bezier)
+    val pts =
+        when (piece) {
+            is ProfileElement.BezierE -> GeomMath.tessellateBezier(piece.bezier)
+            is ProfileElement.EllipticArcE -> Conics.sample(piece.arc, ellipticSteps(piece.arc))
+            else -> return ThickLeg(piece, offsets, length, runs, null, null)
+        }
     val cum = ArrayList<Double>(pts.size)
     var acc = 0.0
     cum.add(0.0)
@@ -1010,7 +1076,8 @@ private fun startTangent(e: ProfileElement): Vec2 =
         is ProfileElement.ArcE ->
             Vec2(cos(e.arc.startAngle), sin(e.arc.startAngle)).let { if (e.arc.ccw) it.perp() else -it.perp() }
         is ProfileElement.BezierE -> GeomMath.bezierTangentAt(e.bezier, 0.0).normalized()
-        is ProfileElement.CircleE -> Vec2(0.0, 1.0)
+        is ProfileElement.EllipticArcE -> Conics.walkTangent(e.arc, e.arc.startT)
+        is ProfileElement.CircleE, is ProfileElement.EllipseE -> Vec2(0.0, 1.0)
     }
 
 private fun endTangent(e: ProfileElement): Vec2 =
@@ -1019,7 +1086,8 @@ private fun endTangent(e: ProfileElement): Vec2 =
         is ProfileElement.ArcE ->
             Vec2(cos(e.arc.endAngle), sin(e.arc.endAngle)).let { if (e.arc.ccw) it.perp() else -it.perp() }
         is ProfileElement.BezierE -> GeomMath.bezierTangentAt(e.bezier, 1.0).normalized()
-        is ProfileElement.CircleE -> Vec2(0.0, 1.0)
+        is ProfileElement.EllipticArcE -> Conics.walkTangent(e.arc, e.arc.endT)
+        is ProfileElement.CircleE, is ProfileElement.EllipseE -> Vec2(0.0, 1.0)
     }
 
 /** [raw] shifted by whole turns to the representative nearest [target] — see [trim]. */

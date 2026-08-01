@@ -1,8 +1,10 @@
 package constructit.geom
 
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 /**
  * The **structural name of a face** of a feature (OP-8): what it is a face *of*, never what a mesh lookup
@@ -103,9 +105,12 @@ data class SolidEdge(val name: EdgeName, val geom: EdgeGeom)
  *   the facet's own boundary is curved), a plane perpendicular to a cylinder's axis is that cylinder's
  *   circle, a plane containing the axis is a ruling. Exact means exact: the numbers come from the feature's
  *   parameters, not from its triangles.
- * - [sampled] — the cut is a curve the vocabulary cannot say (OP-15): an inclined plane through a cylinder is
- *   a true **ellipse**, and no segment, arc or cubic Bézier is one. Exact at every sample, chords between,
- *   flagged, and refused as an *input* by name — see [PlaneSection.inputsRefusal] for the other honest limit.
+ * - [sampled] — the cut is a curve the vocabulary cannot say (OP-15): a twisted band's, or a cylinder's cut
+ *   that runs off the ends of the material. Exact at every sample, chords between, flagged, and refused as
+ *   an *input* by name — see [PlaneSection.inputsRefusal] for the other honest limit. The **inclined cut of
+ *   a cylinder** used to be here and is not any more: since the conics package (OP-24) it comes back as an
+ *   exact [ProfileElement.EllipseE] or [ProfileElement.EllipticArcE], which is the honesty line moving
+ *   outward by a change in *compute* and not in what any file stores.
  * - neither — this face is not cut at all, or is cut in more than one piece; [reason] says which (OP-3).
  */
 data class SectionEdge(
@@ -289,7 +294,7 @@ object Section3 {
                     FacePatch(name, plane, rectangle(len, depth), null)
                 }
             }
-            is ProfileElement.ArcE, is ProfileElement.CircleE ->
+            is ProfileElement.ArcE, is ProfileElement.CircleE, is ProfileElement.EllipticArcE, is ProfileElement.EllipseE ->
                 FacePatch(
                     name,
                     null,
@@ -712,6 +717,9 @@ object Section3 {
         // to its axis** is that cylinder's own arc or circle, derived from the profile rather than fitted to
         // samples (OP-15 — exact means the numbers come from the parameters)
         perpendicularCylinderCut(feature, patch.name, cut)?.let { return SectionEdge(label, it, null, null) to emptyList() }
+        // ...and, since the conics package (OP-24), the *inclined* cut of a cylinder is exact too: it is a
+        // true ellipse, and the drawing now has a name for one
+        inclinedCylinderCut(feature, patch.name, cut)?.let { return SectionEdge(label, it, null, null) to emptyList() }
         val strip = ruledStrip(feature, patch.name) ?: return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
         return cutRuledStrip(label, strip, cut)
     }
@@ -815,6 +823,10 @@ object Section3 {
                     GeomMath.arcContains(e.arc, (it - e.arc.center).angle())
                 }
             is ProfileElement.CircleE -> GeomMath.intersectLC(line, e.circle).points
+            // exact for a conic too, since session 27: line ∩ ellipse is a quadratic (OP-24)
+            is ProfileElement.EllipticArcE ->
+                Conics.intersectLE(line, e.arc.ellipse).points.filter { Conics.contains(e.arc, Conics.paramOf(e.arc.ellipse, it)) }
+            is ProfileElement.EllipseE -> Conics.intersectLE(line, e.ellipse).points
             is ProfileElement.BezierE -> {
                 val pts = GeomMath.tessellatePiece(e)
                 (0 until pts.size - 1).flatMap { i ->
@@ -869,6 +881,79 @@ object Section3 {
         val at = p.translated(t)
         val o = cut.toLocal(at.origin)
         return GeomMath.transform(e, Affine(at.u.dot(cut.u), at.u.dot(cut.v), at.v.dot(cut.u), at.v.dot(cut.v), o.x, o.y))
+    }
+
+    /**
+     * A cylindrical face cut by an **inclined** plane: the true ellipse it is, **exact** (OP-24).
+     *
+     * This is where the conics package moves OP-15's honesty line outward, and it moves it by a change in
+     * *compute* alone: a point of the cylinder is `Q(φ) = C + r·cos φ·u + r·sin φ·v`, the ruling through it
+     * meets the plane at `Q(φ) − axis·dist(Q(φ))/(axis·n)`, and because `dist` is affine in `cos φ` and
+     * `sin φ` the whole expression is `C₀ + cos φ·A + sin φ·B` — an ellipse given by two conjugate
+     * semi-diameters (see [Conics.cylinderSection]). Nothing is fitted to samples; the numbers come from the
+     * feature's own parameters, which is what *exact* means here.
+     *
+     * Two conditions, both refusals rather than approximations. The plane must not be parallel to the axis
+     * (that section is a pair of rulings, not an ellipse), and it must cross **every** ruling of the swept
+     * range *within the extrusion's own depth* — otherwise the cut runs off the ends of the cylinder and the
+     * section is a mixture of elliptic and straight pieces, which one named curve cannot be. Either way the
+     * sampled path below still answers, exactly as it did before.
+     */
+    private fun inclinedCylinderCut(
+        feature: Feature3,
+        name: FaceName,
+        cut: Plane3,
+    ): ProfileElement? {
+        if (feature !is Feature3.Extrusion || name !is FaceName.Side) return null
+        val e = Geom3.boundaryPieces(feature).getOrNull(name.piece) ?: return null
+        val circle =
+            when (e) {
+                is ProfileElement.ArcE -> Circle(e.arc.center, e.arc.radius)
+                is ProfileElement.CircleE -> e.circle
+                else -> return null
+            }
+        val p = feature.sketch.plane
+        val axis = p.normal.normalized()
+        val k = axis.dot(cut.normal.normalized())
+        if (abs(k) < 1e-9 || abs(abs(k) - 1.0) <= 1e-9) return null
+        val centre3 = p.toWorld(circle.center)
+        val ell = Conics.cylinderSection(centre3, axis, p.u, p.v, circle.radius, cut) ?: return null
+        // every ruling of the swept range must be crossed inside the material
+        val lo = min(0.0, feature.depth) - ON_PLANE_TOL
+        val hi = max(0.0, feature.depth) + ON_PLANE_TOL
+
+        fun crossesInside(phi: Double): Boolean {
+            val q = p.toWorld(circle.center + Vec2(circle.radius * cos(phi), circle.radius * sin(phi)))
+            val s = -cut.distanceTo(q) / k
+            return s >= lo && s <= hi
+        }
+        return when (e) {
+            is ProfileElement.CircleE -> {
+                // a sinusoid over a full turn: its extremes are the centre's crossing ± the in-plane reach
+                val n = cut.normal.normalized()
+                val reach = circle.radius * kotlin.math.hypot(n.dot(p.u), n.dot(p.v)) / abs(k)
+                val mid = -cut.distanceTo(centre3) / k
+                if (mid - reach < lo || mid + reach > hi) return null
+                ProfileElement.EllipseE(ell, e.ccw)
+            }
+            is ProfileElement.ArcE -> {
+                val sweep = GeomMath.sweep(e.arc)
+                if ((0..SAMPLE_STEPS).any { !crossesInside(e.arc.startAngle + sweep * it / SAMPLE_STEPS) }) return null
+                val at = { f: Double ->
+                    val q = p.toWorld(circle.center + Vec2(circle.radius * cos(f), circle.radius * sin(f)))
+                    cut.toLocal(q - axis * (cut.distanceTo(q) / k))
+                }
+                val t0 = Conics.paramOf(ell, at(e.arc.startAngle))
+                val t1 = Conics.paramOf(ell, at(e.arc.endAngle + 0.0 * sweep))
+                val tm = Conics.paramOf(ell, at(e.arc.startAngle + sweep * 0.5))
+                // φ → t is a monotone reparametrization, but its *direction* depends on the frame the
+                // conjugate-diameter reduction happened to choose, so it is decided by where the middle
+                // of the swept range lands rather than assumed
+                val ccw = Conics.contains(EllipticArc(ell, t0, t1, true), tm)
+                ProfileElement.EllipticArcE(EllipticArc(ell, t0, t1, ccw))
+            }
+            else -> null
+        }
     }
 
     private fun ruledStrip(
@@ -928,9 +1013,10 @@ object Section3 {
      * makes: a cylinder cut **perpendicular** to its axis is that cylinder's own circle (derived from the
      * profile, not from the mesh), and one cut **along** its axis is a ruling. Everything else — the inclined
      * cut through a cylinder, the cut through a twisted band — is a curve this vocabulary contains no name
-     * for (an inclined plane through a cylinder is a true ellipse), so it comes back **sampled and flagged**:
-     * exact at every ruling, chords between. First-class conics would move that line, and are recorded as a
-     * future extension rather than approximated here.
+     * for — the cut through a twisted band, and a cylinder's cut that leaves the material through its ends —
+     * so it comes back **sampled and flagged**: exact at every ruling, chords between. The inclined cut of a
+     * cylinder no longer arrives here at all: it is answered exactly, one level up (see
+     * [inclinedCylinderCut]), which is the change first-class conics bought.
      */
     private fun cutRuledStrip(
         label: String,

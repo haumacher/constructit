@@ -2,6 +2,7 @@ package constructit.core
 
 import constructit.geom.Affine
 import constructit.geom.Circle
+import constructit.geom.Conics
 import constructit.geom.Direction
 import constructit.geom.GeomMath
 import constructit.geom.Line
@@ -23,6 +24,9 @@ fun transformValue(
         is SegmentValue -> SegmentValue(Segment(t.apply(v.seg.a), t.apply(v.seg.b)))
         is CircleValue -> CircleValue(Circle(t.apply(v.circle.center), v.circle.radius * t.scale))
         is ArcValue -> ArcValue(GeomMath.transformArc(v.arc, t))
+        // an affine image of an ellipse is an ellipse — exactly, for any affine map (see [Conics.transform])
+        is EllipseValue -> EllipseValue(Conics.transform(v.ellipse, t))
+        is EllipticArcValue -> EllipticArcValue(Conics.transform(v.arc, t))
         is BezierValue -> BezierValue(GeomMath.transformBezier(v.bezier, t))
         is DirectionValue -> DirectionValue(Direction(t.linear(v.dir.v).normalized()))
         is PointSetValue -> PointSetValue(PointSet(v.set.points.map { t.apply(it) }))

@@ -3,6 +3,8 @@ package constructit.editor
 import constructit.core.ArcValue
 import constructit.core.BezierValue
 import constructit.core.CircleValue
+import constructit.core.EllipseValue
+import constructit.core.EllipticArcValue
 import constructit.core.Evaluator
 import constructit.core.LineValue
 import constructit.core.LoopValue
@@ -122,6 +124,11 @@ object HitTest {
             is CircleValue -> abs((world - v.circle.center).length() - v.circle.radius)
             is SegmentValue -> distToSegment(world, v.seg.a, v.seg.b)
             is ArcValue -> distToArc(world, v.arc)
+            // measured against the drawn polyline, for the reason [distToPiece] gives
+            is EllipseValue ->
+                SceneRenderer.tessellate(v.ellipse, true).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
+            is EllipticArcValue ->
+                SceneRenderer.tessellate(v.arc).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
             // A Bézier is measured against its own tessellation — the same polyline the renderer
             // draws, so what looks near the curve is near it.
             is BezierValue ->
@@ -275,6 +282,8 @@ object HitTest {
             is RayValue -> spanMeets(v.ray.origin, v.ray.dir, lo, hi, 0.0, Double.POSITIVE_INFINITY)
             is CircleValue -> circleMeets(v.circle.center, v.circle.radius, lo, hi)
             is ArcValue -> polyMeets(SceneRenderer.tessellate(v.arc), lo, hi)
+            is EllipseValue -> polyMeets(SceneRenderer.tessellate(v.ellipse, true), lo, hi)
+            is EllipticArcValue -> polyMeets(SceneRenderer.tessellate(v.arc), lo, hi)
             is BezierValue -> polyMeets(GeomMath.tessellateBezier(v.bezier), lo, hi)
             is LoopValue -> v.loop.elements.any { pieceMeets(it, lo, hi) }
             is RegionValue ->
@@ -359,6 +368,8 @@ object HitTest {
             is ProfileElement.ArcE -> polyMeets(SceneRenderer.tessellate(e.arc), lo, hi)
             is ProfileElement.CircleE -> circleMeets(e.circle.center, e.circle.radius, lo, hi)
             is ProfileElement.BezierE -> polyMeets(GeomMath.tessellateBezier(e.bezier), lo, hi)
+            is ProfileElement.EllipticArcE -> polyMeets(SceneRenderer.tessellate(e.arc), lo, hi)
+            is ProfileElement.EllipseE -> polyMeets(SceneRenderer.tessellate(e.ellipse, e.ccw), lo, hi)
         }
 
     /**
@@ -391,6 +402,12 @@ object HitTest {
             is ProfileElement.CircleE -> abs((world - e.circle.center).length() - e.circle.radius)
             is ProfileElement.BezierE ->
                 GeomMath.tessellateBezier(e.bezier).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
+            // An ellipse has no "distance to the curve" in closed form, so it is measured — like a Bézier
+            // — against the very polyline the renderer draws: what looks near the curve is near it.
+            is ProfileElement.EllipticArcE ->
+                SceneRenderer.tessellate(e.arc).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
+            is ProfileElement.EllipseE ->
+                SceneRenderer.tessellate(e.ellipse, e.ccw).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
         }
 
     /** Distance to a ray: [distToSegment]'s clamp, on the origin side only — the far side runs on. */

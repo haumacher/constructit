@@ -1,6 +1,7 @@
 package constructit.editor
 
 import constructit.core.CircleValue
+import constructit.core.EllipseValue
 import constructit.core.Evaluator
 import constructit.core.LineValue
 import constructit.core.PointValue
@@ -8,6 +9,8 @@ import constructit.core.RayValue
 import constructit.core.SegmentValue
 import constructit.dsl.valueOf
 import constructit.geom.Circle
+import constructit.geom.Conics
+import constructit.geom.Ellipse
 import constructit.geom.GeomMath
 import constructit.geom.Line
 import constructit.geom.Vec2
@@ -142,6 +145,7 @@ object Snap {
             when (val f = formOf(ev, curve)) {
                 is Line -> GeomMath.intersectLL(axisLine, f).points
                 is Circle -> GeomMath.intersectLC(axisLine, f).points
+                is Ellipse -> Conics.intersectLE(axisLine, f).points
                 else -> null
             } ?: return null
         return points.minByOrNull { (it - near).length() }
@@ -154,8 +158,8 @@ object Snap {
         world: Vec2,
     ): Vec2? = projection(ev, curve, world)
 
-    /** Lines, segments, rays and circles can carry a point; arcs can't yet (no carrier circle). */
-    private fun attachable(el: Element) = el.isLinear || el.kind == ElementKind.CIRCLE
+    /** Lines, segments, rays, circles and ellipses can carry a point; arcs can't yet (no carrier circle). */
+    private fun attachable(el: Element) = el.isLinear || el.kind == ElementKind.CIRCLE || el.kind == ElementKind.ELLIPSE
 
     /** [el]'s geometry as an infinite line or a circle, for intersecting and projecting. */
     private fun formOf(
@@ -167,6 +171,7 @@ object Snap {
             is RayValue -> Line(v.ray.origin, v.ray.dir)
             is SegmentValue -> (v.seg.b - v.seg.a).let { d -> if (d.length() < Vec2.EPS) null else Line(v.seg.a, d.normalized()) }
             is CircleValue -> v.circle
+            is EllipseValue -> v.ellipse
             else -> null
         }
 
@@ -183,6 +188,13 @@ object Snap {
             fa is Line && fb is Circle -> GeomMath.intersectLC(fa, fb).points
             fa is Circle && fb is Line -> GeomMath.intersectLC(fb, fa).points
             fa is Circle && fb is Circle -> GeomMath.intersectCC(fa, fb).points
+            // the conic cases (OP-24) — the very same solvers the intersection *op* uses, run one frame
+            // early on values, so what the snap offers is what the click would build
+            fa is Line && fb is Ellipse -> Conics.intersectLE(fa, fb).points
+            fa is Ellipse && fb is Line -> Conics.intersectLE(fb, fa).points
+            fa is Circle && fb is Ellipse -> Conics.intersect(Conics.ofCircle(fa), fb).points
+            fa is Ellipse && fb is Circle -> Conics.intersect(fa, Conics.ofCircle(fb)).points
+            fa is Ellipse && fb is Ellipse -> Conics.intersect(fa, fb).points
             else -> null
         }
     }
@@ -198,6 +210,7 @@ object Snap {
                 val d = world - f.center
                 if (d.length() < Vec2.EPS) f.center + Vec2(f.radius, 0.0) else f.center + d * (f.radius / d.length())
             }
+            is Ellipse -> Conics.nearestPoint(f, world)
             else -> null
         }
 }

@@ -254,6 +254,13 @@ object DocumentFormat {
                 val q = step.creates.firstOrNull()?.let { doc.restatedRiderParam(it, ev) }
                 if (q == null) step.args else listOf(step.args[0], Arg.Num(q), step.args[2])
             }
+            // the same rule for a conic break (OP-24): the split **parametric angle** is state (the rider
+            // slides round the carrier ellipse), the conic it names and the `ccw` it stored are choices.
+            // A *new step kind* needs no version bump — no stored literal changed meaning (OP-18).
+            "breakellipse" -> {
+                val q = step.creates.firstOrNull()?.let { doc.restatedRiderParam(it, ev) }
+                if (q == null) step.args else listOf(step.args[0], Arg.Num(q), step.args[2])
+            }
             // an interval feature's position and carried heights live in the parameters the step created,
             // in that order (see [Document.addInterval]). They are state, so a value typed in the panel
             // comes back on reload — which is the whole point of recording the interval as a description
@@ -613,6 +620,9 @@ object DocumentFormat {
             "orthodiscard" -> doc.discardOrthoPath(currentPath(doc))
             // splitting an arc: the carrier it names, the angle it splits at (state), the sweep it keeps (OP-1)
             "breakarc" -> doc.breakArc(el(1), quantity(words[2]), words.getOrNull(3) != "cw")
+            // splitting a conic: the carrier it names, the parametric angle it splits at (state), the
+            // sweep it keeps (OP-1, OP-24)
+            "breakellipse" -> doc.breakEllipse(el(1), quantity(words[2]), words.getOrNull(3) != "cw")
             // the step kinds keep their user-facing names; what they carry is the generic thick path and
             // its interval features (OP-21) — a pure description, never the geometry it computes
             "wall" -> doc.buildThickPath(currentPath(doc), scalar(1).ref, justification(words.getOrNull(2)))

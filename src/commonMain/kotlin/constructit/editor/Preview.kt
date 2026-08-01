@@ -3,6 +3,8 @@ package constructit.editor
 import constructit.core.ArcValue
 import constructit.core.BezierValue
 import constructit.core.CircleValue
+import constructit.core.EllipseValue
+import constructit.core.EllipticArcValue
 import constructit.core.Evaluator
 import constructit.core.LineValue
 import constructit.core.LoopValue
@@ -16,6 +18,9 @@ import constructit.geom.Arc
 import constructit.geom.Bezier
 import constructit.geom.CarrierCurve
 import constructit.geom.Circle
+import constructit.geom.Conics
+import constructit.geom.Ellipse
+import constructit.geom.EllipticArc
 import constructit.geom.FilletLeg
 import constructit.geom.FilletMath
 import constructit.geom.GeomMath
@@ -55,6 +60,11 @@ sealed class PreviewShape {
     class Circ(val circle: Circle) : PreviewShape()
 
     class ArcS(val arc: Arc) : PreviewShape()
+
+    /** A whole ellipse, and a piece of one (OP-24). */
+    class Ell(val ellipse: Ellipse) : PreviewShape()
+
+    class EllArc(val arc: EllipticArc) : PreviewShape()
 
     class Bez(val bezier: Bezier) : PreviewShape()
 
@@ -182,6 +192,8 @@ object Previews {
             is RayValue -> listOf(PreviewShape.Ry(v.ray))
             is CircleValue -> listOf(PreviewShape.Circ(v.circle))
             is ArcValue -> listOf(PreviewShape.ArcS(v.arc))
+            is EllipseValue -> listOf(PreviewShape.Ell(v.ellipse))
+            is EllipticArcValue -> listOf(PreviewShape.EllArc(v.arc))
             is BezierValue -> listOf(PreviewShape.Bez(v.bezier))
             is LoopValue -> loopShapes(v.loop)
             is RegionValue -> regionShapes(v.region)
@@ -210,6 +222,53 @@ object Previews {
         if (curves.isEmpty()) return emptyList()
         val (body, _) = thickNetwork(curves, t)
         return body?.let { regionShapes(it.region) } ?: emptyList()
+    }
+
+    // ---- conics (OP-24): what the ellipse tools will build ----
+
+    /**
+     * *Ellipse (centre, axis, point)*: from the first pick onward — the axis being dragged out after the
+     * centre, then the whole ellipse once the axis end is in and the cursor gives the second semi-axis.
+     */
+    fun ellipse(c: PreviewContext): List<PreviewShape> {
+        val centre = c.point(0) ?: return emptyList()
+        val axisEnd = c.point(1) ?: c.cursor
+        val d = axisEnd - centre
+        if (d.length() < Vec2.EPS) return emptyList()
+        if (c.picks.points.size < 2) return listOf(PreviewShape.Seg(Segment(centre, axisEnd)), PreviewShape.Dot(axisEnd))
+        val u = d.normalized()
+        val b = abs((c.cursor - centre).cross(u))
+        if (b < Vec2.EPS) return emptyList()
+        return listOf(PreviewShape.Ell(Ellipse(centre, d.length(), b, d.angle())))
+    }
+
+    /** *Ellipse (centre, axis, semi-axis)*: the typed `b` is in effect, so the whole curve is drawable. */
+    fun ellipseAB(c: PreviewContext): List<PreviewShape> {
+        val centre = c.point(0) ?: return emptyList()
+        val b = c.length(0) ?: return emptyList()
+        val d = c.cursor - centre
+        if (d.length() < Vec2.EPS || b <= 0.0) return emptyList()
+        return listOf(PreviewShape.Ell(Ellipse(centre, d.length(), b, d.angle())))
+    }
+
+    /**
+     * *Elliptic arc*: the carrier ellipse while its axis is being set, then the arc itself — swept
+     * counter-clockwise in the parameter from the picked start to the cursor, which is exactly what the
+     * click will build.
+     */
+    fun ellipticArc(c: PreviewContext): List<PreviewShape> {
+        val centre = c.point(0) ?: return emptyList()
+        val b = c.length(0) ?: return emptyList()
+        val axisEnd = c.point(1) ?: c.cursor
+        val d = axisEnd - centre
+        if (d.length() < Vec2.EPS || b <= 0.0) return emptyList()
+        val e = Ellipse(centre, d.length(), b, d.angle())
+        val start = c.point(2) ?: return listOf(PreviewShape.Ell(e))
+        val t0 = Conics.paramOf(e, start)
+        val t1 = Conics.paramOf(e, c.point(3) ?: c.cursor)
+        val arc = EllipticArc(e, t0, t1, true)
+        if (abs(Conics.sweep(arc)) < Vec2.EPS) return listOf(PreviewShape.Ell(e))
+        return listOf(PreviewShape.Ell(e), PreviewShape.EllArc(arc))
     }
 
     // ---- the loft (OP-17): what the run will look like, and which corner meets which ----
@@ -299,6 +358,8 @@ object Previews {
             is SegmentValue -> ProfileElement.Seg(v.seg)
             is ArcValue -> ProfileElement.ArcE(v.arc)
             is BezierValue -> ProfileElement.BezierE(v.bezier)
+            is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
+            is EllipseValue -> ProfileElement.EllipseE(v.ellipse)
             else -> null
         }
 
@@ -309,6 +370,8 @@ object Previews {
                 is ProfileElement.ArcE -> PreviewShape.ArcS(it.arc)
                 is ProfileElement.CircleE -> PreviewShape.Circ(it.circle)
                 is ProfileElement.BezierE -> PreviewShape.Bez(it.bezier)
+                is ProfileElement.EllipticArcE -> PreviewShape.EllArc(it.arc)
+                is ProfileElement.EllipseE -> PreviewShape.Ell(it.ellipse)
             }
         }
 
@@ -324,6 +387,8 @@ object Previews {
             is PreviewShape.Ry -> PreviewShape.Ry(Ray(t.apply(s.ray.origin), t.linear(s.ray.dir).normalized()))
             is PreviewShape.Circ -> PreviewShape.Circ(Circle(t.apply(s.circle.center), s.circle.radius * t.scale))
             is PreviewShape.ArcS -> PreviewShape.ArcS(GeomMath.transformArc(s.arc, t))
+            is PreviewShape.Ell -> PreviewShape.Ell(Conics.transform(s.ellipse, t))
+            is PreviewShape.EllArc -> PreviewShape.EllArc(Conics.transform(s.arc, t))
             is PreviewShape.Bez -> PreviewShape.Bez(GeomMath.transformBezier(s.bezier, t))
             is PreviewShape.Path -> PreviewShape.Path(s.points.map { t.apply(it) })
             is PreviewShape.Dim -> s

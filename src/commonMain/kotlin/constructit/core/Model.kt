@@ -4,6 +4,8 @@ import constructit.geom.Arc
 import constructit.geom.Bezier
 import constructit.geom.Circle
 import constructit.geom.Direction
+import constructit.geom.Ellipse
+import constructit.geom.EllipticArc
 import constructit.geom.Line
 import constructit.geom.Loop
 import constructit.geom.Plane3
@@ -34,6 +36,18 @@ data class SegmentValue(val seg: Segment) : Value
 data class CircleValue(val circle: Circle) : Value
 
 data class ArcValue(val arc: Arc) : Value
+
+/**
+ * An **ellipse** (OP-24): a first-class curve value, exact in every one of its numbers.
+ *
+ * It exists because the same mathematical object arrives from two directions — a *drawn* ellipse and the
+ * *inclined section of a cylinder* — and shipping one as a flagged polyline while the other was exact
+ * would make one object two citizens. See [Ellipse] for why the frame is not normalised to `a ≥ b`.
+ */
+data class EllipseValue(val ellipse: Ellipse) : Value
+
+/** A piece of an ellipse, trimmed by **parametric angle** (OP-24) — see [EllipticArc]. */
+data class EllipticArcValue(val arc: EllipticArc) : Value
 
 data class PointSetValue(val set: PointSet) : Value
 

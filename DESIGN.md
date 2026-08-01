@@ -175,6 +175,25 @@ path-dependent and would break reproducibility/undo/reload.)
     (sign of a cross product). Stable under any translate/rotate/scale.
   - **line–circle:** order of the two hits along the line's own direction (first/second).
   - **line–line:** unique — the set has one element.
+  - **line–ellipse** (OP-24): the same rule as line–circle — order along the line's own direction — so
+    a stored sign means one thing on both.
+  - **circle–ellipse and ellipse–ellipse** (OP-24): a **quartic**, up to four solutions, ordered by
+    **ascending parametric angle on the first operand, folded into `[0, 2π)`** (for a circle that is the
+    polar angle about its centre; for an ellipse the parameter `t` of `x = a·cos t, y = b·sin t` in its
+    own frame). Like the two rules above it is a property of the operands alone — not of the viewport,
+    not of the click — and it turns with the pair under a rigid motion. It needs no tie-break, because
+    two solutions at one parameter are one solution.
+- **Four branches are addressed by index, not by composed signs.** `Select(set, sign)` speaks two
+  branches; `selectAt(set, index)` speaks any number, and the index is what a step's `signs=` records
+  (which already carried arbitrary integers, so no file argument was added). The session-17 LLL circle
+  stores *two composed binary signs* because its construction genuinely factors into two independent
+  binary choices, one per bisector, each with a geometric meaning of its own. A quartic intersection
+  factors into nothing — its four points are one ordered set — so two binary signs would only re-encode
+  an index, and would re-encode it worse: when an edit leaves two solutions instead of four, "which
+  composed pair survived" has no answer, while "branch 3 of a two-element set" has a clean one (invalid,
+  with a reason, healing when the fourth comes back — OP-3). Which encoding a `signs=` integer means is
+  decided by the **pair kinds**, which are structural, so a sign (±1) and an index (0…3) can never be
+  confused.
 - **Creation UX:** clicking near one intersection sets the `Select` sign to that side.
   Natural to create, stable to recompute.
 - **Tangency:** the two solutions coincide → both signs return the same point.
@@ -2600,6 +2619,205 @@ next to segments and arcs on equal terms.
   silently mended boundary. Parametric trimming (`subCurve` via de Casteljau) is still open, and is
   what a *fit* spline through points will want.
 
+**Where the approximated class stands after OP-24.** The rules above are unchanged; what changed is the
+*membership*. An ellipse and an elliptic arc are **exact** curve values (position-along, trim, area,
+intersections), so the approximated class is now: a spline's arc length, a conic's arc length, equal-distance
+spacing on either, and **offsets of both** — an ellipse's offset is not an ellipse for the same reason a
+Bézier's is not a Bézier. See *Conics — ellipse and elliptic arc* immediately below.
+
+## Conics — ellipse and elliptic arc (OP-24 — RESOLVED)
+
+Not "an ellipse tool": the tool is one of three consumers, and the item is shaped this way because of an
+asymmetry the vocabulary should not tolerate. An inclined plane ∩ cylinder **is** an analytic ellipse
+(centre and axes in closed form), so shipping it as a flagged polyline while a *drawn* ellipse would be
+exact makes the same mathematical object two different citizens. First-class `EllipseValue` pays three
+times: the **drawing tool**, **exact inclined sections** of cylinders, and **projections later** (a circle
+seen obliquely, once the 3D view matures).
+
+### The value, and the one decision worth arguing
+
+`Ellipse(centre, a, b, rotation)`: the point set `C + cos t·R(rotation)·(a, 0) + sin t·R(rotation)·(0, b)`.
+`a` is the semi-axis along the ellipse's own +u — the direction `rotation` names — and `b` the one
+perpendicular to it. **Neither is required to be the larger**, and that is a decision rather than an
+oversight:
+
+- *Not* normalised to `a ≥ b` by swapping and turning the frame, because the frame is what the
+  **parametric angle** is measured in, and that angle is a **stored degree of freedom**: a rider records
+  its `t`, an elliptic arc records its interval, a break records its split parameter. A swap would
+  reinterpret every one of them by 90° at the instant `b` grew past `a` — a stored value silently meaning
+  something else, which is the one thing the no-solver stance forbids. It is the same failure mode as a
+  branch that re-scores itself, wearing different clothes.
+- *Not* refused when `b > a` either, because there is nothing wrong with such an ellipse: typing 80 into
+  the `b` of an `a = 60` ellipse asks for a taller one, and answering "invalid" would make the parameter
+  panel a dead end instead of a control.
+
+So the **frame is structural** (the axis-end point picks it) and the **two semi-axes are values**.
+`major` / `minor` / `majorAngle` answer "which is bigger" wherever that is the real question (a dimension,
+a name). Where a canonical form is genuinely wanted — a *derived* ellipse nobody picked a frame for, i.e.
+a section — `Ellipse.canonical()` gives the major-first reading and the section emits it. Refusals:
+`a = 0` and `b = 0` are invalid with a reason and heal (OP-3); a third point *on* the axis is too.
+
+`EllipticArc(ellipse, startT, endT, ccw)` trims by **parametric angle**, exactly as `Arc` trims by polar
+angle — which is the whole of the honesty claim below.
+
+### The honesty line, and the user's own correction
+
+The classification, with the correction recorded because it moves the line in the right direction:
+
+> **position-along an elliptic arc is EXACT**, because nothing forces arc length to be the parameter — a
+> rider lives at the *parametric angle* (`x = a·cos t`, `y = b·sin t`; point, tangent and normal are plain
+> trigonometry), which is how on-circle points already record their DOF: *"position-along … can be
+> recorded as polar coordinates instead of length — useful for circles, too"*.
+
+So **exact**: the point, the tangent and the normal at `t`; the trim (an arc's ends are parameters); the
+**area** (the rotation cancels out of the line integral `∮(x·dy − y·dx)` entirely, leaving `a·b·Δt` plus
+two boundary terms, so a whole ellipse encloses `π·a·b` to the last bit and a region mixing segments, arcs
+and elliptic arcs still has an exact area); every intersection; and the affine image (an affine map of an
+ellipse *is* an ellipse, recovered in closed form from its two conjugate semi-diameters — Rytz).
+
+And **approximate, flagged, and only where it is genuinely metric**:
+- the measured **length** of an elliptic arc, and the circumference. `∫√(a²sin²t + b²cos²t) dt` is a
+  complete elliptic integral of the second kind and has no elementary closed form, so it is computed by
+  adaptive Simpson to a **stated tolerance** (`Conics.LENGTH_TOL_MM = 1e-9`), and the status line says so
+  when such a reading is taken. A segment's or an arc's length carries no such note — the asymmetry *is*
+  the line.
+- equal-**distance** spacing: the arc-length→parameter map is sampled (monotone bisection), exactly the
+  Bézier-leg bargain. The *map* is numeric; the point it lands on is the curve's own, exact.
+- **offsets**: an ellipse's offset is not an ellipse (it is a sextic), so a thickened elliptic carrier is a
+  sampled polyline — OP-15's spline rule verbatim, and the wall says "its offsets are approximated … an
+  ellipse's is not an ellipse".
+
+Construction exact, measurement approximate — the right side of the line for a construction-based tool.
+
+### Intersections: the genuinely new maths
+
+- **line ∩ ellipse** is a quadratic, solved in the ellipse's own frame: the ordinary two-branch ordered
+  set with `Select(sign)`, ordered along the line's own direction so a sign means the same thing on a
+  circle and on an ellipse. A tangency comes back as the one point it is; a miss as the empty set.
+- **circle ∩ ellipse** and **ellipse ∩ ellipse** are **quartics**. Substituting the first ellipse's own
+  parametrization into the second's implicit form gives a degree-two trigonometric polynomial
+  `f(t) = k₀ + k₁cos t + k₂sin t + k₃cos 2t + k₄sin 2t`, and the half-angle substitution `z = tan(t/2)`
+  turns it into a real quartic in `z` — which is where "four solutions" comes from. The quartic's leading
+  coefficient *is* `f(π)`, so it loses degree exactly when `t = π` is a root; that parameter is therefore
+  tested directly and the degree drop is the ordinary case rather than a guard.
+
+  **The solver** (defended, because it is a choice): roots of the real quartic by **derivative isolation**
+  (`geom/Roots.kt`) — between two real roots of `p` lies a root of `p'` (Rolle), so the derivative's roots
+  partition the line into intervals on which `p` is monotone, each holding at most one root, found by a
+  sign test and bisected to the last bit; recursively, degree *n* costs degree *n−1*, base case a line.
+  Rejected: **Ferrari's closed form**, whose resolvent cubic is worst-conditioned exactly where two
+  intersections approach each other, i.e. where a dragged parameter actually walks; and a **complex
+  root-finder** (Durand–Kerner on the self-inversive quartic in `e^{it}`), which is elegant but needs
+  complex arithmetic in `commonMain` and gives nothing this does not. Rejected too: a **fine sampling with
+  sign-change bisection**, which is honest but can miss a close pair. Every candidate is then polished by
+  Newton on `f` itself — the quartic is only ever an isolator — and finally **verified geometrically**
+  against the second conic, so a numerically spurious root can never become a point of the drawing. That
+  verification is what makes the solver replaceable without moving any answer.
+
+  **Degeneracies, honestly**: a near-tangency is a double root, which the isolator meets at a *critical
+  point* rather than at a sign change and therefore reports **once** — so a tangency is one solution, never
+  a spurious pair. Two **coincident** conics have `f ≡ 0`; they share a whole curve rather than a solution
+  set, so the set is empty and the dependent `Select` says so (OP-3).
+
+  The **ordering convention** and the **index encoding** are recorded where they belong, under OP-1.
+
+  **Not built, and named so it is not looked for**: the tangent-construction family for conics (tangent
+  from a point to an ellipse, common tangents of two ellipses, an ellipse's own fillets). Each is
+  composable from what exists plus at most one op, and each needs its own `signs=` layout for the same
+  reason the rest of the Apollonius family does — the number of discrete choices is part of the shape of
+  the construction.
+
+### The rest of the curve contract, case by case
+
+Each follows an existing pattern; what is new is only the arithmetic.
+
+- **Tessellation**: sampled at equal *parametric* steps. The chord bound is the circle's, stated at the
+  larger semi-axis — the sagitta over a step Δt is at most `|P''|·Δt²/8` and `|P''(t)| ≤ max(a, b)` — so
+  `GeomMath.chordSteps` is reused rather than a second rule invented. The **renderer** uses a fixed 64 per
+  full turn of parameter, exactly as an arc does, so goldens never depend on the camera; and `HitTest`
+  measures against those very chords, so what looks near the curve is near it.
+- **Riders**: a fourth `RiderForm`, `ELLIPSE_PARAM`, and it is *absolute* for the same reason
+  `CIRCLE_ANGLE` is — it is measured in the ellipse's own frame, which no edit to the curve's extent can
+  move, because an ellipse has no ends to stretch. A drag projects the cursor to the nearest point (Newton
+  on `t`, seeded from the radial reading) and writes the parameter; the `dofs=` seam is the one every
+  other rider already uses.
+- **Break**: an elliptic arc splits into the two pieces between the cut and its own ends — the exact mirror
+  of the arc break, same carrier, `ccw` stored verbatim. A **whole ellipse** has no ends, so one cut cannot
+  open it; it is cut at the click *and at its antipode*, which is not a second freedom but the same one
+  half a turn on (the antipodal point is a construction over the rider's own parameter). The consumer rule
+  is unchanged: the carrier stays, hidden, because both halves are built on it.
+- **Trace, outline, profiles, regions**: `ProfileElement.EllipticArcE` and `EllipseE` join the sealed
+  piece hierarchy, so the compiler listed every site that had to learn them. A whole ellipse closes by
+  itself exactly as a circle does, and therefore bounds an area with no tracing at all. An elliptic arc is
+  built onto its two cut points, so it publishes them as accessors and the boundary follow joins it the way
+  it joins a Bézier.
+- **Extrude / revolve**: nothing special — the piece tessellates into the mesh like everything else, and a
+  region whose boundary is elliptic has an exact area with an inscribed-chord mesh under it.
+- **Thicken over an elliptic carrier**: approximated and flagged, with the offset polyline **exact at every
+  sample** (each displaced along the true normal there) and chords between.
+- **Key points**: an ellipse's are its centre and its four axis endpoints; an elliptic arc's are its
+  centre and its own two ends.
+- **Dimensioning**: a *radial* dimension on an ellipse refuses **by name** — an ellipse has no single
+  radius — and points at what does work.
+
+### The payoff in Section3 — and the refusal it retires
+
+The inclined plane ∩ cylinder section is now computed **analytically**. A point of the cylinder is
+`Q(φ) = C + r·cos φ·u + r·sin φ·v`; the ruling through it meets the plane at `Q(φ) − axis·dist(Q(φ))/(axis·n)`;
+and because `dist` is affine in `cos φ` and `sin φ`, the whole expression is `C₀ + cos φ·A + sin φ·B` — an
+ellipse given by two conjugate semi-diameters, which Rytz's construction turns into centre, semi-axes and
+orientation in closed form. For the classic case it comes out as `r` and `r / cos θ` to the last bit.
+
+So the section stops being flagged approximated for that case, and it becomes a **legal construction
+input** — `sectionEllipse(section, index)`, with the same kind-is-part-of-the-accessor rule every other
+section input has. Note what did *not* change: no stored literal, no file, no version. The honesty line
+moved outward by a change in **compute**, at eval time, exactly as the queue entry predicted.
+
+What this retires is `SectionInputTest.anInclinedCutThroughACylinderRefusesToBeAnInput`, whose whole point
+was the refusal, quoted so the retirement is legible:
+
+> *"An **inclined** cut through the same cylinder is a true ellipse, which this vocabulary has no name
+> for: the section draws (flagged, sampled, exact at every sample) and the *input* accessor **refuses by
+> name**, saying what is exact instead. That is the conic honesty line, asserted from the side that
+> matters: no construction is ever silently anchored on a chord."*
+
+The rule it protected is untouched — no construction is anchored on a chord — but the cut is no longer a
+chord. Its sibling `PlaneSectionTest.anInclinedCutThroughACylinderIsAFlaggedEllipse` is retired the same
+way, replaced by the positive assertion (semi-axes to 1e-12, and the section no longer flagged).
+
+**What still refuses, stated so it is not looked for**: a cut that leaves the material through the
+cylinder's **ends** (the section is then a mixture of elliptic and straight pieces, which one named curve
+cannot be — refused rather than approximated, and the sampled path still draws it); a cut through a
+**twisted band** of a loft; and **plane ∩ cone**, which did *not* fall out naturally — an oblique cut of a
+cone is an ellipse whose axes need the cone's half-angle and the plane's inclination together, and a cone
+in this engine is a *loft* whose lateral faces are ruled bands with no cone parameters to read, so
+answering it would mean recognising a cone from a loft's shape. That is discovery, which OP-14 rejects for
+regions and this rejects for the same reason. It stays sampled, as before.
+
+### Implementation status (as built)
+
+- **`geom/Conic.kt`** — `Ellipse`, `EllipticArc`, and `Conics`: point/tangent/normal at `t`, implicit
+  form, nearest-parameter (Newton), sweep/contains, sampling and the render policy, exact area, adaptive
+  arc length + the sampled distance→parameter map, affine transform through conjugate diameters, `Rytz`
+  (`fromConjugate`), `intersectLE`, `intersectEE`, and `cylinderSection`.
+- **`geom/Roots.kt`** — the derivative-isolation real-polynomial root finder, deterministic and
+  degradation-honest.
+- **Values**: `EllipseValue`, `EllipticArcValue`; pieces `ProfileElement.EllipticArcE`, `EllipseE`.
+- **Ops**: `ellipseCAB`, `ellipseCAP`, `pointOnEllipse`, `tangentOnEllipse`, `normalOnEllipse`,
+  `ellipticArcBetween`, `ellipseOfArc`, `ellipseCenter`, `ellipseAxisPoint`, `ellipticArcStart/End`,
+  `measureSemiAxisA/B`, `measureEllipticArcLength`, `measureCircumference`, `measureArcLength` (the
+  circular one, exact), `intersectLE`/`intersectCE`/`intersectEE`, `selectAt`, `solutionCount`,
+  `sectionEllipse`.
+- **Tools**: *Ellipse (centre, axis, point)*, *Ellipse (centre, axis, semi-axis)*, *Elliptic arc*, *Point
+  on ellipse* — all with live previews and glyphs; *Centre* and *Length* widened (two new slot kinds,
+  `CENTERED` and `MEASURABLE`, plus `CONIC`); *Break* covers both conic kinds.
+- **Persistence**: no version bump. Every drawing tool rides the generic `tool` step; the conic break gets
+  a new step kind `breakellipse` whose split parameter is restated exactly as `breakarc`'s is — and a *new
+  step kind* changes no stored literal's meaning (OP-18's versioning rule).
+- **What is cut, deliberately**: the conic tangent-construction family (above); a *parabola* and a
+  *hyperbola* (the value here is an ellipse, and the two open conics have no gesture and no consumer yet —
+  a section that produces one is a cone's, which refuses above); and `plane ∩ cone`.
+
 ## Groups, frames & placement (OP-16 — RESOLVED)
 
 Two different needs hide under "group", and separating them dissolves most of the problem:
@@ -3797,10 +4015,16 @@ at the incircle's centre — with **moving the apex** re-deriving every one of t
   crossings taken on the tessellated ring, a decision about a point far from the boundary and never about a
   coordinate. A cylinder cut **perpendicular to its axis** is that cylinder's **own circle or arc**, restated
   from the profile through the rigid map between two parallel planes; a cut **along** the axis is a ruling, a
-  segment. Everything else is a curve this vocabulary has no name for — an inclined plane through a cylinder
-  is a true **ellipse** — and comes back **sampled and flagged**: exact at every ruling, chords between, drawn
-  but refused as an *input* by name, with what *is* exact in the message. First-class conics would move that
-  line by a change in `compute` alone; they are the next queue item, not this one.
+  segment. Everything else is a curve this vocabulary has no name for and comes back **sampled and flagged**:
+  exact at every ruling, chords between, drawn but refused as an *input* by name, with what *is* exact in the
+  message. First-class conics would move that line by a change in `compute` alone; they are the next queue
+  item, not this one.
+  > **Amended in session 27 (OP-24).** The line moved exactly there and exactly that way. The **inclined cut
+  > of a cylinder** is now an exact `EllipseValue` — analytic, from the feature's own parameters — and an
+  > ordinary construction input; no stored literal, no file and no version changed, because the change is in
+  > `compute`. What is still sampled and flagged is the genuinely unnameable: a cut that leaves the material
+  > through the cylinder's **ends**, and a cut through a loft's **twisted band**. See *Conics — ellipse and
+  > elliptic arc* for the derivation and for why **plane ∩ cone** is a refusal rather than a deferral.
 - **The acceptance numbers, exact where they can be.** A pyramid (100 × 100, apex 90) cut at half height is
   the **exact 50 × 50 square**, corner for corner, all four corners at 1e-9; its section corners are the
   midpoints of base corner and apex for *any* apex, so moving the apex moves them by recompute. An inclined
@@ -5931,8 +6155,9 @@ Three broad families (see OP-9 decision above):
   three-tangent circle's `LINE` slots, *Tangent*'s `CIRCLE` slot, *Segment*'s points (through a new snap that
   ranks a section corner beside an existing point). A pick is one index, verbatim on replay, never re-scored.
   (4) **The honesty flag is load-bearing, not cosmetic.** An inclined plane through a cylinder is a true
-  ellipse and this vocabulary has no conic, so the section is sampled — but it is *drawn* and **refused as an
-  input by name**, with what is exact named in the refusal. Exact stayed genuinely exact on the other side of
+  ellipse and this vocabulary had no conic, so the section was sampled — but it was *drawn* and **refused as
+  an input by name**, with what is exact named in the refusal. (Session 27 made that very cut exact; the flag
+  and the refusal stayed, for the cases that are still genuinely unnameable — see OP-24.) Exact stayed genuinely exact on the other side of
   the line: a perpendicular cut is restated *from the profile* (a circle with the profile's radius, not a fit
   to samples), a cut along the axis is a ruling, and a planar facet's cut is analytic. The reward is the
   acceptance scenario being *predictable*: the pyramid's half-height section is the exact 50 × 50 square, and
@@ -6012,6 +6237,56 @@ Three broad families (see OP-9 decision above):
   byte golden (`export-pyramid.glb`), every existing golden byte-identical, ktlint clean, and all eight browser
   E2E flows passing — the new one building a plate, dressing it in the panel, opening the preview and catching
   three real downloads in Chrome.
+
+- **Session 27 — conics as first-class curve values: the ellipse the drawing could always see and never
+  name.** The queue's last numbered line, and the shape of it was set by the asymmetry the entry named
+  rather than by the tool: an inclined plane through a cylinder *is* an ellipse, so the choice was never
+  "should there be an ellipse tool" but "how many citizens is this one object". Six things worth keeping.
+  (1) **The honesty classification was the design, and the user's correction was what made it hold.**
+  Position-along an elliptic arc is **exact** because nothing forces arc length to be the parameter — the
+  rider lives at the parametric angle, which is the on-circle DOF one conic up. That single sentence decides
+  the whole package: point, tangent, normal, trim, area and every intersection come out exact, and what is
+  left approximate is only what is *genuinely metric* — measured length (an elliptic integral, adaptive
+  Simpson to a stated tolerance), equal-distance spacing (the sampled arc-length→parameter map), and offsets
+  (an ellipse's offset is a sextic — OP-15's spline rule verbatim). Construction exact, measurement
+  approximate.
+  (2) **The one decision taken against the entry's own phrasing, and why.** The entry described the value as
+  "semi-axes a ≥ b". It is not normalised, and the reason is the same reason branch choices are persisted:
+  the frame is what a **stored parametric angle is measured in**, so swapping `a` and `b` when `b` grows
+  past `a` would reinterpret every rider's `t` and every arc's interval by 90° — a stored value silently
+  meaning something else. Refusing `b > a` was rejected too (it makes the parameter panel a dead end for no
+  geometric reason). The frame is structural, the semi-axes are values, `major`/`minor` answer the question
+  that actually wants an answer, and a *derived* ellipse — a section, which nobody picked a frame for — is
+  emitted canonical. A test asserts the frame survives `b > a`, so it is a decision and not an accident.
+  (3) **Four branches are an index, not two composed signs — and that is an argument, not a shortcut.** The
+  session-17 LLL circle composes two binary signs because its construction genuinely factors into two
+  independent binary choices with geometric meanings of their own. A quartic factors into nothing; two signs
+  would re-encode an index *and fail worse* when a parameter edit leaves two solutions, where "which
+  composed pair survived" has no answer and "branch 3 of a two-element set" has a clean one. `signs=`
+  already carried arbitrary integers, so nothing was added to the format.
+  (4) **The solver was chosen for where it degrades, not for where it is fastest.** Ferrari's closed form is
+  worst-conditioned exactly where two intersections approach each other — which is where a dragged parameter
+  actually walks. Derivative isolation (Rolle: between two roots of `p` lies a root of `p'`) is deterministic,
+  degree-recursive, and reports a double root **once**, so a near-tangency comes back as one solution rather
+  than a spurious pair. Every candidate is polished on the true residual and then **verified geometrically**
+  against the second conic, which is what makes the solver replaceable without moving an answer. The
+  half-angle substitution's singularity turned out to be free: the quartic's leading coefficient *is* `f(π)`,
+  so the degree drop *is* the signal, and `t = π` is simply tested.
+  (5) **The payoff moved an honesty line without moving a byte.** The inclined cylinder section is now
+  analytic — the ruling family is affine in `cos φ` and `sin φ`, so the section is two conjugate
+  semi-diameters and Rytz turns them into axes in closed form, giving `r` and `r/cos θ` to 1e-12. It is a
+  legal construction input from that moment. No stored literal, no file and no version changed: the line
+  moved at **eval time**, exactly as the entry predicted, and the two tests that asserted the old refusal
+  are retired with their text quoted. What still refuses is named — a cut leaving through the cylinder's
+  ends, a twisted band, and **plane ∩ cone**, which did not fall out naturally because a cone here is a loft
+  with no cone parameters to read, and recognising one from a shape is discovery.
+  (6) **A sealed hierarchy is a to-do list.** Adding `EllipticArcE` and `EllipseE` to `ProfileElement` made
+  the compiler enumerate every site that had to learn them — tessellation, hit-testing, marquee, rendering,
+  SVG, walls, sections, previews — which is why "the mechanical rest" was mechanical rather than a hunt.
+  **36 new tests** (`EllipseTest` 11, `ConicIntersectTest` 13, `EllipticArcTest` 11, plus one replacing each
+  retired refusal and one extra for the cut that still refuses), **1102 → 1138 green**, one new SVG golden
+  (`ellipse_and_arc`), every existing golden byte-identical, ktlint clean, and the
+  numbered work queue empty for the first time.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -7037,7 +7312,10 @@ queue entry, quoted whole because half of it is the argument and not the specifi
 > the offset gesture round-trips and its parameter slides the section; the inclined cylinder section asserts
 > the approximated flag and sampled points on the true ellipse to 1e-9; the perpendicular cut asserts the
 > exact circle. First-class conics (ellipse arcs) would move that boundary but ripple through intersections,
-> offsets and hit-testing — a **future extension**, recorded here, not part of this package. What this
+> offsets and hit-testing — a **future extension**, recorded here, not part of this package. *(That future
+> extension is OP-24, delivered in session 27: the inclined cut is exact now, and this amendment's
+> requirements — the perpendicular circle, the sampled flag's load-bearing refusal — are the ones that
+> survived it, restated against the cases that remain unnameable.)* What this
 > deliberately does not build:
 > face-space *creation* by 3D click (that is edit-in-3D slice 2; this item consumes the same provenance
 > mechanism in the 2D editor first, which is the cheaper place to grow it).
@@ -7056,7 +7334,8 @@ rider's precedent, rather than `signs=` on the consuming tool, because that is w
 take a section input with no case of its own; and the loft's correspondence needed a **second consumer**
 (`loftPlan`) so the faces a section names are the faces the mesh has. What it closes beyond itself: a **flat
 face of a loft is a face space**, which retires half of the loft's `facePlane` refusal at the same stored
-address, with no file changing meaning. What stays cut, stated with the work: **conics** (the next queue item),
+address, with no file changing meaning. What stays cut, stated with the work: **conics** (the next queue item
+— since delivered as OP-24, which retired this package's inclined-cylinder refusal by name),
 **a prism's per-slab faces** (a boolean-assembled solid takes the mesh route, and *Section* is exact for the
 horizontal cut), **inputs on a mesh-route section** (it draws and names nothing — OP-9's sink rule), **a
 section as an area** (the curves are inputs, not a `Region` — that is the analytic loft section), and **3D
@@ -7214,31 +7493,53 @@ Nothing about those three changed here. Tier 3 still waits on edit-in-3D's **sli
 entries give: naming a face durably is the same face-ID provenance mechanism click-a-working-plane needs, built
 once for two consumers.
 
-**Queued in session 22, after the four above (user-directed): conics as first-class curve values —
-ellipse and elliptic arc.** Not "an ellipse tool": the tool is one of three consumers, and the reason the
-item is shaped this way is an asymmetry the vocabulary should not tolerate — an inclined plane ∩ cylinder
-is an analytic ellipse (centre and axes in closed form), so shipping it as a flagged polyline while a
-*drawn* ellipse would be exact makes the same mathematical object two different citizens. First-class
-`EllipseValue` pays three times: the **drawing tool** (centre, two radii, orientation from a picked line —
-every input a node), **exact inclined sections** of cylinders and cones (the section-inputs honesty line
-moves outward by a change in *compute*, eval-time, so recorded files are untouched), and **projections
-later** (a circle seen obliquely, once the 3D view matures). The genuinely new math is intersections:
-line ∩ ellipse is the ordinary two-branch `Select`; circle ∩ ellipse and ellipse ∩ ellipse are **quartic**
-— up to four solutions — so the ordered-solution-set convention must speak four branches, for which the
-session-17 LLL circle is the precedent (four solutions as two composed binary signs). The honesty
-classification, with the user's own correction recorded because it moves the line in the right direction:
-**position-along an elliptic arc is EXACT**, because nothing forces arc length to be the parameter — a
-rider lives at the *parametric angle* (x = a·cos t, y = b·sin t; point, tangent and normal are plain
-trigonometry), which is how on-circle points already record their DOF ("*position-along … can be recorded
-as polar coordinates instead of length — useful for circles, too*"). What stays approximate is only what
-is genuinely *metric*: an elliptic arc's measured **length** (a dimension, computed to tolerance —
-elliptic integrals have no closed form) and equal-**distance** spacing (the sampled arc-length→parameter
-map, exactly the Bézier-leg bargain), plus **offsets** (an ellipse's offset is not an ellipse — OP-15's
-spline rule verbatim). Construction exact, measurement approximate — the right side of the line for a
-construction-based tool. The mechanical rest — tessellation, hit-testing, riders, break, trace, profiles,
-extrude/revolve, thicken over an elliptic carrier, key points — follows existing patterns case by case.
+**Retired in session 27: conics as first-class curve values — ellipse and elliptic arc.** The queue's last
+numbered line, delivered whole. What it said, quoted so the retirement is legible:
 
-Otherwise the numbered queue is empty; what remains is the parked list below, each item recorded at its
+> **Queued in session 22, after the four above (user-directed): conics as first-class curve values —
+> ellipse and elliptic arc.** Not "an ellipse tool": the tool is one of three consumers, and the reason the
+> item is shaped this way is an asymmetry the vocabulary should not tolerate — an inclined plane ∩ cylinder
+> is an analytic ellipse (centre and axes in closed form), so shipping it as a flagged polyline while a
+> *drawn* ellipse would be exact makes the same mathematical object two different citizens. First-class
+> `EllipseValue` pays three times: the **drawing tool** (centre, two radii, orientation from a picked line —
+> every input a node), **exact inclined sections** of cylinders and cones (the section-inputs honesty line
+> moves outward by a change in *compute*, eval-time, so recorded files are untouched), and **projections
+> later** (a circle seen obliquely, once the 3D view matures). The genuinely new math is intersections:
+> line ∩ ellipse is the ordinary two-branch `Select`; circle ∩ ellipse and ellipse ∩ ellipse are **quartic**
+> — up to four solutions — so the ordered-solution-set convention must speak four branches, for which the
+> session-17 LLL circle is the precedent (four solutions as two composed binary signs). The honesty
+> classification, with the user's own correction recorded because it moves the line in the right direction:
+> **position-along an elliptic arc is EXACT**, because nothing forces arc length to be the parameter — a
+> rider lives at the *parametric angle* (x = a·cos t, y = b·sin t; point, tangent and normal are plain
+> trigonometry), which is how on-circle points already record their DOF ("*position-along … can be recorded
+> as polar coordinates instead of length — useful for circles, too*"). What stays approximate is only what
+> is genuinely *metric*: an elliptic arc's measured **length** (a dimension, computed to tolerance —
+> elliptic integrals have no closed form) and equal-**distance** spacing (the sampled arc-length→parameter
+> map, exactly the Bézier-leg bargain), plus **offsets** (an ellipse's offset is not an ellipse — OP-15's
+> spline rule verbatim). Construction exact, measurement approximate — the right side of the line for a
+> construction-based tool. The mechanical rest — tessellation, hit-testing, riders, break, trace, profiles,
+> extrude/revolve, thicken over an elliptic carrier, key points — follows existing patterns case by case.
+
+Shipped as **OP-24** — see *Conics — ellipse and elliptic arc* above for the value, the honesty
+classification, the quartic solver and the section payoff. The three payments the entry names are all
+taken: three drawing tools plus *Point on ellipse*; the inclined cylinder section is an **exact**
+`EllipseValue` and a legal construction input, which retires the two tests that asserted the opposite
+(both quoted where the change is recorded); and the value the projection work will want exists.
+
+The classification held exactly as the entry framed it, and the user's correction is what made it hold:
+**position-along is exact** (the parametric angle, not arc length), and what stays approximate is only
+the genuinely metric — measured length, equal-distance spacing, offsets. One thing the entry left open
+was decided against its own first phrasing and is defended where it lives: the value does **not**
+normalise to `a ≥ b`, because the frame is what a stored parametric angle is measured in.
+
+It leaves the parked list below, and one new item stated where it belongs: the **conic
+tangent-construction family** (tangent from a point to an ellipse, common tangents of two ellipses),
+each composable from what exists plus at most one op, each needing its own `signs=` layout — the same
+shape of parking the rest of the Apollonius family already has. **Plane ∩ cone** is a *refusal*, not a
+deferral, and the reason is recorded with it: a cone here is a loft with no cone parameters to read, so
+answering would mean recognising one from a shape, which is discovery.
+
+The numbered queue is now **empty**; what remains is the parked list below, each item recorded at its
 source.
 
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and

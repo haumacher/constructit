@@ -92,6 +92,16 @@ sealed interface ProfileElement {
      * [ccw] carries the orientation an arc gets from its own sweep direction (OP-14).
      */
     data class CircleE(val circle: Circle, val ccw: Boolean = true) : ProfileElement
+
+    /** An **elliptic arc** as a boundary piece (OP-24) — a loop may mix these with every other kind. */
+    data class EllipticArcE(val arc: EllipticArc) : ProfileElement
+
+    /**
+     * A whole **ellipse** as a single element — the exact twin of [CircleE], and for the same reason: a
+     * closed boundary in its own right (an oval hole, an inclined cylinder's section), so it is never
+     * faked as a full-turn [EllipticArcE] whose 0-vs-2π sweep would be ambiguous.
+     */
+    data class EllipseE(val ellipse: Ellipse, val ccw: Boolean = true) : ProfileElement
 }
 
 /** An ordered (ideally closed) chain of segments and arcs — the bridge to 3D extrude/revolve. */
@@ -313,6 +323,8 @@ object GeomMath {
             is ProfileElement.ArcE -> arcStart(e.arc)
             is ProfileElement.CircleE -> e.circle.center + Vec2(e.circle.radius, 0.0)
             is ProfileElement.BezierE -> e.bezier.p0
+            is ProfileElement.EllipticArcE -> Conics.start(e.arc)
+            is ProfileElement.EllipseE -> Conics.pointAt(e.ellipse, 0.0)
         }
 
     /** Where a piece ends, following its own orientation. */
@@ -322,6 +334,8 @@ object GeomMath {
             is ProfileElement.ArcE -> arcEnd(e.arc)
             is ProfileElement.CircleE -> e.circle.center + Vec2(e.circle.radius, 0.0)
             is ProfileElement.BezierE -> e.bezier.p3
+            is ProfileElement.EllipticArcE -> Conics.end(e.arc)
+            is ProfileElement.EllipseE -> Conics.pointAt(e.ellipse, 0.0)
         }
 
     /** The same piece traversed the other way. */
@@ -332,6 +346,9 @@ object GeomMath {
             is ProfileElement.CircleE -> ProfileElement.CircleE(e.circle, !e.ccw)
             is ProfileElement.BezierE ->
                 ProfileElement.BezierE(Bezier(e.bezier.p3, e.bezier.p2, e.bezier.p1, e.bezier.p0))
+            is ProfileElement.EllipticArcE ->
+                ProfileElement.EllipticArcE(EllipticArc(e.arc.ellipse, e.arc.endT, e.arc.startT, !e.arc.ccw))
+            is ProfileElement.EllipseE -> ProfileElement.EllipseE(e.ellipse, !e.ccw)
         }
 
     /**
@@ -363,6 +380,9 @@ object GeomMath {
                         b.p3.x * b.p0.y - 3 * b.p3.x * b.p1.y - 6 * b.p3.x * b.p2.y
                 ) / 10.0
             }
+            // exact, like the arc's — see [Conics.doubleSignedArea] for why the rotation cancels
+            is ProfileElement.EllipticArcE -> Conics.doubleSignedArea(e.arc)
+            is ProfileElement.EllipseE -> Conics.doubleSignedArea(e.ellipse, e.ccw)
         }
 
     /** Signed area of a closed [loop]: positive when it runs counter-clockwise. */
@@ -388,11 +408,11 @@ object GeomMath {
      */
     fun chainLoop(parts: List<ProfileElement>): Pair<Loop?, String?> {
         if (parts.isEmpty()) return null to "a loop needs at least one piece"
-        if (parts.any { it is ProfileElement.CircleE }) {
+        if (parts.any { it is ProfileElement.CircleE || it is ProfileElement.EllipseE }) {
             return if (parts.size == 1) {
                 Loop(parts) to null
             } else {
-                null to "a whole circle already closes, so it cannot be chained with other pieces"
+                null to "a whole circle or ellipse already closes, so it cannot be chained with other pieces"
             }
         }
         val chained = ArrayList<ProfileElement>(parts.size)
@@ -550,7 +570,14 @@ object GeomMath {
                 val ys = listOf(b.p0.y, b.p1.y, b.p2.y, b.p3.y)
                 Vec2(xs.min(), ys.min()) to Vec2(xs.max(), ys.max())
             }
+            // the box of the *whole* ellipse at its larger semi-axis, conservative exactly as the circle's is
+            is ProfileElement.EllipticArcE -> ellipseBounds(e.arc.ellipse)
+            is ProfileElement.EllipseE -> ellipseBounds(e.ellipse)
         }
+
+    /** The conservative box of a whole ellipse: its circumscribed circle's, for [bounds]' own reason. */
+    private fun ellipseBounds(e: Ellipse): Pair<Vec2, Vec2> =
+        e.center - Vec2(e.major, e.major) to e.center + Vec2(e.major, e.major)
 
     /** Apply an affine map to an arc, flipping its sweep when the map reflects. */
     fun transformArc(
@@ -578,6 +605,9 @@ object GeomMath {
                     if (t.det < 0) !e.ccw else e.ccw,
                 )
             is ProfileElement.BezierE -> ProfileElement.BezierE(transformBezier(e.bezier, t))
+            is ProfileElement.EllipticArcE -> ProfileElement.EllipticArcE(Conics.transform(e.arc, t))
+            is ProfileElement.EllipseE ->
+                ProfileElement.EllipseE(Conics.transform(e.ellipse, t), if (t.det < 0) !e.ccw else e.ccw)
         }
 
     /**
@@ -761,6 +791,10 @@ object GeomMath {
             is ProfileElement.CircleE ->
                 sampleCircle(e.circle, max(3, chordSteps(e.circle.radius, 2.0 * PI, tolMm)), e.ccw)
             is ProfileElement.BezierE -> tessellateBezier(e.bezier, bezierSteps(e.bezier, tolMm))
+            is ProfileElement.EllipticArcE ->
+                Conics.sample(e.arc, Conics.chordSteps(e.arc.ellipse, Conics.sweep(e.arc), tolMm))
+            is ProfileElement.EllipseE ->
+                Conics.sampleWhole(e.ellipse, max(3, Conics.chordSteps(e.ellipse, 2.0 * PI, tolMm)), e.ccw)
         }
 
     /**
