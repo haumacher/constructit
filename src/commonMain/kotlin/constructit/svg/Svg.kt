@@ -11,6 +11,7 @@ import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.PlaneValue
+import constructit.core.Point3Value
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.ProfileValue
@@ -165,6 +166,9 @@ object Svg {
                 is PlaneValue -> {}
                 is SketchValue -> {}
                 is SolidValue -> {}
+                // …and a height point (OP-25) is a point *off* the plane: its 2D image is its base's, which
+                // this document already draws, so exporting it would draw one dot twice.
+                is Point3Value -> {}
                 // …and a section is a reading of a solid: it is drawn as the working plane's context by the
                 // canvas, which knows which plane it is standing on. This serializer does not.
                 is SectionValue -> {}

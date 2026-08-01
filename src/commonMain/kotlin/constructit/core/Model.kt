@@ -18,6 +18,7 @@ import constructit.geom.Segment
 import constructit.geom.Sketch3
 import constructit.geom.Solid3
 import constructit.geom.Vec2
+import constructit.geom.Vec3
 import constructit.units.Quantity
 
 /** A typed value flowing through the graph (OP-5). Strongly typed, one output per node. */
@@ -26,6 +27,21 @@ sealed interface Value
 data class ScalarValue(val q: Quantity) : Value
 
 data class PointValue(val p: Vec2) : Value
+
+/**
+ * A point **in space** — the value of a height point (`Construction.heightPoint`): a 2D point on a sketch
+ * plane, lifted along that plane's normal by a scalar.
+ *
+ * A value kind of its own rather than a [PointValue] with a third number bolted on, for the reason the
+ * whole 2D/3D seam is built on (OP-17): 2D geometry is *not* plane-resident, so a `Vec2` means "in some
+ * plane's own coordinates" everywhere it appears, and every 2D consumer — the intersections, the offsets,
+ * the region engine — would have to start asking which plane. A point with no plane is a different thing,
+ * so it is a different type, and the type system keeps the two apart at every slot.
+ *
+ * The evaluator needed no change for it: [Value] is opaque to [Evaluator], which only ever passes values
+ * from a node's inputs into its `compute`.
+ */
+data class Point3Value(val p: Vec3) : Value
 
 data class LineValue(val line: Line) : Value
 

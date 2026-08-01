@@ -379,6 +379,12 @@ object Tools {
     const val POINT_ON_LINE = "ptonline"
     const val POINT_AT_DIST = "ptatdist"
     const val POINT_XY = "ptxy"
+
+    /**
+     * A **height point** (OP-25): a base point on the working plane plus a height along its normal — the
+     * apex of a pyramid, generalized into a point anyone can build.
+     */
+    const val HEIGHT_POINT = "heightpoint"
     const val CENTRE = "centre"
     const val KEY_POINTS = "keypoints"
     const val JOIN = "join"
@@ -559,6 +565,11 @@ object Tools {
             // no slots at all: its inputs are both scalars, so it is complete as soon as the panel has
             // supplied x and y and a click merely says "now"
             ToolDef(POINT_XY, "Point (x, y)", ToolCategory.POINTS, emptyList(), scalars = listOf(len("x"), len("y")), help = "Type x, then y (or pick two parameters in the panel), then click anywhere: the point follows both, so editing either moves it.", icon = Icons.POINT_XY) { d, _, s -> d.pointFromCoordinates(s[0], s[1]) },
+            // the height point (OP-25). A POINT slot, so a click reuses a point it lands on and creates one
+            // where it does not — the same first half every point-taking tool has — plus one scalar. What it
+            // adds to the vocabulary is the one thing the 2D canvas cannot show: the result is grabbed and
+            // dragged in the *3D* view, where its height is read off the pointer's ray.
+            ToolDef(HEIGHT_POINT, "Height point", ToolCategory.POINTS, listOf(SlotKind.POINT), scalars = listOf(len("height")), help = "Type a height (or pick a parameter in the panel), then click a base point — an existing one is shared, empty space places a new one: the result is that point lifted off the sketch plane, with the height an ordinary parameter. In the 3D view you can grab it and drag the height; the base stays draggable where it was drawn.", slotNames = listOf("base"), icon = Icons.HEIGHT_POINT) { d, p, s -> d.heightPointAt(p.points[0], s[0]) },
             ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTERED), help = "Click a circle, arc, ellipse or elliptic arc to add its centre point.", slotNames = listOf("circle or ellipse"), icon = Icons.CENTRE) { d, p, _ -> d.centerOf(p.elements[0]) },
             ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.EXTRACTABLE), help = "Click a curve to add its defining points (endpoints, centre) — or a wall footprint / traced area for its corners, which are then snappable and dimensionable like any point. Works on mirrored and derived geometry too.", slotNames = listOf("curve or area"), icon = Icons.KEY_POINTS) { d, p, _ -> d.extractPoints(p.elements[0]) },
             ToolDef(JOIN, "Join points", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), replicates = false, help = "Click the point to keep, then a free point to weld onto it (they become one).", slotNames = listOf("kept point", "welded point"), icon = Icons.JOIN) { d, p, _ -> d.weld(p.elements[1], p.elements[0]) },

@@ -20,6 +20,7 @@ import constructit.geom.GeomMath
 import constructit.geom.ProfileElement
 import constructit.geom.Segment
 import constructit.geom.Vec2
+import constructit.geom.Vec3
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -84,17 +85,53 @@ object HitTest {
     /**
      * Screen-independent distance from [world] to [el]'s geometry, or null if it has no distance
      * (an invalid node, or a value kind that isn't pickable).
+     *
+     * Screen-independent for everything *in* the working plane, which is everything but one: a **height
+     * point** (OP-25) stands off the plane, so how near the pointer is to it is a question only the [view]
+     * can answer — see [distanceToHeightPoint].
      */
     fun distanceTo(
         ev: Evaluator,
         el: Element,
         world: Vec2,
+        view: PlaneProjection? = null,
     ): Double? {
         // An annotation's value is a scalar, so it has no geometry of its own to measure against: what is
         // pickable is the graphic it draws (OP-4). Measured to that, a dimension is picked exactly where it
         // is visible — its lines, its arc, and the number itself.
         el.annotation?.let { a -> return a.graphic(ev)?.let { distanceToGraphic(world, it) } }
+        (el.handle as? HeightPointHandle)?.let { h -> return distanceToHeightPoint(h, world, view, ev) }
         return distanceToValue(ev, el, world)
+    }
+
+    /**
+     * How near [world] is to the height point [h]: the distance from the point to the **pointer's viewing
+     * ray**, in the plane's own orthonormal frame and therefore in millimetres — so the caller's ordinary
+     * plane-space tolerance (`Editor.pickToleranceAt`, ten pixels through the local scale) applies to it
+     * unchanged, which is what "the same local tolerance logic tool picks use" means.
+     *
+     * **Null — not pickable — under a similarity or with no view at all**, and that is the whole of where a
+     * height point lives. A 2D canvas looks along its plane's normal, so a height has no image there and the
+     * point's would sit exactly on its base's; drawing a second dot on top of the apex dot the plan already
+     * has would be chrome that says nothing, and picking one there would take the grab from the base — which
+     * *is* what the plan edits (OP-25). What is drawn is what is picked, and neither happens in the plan. A
+     * caller that offers no view at all — the snap resolver, the weld magnet — is asking a 2D question, and
+     * an off-plane point is no answer to it.
+     */
+    private fun distanceToHeightPoint(
+        h: HeightPointHandle,
+        world: Vec2,
+        view: PlaneProjection?,
+        ev: Evaluator,
+    ): Double? {
+        if (view == null || view.similarity) return null
+        val (base, lift) = h.localAt(ev) ?: return null
+        val ray = view.viewRay(world)
+        val d = ray.dir
+        val len = d.length()
+        if (len < Vec2.EPS) return null
+        val w = Vec3(base.x - ray.origin.x, base.y - ray.origin.y, lift - ray.origin.z)
+        return w.cross(d).length() / len
     }
 
     private fun distanceToGraphic(
@@ -164,13 +201,14 @@ object HitTest {
         el: Element,
         world: Vec2,
         tip: Element?,
+        view: PlaneProjection?,
     ): Double? {
         doc.partOutlineOf(el, ev, tip)?.let { return ringDistance(world, it) }
         // ...and *only* as that context: a part with none to measure against (an unbounded datum hinge, a solid
         // with no value) is simply not pickable here. Falling back to its own geometry would measure a
         // coordinate from another space, which is the one thing one-canvas-one-space exists to prevent.
         if (el.space != doc.activeSpace.name) return null
-        return distanceTo(ev, el, world)
+        return distanceTo(ev, el, world, view)
     }
 
     private fun ringDistance(
@@ -191,6 +229,7 @@ object HitTest {
         ev: Evaluator,
         world: Vec2,
         tol: Double,
+        view: PlaneProjection? = null,
         filter: (Element) -> Boolean,
     ): List<Pair<Element, Double>> {
         // the part the active face space belongs to, as it stands (OP-17's tip rule) — resolved once per
@@ -200,7 +239,7 @@ object HitTest {
             .asSequence()
             .withIndex()
             .filter { (_, el) -> el.visible && doc.addressableIn(el, tip) && filter(el) }
-            .mapNotNull { (i, el) -> distanceIn(doc, ev, el, world, tip)?.let { Triple(el, it, i) } }
+            .mapNotNull { (i, el) -> distanceIn(doc, ev, el, world, tip, view)?.let { Triple(el, it, i) } }
             .filter { it.second <= tol }
             .sortedWith(compareBy({ it.second }, { -it.third }))
             .map { it.first to it.second }
@@ -213,8 +252,9 @@ object HitTest {
         ev: Evaluator,
         world: Vec2,
         tol: Double,
+        view: PlaneProjection? = null,
         filter: (Element) -> Boolean,
-    ): Element? = nearestAll(doc, ev, world, tol, filter).firstOrNull()?.first
+    ): Element? = nearestAll(doc, ev, world, tol, view, filter).firstOrNull()?.first
 
     // ---- marquee: pick everything a rectangle meets (OP-16) ----
 
@@ -228,6 +268,7 @@ object HitTest {
         ev: Evaluator,
         a: Vec2,
         b: Vec2,
+        view: PlaneProjection? = null,
     ): List<Element> {
         val lo = Vec2(kotlin.math.min(a.x, b.x), kotlin.math.min(a.y, b.y))
         val hi = Vec2(kotlin.math.max(a.x, b.x), kotlin.math.max(a.y, b.y))
@@ -238,7 +279,7 @@ object HitTest {
                     doc.partOutlineOf(el, ev, tip)?.let { r -> ringMeets(r, lo, hi) }
                         // the same rule as [distanceIn]: the part is met as this space's reference context or not
                         // at all, never by geometry belonging to another space's coordinates
-                        ?: (el.space == doc.activeSpace.name && meetsRect(ev, el, lo, hi))
+                        ?: (el.space == doc.activeSpace.name && meetsRect(ev, el, lo, hi, view))
                 )
         }
     }
@@ -259,7 +300,16 @@ object HitTest {
         el: Element,
         lo: Vec2,
         hi: Vec2,
+        view: PlaneProjection?,
     ): Boolean {
+        // a height point is met where it is *seen* — its image, mapped back onto the plane the band was
+        // dragged on — which is the same "only through a view that can place it" rule the pick follows
+        (el.handle as? HeightPointHandle)?.let { h ->
+            if (view == null || view.similarity) return false
+            val (base, lift) = h.localAt(ev) ?: return false
+            val at = view.toScreenLifted(base, lift)?.let { view.toPlane(it) } ?: return false
+            return inRect(at, lo, hi)
+        }
         el.annotation?.let { a ->
             val g = a.graphic(ev) ?: return false
             return g.lines.any { spanMeets(it.a, it.b - it.a, lo, hi, 0.0, 1.0) } ||

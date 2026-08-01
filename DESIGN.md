@@ -4270,6 +4270,119 @@ its endpoint dragged in 3D, and the box selection drawn as the plane rectangle i
 `buildAndDragInBrowser` now asserts both halves in real Chrome: a plain drag leaves the solids unturned, a
 Ctrl+drag orbits them.
 
+### The height point — one degree of freedom out of the plane (OP-25 — RESOLVED)
+
+**Decision (the user's design, session 28, delivered whole):**
+
+> One could construct an arbitrary free point in 3D from a point in 2D and a given height parameter. This
+> 3D point has 1 dof over its base point - the height. Such point (and the apex of an extruded outline is
+> exactly such point) can then be manipulated even in the 3D scene - adjusting the height parameter (in
+> reverse) - by estimating the distance of the base point to the projection of the mouse coordinate on the
+> height line.
+
+`heightPoint(plane, base, h, sign)` — value `embed(base) + sign·h·n̂` — is one op node with three inputs
+and no machinery of its own. Everything it needs, the engine already had: the height is an **ordinary named
+scalar** (a panel row, renameable, wireable onto another parameter through `boundTo`, restated by its own
+`param` step at every save), and the base is an **ordinary 2D point**, draggable where it lives. What is new
+is only that a *point* of the drawing is now somewhere the working plane is not — and the four consequences
+of that are what this note is about.
+
+**The value is a kind of its own — `Point3Value(Vec3)` — and the evaluator did not change.** A `Vec2` in
+this engine means "in some plane's own coordinates" (OP-17's decision not to make 2D geometry
+plane-resident), so widening `PointValue` with a third number would have made every 2D consumer — the
+intersections, the offsets, the region engine — start asking which plane. A point with no plane is a
+different thing, so it is a different type and the type system keeps the two apart at every slot. `Value` is
+opaque to `Evaluator`, which only passes a node's inputs into its `compute`, so the new kind cost exactly
+two lines outside `Model.kt`: the 2D affine map refuses it by name (mirror its base instead) and the SVG
+serializer skips it (its 2D image is its base's, already drawn) — both in `when`s that are deliberately
+exhaustive so that a new value kind cannot be silently dropped.
+
+**The seam question — a ray from `Viewport3`, or an accessor on the projection? — is answered by the
+projection.** `PlaneProjection` grows exactly two members, both stated in the plane's **own (u, v, lift)
+frame** rather than in the world:
+
+```
+toScreenLifted(p, lift) -> Vec2?   // where the point `lift` mm off the plane above p is seen
+viewRay(p)              -> Ray3    // the pointer's viewing ray through p, in (u, v, lift)
+```
+
+That interface is already the one authority the *event* path and the *rendering* path share, and a height
+point is just that plane's frame one axis further — so the two paths keep agreeing by construction, as they
+have since edit-in-3D slice 1. `Editor` learns nothing about cameras (it asks its own `pointing`), the 2D
+`Camera` needs no code at all because the **defaults are its honest answer** (it looks along the normal: a
+lifted point's image is its base's, and its viewing ray *is* the height line), and a jvmTest asserts the
+whole rule by constructing a `PlanePerspective` of its own. Stating everything in plane-local coordinates is
+what makes that possible: the 2D camera has no plane and could not answer a world-space question.
+
+**The reverse drag is ray-to-line, and it is one write.** `Handle` grows a second `drag(world, view, held,
+ev)` whose default is the plain in-plane one — every handle but this one ignores it — plus `grabHold`, the
+one-number twin of the grab offset a 2D drag already holds. In plane-local coordinates the height line is
+simply the vertical through the base, so the closest-approach parameter of the pointer's ray on it *is* the
+new lift; the handle writes it into the height scalar and the journal records it exactly as a 2D drag
+records a position (OP-18 — state restates as a value; the `param` step re-reads its parameter at save).
+Two edges, both the existing rule rather than a new one:
+
+- **A wired height refuses the drag**, and the refusal names what drives it — the same question
+  (`isFreeSource` through `Handle.dragMovable`) that makes a welded 2D point immovable, asked in the same
+  place, so there is one rule for "the construction owns this value" and not two.
+- **A near-parallel ray holds the height** instead of exploding it: below
+  `HeightPointHandle.MIN_RAY_LINE_SIN` = **0.05** (about 3°, i.e. one pixel of pointer movement worth at
+  most 20× what it moves a point *on* the plane — the same 20 the pick tolerance is capped by) the drag
+  writes nothing and the status line says why. The 2D canvas is the extreme case of that same rule, which
+  is why a height cannot be dragged in the plan: there is nothing there to read it off.
+
+**Where it lives: the 3D view, drawn and picked by one rule.** It is drawn as a dot at
+`toScreenLifted(base, lift)` with a light guide line down to its base — the line the drag runs along, and
+what makes the mark say *which* base it belongs to — and picked by the distance from the point to the
+pointer's viewing ray, in millimetres, so the ordinary `pickToleranceAt` (ten pixels through the local
+scale) applies to it unchanged. Under a **similarity** it is neither drawn nor picked: the plan's image of
+it would be a second dot exactly on the apex dot already there, and picking one would take the grab from the
+base — which is precisely what the plan edits. What is drawn is what is picked, in both directions, so the
+2D canvas is exactly the canvas it was and every 2D golden is untouched. Where base and apex nearly coincide
+(a low height) the **existing pick-cycle ranking decides and nothing was added**: both are points, both
+draggable, so the tie goes to the one drawn on top — the height point, created later — and one more click
+steps the cycle to the base under it. The stated limit that comes with routing the gesture through the
+plane: a height point can only be grabbed while the pointer still *meets* the working plane, which is the
+rule every gesture in this view already obeys (`Editor.enter`'s off-plane refusal).
+
+**The consumers.** `LoftPart.Apex` now holds **one** `Point3Ref` instead of the (plane, point, height)
+triple it inlined, so both apex-producing gestures became consumers of the general node:
+
+- *Extrude to point* takes the same two clicks and the same typed number, and **raises a height point over
+  the clicked apex** before lofting to it. So its step now declares **two** creations, the apex is a
+  first-class point of the drawing (named, selectable, draggable in 3D, wireable), and the sign rule that
+  used to hide inside a `neg` node is now the node's own structural `sign` — read from the space at build
+  time (`liftSign`: −1 on a face, so a positive height still builds *outward* of the material) and
+  re-derived on replay, so nothing about it is persisted.
+- *Loft* takes a height point **as it is** — one node shared, so two solids can hang off one apex — and
+  lifts a plain 2D point by a zero height, which is the construction it always made, now said with the
+  general node. Which of the two it is, is decided by the element's **kind** and never by casting the ref:
+  `Ref<V>`'s parameter is erased, so `as? Point3Ref` succeeds for any ref and would defer the mistake to
+  the value (a defect the probe test found).
+
+Two smaller things fell out. The inspector's *built from* rows gained one general rule — **an element a
+step built over one of its picks carries that pick's own word** — because the height point *is* the apex and
+the row must say so; without it the row would have fallen silent, since no click landed on the element
+itself. And a solid's automatic palette colour is taken by element id, so the extra element shifts it: the
+acceptance pyramid is teal where it was mauve, which is the documented "stable colour per element" rule
+doing what it says.
+
+What is **not** built, stated so it is not looked for: a marquee takes a height point by the plane point its
+image maps back to, so a band drawn in the 3D view covers it, but there is still no *3D* box; a height point
+is **not** a snap target and not a weld target (both are 2D questions, and its base is the answer to them);
+and there is no second out-of-plane handle — a general 3D point with three degrees of freedom would need a
+gesture for the other two, which is a different design and not this one.
+
+Tests: `HeightPointTest` (12) — the pyramid gesture yielding one whose height is a named scalar that moves
+the apex and the solid; the base still dragging in plan with the height untouched (Cavalieri: same volume);
+no 2D chrome and no 2D pick; a standalone one on a **tilted slant face**, asserted against that face's own
+embedding and normal to 1e-9; the loft as a consumer, picked in the 3D view, still exactly 300000 mm³ and
+following a retyped height; the reverse drag asserted against a screen position computed from the camera
+alone (drag to the pixel of the point 140 mm up the line ⇒ the height is 140), with the camera unmoved and
+the volume following; the grab not jumping; the wired height refusing; the near-parallel clamp at both the
+handle and the editor; the low-height pick cycle; and `save → load → save` byte-equality on each of them,
+including one whose height was set by a 3D drag.
+
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
 **Decision:** an **analytic construction layer is the source of truth**; the mesh is an
@@ -8009,16 +8122,37 @@ out is stated with the work: the unit prompt, a per-body LOD choice, and **assem
 flattened to one placed body per geometry-bearing path, so instancing and grouping are model questions for
 later, not reading ones.
 
-**Still queued, restated** — the other two of session 29's three packages, designed in discussion
-(session 28/29), the designs the user's, kept verbatim so a crashed session loses nothing:
+**Retired in session 31: the height point — the apex generalized.** The second of session 29's three
+packages, delivered whole. The entry, quoted so what was promised and what shipped can be compared:
 
-2. **The height point — the apex generalized (user's design, session 28).** `heightPoint(base, h)`:
-   `base` a 2D point in any sketch space, `h` a named scalar, value = `embed(base) + h · normal` — "1 DOF
-   over its base point", the user's words. `EXTRUDE_TO_POINT` and the loft apex become consumers of it.
-   The reverse drag, also the user's design: dragging the point in the 3D view is **ray-to-line** — the
-   closest-point parameter on the height line through the base *is* the new height, restated into the
-   scalar exactly as a 2D drag restates coordinates. A wired height follows the 2D welded rule; a ray
-   near-parallel to the height line clamps instead of exploding.
+> 2. **The height point — the apex generalized (user's design, session 28).** `heightPoint(base, h)`:
+>    `base` a 2D point in any sketch space, `h` a named scalar, value = `embed(base) + h · normal` — "1 DOF
+>    over its base point", the user's words. `EXTRUDE_TO_POINT` and the loft apex become consumers of it.
+>    The reverse drag, also the user's design: dragging the point in the 3D view is **ray-to-line** — the
+>    closest-point parameter on the height line through the base *is* the new height, restated into the
+>    scalar exactly as a 2D drag restates coordinates. A wired height follows the 2D welded rule; a ray
+>    near-parallel to the height line clamps instead of exploding.
+
+All of it ships, both consumers included — see *The height point — one degree of freedom out of the plane*
+(OP-25) under *Going to 3D*. Four things the entry did not have to decide and this one did, each recorded
+there. The value is a **kind of its own** (`Point3Value`) rather than a widened `PointValue`, because a
+`Vec2` in this engine means "in some plane's coordinates" and widening it would have made every 2D consumer
+ask which plane; the evaluator needed no change at all. The **ray seam** went to the projection rather than
+to `Viewport3` — `PlaneProjection` grows `toScreenLifted` and `viewRay`, stated in the plane's own
+(u, v, lift) frame, so the event path and the rendering path go on sharing one authority, `Editor` still
+knows nothing about cameras, and the 2D canvas needs no code because the **defaults are its honest answer**.
+That default is also what makes the clamp fall out rather than be bolted on: the plan looks straight along
+the normal, so its viewing ray *is* the height line and it declines. And **where the point lives** had to be
+decided: it is drawn, picked and dragged in the 3D view only — in the plan the thing at that spot is its
+base, which is what the plan edits — so no 2D golden moved and the low-height pick needed no new rule, the
+existing cycle's "what is drawn on top takes the press" answering it. It leaves three things parked, each
+stated where it belongs: there is **no 3D box selection** (the marquee takes a height point by its image,
+which is honest but is still a plane rectangle), a height point is **no snap or weld target** (both are 2D
+questions, and its base answers them), and a **general 3D point** with three degrees of freedom is a
+different design — the other two would need a gesture of their own.
+
+**Still queued, restated** — the last of session 29's three packages, designed in discussion
+(session 29), the design the user's, kept verbatim so a crashed session loses nothing:
 
 3. **Face-frame orientation + the space origin (user's design, session 29, superseding a world-Z draft
    the user rightly rejected — world-Z degenerates when derived faces go parallel to XY).** The frame is
@@ -8033,7 +8167,7 @@ later, not reading ones.
    them — the parametrically correct reading, documented as a feature. **No migration** — the user's
    call: no release yet, all files throwaway; the rule simply changes.
 
-The numbered queue otherwise holds only these; what else remains is the parked list below, each item
+The numbered queue otherwise holds only this one; what else remains is the parked list below, each item
 recorded at its source.
 
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and

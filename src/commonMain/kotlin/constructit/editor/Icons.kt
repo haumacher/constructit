@@ -91,6 +91,11 @@ object Icons {
 
     val JOIN = ring(16.5, 12.0, 4.2) + dot(16.5, 12.0, 2.2) + dot(4.5, 12.0, 2.2) + path("M6.8 12 L11 12") + path("M9.4 10.2 L11.4 12 L9.4 13.8")
 
+    /** A height point (OP-25): a base point on the ground, and the point standing over it. */
+    val HEIGHT_POINT =
+        path("M2 19 L10 22 L22 18 L14 15 Z", """opacity=".4"""") + dot(12.0, 18.5, 2.2) + dashed("M12 18.5 L12 5") +
+            dot(12.0, 5.0, 2.6) + path("M9.6 7.4 L12 5 L14.4 7.4")
+
     // ---- curves ----
 
     val SEGMENT = path("M5 18 L19 6") + dot(5.0, 18.0, 2.0) + dot(19.0, 6.0, 2.0)

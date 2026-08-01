@@ -16,6 +16,7 @@ import constructit.core.LoopValue
 import constructit.core.Node
 import constructit.core.OpNode
 import constructit.core.PlaneValue
+import constructit.core.Point3Value
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.ProfileValue
@@ -122,6 +123,9 @@ typealias SolidRef = Ref<SolidValue>
 /** A **section** of a solid at a plane: a compound value with accessors (OP-6, OP-17). */
 typealias SectionRef = Ref<SectionValue>
 
+/** A point in space: a plane point plus a height along that plane's normal — see [Construction.heightPoint]. */
+typealias Point3Ref = Ref<Point3Value>
+
 /**
  * One input of a [Construction.loft] — a section of the run, or a guide that shapes it (OP-17).
  *
@@ -135,13 +139,16 @@ sealed interface LoftPart {
     class Area(val sketch: SketchRef) : LoftPart
 
     /**
-     * A **point** section: [point] read in [plane]'s own 2D coordinates, lifted [height] mm along its normal.
+     * A **point** section: one [Construction.heightPoint] — a base point on a plane, lifted by a scalar.
      *
-     * Both are ordinary nodes, which is the whole of "the apex is a constructed point": drag the point and the
-     * pyramid leans, retype the height and it grows, and clicking an existing point *shares* it, so two solids
-     * can hang off one apex (OP-5 — sharing a node is equality).
+     * *One node*, not the (plane, point, height) triple this used to inline: "the apex of an extruded outline
+     * is exactly such a point" (the user's words), so the apex is a **consumer** of the general height point
+     * rather than a construction welded into the loft. What that buys is everything the height point is:
+     * drag the base and the pyramid leans, retype the height — an ordinary named scalar, wireable through
+     * `boundTo` — and it grows, drag the apex *in the 3D view* and the height follows the ray (OP-25), and
+     * sharing the node makes two solids hang off one apex (OP-5 — sharing a node is equality).
      */
-    class Apex(val plane: PlaneRef, val point: PointRef, val height: ScalarRef) : LoftPart
+    class Apex(val point: Point3Ref) : LoftPart
 
     /**
      * A **guide** curve: [curve] read in [plane]'s coordinates — a segment, an arc, a Bézier, a profile or a
@@ -1955,6 +1962,35 @@ class Construction {
         }
 
     /**
+     * A **height point** (OP-25): the point standing [height] mm off [plane] above the plane point [base] —
+     * `embed(base) + h · n̂`, the user's own formula.
+     *
+     * *"One could construct an arbitrary free point in 3D from a point in 2D and a given height parameter.
+     * This 3D point has 1 dof over its base point — the height."* That is the whole node: a pure function of
+     * three inputs, so it needs no new machinery anywhere. The height is an **ordinary scalar** — a named
+     * parameter in the panel, renameable, wireable onto another parameter through `boundTo` (OP-7/OP-16) —
+     * and the base is a point like any other, draggable wherever it lives. Nothing here is a constraint: the
+     * point *is* the formula.
+     *
+     * [sign] is ±1 and **structural**, decided by the operation that builds this and never by a value: it
+     * says which way "up" is for the space this was built in, exactly as *Extrude*'s does. A face plane's
+     * normal points into the material (OP-8), so a face-space height point takes −1 and the user's typed
+     * height stays a positive number standing *out* of the face. It is re-derived from the space on replay,
+     * so nothing has to be persisted for it.
+     */
+    fun heightPoint(
+        plane: PlaneRef,
+        base: PointRef,
+        height: ScalarRef,
+        sign: Int = 1,
+    ): Point3Ref =
+        op(plane, base, height) {
+            val pl = (it[0] as PlaneValue).plane
+            val h = sc(it[2]).requireDim(Dimension.LENGTH, "height").mm
+            EvalResult.Ok(Point3Value(pl.toWorld(pt(it[1])) + pl.normal.normalized() * (sign * h)))
+        }
+
+    /**
      * A **loft**: [parts] — the sections in order, plus any guides — with [seams] saying where each section's
      * boundary correspondence starts (OP-17's third feature).
      *
@@ -1976,11 +2012,7 @@ class Construction {
         for (p in parts) {
             when (p) {
                 is LoftPart.Area -> refs.add(p.sketch)
-                is LoftPart.Apex -> {
-                    refs.add(p.plane)
-                    refs.add(p.point)
-                    refs.add(p.height)
-                }
+                is LoftPart.Apex -> refs.add(p.point)
                 is LoftPart.Guide -> {
                     refs.add(p.plane)
                     refs.add(p.curve)
@@ -1995,12 +2027,7 @@ class Construction {
             for (p in layout) {
                 when (p) {
                     is LoftPart.Area -> sections.add(LoftSection.Area((args[i++] as SketchValue).sketch))
-                    is LoftPart.Apex -> {
-                        val plane = (args[i++] as PlaneValue).plane
-                        val at = pt(args[i++])
-                        val h = sc(args[i++]).requireDim(Dimension.LENGTH, "apex height").mm
-                        sections.add(LoftSection.Apex(plane.toWorld(at) + plane.normal.normalized() * h))
-                    }
+                    is LoftPart.Apex -> sections.add(LoftSection.Apex((args[i++] as Point3Value).p))
                     is LoftPart.Guide -> {
                         val plane = (args[i++] as PlaneValue).plane
                         val curve = args[i++]
@@ -2561,6 +2588,9 @@ fun Evaluator.isValid(ref: Ref<*>): Boolean = eval(ref.node) is EvalResult.Ok
 fun Evaluator.valueOf(ref: Ref<*>): Value? = (eval(ref.node) as? EvalResult.Ok)?.value
 
 fun Evaluator.point(ref: PointRef): Vec2 = (valueOf(ref) as PointValue).p
+
+/** A point in space — the value of a height point ([Construction.heightPoint]). */
+fun Evaluator.point3(ref: Point3Ref): Vec3 = (valueOf(ref) as Point3Value).p
 
 fun Evaluator.frame(ref: FrameRef): FrameValue = valueOf(ref) as FrameValue
 

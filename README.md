@@ -226,7 +226,12 @@ with its planes where they now are.
 simplest shape they cannot make is a pyramid. *Extrude to point* is that gesture — click an area, type a
 height, click where the apex belongs, and the apex is a **real point of the drawing**: drag it and the pyramid
 leans (same volume, Cavalieri), retype the height and it grows, click an *existing* point and the pyramid and
-whatever else uses that point move together. A circle instead of a polygon is a cone. *Loft (sections)* is the
+whatever else uses that point move together. The apex is a **height point** — a base point on the sketch plane
+plus a height along its normal, one degree of freedom over the base — which is a point anyone can build with
+*Height point* and use anywhere: the height is an ordinary named parameter (rename it, wire it onto another),
+and in the **3D view** you can grab the apex itself and drag it up and down, which writes that parameter
+(the pointer's ray against the height line says how far). Wire the height to something else and the drag
+declines and says what drives it, exactly as a welded point does. A circle instead of a polygon is a cone. *Loft (sections)* is the
 general form: click sections in order — outlines, wall footprints, circles, or a point to end the run — and
 they may live on **different sketch planes**, so a frustum is the plan's square and a square on a plane
 parallel to it (*Sketch plane* takes an offset for exactly that). Three or more sections blend piecewise, and

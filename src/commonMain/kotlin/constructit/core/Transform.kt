@@ -50,6 +50,9 @@ fun transformValue(
         // does its reflection line become?) would be a plausible-looking wrong answer. Refused, so the
         // Evaluator turns it into node invalidity (OP-3), until 3D transforms arrive with assemblies.
         is PlaneValue -> throw IllegalArgumentException("a sketch plane cannot be transformed by a 2D map (OP-17)")
+        // ...and a height point (OP-25) is a point in space: a 2D map has nothing to say about the axis it
+        // stands on. Mirror its base and its plane instead, and the point follows by construction.
+        is Point3Value -> throw IllegalArgumentException("a height point cannot be transformed by a 2D map — mirror its base (OP-25)")
         is SketchValue -> throw IllegalArgumentException("a sketch cannot be transformed by a 2D map (OP-17)")
         is SolidValue -> throw IllegalArgumentException("a solid cannot be transformed by a 2D map (OP-17)")
         // A section is a *reading* of a solid at a plane (OP-17): what it would mean to mirror one is to

@@ -14,11 +14,13 @@ import constructit.core.SourceNode
 import constructit.dsl.CircleRef
 import constructit.dsl.EllipseRef
 import constructit.dsl.LineRef
+import constructit.dsl.PlaneRef
 import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.dsl.valueOf
 import constructit.geom.Conics
 import constructit.geom.Vec2
+import constructit.geom.Vec3
 import constructit.units.Dimension
 import constructit.units.Quantity
 
@@ -39,6 +41,32 @@ interface Handle {
         world: Vec2,
         ev: Evaluator,
     )
+
+    /**
+     * A drag of a DOF that **leaves the working plane** (OP-25): [world] is where the pointer meets that
+     * plane, [view] is the projection the gesture came through — the one thing that knows where the
+     * pointer's ray goes — and [held] is whatever [grabHold] answered at the press, so the grab does not jump.
+     *
+     * Defaulted to the plain in-plane [drag], which is what every handle but the height point's is: a
+     * position on the plane says everything about a DOF that lives in it, and nothing about one that does not.
+     */
+    fun drag(
+        world: Vec2,
+        view: PlaneProjection,
+        held: Double,
+        ev: Evaluator,
+    ) = drag(world, ev)
+
+    /**
+     * What the press must remember for this handle's [drag] to be jump-free: the difference between the
+     * value the pointer indicates there and the value the DOF has. Zero for an in-plane handle, whose
+     * grab offset is a plane vector the caller already holds.
+     */
+    fun grabHold(
+        world: Vec2,
+        view: PlaneProjection,
+        ev: Evaluator,
+    ): Double = 0.0
 
     /** Discrete binding: the numeric views of the very same write. */
     fun fields(): List<HandleField> = emptyList()
@@ -909,4 +937,120 @@ class OnEllipseHandle(val ellipse: EllipseRef, private val t: SourceNode) : Hand
     }
 
     override fun fields(): List<HandleField> = listOf(angleField("parameter", t))
+}
+
+/**
+ * A **height point** (OP-25): a base point on a sketch plane, standing `height` mm off it along the
+ * plane's normal — one degree of freedom over its base, and the first handle in this editor whose DOF
+ * leaves the working plane.
+ *
+ * What it writes is the ordinary scalar node [height]: the panel field and the drag are the same write, as
+ * everywhere else (OP-13), and a height **wired onto another parameter** is driven by the construction and
+ * therefore not draggable at all — the very rule a welded 2D point follows, asked in the very same way
+ * ([isFreeSource] through [Handle.dragMovable]), so the refusal names the driven value (see
+ * [explainImmovable]).
+ *
+ * **The reverse drag is the user's design**: *"such a point can be manipulated even in the 3D scene —
+ * adjusting the height parameter (in reverse) — by estimating the distance of the base point to the
+ * projection of the mouse coordinate on the height line."* So the drag takes the pointer's viewing ray
+ * ([PlaneProjection.viewRay]) and answers with the closest-point parameter on the **height line** — the
+ * line through the embedded base along the normal — which in the plane's own (u, v, lift) frame is simply
+ * the vertical through the base. [sign] is the same ±1 the node was built with, so what is written is
+ * always the number the user typed.
+ */
+class HeightPointHandle(
+    val plane: PlaneRef,
+    val base: PointRef,
+    private val height: Node,
+    private val sign: Int = 1,
+) : Handle {
+    override val dragNodes: List<Node> get() = listOf(height)
+
+    /**
+     * Where this point stands in its plane's own (u, v, lift) coordinates: the base, and the **lift** —
+     * the signed distance along the normal, which is [sign] times the height the user typed.
+     *
+     * The one thing a view needs of a height point, and the reason it is asked of the handle rather than
+     * read off the value: the node's value is an honest world position, while drawing and picking happen in
+     * the plane's own frame (see [PlaneProjection]'s off-plane note).
+     */
+    fun localAt(ev: Evaluator): Pair<Vec2, Double>? {
+        val b = (ev.valueOf(base) as? PointValue)?.p ?: return null
+        val h = baseOf(height, ev) ?: return null
+        return b to sign * h
+    }
+
+    /**
+     * The lift the viewing ray through [world] indicates — the closest-approach parameter of that ray on
+     * this point's height line — or **null when the two are too nearly parallel to say** (see
+     * [MIN_RAY_LINE_SIN]).
+     */
+    fun liftFrom(
+        world: Vec2,
+        view: PlaneProjection,
+        ev: Evaluator,
+    ): Double? {
+        val b = localAt(ev)?.first ?: return null
+        val ray = view.viewRay(world)
+        val d = ray.dir
+        val a = d.dot(d)
+        if (a < Vec2.EPS * Vec2.EPS) return null
+        // sin² of the angle between the ray and the height line (0, 0, 1) — the whole of the degenerate case
+        val sin2 = 1.0 - d.z * d.z / a
+        if (sin2 < MIN_RAY_LINE_SIN * MIN_RAY_LINE_SIN) return null
+        val w0 = Vec3(ray.origin.x - b.x, ray.origin.y - b.y, ray.origin.z)
+        return (a * w0.z - d.z * d.dot(w0)) / (a - d.z * d.z)
+    }
+
+    /** The offset between the height this point has and the one the ray indicates at the grab. */
+    override fun grabHold(
+        world: Vec2,
+        view: PlaneProjection,
+        ev: Evaluator,
+    ): Double = (localAt(ev)?.second ?: 0.0) - (liftFrom(world, view, ev) ?: 0.0)
+
+    /**
+     * **The reverse drag**: the ray-to-line lift, plus the grab's offset, written back into the height —
+     * "state restates as a value" (OP-18), so the journal records it exactly as a 2D drag records a
+     * position (the `param` step re-reads its parameter on every save).
+     */
+    override fun drag(
+        world: Vec2,
+        view: PlaneProjection,
+        held: Double,
+        ev: Evaluator,
+    ) {
+        val lift = liftFrom(world, view, ev) ?: return
+        writeScalar(height, Quantity.mm(sign * (lift + held)))
+    }
+
+    /**
+     * An **in-plane** drag writes nothing: this point's one freedom is out of the plane, so a caller with
+     * only a plane position to offer has said nothing about it. (Not an oversight, and not inert either —
+     * every caller that can see the view uses the ray form above; this is the honest answer for the one
+     * that cannot.)
+     */
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) = Unit
+
+    override fun fields(): List<HandleField> = listOf(scalarField("height", height, Dimension.LENGTH))
+
+    companion object {
+        /**
+         * How square the pointer's ray must meet the height line before a drag will read a height off it:
+         * the sine of the angle between them, i.e. the reciprocal of the drag's sensitivity.
+         *
+         * 0.05 — about 3° — so one pixel of pointer movement can move the apex by at most **20** times what
+         * it would move a point on the plane. That is the same 20 the pick tolerance is capped by
+         * ([PlanePerspective.MAX_TOLERANCE_FACTOR]) and for the same reason: past it the view cannot
+         * honestly say where the pointer is aiming, and an answer computed anyway would fly off to
+         * infinity as the two lines came into line. Inside the cone the drag simply holds the height it
+         * has — the change is clamped to nothing, never exploded — and the status line says why. Orbiting
+         * a little is what makes the height editable again, exactly as it is what makes a far-off pick
+         * precise again.
+         */
+        const val MIN_RAY_LINE_SIN = 0.05
+    }
 }

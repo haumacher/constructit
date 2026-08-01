@@ -5,7 +5,9 @@ import constructit.geom.Circle
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Plane3
+import constructit.geom.Ray3
 import constructit.geom.Vec2
+import constructit.geom.Vec3
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -63,6 +65,46 @@ interface PlaneProjection {
      * a pick silently reach across the drawing (see [Editor.pointerMove]).
      */
     fun scaleClampedAt(p: Vec2): Boolean = false
+
+    // ---- one axis further: the plane's own frame in 3D (OP-25, the height point) ----
+    //
+    // **The ray seam's answer.** A height point is not *on* the working plane, so neither drawing it nor
+    // dragging it can be said in plane coordinates alone — and the question was whether `Viewport3` should
+    // hand the editor a ray or the projection should grow one. It grows one, for the reason this interface
+    // exists at all: it is already the single authority both the event path and the rendering path share,
+    // and a height point is exactly "the plane's own frame, one axis further" — so the two paths keep
+    // agreeing by construction. `Editor` stays headless (it asks its `pointing` projection, never a
+    // camera), the 2D canvas needs no code (the defaults below *are* its answer), and a test asserts the
+    // whole of it by building a `PlanePerspective` of its own.
+    //
+    // Everything here is stated in the plane's own **(u, v, lift)** coordinates — an orthonormal frame, so a
+    // distance in it is millimetres — rather than in the world: the 2D [Camera] has no plane and could not
+    // answer a world question at all, and the consumer (a height point's base and height) speaks that frame
+    // already.
+
+    /**
+     * Where the point standing [lift] mm off the plane above [p] lands on screen, or null when it has no
+     * image ([toScreen]'s rule, one axis up).
+     *
+     * The default is the **orthographic** answer, and it is the honest one for a similarity: a 2D canvas
+     * looks along its plane's normal, so a lifted point's image is its base's image and a height is
+     * invisible there. That is why a height point draws and picks in the 3D view only — see
+     * [SceneRenderer] and [HitTest].
+     */
+    fun toScreenLifted(
+        p: Vec2,
+        lift: Double,
+    ): Vec2? = toScreen(p)
+
+    /**
+     * The **viewing ray** through plane point [p], in the plane's own (u, v, lift) coordinates: what a drag
+     * of an out-of-plane handle is measured against (OP-25's ray-to-line).
+     *
+     * The default is again the orthographic one — straight along the normal — which is what makes the
+     * near-parallel clamp fire in the 2D canvas: a height line *is* that ray there, so the plan can say
+     * nothing about a height, and it declines instead of exploding.
+     */
+    fun viewRay(p: Vec2): Ray3 = Ray3(Vec3(p.x, p.y, 0.0), Vec3(0.0, 0.0, 1.0))
 
     /**
      * Whether this projection is a **similarity**: uniform scale and no perspective, so a length in
@@ -124,6 +166,22 @@ class PlanePerspective(
         val ray = camera.unproject(s, widthPx, heightPx)
         val t = Geom3.rayPlane(ray, plane) ?: return null
         return plane.toLocal(ray.at(t))
+    }
+
+    override fun toScreenLifted(
+        p: Vec2,
+        lift: Double,
+    ): Vec2? = camera.project(plane.toWorld(p) + plane.normal.normalized() * lift, widthPx, heightPx)
+
+    /**
+     * The eye, and the direction from it through the point on the plane — the same line the pointer's ray
+     * is, expressed in this plane's own frame (see the interface note).
+     */
+    override fun viewRay(p: Vec2): Ray3 {
+        val n = plane.normal.normalized()
+        val eye = plane.toLocal(camera.eye)
+        val d = plane.toWorld(p) - camera.eye
+        return Ray3(Vec3(eye.x, eye.y, plane.distanceTo(camera.eye)), Vec3(d.dot(plane.u), d.dot(plane.v), d.dot(n)))
     }
 
     /**

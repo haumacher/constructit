@@ -162,13 +162,16 @@ class LoftToolTest {
         ed.setTool(Tools.CIRCLE)
         ed.click(Vec2(60.0, 40.0))
         ed.click(Vec2(70.0, 40.0))
-        val points = ed.doc.elements.count { it.isPoint }
+        val points = ed.doc.elements.count { it.kind == ElementKind.POINT }
 
         ed.setTool(Tools.EXTRUDE_TO_POINT)
         ed.type("60")
         ed.click(Vec2(30.0, 0.0))
         ed.click(Vec2(60.0, 40.0))
-        assertEquals(points, ed.doc.elements.count { it.isPoint }, "the apex click found the point instead of placing one")
+        assertEquals(points, ed.doc.elements.count { it.kind == ElementKind.POINT }, "the apex click found the point instead of placing one")
+        // ...and what it *did* add is the height point standing over it (OP-25) — one per gesture, whether
+        // the base was clicked or placed, which is what makes the apex the same kind of thing either way
+        assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.HEIGHT_POINT }, "one height point over the shared base")
 
         val solid = ed.solids().single()
         val circle = ed.doc.elements.last { it.kind == ElementKind.CIRCLE }

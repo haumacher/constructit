@@ -35,6 +35,7 @@ import constructit.dsl.LineRef
 import constructit.dsl.LoftPart
 import constructit.dsl.LoopRef
 import constructit.dsl.PlaneRef
+import constructit.dsl.Point3Ref
 import constructit.dsl.PointRef
 import constructit.dsl.PointSetRef
 import constructit.dsl.RayRef
@@ -91,6 +92,14 @@ enum class ElementKind {
     POINT,
     DERIVED_POINT,
     ON_CURVE,
+
+    /**
+     * A **height point** (OP-25): a base point on a sketch plane plus a height along that plane's normal —
+     * the apex of a pyramid, generalized. A point kind like the three above, and the one whose position is
+     * not *in* the working plane, which is why it is drawn, picked and dragged in the 3D view (see
+     * [HeightPointHandle] and [HitTest.distanceTo]).
+     */
+    HEIGHT_POINT,
     LINE,
     RAY,
     CIRCLE,
@@ -222,7 +231,7 @@ class Element(
      */
     val draggable: Boolean get() =
         when (kind) {
-            ElementKind.POINT, ElementKind.ON_CURVE, ElementKind.DIMENSION -> hasFreeDof
+            ElementKind.POINT, ElementKind.ON_CURVE, ElementKind.HEIGHT_POINT, ElementKind.DIMENSION -> hasFreeDof
             else -> false
         }
 
@@ -257,7 +266,9 @@ class Element(
      * not hidden, full stop.
      */
     val isAnnotation: Boolean get() = kind == ElementKind.DIMENSION
-    val isPoint: Boolean get() = kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT || kind == ElementKind.ON_CURVE
+    val isPoint: Boolean get() =
+        kind == ElementKind.POINT || kind == ElementKind.DERIVED_POINT || kind == ElementKind.ON_CURVE ||
+            kind == ElementKind.HEIGHT_POINT
 
     /** Line / segment / ray — anything that determines an infinite line. */
     val isLinear: Boolean get() = kind == ElementKind.LINE || kind == ElementKind.SEGMENT || kind == ElementKind.RAY
@@ -7272,7 +7283,19 @@ class Document {
                     seams.add(signs.getOrNull(seams.size) ?: seamOf(region, clicks.getOrNull(i)))
                 }
                 LoftRole.APEX -> {
-                    parts.add(LoftPart.Apex(planeOfSpace(el.space), el.ref as PointRef, cx.const(0.0.mm)))
+                    // A height point picked as the apex is taken **as it is** (OP-25) — it already says where
+                    // it stands in space, and sharing the node is what makes two solids follow one apex
+                    // (OP-5). A plain 2D point is lifted by nothing: it lies in its own sketch plane, which is
+                    // the same construction the loft has always made, now said with the general node.
+                    // told apart by **kind**, never by casting the ref: `Ref<V>`'s parameter is erased, so
+                    // `as? Point3Ref` succeeds for any ref and would defer the mistake to the value
+                    val point =
+                        if (el.kind == ElementKind.HEIGHT_POINT) {
+                            el.ref as Point3Ref
+                        } else {
+                            cx.heightPoint(planeOfSpace(el.space), el.ref as PointRef, cx.const(0.0.mm))
+                        }
+                    parts.add(LoftPart.Apex(point))
                     // a point has no boundary to start a correspondence at, and the list is indexed by section
                     seams.add(0)
                 }
@@ -7287,6 +7310,49 @@ class Document {
     }
 
     /**
+     * Which way "up" is for a point lifted off the **active** plane: −1 on a face, +1 everywhere else.
+     *
+     * *Extrude*'s own rule, stated once and shared by everything that lifts (OP-25): a face plane's normal
+     * points into the material (OP-8), so a positive height there must build **outward**. Structural — it is
+     * read from the space at build time and re-read on replay, never from a value — so nothing about it has
+     * to be persisted.
+     */
+    private fun liftSign(): Int = if (activeSpace.isFace) -1 else 1
+
+    /**
+     * A **height point** over [base], standing [height] off the active sketch plane (OP-25) — the user's
+     * generalization of the apex: *"an arbitrary free point in 3D from a point in 2D and a given height
+     * parameter … 1 dof over its base point."*
+     *
+     * One element over one node, so everything else about it is what any element already gets: the height is
+     * an ordinary named scalar (panel row, rename, wire), the base is a point like any other and stays
+     * draggable where it lives, and the point itself is grabbed *in the 3D view*, where the drag reads its
+     * height off the pointer's ray ([HeightPointHandle]).
+     */
+    fun heightPoint(
+        base: PointRef,
+        height: ScalarRef,
+    ): Element {
+        val sign = liftSign()
+        val plane = activePlane()
+        val el = add(cx.heightPoint(plane, base, height, sign), ElementKind.HEIGHT_POINT, Styles.DERIVED_POINT)
+        el.handle = HeightPointHandle(plane, base, height.node, sign)
+        return el
+    }
+
+    /** The height-point gesture: a base point (clicked or created) and a height. */
+    fun heightPointAt(
+        base: PointRef,
+        height: ScalarRef,
+    ): Element {
+        val el = heightPoint(base, height)
+        note =
+            "${nameOf(el)}: ${Format.num(((Evaluator().valueOf(height) as? ScalarValue)?.q?.mm) ?: 0.0)} mm above ${nameOf(elementFor(base) ?: el)} " +
+            "— drag it in the 3D view to change the height, or retype it in the panel"
+        return el
+    }
+
+    /**
      * The pyramid/cone gesture: the area [el] run to a **point** [apex] standing [height] off the sketch plane
      * (OP-17). The two-section case of [loftSolid], with the apex placed by the same kind of scalar an extrude's
      * depth is.
@@ -7295,7 +7361,13 @@ class Document {
      * it hit a point — so it is draggable in the plan and *shared* when it was clicked, and the pyramid follows
      * it either way (OP-5). Which way the height goes is the operation's business and follows *Extrude*'s own
      * rule: on a face space a positive height builds **outward**, because a face plane's normal points into the
-     * material; in the plan and on a datum it follows the plane's own normal.
+     * material; in the plan and on a datum it follows the plane's own normal ([liftSign]).
+     *
+     * **The apex it builds *is* a height point** (OP-25), which is the whole of this tool's part in that
+     * package: the same two clicks and the same typed number, and what comes out is the general node rather
+     * than a lift welded into the loft — so the height stands in the panel under its own name, the apex is
+     * grabbable in the 3D view, and the pyramid follows either edit. The user's own reading: *"the apex of an
+     * extruded outline is exactly such a point."*
      */
     fun extrudeToPoint(
         el: Element,
@@ -7309,13 +7381,15 @@ class Document {
                 note = "Extrude to point: ${nameOf(el)} bounds no area"
                 return null
             }
-        val space = activeSpace
         val plane = activePlane()
-        val lift = if (space.isFace) cx.neg(height) else height
+        val top = heightPoint(apex, height)
         val seam = signs.firstOrNull() ?: seamOf(region, at)
         val solid =
             add(
-                cx.loft(listOf(LoftPart.Area(cx.sketchOn(plane, region)), LoftPart.Apex(plane, apex, lift)), listOf(seam, 0)),
+                cx.loft(
+                    listOf(LoftPart.Area(cx.sketchOn(plane, region)), LoftPart.Apex(top.ref as Point3Ref)),
+                    listOf(seam, 0),
+                ),
                 ElementKind.SOLID,
                 Styles.SOLID,
             )

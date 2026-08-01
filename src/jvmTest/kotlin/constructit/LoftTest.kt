@@ -103,7 +103,7 @@ class LoftTest {
         val base = c.rect(0.0, 0.0, 100.0, 100.0)
         val apex = c.freePoint("apex", 50.mm, 50.mm)
         val height = c.parameter("height", 90.mm)
-        val solid = c.loftOf(c.areaOn(0.0, base), LoftPart.Apex(c.planeXY(), apex, height))
+        val solid = c.loftOf(c.areaOn(0.0, base), LoftPart.Apex(c.heightPoint(c.planeXY(), apex, height)))
         val vol = c.measureVolume(solid)
 
         val ev = Evaluator()
@@ -126,7 +126,7 @@ class LoftTest {
         val c = Construction()
         val apex = c.freePoint("apex", 50.mm, 50.mm)
         val height = c.parameter("height", 90.mm)
-        val solid = c.loftOf(c.areaOn(0.0, c.rect(0.0, 0.0, 100.0, 100.0)), LoftPart.Apex(c.planeXY(), apex, height))
+        val solid = c.loftOf(c.areaOn(0.0, c.rect(0.0, 0.0, 100.0, 100.0)), LoftPart.Apex(c.heightPoint(c.planeXY(), apex, height)))
         val vol = c.measureVolume(solid)
         val nodesBefore = c.nodesCreated
 
@@ -144,7 +144,7 @@ class LoftTest {
         val c = Construction()
         val apexFirst =
             c.loftOf(
-                LoftPart.Apex(c.planeXY(), c.freePoint("apex", 50.mm, 50.mm), c.parameter("h", 90.mm)),
+                LoftPart.Apex(c.heightPoint(c.planeXY(), c.freePoint("apex", 50.mm, 50.mm), c.parameter("h", 90.mm))),
                 c.areaOn(0.0, c.rect(0.0, 0.0, 100.0, 100.0)),
             )
         val ev = Evaluator()
@@ -182,7 +182,7 @@ class LoftTest {
         val c = Construction()
         val centre = c.freePoint("centre", 0.mm, 0.mm)
         val disc = c.region(c.loop(c.circleCR(centre, c.parameter("r", 40.mm))))
-        val solid = c.loftOf(c.areaOn(0.0, disc), LoftPart.Apex(c.planeXY(), c.freePoint("apex", 0.mm, 0.mm), c.parameter("h", 90.mm)))
+        val solid = c.loftOf(c.areaOn(0.0, disc), LoftPart.Apex(c.heightPoint(c.planeXY(), c.freePoint("apex", 0.mm, 0.mm), c.parameter("h", 90.mm))))
         val vol = c.measureVolume(solid)
 
         val ev = Evaluator()
@@ -389,7 +389,7 @@ class LoftTest {
             c.loft(
                 listOf(
                     c.areaOn(0.0, c.rect(0.0, 0.0, 100.0, 100.0)),
-                    LoftPart.Apex(c.planeXY(), c.freePoint("apex", 50.mm, 50.mm), c.parameter("h", 50.mm)),
+                    LoftPart.Apex(c.heightPoint(c.planeXY(), c.freePoint("apex", 50.mm, 50.mm), c.parameter("h", 50.mm))),
                     c.areaOn(100.0, c.rect(0.0, 0.0, 100.0, 100.0)),
                 ),
             )
@@ -403,7 +403,7 @@ class LoftTest {
         val height = c.parameter("height", 0.mm)
         // off the centre, deliberately: an apex *at* the centre with no height is the other degeneracy (the
         // two sections sit at the same place), and each reason should be reachable on its own
-        val solid = c.loftOf(c.areaOn(0.0, c.rect(0.0, 0.0, 100.0, 100.0)), LoftPart.Apex(c.planeXY(), c.freePoint("apex", 20.mm, 30.mm), height))
+        val solid = c.loftOf(c.areaOn(0.0, c.rect(0.0, 0.0, 100.0, 100.0)), LoftPart.Apex(c.heightPoint(c.planeXY(), c.freePoint("apex", 20.mm, 30.mm), height)))
         val why = (Evaluator().resultOf(solid) as EvalResult.Invalid).reason
         assertTrue(why.contains("no height"), "the reason says the apex is in the plane: $why")
         c.set(height, 20.mm)
@@ -419,7 +419,7 @@ class LoftTest {
     fun aSectionWithNoAreaIsRefusedByName() {
         val c = Construction()
         val flat = c.rect(0.0, 0.0, 100.0, 0.0)
-        val solid = c.loftOf(c.areaOn(0.0, flat), LoftPart.Apex(c.planeXY(), c.freePoint("apex", 50.mm, 50.mm), c.parameter("h", 50.mm)))
+        val solid = c.loftOf(c.areaOn(0.0, flat), LoftPart.Apex(c.heightPoint(c.planeXY(), c.freePoint("apex", 50.mm, 50.mm), c.parameter("h", 50.mm))))
         val why = (Evaluator().resultOf(solid) as EvalResult.Invalid).reason
         assertTrue(why.contains("area"), "the reason reaches back to the flattened boundary: $why")
 
@@ -463,7 +463,7 @@ class LoftTest {
         val outer = c.loop(*ringSegments(c, 0.0, 0.0, 100.0, 100.0))
         val hole = c.loop(c.circleCR(c.freePoint("hc", 50.mm, 50.mm), c.const(10.mm)))
         val ringed = c.region(outer, hole)
-        val solid = c.loftOf(c.areaOn(0.0, ringed), LoftPart.Apex(c.planeXY(), c.freePoint("apex", 50.mm, 50.mm), c.parameter("h", 50.mm)))
+        val solid = c.loftOf(c.areaOn(0.0, ringed), LoftPart.Apex(c.heightPoint(c.planeXY(), c.freePoint("apex", 50.mm, 50.mm), c.parameter("h", 50.mm))))
         val why = (Evaluator().resultOf(solid) as EvalResult.Invalid).reason
         assertTrue(why.contains("hole"), "the reason names the hole: $why")
         assertTrue(why.contains("subtract"), "and the construction that does work: $why")

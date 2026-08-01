@@ -787,6 +787,13 @@ class Editor(
     private var grabOffset: Vec2 = Vec2(0.0, 0.0) // cursor minus that, so a grab never jumps
 
     /**
+     * The same thing one axis further, for a handle whose DOF **leaves the working plane** (OP-25): what the
+     * press held back so the drag does not jump ([Handle.grabHold]). Zero for every in-plane handle, whose
+     * offset is [grabOffset] — one field rather than a second kind of drag, because a grab is a grab.
+     */
+    private var dragHold: Double = 0.0
+
+    /**
      * Where every carrier-anchored rider stood when this drag began (OP-20). Captured at the press and never
      * refreshed: the compensation each move applies is measured from the *grab*, so a gesture is a pure
      * function of where it started and where the cursor is now — see [Document.compensateRiders].
@@ -2042,6 +2049,7 @@ class Editor(
                 dragTarget = primedElement
                 val anchor = grabAnchor(primedElement, world)
                 grabOffset = world - anchor
+                dragHold = primedElement.handle?.grabHold(world, proj(), ev()) ?: 0.0
                 dragStart = anchor
                 dragRiders = doc.riderAnchors()
                 pendingNote = "Dragging ${elementLabel(primedElement)} — what is selected takes the grab"
@@ -2064,6 +2072,7 @@ class Editor(
                 // it on the first move and then follow from there
                 val anchor = grabAnchor(movable, world)
                 grabOffset = world - anchor
+                dragHold = movable.handle?.grabHold(world, proj(), ev()) ?: 0.0
                 dragStart = anchor
                 // …and where everything riding a host stands right now, for the same reason: the drag may turn
                 // a host, and a rider measured along that host has to be re-solved against where it *was*
@@ -2620,7 +2629,7 @@ class Editor(
     private fun pickAt(world: Vec2): PickPile {
         val ev = ev()
         val tol = tolWorld()
-        val all = HitTest.nearestAll(doc, ev, world, tol) { it.selectable }.map { it.first }
+        val all = HitTest.nearestAll(doc, ev, world, tol, proj()) { it.selectable }.map { it.first }
         val points = all.filter { it.isPoint }.sortedBy { !it.draggable }
         val draggablePoint = points.firstOrNull { it.draggable }
         // An opening's jamb is not an element, so it is picked on its own and then *competes by distance* with
@@ -2631,8 +2640,8 @@ class Editor(
         val jamb = HitTest.nearestJamb(doc, ev, world, tol)
         val reach =
             if (draggablePoint == null && jamb != null) minOf(tol, HitTest.distanceToSegment(world, jamb.seg)) else tol
-        val curves = HitTest.nearestAll(doc, ev, world, reach) { it.isCurve && it.hasFreeDof }.map { it.first }
-        val annotations = HitTest.nearestAll(doc, ev, world, reach) { it.annotation != null && it.hasFreeDof }.map { it.first }
+        val curves = HitTest.nearestAll(doc, ev, world, reach, proj()) { it.isCurve && it.hasFreeDof }.map { it.first }
+        val annotations = HitTest.nearestAll(doc, ev, world, reach, proj()) { it.annotation != null && it.hasFreeDof }.map { it.first }
         val movable = draggablePoint ?: curves.firstOrNull() ?: annotations.firstOrNull()
         val ranked = points + (curves + annotations).filter { el -> points.none { it === el } }
         // everything else that can be addressed at all — an area, a solid's footprint hint, a curve the jamb's
@@ -2779,7 +2788,7 @@ class Editor(
         from: Vec2,
         to: Vec2,
     ) {
-        val hits = HitTest.within(doc, ev(), from, to)
+        val hits = HitTest.within(doc, ev(), from, to, proj())
         val kept = if (marqueeAdds) selectedElements else emptyList()
         select(kept + hits.filter { it !in kept }, hits.lastOrNull() ?: selection)
         statusHint =
@@ -2847,7 +2856,10 @@ class Editor(
             dragTarget != null -> {
                 val el = dragTarget!!
                 val at = axisLocked(world - grabOffset, el)
-                el.handle?.drag(at, ev())
+                // one call for both kinds of handle: the view and the grab's hold are what a DOF that leaves
+                // the plane needs (OP-25), and every in-plane handle ignores them (see [Handle.drag])
+                el.handle?.drag(at, proj(), dragHold, ev())
+                heightDragNote(el, at)
                 // one seam for every route that can turn a host — an endpoint, a whole leg, a junction the
                 // handle delegated to (OP-20): whatever the drag wrote, the riders are re-solved after it
                 doc.compensateRiders(dragRiders)
@@ -3013,6 +3025,10 @@ class Editor(
         el: Element,
     ): Vec2 {
         if (el.handle is OrthoEdgeHandle) return world
+        // ...and a height point's drag is a *ray*, not a position (OP-25): the plane point only aims it, so
+        // pinning that point to an axis would bend the aim rather than restrict the height. The jamb's rule
+        // for the same reason — a handle with a single direction of its own has nothing a lock could add.
+        if (el.handle is HeightPointHandle) return world
         return axisLockedFrom(world)
     }
 
@@ -3067,6 +3083,29 @@ class Editor(
         path: OrthoPath,
         i: Int,
     ): Double? = doc.legPerpValue(path, i)
+
+    /**
+     * What a **height point**'s drag has to say for itself (OP-25): the height it now stands at, or — when
+     * the pointer's ray is too nearly in line with the height line to read one — that the change is held.
+     *
+     * Nothing at all for every other handle, which is why it is one line in the drag branch rather than a
+     * case in it. The clamp is said out loud for the same reason a clamped pick tolerance is: a drag that
+     * has quietly stopped following the cursor reads as a bug unless the view says why it cannot.
+     */
+    private fun heightDragNote(
+        el: Element,
+        at: Vec2,
+    ) {
+        val h = el.handle as? HeightPointHandle ?: return
+        val ev = ev()
+        statusHint =
+            if (h.liftFrom(at, proj(), ev) == null) {
+                "${doc.nameOf(el)}: the view looks along its height line, so the height cannot be read here " +
+                    "(it is held). Orbit a little and drag again."
+            } else {
+                "${doc.nameOf(el)} height ${Format.num(h.fields().firstOrNull()?.read(ev)?.mm ?: 0.0)} mm"
+            }
+    }
 
     /**
      * Where on [el] a grab at [world] landed: the point itself, or the point of the curve under the
@@ -3682,7 +3721,7 @@ class Editor(
         world: Vec2,
         filter: (Element) -> Boolean,
     ): Boolean {
-        val el = HitTest.nearest(doc, ev(), world, tolWorld(), filter) ?: return false
+        val el = HitTest.nearest(doc, ev(), world, tolWorld(), proj(), filter) ?: return false
         pickedElements.add(el)
         return true
     }

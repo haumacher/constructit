@@ -200,6 +200,14 @@ object SceneRenderer {
             // one canvas shows one space (OP-17): everything else belongs to a different coordinate system
             if (el.space != doc.activeSpace.name) continue
             val style = if (el in dimmed) Styles.DIMMED else el.style
+            // A **height point** stands off this plane (OP-25), so it is drawn where the view can honestly
+            // put it and nowhere else — handled before the value dispatch because its value is the one that
+            // is not in plane coordinates at all.
+            val height = el.handle as? HeightPointHandle
+            if (height != null) {
+                drawHeightPoint(height, ev, proj, target, style)
+                continue
+            }
             when (val v = ev.valueOf(el.ref)) {
                 is PointValue -> dot(proj, target, v.p, style.stroke)
                 is SegmentValue -> poly(proj, target, listOf(v.seg.a, v.seg.b), style)
@@ -366,6 +374,45 @@ object SceneRenderer {
     }
 
     /**
+     * A **height point** (OP-25): the dot where the point stands in space, with a light guide line down to
+     * its base — the drawing of "this point is that point, lifted".
+     *
+     * The guide is what makes the mark readable rather than mysterious: a dot floating over a pyramid says
+     * nothing about which base it belongs to, and the line is also what a user aims along when dragging the
+     * height (the drag runs on exactly that line). It is drawn in the plane-context weight, because it is a
+     * relation and not geometry.
+     *
+     * **Nothing at all under a similarity** — the 2D canvas. Its projection looks along the plane's normal,
+     * so the point's image is its base's and the guide is a zero-length line: two marks that say nothing,
+     * one of them exactly on top of the apex dot the plan already draws. What is not drawn is not picked
+     * there either ([HitTest.distanceTo]), so the plan is exactly the plan it was.
+     */
+    private fun drawHeightPoint(
+        h: HeightPointHandle,
+        ev: Evaluator,
+        proj: PlaneProjection,
+        target: DrawTarget,
+        style: Style,
+    ) {
+        if (proj.similarity) return
+        val (base, lift) = h.localAt(ev) ?: return
+        val top = proj.toScreenLifted(base, lift) ?: return
+        proj.toScreen(base)?.let { foot -> target.polyline(listOf(foot, top), faceStyle) }
+        target.dot(top, POINT_PX, style.stroke)
+    }
+
+    /** Where a height point is **seen** on the screen — what its selection ring and its emphasis mark. */
+    private fun heightPointAt(
+        h: HeightPointHandle,
+        ev: Evaluator,
+        proj: PlaneProjection,
+    ): Vec2? {
+        if (proj.similarity) return null
+        val (base, lift) = h.localAt(ev) ?: return null
+        return proj.toScreenLifted(base, lift)
+    }
+
+    /**
      * One [PreviewShape] in the preview style — the whole of the rendering half of live tool previews.
      *
      * Every case is a call the renderer already makes for the corresponding *value* kind (an infinite line is
@@ -420,6 +467,12 @@ object SceneRenderer {
             return
         }
         if (el.space != doc.activeSpace.name) return
+        // a height point rings where it is seen — the same ring a point gets, at the position the view
+        // draws it at (OP-25)
+        (el.handle as? HeightPointHandle)?.let { h ->
+            heightPointAt(h, ev, proj)?.let { target.circle(it, 7.0, ringStyle) }
+            return
+        }
         when (val v = ev.valueOf(el.ref)) {
             is PointValue -> proj.toScreen(v.p)?.let { target.circle(it, 7.0, ringStyle) }
             is SegmentValue -> poly(proj, target, listOf(v.seg.a, v.seg.b), style)

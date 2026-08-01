@@ -120,6 +120,16 @@ object Dependencies {
                 }
             if (pick != null) out.getOrPut(pick.id) { tool.roleOf(i) }
         }
+        // …and an element the step built **over** a pick carries that pick's own word. *Extrude to point*
+        // raises a height point over the apex the user clicked (OP-25), and that height point *is* the apex —
+        // so the row must say "apex" rather than fall silent because no click landed on the element itself.
+        // Stated once, over every tool: a step that builds an intermediate element over one of its picks has
+        // no second word for it, and inventing one per tool is exactly the second table this map avoids.
+        val fromPicks = out.toMap()
+        for (made in step.creates) {
+            if (made === el || made.id in out) continue
+            nearestAncestors(doc, made).firstNotNullOfOrNull { fromPicks[it.id] }?.let { out[made.id] = it }
+        }
         return out
     }
 

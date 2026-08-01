@@ -121,7 +121,7 @@ class PreviewContext(
     fun number(i: Int): Double? = scalars.getOrNull(i)?.base
 
     /** The nearest element under the cursor passing [filter] — the pick this hover would make. */
-    fun under(filter: (Element) -> Boolean): Element? = HitTest.nearest(doc, ev, cursor, tol, filter)
+    fun under(filter: (Element) -> Boolean): Element? = HitTest.nearest(doc, ev, cursor, tol, filter = filter)
 }
 
 /**

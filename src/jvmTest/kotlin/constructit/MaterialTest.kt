@@ -55,6 +55,11 @@ class MaterialTest {
      * **A drawing written before materials existed**, verbatim: it loads, every solid wears the default, and
      * the load says nothing — there is nothing to say. Kept permanently, because this is the assertion that
      * catches the day somebody makes the material step required, or changes what a missing one means.
+     *
+     * The step declares **two** creations since OP-25: *Extrude to point* raises a height point over the apex
+     * it was clicked at and then lofts to it, so the apex is a first-class point of the drawing. Written into
+     * the fixture rather than migrated on load, on the user's standing call — there is no release, so the
+     * rule simply changes.
      */
     private val preMaterials =
         """
@@ -66,7 +71,7 @@ class MaterialTest {
         orthoclose -> e8
         param "height" = 90mm
         point 50,50 -> e9
-        tool extrudepoint pts=e9 els=e3 clicks=30,0;50,50 scalar="height" signs=0;0 -> e10
+        tool extrudepoint pts=e9 els=e3 clicks=30,0;50,50 scalar="height" signs=0;0 -> e10,e11
         """.trimIndent() + "\n"
 
     @Test
