@@ -967,6 +967,14 @@ golden (`editor_scale_bar`) records the overlay itself. The label is in millimet
 base unit, and a bar that switched to metres would be the display-unit question (OP-7) answered in one corner
 of one view.
 
+> **Reversed in session 30 (issue #12, "10000mm").** The last sentence above lost to the ruler's own job: a
+> bar exists to be *read*, and "10000 mm" is a digit count where "10 m" is a distance. The label now converts
+> upward in powers of 1000 (µm below 0.1 mm, mm, m from a metre, km from a kilometre), so a 1/2/5-round
+> length stays 1/2/5-round in whichever unit it is shown in. What survives of the old reasoning is its scope:
+> this is still only the *bar's* spelling — the model, the panel and the file remain in mm, and the general
+> display-unit question (OP-7) remains open, not answered in one corner of one view.
+> `ScaleBarTest.farOutTheBarSpeaksMetresNotThousandsOfMillimetres` is the regression.
+
 #### Usability — click budgets (as built)
 
 The session-3 charge was to *test the application and its usability, and reach the results in a reasonable

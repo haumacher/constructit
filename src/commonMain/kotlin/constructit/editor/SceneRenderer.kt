@@ -687,8 +687,22 @@ object SceneRenderer {
      */
     fun scaleBarLength(scale: Double): Double = niceLength(SCALE_BAR_PX / scale)
 
-    /** The bar's label: the same base unit the whole model is in (mm), never a converted one. */
-    fun scaleBarLabel(scale: Double): String = "${Format.num(scaleBarLength(scale))} mm"
+    /**
+     * The bar's label: the base unit (mm), converted upward exactly when the number would stop reading as
+     * a length — "10000 mm" is a digit count, "10 m" is a distance (issue #12; the original never-convert
+     * decision is reversed where it was recorded). Steps are powers of 1000 (µm, mm, m, km), so a
+     * 1/2/5-round length stays 1/2/5-round in whichever unit it is shown in; mm holds down to 0.1 because
+     * "0.5 mm" is the familiar spelling and "500 µm" is not.
+     */
+    fun scaleBarLabel(scale: Double): String {
+        val mm = scaleBarLength(scale)
+        return when {
+            mm >= 1e6 -> "${Format.num(mm / 1e6)} km"
+            mm >= 1e3 -> "${Format.num(mm / 1e3)} m"
+            mm >= 0.1 -> "${Format.num(mm)} mm"
+            else -> "${Format.num(mm * 1e3)} µm"
+        }
+    }
 
     /**
      * The corner ruler: a round length, drawn at the size it really is, with its number over it.

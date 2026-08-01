@@ -32,6 +32,21 @@ class ScaleBarTest {
         assertEquals("20 mm", SceneRenderer.scaleBarLabel(4.0))
     }
 
+    /**
+     * Issue #12's regression: zoomed out, the bar converts upward — "10000 mm" is a digit count where
+     * "10 m" is a distance. The unit steps are powers of 1000 so a 1/2/5-round length stays round, and mm
+     * holds down to 0.1 because "0.5 mm" is the familiar spelling.
+     */
+    @Test
+    fun farOutTheBarSpeaksMetresNotThousandsOfMillimetres() {
+        assertEquals("10 m", SceneRenderer.scaleBarLabel(0.01), "the reported case: 10000 mm reads as 10 m")
+        assertEquals("1 m", SceneRenderer.scaleBarLabel(0.1))
+        assertEquals("500 mm", SceneRenderer.scaleBarLabel(0.2), "below a metre the base unit stands")
+        assertEquals("1 km", SceneRenderer.scaleBarLabel(0.0001), "and a site plan reads kilometres")
+        assertEquals("0.5 mm", SceneRenderer.scaleBarLabel(200.0), "fine zoom keeps the familiar spelling")
+        assertEquals("50 µm", SceneRenderer.scaleBarLabel(2000.0), "and only truly small goes micro")
+    }
+
     @Test
     fun itFollowsTheZoomAndStaysRound() {
         // every step of the wheel, over four decades: the label is always a round number, and it never

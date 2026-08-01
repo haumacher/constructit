@@ -60,10 +60,12 @@ class PolishProbe2Test {
 
     @Test
     fun theScaleBarPicksRoundNumbersAtEveryZoom() {
-        // ~100px target: at 4 px/mm -> 25mm -> nice 20 or 50; at 0.01 px/mm -> 10000mm; at 100 px/mm -> 1mm
+        // ~100px target: at 4 px/mm -> 25mm -> nice 20 or 50; at 0.01 px/mm -> 10 m (issue #12: converted
+        // upward, deliberately — this row asserted "10000 mm" until that decision was reversed); at
+        // 100 px/mm -> 1mm
         for ((scale, acceptable) in listOf(
             4.0 to setOf("20 mm", "25 mm", "50 mm"),
-            0.01 to setOf("10000 mm", "5000 mm", "20000 mm"),
+            0.01 to setOf("10 m", "5 m", "20 m"),
             100.0 to setOf("1 mm", "2 mm", "0.5 mm"),
         )) {
             val label = SceneRenderer.scaleBarLabel(scale)
