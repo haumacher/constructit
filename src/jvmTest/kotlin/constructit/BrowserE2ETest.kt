@@ -1399,6 +1399,8 @@ class BrowserE2ETest {
             assertEquals("drawing.stl", stl.suggestedFilename())
             val jt = page.waitForDownload { page.click("#x-jt") }
             assertEquals("drawing.jt", jt.suggestedFilename())
+            val savedJt = File("build/e2e/export.jt")
+            jt.saveAs(savedJt.toPath())
 
             // ---- and the editing views still work, with the preview closed again ----
             page.click("#v-3d")
@@ -1409,6 +1411,18 @@ class BrowserE2ETest {
             page.mouse().click(rx1, ry1 - 40)
             assertEquals(itemsBefore + 1, tree().size, "the 2D view still draws: ${status()}")
             assertTrue(solid3d.length > 1000, "the 3D view still renders the part")
+
+            // ---- and the loop closed in the browser: the JT this shell just wrote, imported back ----
+            //
+            // Cheap because the export half already produced a real file: the picker is fed that file, and
+            // the whole of the shell's contribution (read the bytes, hand them to `Editor.importFile`, show
+            // what came back) is exercised for the cost of three lines.
+            val treeBeforeImport = tree().size
+            page.setInputFiles("#x-import-file", savedJt.toPath())
+            page.waitForCondition { fileNote().startsWith("Imported ") }
+            assertTrue(fileNote().contains("1 body"), "the panel says what came in: ${fileNote()}")
+            assertTrue(tree().size > treeBeforeImport, "the imported body is in the drawing")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/26-jt-imported.png")))
 
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()

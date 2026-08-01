@@ -205,6 +205,11 @@ object Section3 {
             "not faces — its section draws from the mesh and offers no construction inputs; a horizontal cut " +
             "through it is exact via the Section tool"
 
+    private const val IMPORT_ONLY =
+        "this body was imported from a file, so it is triangles and nothing else (OP-9) — its section draws " +
+            "from the mesh and offers no construction inputs; build what you want to anchor on beside it, " +
+            "and place the body against that"
+
     // ---- the structural face list, per feature kind ----
 
     /**
@@ -222,6 +227,7 @@ object Section3 {
             is Feature3.Loft -> loftFaces(feature)
             is Feature3.Revolution -> null to REVOLVE_ONLY
             is Feature3.MeshBoolean -> null to MESH_ONLY
+            is Feature3.Imported -> null to IMPORT_ONLY
         }
 
     /**
@@ -240,6 +246,7 @@ object Section3 {
             is Feature3.Prism -> false
             is Feature3.Revolution -> false
             is Feature3.MeshBoolean -> false
+            is Feature3.Imported -> false
         }
 
     /** Why a general section of [feature] cannot name its faces, or null when it can. */
@@ -249,6 +256,7 @@ object Section3 {
             is Feature3.Prism -> PRISM_ONLY
             is Feature3.Revolution -> REVOLVE_ONLY
             is Feature3.MeshBoolean -> MESH_ONLY
+            is Feature3.Imported -> IMPORT_ONLY
         }
 
     private fun extrusionFaces(f: Feature3.Extrusion): List<FacePatch> {
@@ -468,6 +476,7 @@ object Section3 {
             is Feature3.Prism -> null to PRISM_ONLY
             is Feature3.Revolution -> null to REVOLVE_ONLY
             is Feature3.MeshBoolean -> null to MESH_ONLY
+            is Feature3.Imported -> null to IMPORT_ONLY
         }
 
     private fun extrusionEdges(f: Feature3.Extrusion): List<SolidEdge> {

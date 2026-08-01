@@ -4805,11 +4805,217 @@ path proved, the empty-drawing refusal shared with the other three formats, and 
 distinctly named parts. The browser E2E clicks `#x-jt` and asserts a real `drawing.jt` download, so the fourth
 button is wired in real Chrome like the other three.
 
-**Still a future extension, with its own design question: JT *import*.** Reading a JT as a reference body inside
-a parametric drawing is not the inverse of this page — an imported mesh is not a construction, so where it hangs
-in the DAG (a source node whose value is a fixed mesh, placed by parameters?) and what it means when it is
-edited are the questions to answer before any reading code is written. The library reads JT already; what is
-missing is the model decision, which is the honest reason it is not here.
+*(That future extension is the section below, delivered in session 30: the model decision is taken, and the
+guess in the sentence above — "a source node whose value is a fixed mesh, placed by parameters" — turned out to
+be the right shape with one correction, that the literal is not a **source** node at all.)*
+
+### JT import (as built — a frozen literal, a live placement, and the placement is generic)
+
+**What an imported body *is*, decided first, because everything else follows from it: a frozen solid literal
+with a parametric placement** — the tracing-paper model in 3D. The mesh has no construction, so nothing about
+it can be recomputed and nothing about it may be rediscovered; the *position* is where the parameters live, and
+they are ordinary nodes, so an imported body drags, wires, welds and re-anchors like everything else in the
+drawing. `exchange/Imports.kt` is the mirror of `Exports.kt` — bytes in, bodies in the document, one result
+object carrying what came in, what was refused **by name**, and everything else worth reading — and
+`exchange/JtImport.kt` is the mirror of `Jt.kt`: an adapter over the sibling library's `readScene`, with no
+decoding and no format knowledge on this side of the seam.
+
+**The literal is a node with no inputs, not a `SourceNode` — and the distinction is the doctrine, not
+pedantry.** A source node is a **degree of freedom**: the thing a drag writes, a weld re-points, a handle owns.
+A mesh is none of those. `Construction.importedSolid` is therefore an `OpNode` with an empty input list whose
+value object is built once at construction — the same kind of constant a pattern's count is (OP-23: recorded,
+never discovered). The evaluator needed **no change at all** for it: an empty argument list is trivially the
+same argument list next pass, so OP-5's argument-identity memo computes it once and hands out the same value
+object by pointer ever after, which is exactly what the 3D view and the preview key their re-uploads on. Its
+feature is a new member of the `Feature3` family, `Imported(source)` — the other half of the partition
+`MeshBoolean`'s own note already anticipated ("mesh-only operations … imported meshes"), so every provenance
+accessor refuses it **by name** (no plane to sketch on, no slab to cut, no plan to draw) instead of inventing a
+reading of triangles.
+
+**The mesh is embedded in the step, and the file's bytes never are.** `MeshText` (in `exchange/`) encodes a
+`Mesh3` as one Base64 word: a four-byte magic `CIM1`, the vertex and triangle counts as little-endian int32,
+then `x, y, z` per vertex as **float64** and `a, b, c` per triangle as int32 — the layout stated in its KDoc,
+because a stored literal's meaning is frozen the moment a build that could write it ships (OP-18). Float64 and
+not float32: a narrower field would round somebody's geometry on every save, and a mesh that changes when it is
+written down is not a literal. Base64 is spelled out in that file rather than taken from the standard library,
+because the stdlib encoder is still an experimental API in this toolchain and a *file format* is not the place
+to depend on one. The reason for all of it is the queue entry's own: **replay must never re-run the reader**, or
+a library upgrade could silently change a drawing somebody drew a year ago — the recorded-never-discovered rule
+(OP-23) one layer down, applied to a decoder instead of to a click.
+
+**The cost is real, accepted and measured rather than optimised away.** The committed Siemens fixture is a
+1.6 MB JT; the drawing it becomes is an **8.6 MB `.cit`** of 218 steps (36 bodies, 108 elements, 36 parameters),
+which imports in ~1.4 s, saves in ~40 ms and reloads in ~440 ms. Ten instances of one bolt store ten copies of
+one mesh, because this model has no instance concept for imported geometry and pretending it had one would be a
+construction the file cannot state. Every trick that would shrink the file — quantised coordinates, a mesh
+shared between steps, a deflated block — either loses precision or makes one step's meaning depend on another's,
+so none is taken. What it does cost beyond disk is **undo**: the undo substrate is the saved script (OP-18), so
+each checkpoint after a large import re-serialises those megabytes. Recorded here rather than discovered later.
+
+**Placement is a general operation on any solid, and the import merely uses it.** `Construction.placeSolid(solid,
+plane, at, angle)`: the body's own coordinates are read in the frame the sketch plane gives, at an in-plane
+point, turned about that plane's normal. Four ordinary nodes, so a placement is parametric exactly like
+everything else — weld `at` onto a constructed point and the body follows the construction, wire `angle` to a
+parameter two bodies share and they turn together (OP-5: sharing a node *is* equality). It is exposed as an
+ordinary data-driven `ToolDef` (*Place solid*, a `SOLID` slot, a `POINT` slot and a **defaulted** angle, so the
+everyday gesture is two clicks and typing a number first turns the body), which means the import records its
+placements as ordinary `tool placesolid` steps and a body placed by an import is indistinguishable from one a
+user placed by clicking. **One new step kind in the whole package** — `import`, for the literal.
+
+**Rigid, so nothing in the honesty ledger degrades — and that is a claim the code makes rather than a hope.**
+The map a placement applies is built from an orthonormal plane frame and a rotation, so `Solid3.movedBy`
+(`geom/Xform3.kt`) moves the **feature** as well as the mesh: every feature in the vocabulary is "2D data plus a
+frame", so an extrusion's regions, a revolve's in-plane axis, a prism's slabs and a loft's correspondence keep
+the coordinates they were built in and only the frames move. A placed extrusion is therefore still an exact
+extrusion whose faces can be sketched on — asserted in the genericity test, which places a *constructed* drilled
+plate and checks its feature survived. Only the two features that carry no frame (a general boolean's result, an
+imported body) are returned unchanged, because they carry no analytic form to move. A map that is **not** rigid
+has no such reading, so `movedBy` refuses one with a reason and the node is invalid and heals (OP-3).
+
+**How a file's pose maps onto (space, point, angle) — the one place the design had to choose.** A rigid pose has
+six degrees of freedom; the placement's editable form reaches three from any given plane (two in-plane
+coordinates and a turn about its normal). So the import **decomposes**: a pose that is a plan placement — a
+shift in XY and a turn about Z, which is what an assembly of parts laid out on a table looks like — lands
+**entirely** in the two live nodes, and that is *"a click is a choice, state restates as a value"* paid out in
+full: the point is where the file put the body, the angle is how the file turned it, and the step carries no
+pose at all. A pose that tilts the body or lifts it off the plane cannot be said that way, so the part that does
+not fit stays with the *literal* as the body's own as-received orientation — recorded verbatim in its step as
+twelve plain decimals (`pose=`), **beside** the vertices rather than multiplied into them, so what the file
+records is the file's two statements (these triangles, at that pose) and not their product. Either way the body
+lands exactly where the file put it, and either way the point and the angle move it about afterwards.
+Re-anchoring such a body to a **datum plane** is what tilts it — the placement's frame *is* the plane's, so
+there is no second orientation concept and none is stored. What would close the gap entirely is a placement that
+also took a height above its plane, which is the height-point work and the datum vocabulary meeting: a future
+extension, named rather than half-built.
+
+**The refusal catalog, all of it by name.**
+- **A file that declares no unit** — the whole file, because a length with no unit is not a length. A "state
+  the unit" prompt is the friendlier answer and is a recorded refinement; a *default* would be this importer
+  inventing a scale, which is the one thing it must not do. (It is asserted at the scene seam rather than on
+  bytes, and that is not a shortcut: the sibling library's **writer** refuses to write a file with
+  `LengthUnit.UNSPECIFIED` — the same rule from the other side — so there is no way to produce such bytes with
+  this toolchain at all.)
+- **A body that is not watertight** — the same gate every constructed solid passes, reached through its one
+  production implementation (`ThreeMf.check`, the twin of the suite's `assertManifold`): every directed edge
+  used once with its reverse used once, and a positive enclosed volume. The **rest of the file still imports**,
+  and the refusal names the body. Nothing is repaired: a mesh this import would have to mend to accept is a mesh
+  whose geometry it does not understand, and OP-9's whole guarantee is that no such thing gets in.
+- **Bytes that are not a JT file** (garbage, a truncation) — with whatever the reader says about them, and
+  nothing left behind in the drawing.
+- **A transform that is not a placement** (a scale, a shear, a mirror) — not refused but **baked**, into that
+  body's vertices, with a note saying so and saying that the body therefore cannot be re-placed from it. A
+  mirror re-winds its triangles on the way in, because a mirrored mesh that kept its winding encloses negative
+  volume — a solid turned inside out — and an importer that has to bake one still has to bake it honestly.
+- **A wireframe-only part** (polylines, no triangles — JT files carry plenty: centrelines, sketches) — skipped
+  and **named**, never silently dropped, the same rule the export's notes follow.
+- The **library's own notes** ride into the result unchanged: what it could not represent faithfully is what
+  this import could not either.
+
+**Two adapter decisions worth stating.** *Positions are welded by exact equality* — JT indexes positions and
+normals separately, and a writer that emits one vertex per (position, normal) pair (which is what `RenderMesh`
+does, so it is what **our own** files look like) hands back a mesh whose faces share no indices at all. Welding
+coincident positions is not a repair but the exact inverse of that split, and without it every body in every
+file would fail the watertight gate for a reason about indexing rather than about geometry. *Normals are
+dropped* — `Mesh3` holds none and `RenderMesh` computes them on the way out at one crease threshold shared by
+the 3D view, the preview and every writer, so keeping a file's normals would give an imported body a second
+shading authority, which is precisely what the export package went out of its way not to have. One body per
+geometry-bearing **path** (instances included), finest LOD only.
+
+**The browser contributes a file picker and nothing else**, which is the point: `#x-import` opens a hidden
+`.jt` input, the bytes go to `Editor.importFile`, and the status line is the result's own message. One call is
+**one checkpoint**, so one undo removes every body a file brought in. The plain input rather than the File
+System Access API that *Open* uses, for the reason an export takes the download route: an import is read once
+and becomes part of the drawing, so there is no handle worth keeping.
+
+**The plan of a mesh-only body — the parked footprint question, answered where a plane exists.** An
+imported body has no sketch, so the first cut of this package gave `Feature3.Imported` an **empty**
+footprint — and that was a defect with two faces, both real: the body was **invisible** in the 2D view (a
+user who imported a file saw an anchor point and nothing else), and it answered no distance, so it could
+fill **no `SOLID` slot at all** — no boolean, no re-placement, no measurement by clicking. Not a missing
+nicety: `Feature3.footprint` is the single seam all three of the plan's consumers read (the renderer's
+footprint hint, the hit test's distance, the marquee's overlap), so a feature with none is a solid that is
+not in the drawing at all except in the tree.
+
+The answer is `geom/Silhouette.kt`, and it needs no 2D boolean: for a **closed, oriented** mesh — which
+every solid here is, by OP-9's own doctrine — the boundary of the projected shape is exactly the set of
+**silhouette edges**. Project every vertex into the plane; call a triangle *front* when its projected signed
+area is positive (edge-on is *back*, decided once so every triangle has a side); then an edge between two
+front triangles is used in both directions and is interior, while an edge between a front and a back
+triangle is used once — and is on the outline. The survivors are already directed consistently, so chaining
+them yields closed loops with no orientation to guess, and consecutive **exactly** collinear runs collapse
+(a box's outline is four segments, not one per facet — asserted). No tolerance anywhere: the loops are exact
+for the mesh, and the mesh is the standing OP-15 approximation it always was.
+
+Three things about it are decisions rather than mechanics. **Loops, not an area**: each loop becomes a
+`Region` of its own with no holes, because a silhouette may *self-overlap* (a bracket whose arms cross in
+projection) and there the outer/hole reading does not exist — so the value claims only what it can prove,
+*these are the curves the body's outline projects to*, which is exactly what the three consumers ask for.
+**Computed where the plane is**: a projection without a plane is undefined, and the one node that holds both
+a mesh-only solid and the plane it is shown in is the **placement** — so `placeSolid` fills the plan in, the
+raw literal keeps none (it is the file's content in the file's coordinates, not a body in a space), and
+`Feature3.movedBy` **drops** an imported body's plan rather than carrying an outline stated in a frame the
+move invalidates. One hint per imported body, in the space it lives in. **Stored, not derived**: `footprint`
+is read on every repaint and of every element on every click, so it must be a field read; the projection
+happens once per recompute.
+
+Picking and drawing then need **no change at all** — an imported body is picked by distance to its outline,
+which is the same rule a constructed footprint is picked by, so the pick cycle stays one rule and the
+existing precedence still holds (the anchor point wins the tie with the body's own corner under it: *a point
+cannot dodge, a curve can be clicked elsewhere*, asserted).
+
+**Its cost, measured on the NIST assembly, because that is the case that could have been quadratic and is
+not.** It is linear in triangles: 36 bodies, 269,000 triangles → 3,202 loops and 110,652 outline segments,
+computed once at import, inside the ~1.4–1.6 s the import already takes (the silhouettes are a few tenths
+of it, run to run). A SELECT hover over that assembly costs **0.27 ms**
+(200 pointer moves in 53 ms), so picking is not the problem; what the numbers *do* say is that a threaded
+assembly's honest plan is a lot of line work — a hex nut's outline is ~1,580 segments because a thread
+genuinely projects that way — and a repaint draws all of it. That is the data's complexity rather than the
+algorithm's, and the standing answer is the one the drawing already has: hide the bodies you are not working
+on (OP-18's visibility).
+
+**What stays parked, halved.** The parked *mesh-only footprint* item is retired **for imported bodies** and
+stands for the other mesh-only feature, a **general boolean's result** (`Feature3.MeshBoolean`), for a
+stated reason rather than by omission: the mechanism is the same call, but the boolean node has **no plane**
+— its operands may have been drawn in different spaces, and picking one would be a guess of exactly the kind
+this design refuses. Answering it means deciding which space a mesh-boolean result belongs to, which is a
+document-level question, not a geometric one — and switching it on would change what existing drawings look
+like in plan, so it belongs with its own review.
+
+**The bundle cost, measured like the export's was.** The main JS bundle goes **887,869 → 1,059,173 bytes
+(+171,304, +19.3 %)**: the reader half of the sibling library — the LSG decoder, the shape-LOD decoders, the
+scene walk — none of which the writer pulled in. That is the same shape of cost the JT *export* recorded
+(+22.0 % for the writer) and it has the same mitigation named without being promised: a `jsMain`-side split
+behind a dynamically imported Kotlin module. It is not a complaint at 1.03 MB for a CAD tool that already
+fetches a 541 KB WASM kernel and a 684 KB three.js chunk, and paying it is what makes *reading a CAD
+interchange file* a thing the browser build can do at all.
+
+**Acceptance (`JtImportTest`, 21 tests, plus a new SVG golden).** The loop closes both ways. A drilled,
+renamed, copper-dressed plate exported to JT and imported into a **fresh** drawing: the same volume recomputed from the triangles that made
+the trip, the name through the naming authority, the Tier-1 colour and roughness round-tripped, and metalness
+back as **0** — the export's own recorded loss, asserted from the other side. The committed **Siemens NX
+fixture** (`nist-mtc-crada-assembly.jt`): 36 bodies over 269,000 triangles, every one watertight, every one
+named, ten instances of one nut at ten distinct places, five wireframe-only parts skipped and named, positive
+volume overall and per body — and `save → load → save` **byte-equal** with every vertex and every triangle
+bit-identical after the reload. Placement: an imported body follows its dragged anchor and its retyped angle
+with its volume unchanged, and a **constructed** solid places identically and keeps its analytic feature. The
+five refusals each speak. An import is one undo. An imported body goes out again through all four writers,
+including 3MF, which re-checks the mesh manifold before writing a byte. The browser E2E exports a JT and feeds
+it straight back to `#x-import-file`, so the round trip is proved in real Chrome as well. The plan: an
+imported plate's outline is the square it occupies in four segments with its through-bore as a second loop,
+it is **drawn** (a golden), it fills a `SOLID` slot **by clicking** — a boolean between an imported body and
+a constructed one, and a re-placement of an imported body, both driven by clicks — and its anchor point
+still outranks it in the pick cycle.
+
+**What stays out, stated so it is not looked for.** A **"state the unit" prompt** for a unit-less file (the
+refusal is the shipped answer). A **per-body LOD choice** — the finest tier is taken and the others are
+dropped, because picking a coarser one would be a display decision baked into the stored model. **Assembly
+structure**: the tree is flattened to one body per geometry-bearing path, so the file's part/instance hierarchy
+becomes 36 independent placed bodies rather than a nested structure — grouping them (OP-16's groups are the
+obvious home) and sharing one mesh literal between instances are both future extensions, and both are model
+questions rather than reading ones. **B-rep/XT** is preserved opaquely by the library and interpreted by
+nobody, which is that project's own stated rule. And an imported body remains a **sink** (OP-9): no face to
+sketch on, no section with inputs, no named edge — a body brought in as reference is reference, and the
+geometry a construction anchors on is built beside it and the body placed against that.
 
 ### Representation families considered (background)
 Three broad families (see OP-9 decision above):
@@ -7761,23 +7967,50 @@ non-identity matrix, since that is the only way the claim means anything. What t
 extension stays one, with its reason sharpened: **JT import** waits on a *model* decision (what a
 non-parametric reference body is in a construction DAG), not on reading code — the library already reads.
 
-**Queued in session 29 — three user-designed packages, in order.** All three were designed in discussion
-(session 28/29); the designs are the user's, restated here so a crashed session loses nothing.
+**Retired in session 30: JT import — reference bodies, with parametric placement.** The first of session
+29's three packages, delivered whole. The entry, quoted so what was promised and what shipped can be compared:
 
-1. **JT import: reference bodies, with parametric placement.** The model decision the export entry said
-   this waits on is now taken, in discussion with the user. An imported body is a **frozen solid literal
-   with a parametric placement** — the tracing-paper model in 3D. `Imports.kt` mirrors `Exports.kt`
-   (bytes in → `readScene` → `Mesh3` solids; the browser contributes only a file picker). The journal
-   step embeds the **extracted mesh**, never the JT bytes — replay must not re-run the reader, or a
-   library upgrade could silently change an old drawing. Watertight-or-refused by name at import; units
-   honored (a unit-less file is refused with that reason — a "state the unit" prompt is a recorded
-   refinement); finest LOD; names through the naming authority; materials to Tier-1. **Placement is the
-   user's design**: each geometry-bearing node's file transform does *not* bake into vertices — it
-   initializes a placement node ("a click is a choice, state restates as a value"), thereafter editable
-   and re-anchorable (a sketch space, a point, an angle; rigid, so nothing in the honesty ledger
-   degrades), and the placement op is built **generic over solids** — an import merely uses it.
-   Acceptance both ways: export→import round trip (volume, name, material), and a Siemens-written
-   fixture from the sibling's set, so the library is validated against bytes we did not produce.
+> 1. **JT import: reference bodies, with parametric placement.** The model decision the export entry said
+>    this waits on is now taken, in discussion with the user. An imported body is a **frozen solid literal
+>    with a parametric placement** — the tracing-paper model in 3D. `Imports.kt` mirrors `Exports.kt`
+>    (bytes in → `readScene` → `Mesh3` solids; the browser contributes only a file picker). The journal
+>    step embeds the **extracted mesh**, never the JT bytes — replay must not re-run the reader, or a
+>    library upgrade could silently change an old drawing. Watertight-or-refused by name at import; units
+>    honored (a unit-less file is refused with that reason — a "state the unit" prompt is a recorded
+>    refinement); finest LOD; names through the naming authority; materials to Tier-1. **Placement is the
+>    user's design**: each geometry-bearing node's file transform does *not* bake into vertices — it
+>    initializes a placement node ("a click is a choice, state restates as a value"), thereafter editable
+>    and re-anchorable (a sketch space, a point, an angle; rigid, so nothing in the honesty ledger
+>    degrades), and the placement op is built **generic over solids** — an import merely uses it.
+>    Acceptance both ways: export→import round trip (volume, name, material), and a Siemens-written
+>    fixture from the sibling's set, so the library is validated against bytes we did not produce.
+
+All of it ships — see *JT import (as built — a frozen literal, a live placement, and the placement is generic)*
+under OP-9. Four things the entry did not pre-empt, each recorded there because each could have gone the other
+way. The literal is **not a source node**: a source node is a degree of freedom (the thing a drag writes and a
+weld re-points) and a mesh is none of those, so it is an op node with no inputs — which also meant the evaluator
+needed no change at all, since an empty argument list is trivially unchanged and OP-5's memo builds the value
+once. The placement had to be built **rigid over the feature and not only over the mesh**: every feature in the
+vocabulary is "2D data plus a frame", so moving the frames keeps a placed extrusion an exact extrusion whose
+faces are still sketchable — which is what "nothing in the honesty ledger degrades" actually costs, and it is
+asserted on a *constructed* solid. The **(space, point, angle) form reaches three of a pose's six degrees of
+freedom**, so a plan placement lands entirely in the live nodes (the common case, and the entry's phrase paid
+out in full) while a tilt or a lift stays with the literal as twelve recorded decimals beside the vertices —
+never multiplied into them; re-anchoring to a datum plane is what tilts such a body, and a placement that also
+took a height above its plane is the named future extension that would close the gap. A **fifth** thing the entry could not
+have foreseen came from the probe review, and it is the correction this package needed: an imported body **had no plan**, so it was invisible in the 2D view and could fill no
+`SOLID` slot at all — no boolean, no re-placement by clicking. Fixing it retires half of the long-parked
+*mesh-only footprint* item on the way: the plan of a mesh-only body is the **silhouette** of its projected
+triangles, computed by the placement, which is the one node holding both such a solid and the plane it is
+shown in. And the **size** is the
+package's real cost: the committed 1.6 MB Siemens fixture becomes an 8.6 MB `.cit`, accepted and measured rather
+than optimised away, with undo (whose substrate is the saved script) paying it at every checkpoint. What stays
+out is stated with the work: the unit prompt, a per-body LOD choice, and **assembly structure** — the tree is
+flattened to one placed body per geometry-bearing path, so instancing and grouping are model questions for
+later, not reading ones.
+
+**Still queued, restated** — the other two of session 29's three packages, designed in discussion
+(session 28/29), the designs the user's, kept verbatim so a crashed session loses nothing:
 
 2. **The height point — the apex generalized (user's design, session 28).** `heightPoint(base, h)`:
    `base` a 2D point in any sketch space, `h` a named scalar, value = `embed(base) + h · normal` — "1 DOF
@@ -7806,7 +8039,9 @@ recorded at its source.
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
 convention (fillet note), drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), Manifold
-face-ID provenance and 3D picking and the mesh-only footprint (OP-9/OP-17 notes), MeshGL64,
+face-ID provenance and 3D picking, the mesh-only footprint **for a general boolean's result only** (the
+imported-body half is delivered in session 30 — see the JT import note under OP-9; what is left is a
+decision about which *space* a mesh boolean belongs to, not a geometric one), MeshGL64,
 **silhouette edges in the 3D view** (the view-dependent half of the feature-edge work — see the viewport
 note's crease bullet, GitHub #3), and — new from
 session 11 — **angles under a turned frame**: bind a polar offset's bearing and an on-circle angle onto

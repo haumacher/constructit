@@ -6,8 +6,10 @@ import constructit.core.FrameValue
 import constructit.core.ScalarValue
 import constructit.core.SourceNode
 import constructit.dsl.PointRef
+import constructit.exchange.MeshText
 import constructit.geom.Justification
 import constructit.geom.Vec2
+import constructit.geom.Xform3
 import constructit.units.Dimension
 import constructit.units.Quantity
 
@@ -641,6 +643,17 @@ object DocumentFormat {
                 if (!doc.switchSpace(unquote(words.getOrElse(1) { throw LoadError("space is missing a name") }), record = true)) {
                     throw LoadError("unknown sketch space '${unquote(words[1])}'")
                 }
+            // A **reference body** read from a file (the JT import, OP-9). The only step that carries
+            // geometry rather than a description of it, because an imported body has no construction to
+            // describe — see [MeshText] for the layout and for why the step embeds the extracted mesh and
+            // never the file's bytes. A *new step kind* needs no version bump: no stored literal changed
+            // meaning, and a drawing written before imports existed simply has none (OP-18).
+            "import" -> {
+                val mesh =
+                    MeshText.decode(keyed(words, "mesh") ?: throw LoadError("import is missing 'mesh='"))
+                        ?: throw LoadError("this import's mesh is not readable — the drawing was written by a different version")
+                doc.importBody(unquote(keyed(words, "src") ?: "?"), mesh, pose(words))
+            }
             "weld" -> doc.weld(el(1), el(2))
             "attach" -> doc.attachToCurve(el(1), el(2))
             "weldortho" -> doc.weldOrthoEndpointToPoint(el(1), el(2))
@@ -1089,6 +1102,18 @@ object DocumentFormat {
         words.firstOrNull { it.startsWith("$key=") }
             ?.removePrefix("$key=")?.split(';')?.filter { it.isNotEmpty() }?.map { quantity(it) }
             ?: emptyList()
+
+    /**
+     * An `import` step's `pose=` — the file's own placement of that body, as twelve plain numbers
+     * (row-major 3×3 then the translation, see [constructit.geom.Xform3]). Absent means the identity, which
+     * is what a file that placed its body at the origin writes.
+     */
+    private fun pose(words: List<String>): Xform3 {
+        val nums = keyedNums(words, "pose")
+        if (nums.isEmpty()) return Xform3.IDENTITY
+        if (nums.size != 12) throw LoadError("a pose is twelve numbers, this one has ${nums.size}")
+        return Xform3.of(nums.map { it.value })
+    }
 
     /** The bare `key=value` word of a step, or null when it carries none. */
     private fun keyed(

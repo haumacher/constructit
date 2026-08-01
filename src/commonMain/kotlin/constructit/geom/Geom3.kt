@@ -239,6 +239,38 @@ sealed interface Feature3 {
     }
 
     /**
+     * A body this kernel did not construct: a mesh **read from a file** (the JT import, OP-9), named by
+     * the [source] it came from.
+     *
+     * The other half of the partition [MeshBoolean]'s note describes, and the one that note already
+     * anticipated ("mesh-only operations (offset/shell/hull, imported meshes)"). It carries a mesh and a
+     * provenance string and nothing else, deliberately: an imported body has no sketch, no depth and no
+     * axis, so there is no plane to sketch on, no slab to cut and no plan to draw — every provenance
+     * accessor refuses it by name rather than inventing a reading of triangles, which is what
+     * *watertight-or-refused* buys and what *never rediscover* forbids spending.
+     *
+     * What it *is* is a solid like any other where that word means something measurable: it has a volume,
+     * it renders, it prints, it exports, it is a legal boolean operand (through the general engine) and it
+     * can be **placed** — a rigid move leaves it exactly this feature with its mesh somewhere else.
+     */
+    data class Imported(
+        val source: String,
+        /**
+         * The outline this body projects to in the space it is shown in ([Silhouette]) — empty for the raw
+         * literal, which has no space of its own to be drawn in.
+         *
+         * Stored rather than derived, and that is the load-bearing half: [footprint] is asked on every
+         * repaint and of every element on every click, so it must be a field read. The projection is done
+         * **once**, where the plane is known — by the placement that puts the body in a space (see
+         * `Construction.placeSolid`) — which is also the only place that *can* do it, since a projection
+         * without a plane is not defined.
+         */
+        val plan: List<Region> = emptyList(),
+    ) : Feature3 {
+        override val footprint: List<Region> get() = plan
+    }
+
+    /**
      * A **loft**: the ordered [sections] blended pairwise, optionally shaped by [guides] (OP-17).
      *
      * The one solid class a prism, a revolve and their booleans cannot make — the one whose cross-section
@@ -1585,6 +1617,8 @@ object Geom3 {
             is Feature3.Prism -> feature to null
             is Feature3.Revolution -> null to NOT_PRISMATIC
             is Feature3.MeshBoolean -> null to NOT_PRISMATIC
+            // An imported body is a mesh with no analytic form at all, so it has no prism reading either.
+            is Feature3.Imported -> null to NOT_PRISMATIC
             // A loft's whole point is that its cross-section changes along the run, so it is a prism only in
             // the degenerate case that is an extrude anyway — refused rather than approximated, like a
             // revolve, and the general engine (OP-9) takes it from here.
@@ -1617,6 +1651,7 @@ object Geom3 {
             is Feature3.Prism -> feature.plane
             is Feature3.Revolution -> null
             is Feature3.MeshBoolean -> null
+            is Feature3.Imported -> null
             is Feature3.Loft -> null
         }
 
@@ -2006,6 +2041,9 @@ object Geom3 {
             // A general boolean's result is a mesh (OP-9's sink rule): its faces are emergent, not
             // constructed, so there is nothing here that a provenance accessor could name.
             is Feature3.MeshBoolean -> null to "a general boolean's result is mesh-only, so it has no named faces (OP-9)"
+            // Same rule, same reason: an imported body's faces are emergent triangles, and naming one would
+            // be discovery (OP-9, OP-23).
+            is Feature3.Imported -> null to "an imported body is mesh-only, so it has no named faces (OP-9)"
         }
 
     // ---- side faces: the planar faces a boundary piece sweeps (OP-8 provenance, OP-17's frame) ----
@@ -2047,6 +2085,7 @@ object Geom3 {
             is Feature3.Prism -> Triple(feature.plane, feature.minZ, feature.maxZ)
             is Feature3.Revolution -> null
             is Feature3.MeshBoolean -> null
+            is Feature3.Imported -> null
             is Feature3.Loft -> null
         }
 
@@ -2183,6 +2222,8 @@ object Geom3 {
                 return null to "a revolved solid has no prismatic cross-section; sectioning one needs an analytic revolve section (OP-17)"
             is Feature3.MeshBoolean ->
                 return null to "a general boolean's result is mesh-only, so it has no analytic cross-section (OP-9); slicing its mesh is a separate operation"
+            is Feature3.Imported ->
+                return null to "an imported body is mesh-only, so it has no analytic cross-section (OP-9)"
             // A loft is not a stack of areas over height intervals — its area varies *continuously* along the
             // run — so it has no slab to answer with. Refused rather than interpolated: the honest answer is
             // an analytic loft section, which is its own piece of work (DESIGN.md, the loft's note).

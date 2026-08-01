@@ -7,6 +7,8 @@ import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.dsl.PointRef
 import constructit.dsl.valueOf
+import constructit.exchange.ImportResult
+import constructit.exchange.Imports
 import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.Vec2
@@ -320,6 +322,26 @@ class Editor(
         statusHint = if (dependents == 0) "Deleted $what" else "Deleted $what and $dependents dependent${if (dependents == 1) "" else "s"}"
         onChange()
         return true
+    }
+
+    /**
+     * **Import** [bytes] as reference bodies (the JT import, OP-9): one call, **one checkpoint**, so one
+     * undo removes every body a file brought in.
+     *
+     * The whole of the editor's part. Which bodies a file offers, what they are called, what units they are
+     * in and every refusal are [Imports]'s, in `commonMain` — the mirror of the export flow, and the reason
+     * both are covered headlessly. A refused import changes nothing, so the checkpoint sees no change and
+     * pushes no undo step, exactly as a no-op gesture does.
+     */
+    fun importFile(
+        bytes: ByteArray,
+        fileName: String,
+    ): ImportResult {
+        val result = Imports.import(doc, bytes, fileName)
+        checkpoint()
+        statusHint = result.message
+        onChange()
+        return result
     }
 
     /**

@@ -48,6 +48,7 @@ import constructit.geom.Line
 import constructit.geom.LoftGuide
 import constructit.geom.LoftSection
 import constructit.geom.Loop
+import constructit.geom.Mesh3
 import constructit.geom.MeshBool
 import constructit.geom.Plane3
 import constructit.geom.Profile
@@ -56,11 +57,14 @@ import constructit.geom.Ray
 import constructit.geom.Region
 import constructit.geom.Section3
 import constructit.geom.Segment
+import constructit.geom.Silhouette
 import constructit.geom.Sketch3
 import constructit.geom.Solid3
 import constructit.geom.SolidFace
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.geom.Xform3
+import constructit.geom.movedBy
 import constructit.geom.thickNetwork
 import constructit.units.Dimension
 import constructit.units.DimensionError
@@ -2090,6 +2094,110 @@ class Construction {
                 }
             }
         }
+
+    // ---- imported bodies, and the placement that is generic over every solid (the JT import, OP-9) ----
+
+    /**
+     * A **solid literal**: the [mesh] a file gave us, named by the [source] it came from.
+     *
+     * A node with **no inputs** — which is what "literal" means in a graph whose every other solid is a
+     * function of parameters. Deliberately not a [SourceNode]: a source node is a *degree of freedom*, the
+     * thing a drag writes and a weld re-points, and a mesh is none of those. This is the same kind of
+     * constant a pattern's count is — recorded once, replayed verbatim, never rediscovered (OP-23). The
+     * memo (OP-5) then does the rest for free: an argument list that is empty is trivially the same
+     * argument list next pass, so the value object is built once and handed out by pointer ever after,
+     * which is exactly what the 3D view and the preview key their re-uploads on.
+     *
+     * The **mesh is what the step stores**, never the file's bytes: replaying a drawing must not re-run a
+     * reader, or a library upgrade could silently change a drawing somebody drew a year ago.
+     *
+     * [pose] is the file's own placement of this body. It is applied here rather than multiplied into the
+     * stored vertices, so the step keeps the file's two statements apart — these triangles, at that pose.
+     */
+    fun importedSolid(
+        source: String,
+        mesh: Mesh3,
+        pose: Xform3 = Xform3.IDENTITY,
+    ): SolidRef {
+        val value = SolidValue(Solid3(Feature3.Imported(source), mesh.movedBy(pose)))
+        return op { EvalResult.Ok(value) }
+    }
+
+    /**
+     * **Placement**: [solid] moved so that its own coordinates are read in the frame [plane] gives, at the
+     * in-plane point [at], turned by [angle] about that plane's normal.
+     *
+     * Generic over solids by construction — an extruded part, a revolve, a boolean's result and an imported
+     * body are all just *a solid* here — and that genericity is the point rather than a bonus: an import
+     * merely happens to be the first caller. The four inputs are ordinary nodes, so a placement is
+     * parametric like everything else: weld [at] onto a constructed point and the body follows the
+     * construction, wire [angle] to a parameter two other things read and they turn together (OP-5 — sharing
+     * a node *is* equality).
+     *
+     * **Rigid, so nothing in the honesty ledger degrades.** The map is built from an orthonormal plane frame
+     * and a rotation, so it preserves lengths, angles and winding; [Solid3.movedBy] therefore moves the
+     * *feature* as well as the mesh, and a placed extrusion is still an exact extrusion whose faces can be
+     * sketched on. A frame that has gone degenerate makes this node invalid with a reason, and it heals when
+     * the frame stops being (OP-3).
+     *
+     * The identity case costs nothing at all: a body placed at its own plane's origin with no turn hands its
+     * input's very value object on, so placing a solid "where it already is" adds no mesh and no work.
+     */
+    fun placeSolid(
+        solid: SolidRef,
+        plane: PlaneRef,
+        at: PointRef,
+        angle: ScalarRef,
+    ): SolidRef =
+        op(solid, plane, at, angle) {
+            val p = (it[1] as PlaneValue).plane
+            val a = pt(it[2])
+            val t = sc(it[3]).requireDim(Dimension.ANGLE, "placement angle").base
+            val x = placementFrame(p, a, t)
+            val (moved, why) = (it[0] as SolidValue).solid.movedBy(x)
+            if (moved == null) EvalResult.Invalid(why ?: "cannot place this solid") else EvalResult.Ok(SolidValue(planned(moved, p)))
+        }
+
+    /**
+     * A placed solid with its **plan** filled in when it has no analytic one — i.e. for an imported body.
+     *
+     * This is the placement's second job and the reason it is where the mesh-only footprint question gets
+     * answered (OP-9/OP-17's long-parked item): a projection needs a plane, and the placement is the one node
+     * that holds both a mesh-only solid and the plane it is being shown in. A constructed solid passes
+     * straight through — its feature carries its own plan and the move already took it along.
+     *
+     * Done **once per recompute** rather than on every read, because `Feature3.footprint` is asked on every
+     * repaint and of every element on every click.
+     */
+    private fun planned(
+        solid: Solid3,
+        plane: Plane3,
+    ): Solid3 =
+        when (val f = solid.feature) {
+            is Feature3.Imported -> Solid3(Feature3.Imported(f.source, Silhouette.of(solid.mesh, plane)), solid.mesh)
+            else -> solid
+        }
+
+    /**
+     * The rigid map a placement applies: the plane's frame turned by [angle] about its own normal, with its
+     * origin moved to where the in-plane point [at] is.
+     *
+     * The body's local x/y/z therefore mean "along the plane's u, along its v, out along its normal", which
+     * is what makes the plan space's identity placement (the XY plane, the origin, no turn) leave a solid
+     * exactly where it was — and what makes re-anchoring the same body to a tilted datum plane tilt it,
+     * with no second concept and no stored orientation.
+     */
+    private fun placementFrame(
+        plane: Plane3,
+        at: Vec2,
+        angle: Double,
+    ): Xform3 {
+        val c = kotlin.math.cos(angle)
+        val s = kotlin.math.sin(angle)
+        val u = plane.u
+        val v = plane.v
+        return Xform3.frame(plane.toWorld(at), u * c + v * s, u * -s + v * c, plane.normal)
+    }
 
     /**
      * The plane of a solid's named face (OP-8) — enough to **sketch on a face**, which is the slice of

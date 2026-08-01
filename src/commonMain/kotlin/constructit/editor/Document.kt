@@ -49,6 +49,7 @@ import constructit.dsl.instance
 import constructit.dsl.resultOf
 import constructit.dsl.roundedRect
 import constructit.dsl.valueOf
+import constructit.exchange.MeshText
 import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
@@ -61,6 +62,7 @@ import constructit.geom.FilletVariant
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
+import constructit.geom.Mesh3
 import constructit.geom.Plane3
 import constructit.geom.PlaneSection
 import constructit.geom.ProfileElement
@@ -70,6 +72,7 @@ import constructit.geom.SolidFace
 import constructit.geom.ThickBody
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.geom.Xform3
 import constructit.geom.thickBodyOf
 import constructit.geom.thickNetwork
 import constructit.units.Dimension
@@ -7521,6 +7524,63 @@ class Document {
             cut = cx.subtract(cut, box)
         }
         return add(cut, ElementKind.SOLID, Styles.SOLID)
+    }
+
+    // ---- imported bodies, and the placement that moves any solid (the JT import, OP-9) ----
+
+    /**
+     * A **reference body**: the [mesh] a file gave us, at the [pose] that file put it at.
+     *
+     * One element, one step, and the step carries the mesh itself ([MeshText]) — the only step in the
+     * format that holds geometry rather than a description of how to build it, for the only reason that
+     * could justify it: an imported body *has* no construction. Its consequence is stated where the
+     * encoding is: replay never re-runs a reader, so a library upgrade cannot silently change an old
+     * drawing.
+     *
+     * [pose] is the file's own placement of this body, kept **beside** the vertices rather than multiplied
+     * into them, so what the step records is the file's two statements — these triangles, at that pose —
+     * and not their product. It is applied by the node, so the value is the body where the file put it.
+     *
+     * This is the *literal* only. What makes an imported body editable is the [placeSolid] that rides on
+     * it, which the importer adds — see `Imports`.
+     */
+    fun importBody(
+        source: String,
+        mesh: Mesh3,
+        pose: Xform3 = Xform3.IDENTITY,
+    ): Element =
+        recording(
+            "import",
+            *listOfNotNull(
+                Arg.Keyed("src", Arg.Label(scalarWord(source))),
+                Arg.Keyed("pose", Arg.Nums(pose.values().map { Quantity.number(it) })).takeIf { !pose.isIdentity },
+                Arg.Keyed("mesh", Arg.Text(MeshText.encode(mesh))),
+            ).toTypedArray(),
+        ) {
+            add(cx.importedSolid(scalarWord(source), mesh, pose), ElementKind.SOLID, Styles.SOLID)
+        }
+
+    /**
+     * **Place** the solid [el]: read its own coordinates in the active sketch space's frame, at the point
+     * [at], turned by [angle] about that space's normal (`cx.placeSolid`).
+     *
+     * Generic over solids on purpose — an extruded part places exactly as an imported one does, and the
+     * import is merely the first caller. What comes out is a *new* solid element whose operand is the one
+     * picked, so the original becomes that body's construction material (`isMaterial`) and the 3D view, the
+     * preview and every export show one body rather than two, exactly as they do for a boolean.
+     *
+     * [angle] is optional because the tool's angle slot is defaulted: with nothing typed the placement is a
+     * pure move, and the constant that says so is a node like any other.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun placeSolid(
+        el: Element,
+        at: PointRef,
+        angle: ScalarRef? = null,
+    ): Element? {
+        if (el.kind != ElementKind.SOLID) return null
+        val ref = cx.placeSolid(el.ref as SolidRef, activePlane(), at, angle ?: cx.const(Quantity.deg(0.0)))
+        return add(ref, ElementKind.SOLID, Styles.SOLID)
     }
 
     /** The named entry driving [ref] — every scalar a tool consumes came from the panel. */

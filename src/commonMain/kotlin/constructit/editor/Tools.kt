@@ -473,6 +473,13 @@ object Tools {
     const val INTERSECT_SOLIDS = "intersectsolids"
     const val CUT_OPENINGS = "cutopenings"
 
+    /**
+     * **Place a solid**: read its own coordinates in the active sketch space's frame, at a picked point,
+     * turned by an angle. Generic over solids — an imported reference body and an extruded part place
+     * identically — which is why it lives here with the other solid operations and not with the import.
+     */
+    const val PLACE_SOLID = "placesolid"
+
     // Construct
     const val PERP_BISECTOR = "perpbis"
     const val ANGLE_BISECTOR = "anglebis"
@@ -641,6 +648,13 @@ object Tools {
             ToolDef(UNION, "Union", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), help = "Click two solids to fuse them into one (they must be extruded along the same axis).", slotNames = listOf("solid", "solid"), icon = Icons.UNION) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.UNION) },
             ToolDef(SUBTRACT, "Subtract", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), shortcut = 'X', help = "Click the solid to keep, then the one to remove from it (a counterbore, a pocket, an opening).", slotNames = listOf("kept solid", "removed solid"), icon = Icons.SUBTRACT) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.SUBTRACT) },
             ToolDef(INTERSECT_SOLIDS, "Intersect solids", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), help = "Click two solids to keep only what they have in common.", slotNames = listOf("solid", "solid"), icon = Icons.INTERSECT_SOLIDS) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.INTERSECT) },
+            // Placement (the JT-import package, OP-9): a solid, a point in the space you are looking at,
+            // and a **defaulted** angle — so the everyday gesture is two clicks and typing a number first
+            // turns the body. Every input is a node, which is the whole point: weld the point onto a
+            // construction and the body follows it, wire the angle to a parameter and two bodies turn
+            // together. It does not replicate — a pattern fans a *gesture*, and a placement's subject is one
+            // named body (OP-23).
+            ToolDef(PLACE_SOLID, "Place solid", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.POINT), scalars = listOf(ang("angle", 0.0)), replicates = false, help = "Type an angle if you want one, then click a solid and the point it should sit at: the body is moved so its own coordinates are read from the sketch space you are in, at that point, turned by that angle. The point and the angle stay live — drag the point and the body follows, retype the angle and it turns. An imported reference body arrives already placed this way.", slotNames = listOf("solid", "at point")) { d, p, s -> d.placeSolid(p.elements[0], p.points[0], s.firstOrNull()) },
             ToolDef(CUT_OPENINGS, "Cut openings", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), help = "Click a solid extruded from a wall footprint: every opening on that wall becomes a subtracted box, sill to head. Openings added later need the tool again.", slotNames = listOf("wall solid")) { d, p, _ -> d.cutOpenings(p.elements[0]) },
             // ----- Construct -----
             // the same defaulted factor as Midpoint: with none it is the bisector, with one it is the

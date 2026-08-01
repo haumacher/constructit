@@ -28,6 +28,7 @@ import constructit.units.Dimension
 import constructit.units.Quantity
 import kotlinx.browser.document
 import kotlinx.browser.window
+import org.khronos.webgl.ArrayBuffer
 import org.khronos.webgl.Int8Array
 import org.khronos.webgl.Uint8Array
 import org.w3c.dom.CanvasRenderingContext2D
@@ -900,6 +901,37 @@ private fun setupApp() {
     (document.getElementById("x-3mf") as HTMLElement).addEventListener("click", { exportBytes(ExportFormat.THREE_MF) })
     (document.getElementById("x-stl") as HTMLElement).addEventListener("click", { exportBytes(ExportFormat.STL) })
     (document.getElementById("x-jt") as HTMLElement).addEventListener("click", { exportBytes(ExportFormat.JT) })
+    /**
+     * **Import**: bytes in, reference bodies in the drawing — the mirror of [exportBytes], and just as thin.
+     *
+     * The shell reads a file and hands over the bytes; which bodies come in, what they are called, what the
+     * status line says and every refusal are `Imports`', in `commonMain`, so the whole flow is covered
+     * headlessly and this cannot drift from what the tests assert. One call is one checkpoint
+     * (`Editor.importFile`), so one undo removes everything a file brought.
+     *
+     * Deliberately the plain file input rather than the File System Access API that *Open* uses: an import
+     * is read once and becomes part of the drawing, so there is no handle worth keeping — the same reasoning
+     * that puts an export on the download route.
+     */
+    val importPicker = document.getElementById("x-import-file") as HTMLInputElement
+    (document.getElementById("x-import") as HTMLElement).addEventListener("click", { importPicker.click() })
+    importPicker.addEventListener("change", {
+        val file = importPicker.files?.item(0)
+        if (file != null) {
+            val reader = FileReader()
+            reader.onload = { _ ->
+                val buffer = reader.result.unsafeCast<ArrayBuffer>()
+                val result = editor.importFile(Int8Array(buffer).unsafeCast<ByteArray>(), file.name)
+                note(result.message, error = !result.ok)
+                repaint()
+            }
+            reader.onerror = { _ -> note("could not read that file", error = true) }
+            reader.readAsArrayBuffer(file)
+            // so picking the same file twice in a row fires `change` the second time too
+            importPicker.value = ""
+        }
+    })
+
     (document.getElementById("f-download") as HTMLElement).addEventListener("click", { saveDrawing(askForFile = false) })
     (document.getElementById("f-saveas") as HTMLElement).addEventListener("click", { saveDrawing(askForFile = true) })
     val filePicker = document.getElementById("f-file") as HTMLInputElement

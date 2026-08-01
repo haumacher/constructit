@@ -73,6 +73,19 @@ data class Appearance(
         /** The sRGB electro-optical transfer function, exactly as the sRGB and glTF specs state it. */
         fun toLinear(c: Double): Double = if (c <= 0.04045) c / 12.92 else ((c + 0.055) / 1.055).pow(2.4)
 
+        /**
+         * The inverse of [toLinear] — what an **import** needs, since a file states the linear number
+         * [linearRgb] hands out and this record stores the sRGB spelling.
+         *
+         * Here rather than in the importer for the reason [linearRgb] is here: the one thing that must not
+         * differ between what is written and what is read back is this curve, and a second copy of it
+         * somewhere else is how two copies start to disagree.
+         */
+        fun fromLinear(c: Double): Double = if (c <= 0.0031308) c * 12.92 else 1.055 * c.pow(1.0 / 2.4) - 0.055
+
+        /** Three **linear** channels as `#rrggbb` — [linearRgb] read backwards, through [fromLinear]. */
+        fun hexOfLinear(linear: DoubleArray): String = hexOf(DoubleArray(3) { fromLinear(linear[it].coerceIn(0.0, 1.0)) })
+
         /** Two lowercase hex digits — the spelling [hex] round-trips through. */
         private fun two(v: Int): String = if (v < 16) "0" + v.toString(16) else v.toString(16)
 
