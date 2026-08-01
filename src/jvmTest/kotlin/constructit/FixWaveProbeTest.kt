@@ -136,10 +136,10 @@ class FixWaveProbeTest {
         // the drill: another circle, Cut — inward as ever
         ed.setTool(Tools.CIRCLE_R)
         ed.type("3")
-        ed.click(Vec2(60.0, 10.0))
+        ed.click(Vec2(-20.0, 10.0))
         ed.setTool(Tools.CUT)
         ed.type("12")
-        ed.click(Vec2(63.0, 10.0))
+        ed.click(Vec2(-17.0, 10.0))
         val cut = ed.doc.elements.last { it.kind == ElementKind.SOLID }
 
         @Suppress("UNCHECKED_CAST")

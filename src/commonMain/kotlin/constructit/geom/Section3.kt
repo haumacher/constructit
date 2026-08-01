@@ -329,6 +329,23 @@ object Section3 {
             ProfileElement.Seg(Segment(Vec2(0.0, h), Vec2(0.0, 0.0))),
         )
 
+    /**
+     * The rectangle a **side face** covers in its own intrinsic frame (OP-17's session-32 rule): the picked
+     * segment on the x axis, centred on its midpoint, the material at `v` in `0..h`.
+     */
+    private fun sideRectangle(
+        w: Double,
+        h: Double,
+    ): List<ProfileElement> {
+        val x = w / 2
+        return listOf(
+            ProfileElement.Seg(Segment(Vec2(-x, 0.0), Vec2(x, 0.0))),
+            ProfileElement.Seg(Segment(Vec2(x, 0.0), Vec2(x, h))),
+            ProfileElement.Seg(Segment(Vec2(x, h), Vec2(-x, h))),
+            ProfileElement.Seg(Segment(Vec2(-x, h), Vec2(-x, 0.0))),
+        )
+    }
+
     private fun capFace(
         regions: List<Region>,
         plane: Plane3,
@@ -357,8 +374,8 @@ object Section3 {
                 if (face == null) {
                     FacePatch(FaceName.Side(i), null, emptyList(), why)
                 } else {
-                    // sideFace anchors at the face's *top* edge with v = +Z, so the face itself is at v ≤ 0
-                    FacePatch(FaceName.Side(i), face.plane, rectangle(face.length, -face.height), null)
+                    // sideFace anchors on the picked segment's midpoint with v running into the face
+                    FacePatch(FaceName.Side(i), face.plane, sideRectangle(face.length, face.height), null)
                 },
             )
         }
@@ -386,10 +403,7 @@ object Section3 {
         val out = ArrayList<FacePatch>()
         val m = plan.railCount
         for (k in 0 until plan.sections.size - 1) {
-            for (j in 0 until m) {
-                val j2 = (j + 1) % m
-                out.add(bandFace(plan.ringW[k][j], plan.ringW[k][j2], plan.ringW[k + 1][j2], plan.ringW[k + 1][j], FaceName.Band(k, j)))
-            }
+            for (j in 0 until m) out.add(bandPatch(plan, k, j, refUpper = false))
         }
         for (k in listOf(0, plan.sections.size - 1)) {
             val prep = plan.preps.getOrNull(k) ?: continue
@@ -405,13 +419,37 @@ object Section3 {
     }
 
     /**
+     * The face over band [band] at rail interval [rail] of a loft's plan — one place both callers get it
+     * from, so `faces()`'s free frame and the sketching frame cannot drift apart in anything but their
+     * declared reference edge (see [bandFace]).
+     */
+    private fun bandPatch(
+        plan: Geom3.LoftPlan,
+        band: Int,
+        rail: Int,
+        refUpper: Boolean,
+    ): FacePatch {
+        val j2 = (rail + 1) % plan.railCount
+        return bandFace(
+            plan.ringW[band][rail],
+            plan.ringW[band][j2],
+            plan.ringW[band + 1][j2],
+            plan.ringW[band + 1][rail],
+            FaceName.Band(band, rail),
+            refUpper,
+        )
+    }
+
+    /**
      * The ruled quad `a → b → d → c` as a face: planar when its four corners are coplanar (which every face
      * of a polygon→apex pyramid and of an untwisted frustum is), and a named non-plane otherwise.
      *
-     * The frame follows the same convention a side face uses, one dimension of freedom up: `u` along the
-     * lower edge, `v` from the *later* section towards the earlier one, origin on the later section — so the
-     * space a user sketches in has the face at `v ≥ 0` once the plane is flipped into the material, exactly
-     * as "v runs down from the top face" does for an extrude's side.
+     * The frame is the **intrinsic** one a side face uses, one dimension of freedom up (OP-17, session 32):
+     * the **reference edge** — the one the picked footprint segment is, `a → b` unless [refUpper] names the
+     * later section's `c → d` — lies on the x axis about its own midpoint, `v` runs across the face towards
+     * the opposite edge (into the face's interior, which is what makes a pyramid's apex sit at `+v`), and
+     * the normal points out of the material, so the face is seen from outside. A degenerate reference edge
+     * (the apex end of a pyramid) falls back to the other one, which is the only edge there is.
      */
     private fun bandFace(
         a: Vec3,
@@ -419,16 +457,29 @@ object Section3 {
         d: Vec3,
         c: Vec3,
         name: FaceName,
+        refUpper: Boolean = false,
     ): FacePatch {
-        val u0 = b - a
-        if (u0.length() <= Geom3.WELD_TOL) return FacePatch(name, null, emptyList(), "that face's edge has no length")
-        val u = u0.normalized()
-        val out0 = u0.cross(d - a)
-        val out1 = u0.cross(c - a)
-        val out = (if (out0.length() > out1.length()) out0 else out1).normalized()
-        if (out.length() < DIR_EPS) return FacePatch(name, null, emptyList(), "that face is degenerate")
-        val v = out.cross(u).normalized()
-        val plane = Plane3(if ((c - d).length() <= Geom3.WELD_TOL) c else c, u, v)
+        val lower = b - a
+        val upper = d - c
+        val useUpper = if (refUpper) upper.length() > Geom3.WELD_TOL else lower.length() <= Geom3.WELD_TOL
+        val p = if (useUpper) c else a
+        val q = if (useUpper) d else b
+        val far = if (useUpper) (a + b) * 0.5 else (c + d) * 0.5
+        val e0 = q - p
+        if (e0.length() <= Geom3.WELD_TOL) return FacePatch(name, null, emptyList(), "that face's edge has no length")
+        val along = e0.normalized()
+        val out0 = lower.cross(d - a)
+        val out1 = lower.cross(c - a)
+        val out2 = upper.cross(a - c)
+        val out =
+            listOf(out0, out1, out2).maxByOrNull { it.length() }?.takeIf { it.length() >= DIR_EPS }?.normalized()
+                ?: return FacePatch(name, null, emptyList(), "that face is degenerate")
+        val across = (far - p).let { it - along * it.dot(along) }
+        if (across.length() < DIR_EPS) return FacePatch(name, null, emptyList(), "that face is degenerate")
+        // v points into the face from its reference edge; u is what right-handedness leaves (u × v = out)
+        val v = across.normalized()
+        val u = v.cross(out).normalized()
+        val plane = Plane3((p + q) * 0.5, u, v)
         val ring = listOf(a, b, d, c)
         val off = ring.maxOf { abs(plane.distanceTo(it)) }
         if (off > 1e-6) {
@@ -542,12 +593,12 @@ object Section3 {
     ): Pair<FacePatch?, String?> {
         if (feature !is Feature3.Loft) {
             // The prism route is [Geom3.sideFace] verbatim — frame, anchor and refusals — because that frame
-            // is what every face-space drawing ever saved is measured in (the origin at the face's *top*
-            // edge, v = world +Z, so a flipped sketch has the face at v ≥ 0). Not a duplicate of [faces]'s
-            // own frame for the same face: this one is the *recorded* convention and the other one is free.
+            // is the **sketching** convention (OP-17): the picked segment on the x axis, v into the face,
+            // the normal out of the material. Not a duplicate of [faces]'s own frame for the same face: this
+            // one is what a user's coordinates are measured in and the other one is free.
             val (face, why) = Geom3.sideFace(feature, piece)
             if (face == null) return null to why
-            return FacePatch(FaceName.Side(piece), face.plane, rectangle(face.length, -face.height), null) to null
+            return FacePatch(FaceName.Side(piece), face.plane, sideRectangle(face.length, face.height), null) to null
         }
         val (plan, why2) = Geom3.loftPlan(feature.sections, feature.seams, feature.guides)
         if (plan == null) return null to why2
@@ -557,9 +608,12 @@ object Section3 {
         if (k < 0) return null to "this loft has no area section to take a face from"
         val band = if (k < feature.sections.size - 1) k else k - 1
         val rail = plan.railOfPiece(k, piece) ?: return null to "this solid has no boundary piece #${piece + 1}"
-        val patch =
-            fs.firstOrNull { it.name == FaceName.Band(band, rail) }
-                ?: return null to "this solid has no boundary piece #${piece + 1} (it has ${Geom3.boundaryPieces(feature).size})"
+        if (band < 0 || band + 1 >= plan.ringW.size || rail >= plan.railCount) {
+            return null to "this solid has no boundary piece #${piece + 1} (it has ${Geom3.boundaryPieces(feature).size})"
+        }
+        // the picked footprint segment is section k's own ring edge — the band's lower edge unless the area
+        // section is the *last* one, and the frame is built on it (OP-17's intrinsic rule)
+        val patch = bandPatch(plan, band, rail, refUpper = band != k)
         if (patch.plane == null) return null to (patch.reason ?: "that face is ruled rather than flat — put a datum plane where you want to sketch")
         return patch to null
     }
@@ -626,7 +680,7 @@ object Section3 {
                 // (OP-14's rule, with its own caveat: a ring turned inside out renames its own edges), then
                 // rotated to start at the corner nearest the plane's own origin — which for a face frame *is*
                 // a corner of that face, so the numbering starts where the coordinates do.
-                rotatedToOrigin(GeomMath.orient(GeomMath.transform(loop, t), ccw = true).elements)
+                rotatedToFirstCorner(GeomMath.orient(GeomMath.transform(loop, t), ccw = true).elements)
             }
         val edges =
             pieces.mapIndexed { i, e ->
@@ -651,10 +705,22 @@ object Section3 {
         )
     }
 
-    /** A closed chain of pieces, rotated so the one starting nearest the origin comes first. */
-    private fun rotatedToOrigin(pieces: List<ProfileElement>): List<ProfileElement> {
+    /**
+     * A closed chain of pieces, rotated so the corner **lowest in (v, then u)** comes first.
+     *
+     * A canonical start is needed for the reason the counter-clockwise normalisation above is (an index must
+     * mean the same edge whichever frame of the plane reads it), and this particular rule is chosen because
+     * it is **translation-invariant**: a space whose origin has been moved — anchored on a corner, offset by
+     * (dx, dy) — must not renumber its own section, and "nearest the origin" (what this used to do) would.
+     * For a face frame it starts at the picked segment's own first corner, so edge #1 is the picked edge.
+     */
+    private fun rotatedToFirstCorner(pieces: List<ProfileElement>): List<ProfileElement> {
         if (pieces.size < 2) return pieces
-        val best = pieces.indices.minByOrNull { GeomMath.startOf(pieces[it]).length() } ?: 0
+        val starts = pieces.map { GeomMath.startOf(it) }
+        val loY = starts.minOf { it.y }
+        // the tolerance is what keeps two corners of one horizontal edge from swapping under an offset's
+        // last bit: they are then compared by u, which is a real difference
+        val best = pieces.indices.filter { starts[it].y <= loY + Geom3.WELD_TOL }.minByOrNull { starts[it].x } ?: 0
         return List(pieces.size) { pieces[(best + it) % pieces.size] }
     }
 

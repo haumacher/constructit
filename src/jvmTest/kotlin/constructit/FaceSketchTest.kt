@@ -100,13 +100,18 @@ class FaceSketchTest {
     // ---- the frame, and the convention it states ----
 
     /**
-     * The face frame, spelled out in world coordinates: `u` along the picked edge from its start, `v`
-     * **down** from the face's top, and the sketch plane's normal pointing **into** the material, which is the
-     * direction a *Cut* sweeps (an *Extrude* builds a boss the other way — see
-     * `anExtrudeOnASideFaceBuildsABossOutOfTheMaterial`).
+     * **The frame is intrinsic** (session 32, superseding "u from the edge's start, v down from the top"):
+     * the picked segment lies **on the x axis** about its own **midpoint**, `v` runs **into the face's
+     * interior** as seen from that segment — for this upright plate, world up — and the normal points **out
+     * of the material**, i.e. at whoever is looking at the face. Right-handedness then fixes `u`.
+     *
+     * Nothing here is a stored sign, and nothing degenerates when a face turns parallel to a world axis: a
+     * face is locally on exactly one side of its own boundary edge, which is the whole derivation. Which way
+     * an operation builds is the operation's business — *Cut* sweeps −normal and drills, *Extrude* sweeps
+     * +normal and bosses (see `anExtrudeOnASideFaceBuildsABossOutOfTheMaterial`).
      */
     @Test
-    fun theFaceFrameRunsAlongTheEdgeAndDownFromTheTop() {
+    fun theFaceFrameStandsOnThePickedEdgeAndRunsIntoTheFace() {
         val ed = plate()
         ed.sketchOnFront()
         val space = ed.activeSpace
@@ -114,31 +119,119 @@ class FaceSketchTest {
         assertEquals(0, space.piece, "the bottom edge is the footprint's first boundary piece (OP-8)")
 
         val p = Evaluator().plane(assertNotNull(space.plane))
-        assertClose(p.origin.x, 0.0, msg = "the origin is the edge's start corner")
+        assertClose(p.origin.x, 40.0, msg = "the origin is the picked edge's midpoint")
         assertClose(p.origin.y, 0.0)
-        assertClose(p.origin.z, 20.0, msg = "...at the face's top edge, so the flip leaves the face at v >= 0")
+        assertClose(p.origin.z, 0.0, msg = "...at the face's own bottom edge, which is the segment that was picked")
         assertClose(p.u.x, 1.0, msg = "u runs along the edge")
-        assertClose(p.v.z, -1.0, msg = "v runs down the face")
-        assertClose(p.normal.y, 1.0, msg = "and the normal points into the material, which is the way a Cut sweeps")
+        assertClose(p.v.z, 1.0, msg = "v runs up into the face, which is where its material is")
+        assertClose(p.normal.y, -1.0, msg = "and the normal points out of the material, at the viewer")
 
         // the reference outline the face view draws: the rectangle the face actually covers
         val r = assertNotNull(ed.doc.faceOutline(space, Evaluator()))
-        assertClose(r[2].x, 80.0, msg = "as wide as the edge is long")
-        assertClose(r[2].y, 20.0, msg = "as tall as the plate is thick")
+        assertEquals(4, r.size)
+        assertClose(r[0].x, -40.0, msg = "the numbering starts at the picked edge's first corner")
+        assertClose(r[0].y, 0.0)
+        assertClose(r[1].x, 40.0, msg = "as wide as the edge is long, centred on it")
+        assertClose(r[1].y, 0.0)
+        assertClose(r[2].x, 40.0)
+        assertClose(r[2].y, 20.0, msg = "as tall as the plate is thick, all of it at v >= 0")
+        assertClose(r[3].x, -40.0)
+        assertClose(r[3].y, 20.0)
         val target = SvgDrawTarget()
         ed.render(target)
         assertTrue(target.svg().contains("#cfd8e3"), "and it is drawn, as reference context: ${target.svg()}")
     }
 
+    /**
+     * **+v is up on screen**, which is what makes "into the face" a statement about the picture and not only
+     * about the numbers: the 2D canvas maps a space's own (u, v) with y increasing upwards, in the face view
+     * exactly as in the plan.
+     */
+    @Test
+    fun theFaceViewDrawsVUpwards() {
+        val ed = plate()
+        ed.sketchOnFront()
+        val low = ed.camera.worldToScreen(Vec2(0.0, 0.0))
+        val high = ed.camera.worldToScreen(Vec2(0.0, 15.0))
+        assertTrue(high.y < low.y, "a bigger v is drawn higher up the canvas ($high vs $low)")
+        val right = ed.camera.worldToScreen(Vec2(20.0, 0.0))
+        assertTrue(right.x > low.x, "and a bigger u to the right")
+    }
+
+    /**
+     * **The rule is about the face, not about the world.** The plate's *far* side is the mirror image of its
+     * front: the same picked-edge-on-the-x-axis, the same `v` into the material's side of the edge, and a
+     * normal that points the other way in the world — so `u` runs the other way too, which is exactly what
+     * "the outward normal points at the viewer" means once you walk round the part.
+     */
+    @Test
+    fun theFarSideFaceIsTheSameRuleSeenFromTheOtherSide() {
+        val ed = plate()
+        ed.setTool(Tools.SKETCH_ON_FACE)
+        ed.click(Vec2(40.0, 50.0)) // the back edge, (80,50)->(0,50)
+        assertEquals(2, ed.activeSpace.piece, "the third boundary piece")
+        val p = Evaluator().plane(assertNotNull(ed.activeSpace.plane))
+        assertClose(p.origin.x, 40.0, msg = "the midpoint of that edge")
+        assertClose(p.origin.y, 50.0)
+        assertClose(p.origin.z, 0.0)
+        assertClose(p.normal.y, 1.0, msg = "the normal points out of the material — the other way from the front face")
+        assertClose(p.v.z, 1.0, msg = "v still runs into the face, which is still upward here")
+        assertClose(p.u.x, -1.0, msg = "so u runs the other way: right-handedness is what turns it round")
+        // and the material really is on the −normal side, which is what "interior" was read from
+        assertClose(p.toWorld(Vec2(0.0, 10.0)).y, 50.0, msg = "the frame lies on the face")
+    }
+
+    /**
+     * **...and it does not secretly mean "up".** A pyramid whose apex hangs *below* its base plane has slant
+     * faces whose interior runs **downwards** from the picked base edge — so `v` points down in the world,
+     * with the normal still out of the material and the apex still at `+v`. A world-anchored frame (the draft
+     * this rule replaced) has no answer here that is not a special case.
+     */
+    @Test
+    fun anInvertedPyramidsFaceRunsDownwardsFromItsBaseEdge() {
+        val ed = Editor()
+        ed.setTool(Tools.RECTANGLE)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(100.0, 100.0))
+        ed.setTool(Tools.EXTRUDE_TO_POINT)
+        for (c in "90") ed.key(c.toString())
+        ed.key("Enter")
+        ed.click(Vec2(30.0, 0.0))
+        ed.click(Vec2(50.0, 50.0))
+        // turn it upside down: the apex's height is an ordinary parameter (OP-25)
+        ed.doc.setParameter(ed.doc.scalars.single { it.name == "height" }, (-90.0).mm)
+
+        ed.setTool(Tools.SKETCH_ON_FACE)
+        ed.click(Vec2(30.0, 0.0))
+        assertTrue(ed.activeSpace.isFace, "a flat face of the inverted loft: ${ed.statusHint}")
+        val p = Evaluator().plane(assertNotNull(ed.activeSpace.plane))
+        // *which* lateral face a footprint edge names is the loft plan's rail mapping and is not this test's
+        // subject (a flipped run renumbers it — see the note under OP-17); the frame on the face it opened is
+        assertClose(p.origin.z, 0.0, msg = "the frame stands on a base edge, which lies in the base plane")
+        assertClose(Vec2(p.origin.x - 50.0, p.origin.y - 50.0).length(), 50.0, tol = 1e-9, msg = "at that edge's midpoint")
+        assertTrue(p.v.z < -0.5, "v runs down the face, because that is where this face's material is: ${p.v}")
+        assertClose(p.u.z, 0.0, msg = "u lies along the base edge, in the base plane")
+        assertTrue(p.normal.z < 0.0, "and the normal points out of the material — downwards-and-out here: ${p.normal}")
+
+        val section = assertNotNull(ed.doc.spaceSection(ed.activeSpace, Evaluator()))
+        val corners = section.cornerPoints
+        assertEquals(3, corners.size, "a triangle: $corners")
+        assertTrue(corners.count { kotlin.math.abs(it.y) < 1e-9 } == 2, "the picked edge lies on the x axis: $corners")
+        val apex = assertNotNull(corners.maxByOrNull { it.y })
+        assertClose(apex.x, 0.0, msg = "the apex is over the middle of that edge")
+        assertClose(apex.y, kotlin.math.sqrt(50.0 * 50.0 + 90.0 * 90.0), tol = 1e-6, msg = "...at +v, a slant height away")
+    }
+
     // ---- THE HEADLINE: the drill, by clicking ----
 
     /**
-     * Plate in plan → extrude → *Sketch on face* on a side edge → a ⌀5 circle at (25, 8) in the face's own
+     * Plate in plan → extrude → *Sketch on face* on a side edge → a ⌀5 circle at (−15, 12) in the face's own
      * coordinates → *Cut* 10 deep. The result is a watertight plate with a horizontal bore exactly where the
      * face coordinates put it.
      *
-     * The numbers: the face frame maps (25, 8) to the world point (25, 0, 12) — 25 mm along the front edge,
-     * 8 mm down from the 20 mm-thick plate's top face — and the bore runs 10 mm inward along +Y. So the
+     * The numbers: the face frame maps (−15, 12) to the world point (25, 0, 12) — 15 mm back along the front
+     * edge from its 40 mm midpoint, 12 mm up from the edge itself — and the bore runs 10 mm inward along +Y (a
+     * *Cut* sweeps −normal, and the face's normal points out of the material). So the
      * cylinder is x ∈ 22.5..27.5, y ∈ 0..10, z ∈ 9.5..14.5, and the material lost is π·2.5²·10 = 196.35 mm³
      * (a little less, because an inscribed tessellated circle removes slightly too little — the direction
      * such an error *must* take, so it is asserted).
@@ -154,13 +247,13 @@ class FaceSketchTest {
         val base = ed.solids().single()
         ed.sketchOnFront()
 
-        // draw the bore's circle in the face view: a typed radius, then a click at (25, 8)
+        // draw the bore's circle in the face view: a typed radius, then a click at (−15, 12)
         ed.setTool(Tools.CIRCLE_R)
         ed.key("2")
         ed.key(".")
         ed.key("5")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
         val circle = ed.doc.elements.last { it.kind == ElementKind.CIRCLE }
         assertEquals(ed.activeSpace.name, circle.space, "the circle belongs to the face space")
 
@@ -169,15 +262,15 @@ class FaceSketchTest {
         ed.key("1")
         ed.key("0")
         ed.key("Enter")
-        ed.click(Vec2(27.5, 8.0)) // the circle, by its boundary
+        ed.click(Vec2(-12.5, 12.0)) // the circle, by its boundary
         assertEquals(3, ed.solids().size, "one gesture, two solids — the drill and the cut part: ${ed.statusHint}")
         val drill = ed.solids()[1]
 
         // the face frame's mapping, asserted twice: exactly, on the frame itself...
-        val world = Evaluator().plane(ed.activeSpace.plane!!).toWorld(Vec2(25.0, 8.0))
+        val world = Evaluator().plane(ed.activeSpace.plane!!).toWorld(Vec2(-15.0, 12.0))
         assertClose(world.x, 25.0, msg = "25 mm along the edge")
         assertClose(world.y, 0.0, msg = "on the face")
-        assertClose(world.z, 12.0, msg = "8 mm down from the top face at z = 20")
+        assertClose(world.z, 12.0, msg = "12 mm up from the picked edge, which lies at z = 0")
         // ...and on the mesh that came out, where an inscribed polygon costs a couple of hundredths
         val db = assertNotNull(Geom3.bounds(ed.meshOf(drill)))
         assertClose((db.first.x + db.second.x) / 2, 25.0, tol = 0.02, msg = "the bore is where the frame put it")
@@ -213,11 +306,12 @@ class FaceSketchTest {
      *
      * Reported as a glitch on a face: the extrude produced a solid of the right size in the right place that
      * was *buried inside the part*, visible only as its base z-fighting the face it was drawn on. The cause was
-     * that the space's plane is the face's plane flipped — the frame that fixes what the drawing's `v` means —
-     * and a plain extrude inherited that direction, so every boss was a wart inside the material and only
-     * *Cut* was reachable. Which way an operation builds belongs to the **operation**: `Cut` goes in, `Extrude`
-     * goes out, and the drawn (u, v) coordinates are untouched by the fix (they could not change: reversing a
-     * right-handed frame's normal mirrors `v`, which would move every face-space drawing ever saved).
+     * that the space's plane was the face's plane **flipped**, so its normal pointed into the material and a
+     * plain extrude inherited that direction. Which way an operation builds belongs to the **operation**, and
+     * since the frame stopped being flipped (session 32) that reads as one sentence for every kind of space:
+     * *Extrude* sweeps the plane's +normal, which on a face is out of the material, and *Cut* sweeps the other
+     * way. **This test is what proves the sign swap kept the user-visible behaviour identical**: the boss
+     * still stands out, and the drill above still drills in.
      *
      * The numbers, against the same plate and the same circle as the drill: material is at y > 0, so the boss
      * occupies y ∈ −10..0 — flush against the face, entirely outside the plate — and unioning it adds exactly
@@ -234,13 +328,13 @@ class FaceSketchTest {
         ed.key(".")
         ed.key("5")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
 
         ed.setTool(Tools.EXTRUDE)
         ed.key("1")
         ed.key("0")
         ed.key("Enter")
-        ed.click(Vec2(27.5, 8.0))
+        ed.click(Vec2(-12.5, 12.0))
         assertEquals(2, ed.solids().size, "the boss is a solid of its own: ${ed.statusHint}")
         val boss = ed.solids().last()
 
@@ -254,7 +348,7 @@ class FaceSketchTest {
         // and it is material added: the union is the plate plus the boss, not the plate with a wart inside it
         ed.setTool(Tools.UNION)
         ed.click(onFrontEdge) // the plate, addressable here as this face
-        ed.click(Vec2(27.5, 8.0)) // the boss
+        ed.click(Vec2(-12.5, 12.0)) // the boss
         assertEquals(3, ed.solids().size, "the joined part exists: ${ed.statusHint}")
         val part = ed.solids().last()
         val mesh = ed.meshOf(part)
@@ -279,13 +373,13 @@ class FaceSketchTest {
         ed.key(".")
         ed.key("5")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
 
         ed.setTool(Tools.CUT)
         ed.key("1")
         ed.key("0")
         ed.key("Enter")
-        ed.click(Vec2(27.5, 8.0))
+        ed.click(Vec2(-12.5, 12.0))
         assertEquals(3, ed.solids().size, "one step, two solids: the tool and the part: ${ed.statusHint}")
         val part = ed.solids().last()
         assertManifold(ed.meshOf(part), "cut plate")
@@ -332,12 +426,12 @@ class FaceSketchTest {
         ed.key(".")
         ed.key("5")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
         ed.setTool(Tools.CUT)
         ed.key("1")
         ed.key("0")
         ed.key("Enter")
-        ed.click(Vec2(27.5, 8.0))
+        ed.click(Vec2(-12.5, 12.0))
         val firstPart = ed.solids().last()
 
         // the second face: arming the tool goes back to the plan, where footprint edges are drawn
@@ -410,12 +504,12 @@ class FaceSketchTest {
         ed.key(".")
         ed.key("5")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
         ed.setTool(Tools.CUT)
         ed.key("1")
         ed.key("0")
         ed.key("Enter")
-        ed.click(Vec2(27.5, 8.0))
+        ed.click(Vec2(-12.5, 12.0))
         val part = ed.solids().last()
 
         ed.setTool(Tools.SELECT)
@@ -427,9 +521,14 @@ class FaceSketchTest {
 
     /**
      * **Parametricity, which is the whole point of deriving the frame** (OP-8): move the plate's corner and
-     * the face moves, so the bore stays 25 mm from the edge's start and 8 mm below the top face — it rides
-     * the part. Contrast OP-20's rule for a rider on a wall, which wants a *world* coordinate: a hole is
-     * dimensioned from the part's own edge, so face-relative is the honest intent here.
+     * the face moves, so the bore stays 15 mm back from the edge's **midpoint** and 12 mm up from the edge
+     * itself — it rides the part. Contrast OP-20's rule for a rider on a wall, which wants a *world*
+     * coordinate: a hole is dimensioned from the part's own edge, so face-relative is the honest intent here.
+     *
+     * What the intrinsic frame changes here is *which* edit moves the bore, and it is worth stating because it
+     * is the user-visible consequence of the rule: coordinates are measured from the picked edge, so
+     * **thickening the plate leaves the bore where it is** (it used to ride the top face down). Anchoring the
+     * space's origin on a corner is how the other reading is asked for.
      */
     @Test
     fun theBoreRidesTheFaceWhenThePlateIsEdited() {
@@ -440,12 +539,12 @@ class FaceSketchTest {
         ed.key(".")
         ed.key("5")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
         ed.setTool(Tools.CUT)
         ed.key("1")
         ed.key("0")
         ed.key("Enter")
-        ed.click(Vec2(27.5, 8.0))
+        ed.click(Vec2(-12.5, 12.0))
         // the cut's *tool* solid is the bore; the part is what it left (OP-17's one gesture, two solids)
         val drill = ed.solids()[1]
 
@@ -457,18 +556,23 @@ class FaceSketchTest {
         assertEquals(elementsBefore, ed.doc.elements.size, "a drag recomputes the frame; it creates nothing")
 
         val moved = assertNotNull(Geom3.bounds(ed.meshOf(drill)))
-        assertClose((moved.first.x + moved.second.x) / 2, 5.0, tol = 0.02, msg = "still 25 mm along the edge, whose start moved to x = -20")
+        assertClose(
+            (moved.first.x + moved.second.x) / 2,
+            15.0,
+            tol = 0.02,
+            msg = "still 15 mm back from the edge's midpoint, which moved to x = 30",
+        )
         assertClose(moved.first.y, -10.0, tol = 1e-9, msg = "and still on the face, which moved to y = -10")
         assertClose((moved.first.z + moved.second.z) / 2, 12.0, tol = 0.02)
 
-        // thicken the plate: v is measured down from the top face, so the bore follows it up
+        // thicken the plate: v is measured up from the picked edge, so the bore stays where it is
         ed.doc.setParameter(ed.doc.scalars.single { it.name == "thickness" }, 30.0.mm)
         val raised = assertNotNull(Geom3.bounds(ed.meshOf(drill)))
-        assertClose((raised.first.z + raised.second.z) / 2, 22.0, tol = 0.02, msg = "8 mm below the new top face at z = 30")
+        assertClose((raised.first.z + raised.second.z) / 2, 12.0, tol = 0.02, msg = "12 mm above the edge it is measured from")
 
         // the face outline follows too — the view says where the material now is
         val r = assertNotNull(ed.doc.faceOutline(ed.doc.spaceNamed("face1")!!, Evaluator()))
-        assertClose(r[2].x, 100.0, msg = "the stretched edge")
+        assertClose(r[1].x, 50.0, msg = "half the stretched edge, which the frame is centred on")
         assertClose(r[2].y, 30.0, msg = "and the thicker plate")
     }
 
@@ -543,25 +647,25 @@ class FaceSketchTest {
         ed.sketchOnFront()
 
         // The plan's own geometry: not addressable here. (80,50) is a rectangle corner in the plan and is
-        // clear of the face rectangle ([0,80] x [0,20]), which *is* addressable — see below.
+        // clear of the face rectangle ([-40,40] x [0,20]), which *is* addressable — see below.
         ed.setTool(Tools.SELECT)
         ed.click(Vec2(80.0, 50.0))
         assertNull(ed.selection, "a plan point is not pickable in the face view")
-        // ...but the face's solid is, on the rectangle the face covers
-        ed.click(Vec2(40.0, 0.0))
+        // ...but the face's solid is, on the rectangle the face covers (its own picked edge, at the origin)
+        ed.click(Vec2(0.0, 0.0))
         assertEquals(base, ed.selection, "the base solid is addressable as its own face")
 
         // draw a circle here, then go back: it is gone from the plan's picking and drawing
         ed.setTool(Tools.CIRCLE_R)
         ed.key("3")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
         val faceCircle = ed.doc.elements.last { it.kind == ElementKind.CIRCLE }
         val faceSvg = SvgDrawTarget().also { ed.render(it) }.svg()
 
         assertTrue(ed.setActiveSpace(Document.PLAN_SPACE))
         ed.setTool(Tools.SELECT)
-        ed.click(Vec2(28.0, 8.0))
+        ed.click(Vec2(-12.0, 12.0))
         assertTrue(ed.selection !== faceCircle, "a face element is not pickable in the plan")
         val planSvg = SvgDrawTarget().also { ed.render(it) }.svg()
         assertTrue(planSvg != faceSvg, "the two views draw different things")
@@ -590,7 +694,7 @@ class FaceSketchTest {
         ed.setTool(Tools.CIRCLE_R)
         ed.key("3")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
 
         // back to the plan and draw there too, so the script has to switch back
         assertTrue(ed.setActiveSpace(Document.PLAN_SPACE))
@@ -601,7 +705,7 @@ class FaceSketchTest {
         ed.setTool(Tools.CIRCLE_R)
         ed.key("2")
         ed.key("Enter")
-        ed.click(Vec2(60.0, 10.0))
+        ed.click(Vec2(20.0, 10.0))
 
         val text = DocumentFormat.save(ed.doc)
         assertTrue(text.contains("\nsketchspace \"face1\""), text)
@@ -617,7 +721,8 @@ class FaceSketchTest {
         )
         // the reloaded frame is re-derived, not stored
         val ev = Evaluator()
-        assertClose(ev.plane(reloaded.spaceNamed("face1")!!.plane!!).origin.z, 20.0)
+        assertClose(ev.plane(reloaded.spaceNamed("face1")!!.plane!!).origin.z, 0.0)
+        assertClose(ev.plane(reloaded.spaceNamed("face1")!!.plane!!).origin.x, 40.0)
 
         // switching views on its own is not a step and not an undo step
         val undos = text
@@ -633,7 +738,7 @@ class FaceSketchTest {
         ed.setTool(Tools.CIRCLE_R)
         ed.key("3")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
         assertEquals(2, ed.doc.spaces.size)
 
         assertTrue(ed.undo(), "undo the circle")
@@ -662,11 +767,11 @@ class FaceSketchTest {
         ed.setTool(Tools.CIRCLE_R)
         ed.key("3")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
         ed.setTool(Tools.EXTRUDE)
         ed.key("4")
         ed.key("Enter")
-        ed.click(Vec2(28.0, 8.0))
+        ed.click(Vec2(-12.0, 12.0))
         assertEquals(2, ed.solids().size)
 
         assertTrue(ed.setActiveSpace(Document.PLAN_SPACE))
@@ -700,10 +805,13 @@ class FaceSketchTest {
         assertEquals(1, ed.activeSpace.piece, "the second boundary piece (OP-8)")
         val p = Evaluator().plane(ed.activeSpace.plane!!)
         assertClose(p.origin.x, 80.0)
+        assertClose(p.origin.y, 25.0, msg = "the origin is that edge's own midpoint")
+        assertClose(p.origin.z, 0.0)
         assertClose(p.u.y, 1.0, msg = "u runs along that edge, which the boundary traverses upward")
-        assertClose(p.normal.x, -1.0, msg = "and the sketch normal points back into the material")
+        assertClose(p.v.z, 1.0, msg = "v runs up into the face")
+        assertClose(p.normal.x, 1.0, msg = "and the sketch normal points out of the material, at the viewer")
         val r = assertNotNull(ed.doc.faceOutline(ed.activeSpace, Evaluator()))
-        assertClose(r[2].x, 50.0, msg = "that face is 50 long")
+        assertClose(r[1].x, 25.0, msg = "that face is 50 long, centred on the picked edge")
     }
 
     /**
@@ -724,12 +832,12 @@ class FaceSketchTest {
         ed.key(".")
         ed.key("5")
         ed.key("Enter")
-        ed.click(Vec2(25.0, 8.0))
+        ed.click(Vec2(-15.0, 12.0))
         ed.setTool(Tools.EXTRUDE)
         ed.key("1")
         ed.key("0")
         ed.key("Enter")
-        ed.click(Vec2(27.5, 8.0))
+        ed.click(Vec2(-12.5, 12.0))
         val drill = ed.solids().last()
 
         val both = Scene3.extract(ed.doc).solids.map { it.elementId }
@@ -739,7 +847,7 @@ class FaceSketchTest {
         // ...and once the boolean *does* consume them, only the part is drawn
         ed.setTool(Tools.SUBTRACT)
         ed.click(onFrontEdge)
-        ed.click(Vec2(27.5, 8.0))
+        ed.click(Vec2(-12.5, 12.0))
         val part = ed.solids().last()
         assertEquals(listOf(part.id), Scene3.extract(ed.doc).solids.map { it.elementId }, "a boolean's operands are its material")
     }

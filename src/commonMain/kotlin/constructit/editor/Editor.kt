@@ -1013,8 +1013,10 @@ class Editor(
                     "a negative angle swaps them. Retype the angle to tilt the plane and everything on it." +
                     (if (space.anchor == null) " Nothing here to cut into: its line is part of no solid." else sectionNote(space))
             else ->
-                "Sketching on ${space.name}, the face of ${space.anchor?.let { doc.nameOf(it) }}: u along the edge from its start, " +
-                    "v down from the top face. Cut here drills into the material; Extrude builds outward, as a boss." +
+                "Sketching on ${space.name}, the face of ${space.anchor?.let { doc.nameOf(it) }}: u along the edge you picked, " +
+                    "v up into the face, the origin at that edge's middle" +
+                    (space.originCorner?.let { " (moved onto section corner #${it + 1})" } ?: "") +
+                    ". Cut here drills into the material; Extrude builds outward, as a boss." +
                     sectionNote(space)
         }
 
@@ -3440,7 +3442,10 @@ class Editor(
     private fun toolScalars(tool: ToolDef): List<ScalarEntry>? {
         val need = tool.scalars.size
         if (scalarPicks.size < need && !tool.scalarsOptional) return null
-        val picks = scalarPicks.takeLast(need)
+        // a tool whose optional scalars cannot be told apart by dimension takes only what was typed *for it*
+        // (see [ToolDef.scalarsTypedOnly]) — the memory below would otherwise fill them with a stranger
+        val remembered = if (tool.scalarsTypedOnly) scalarPicks.filter { e -> pendingTypedParams.any { it === e } } else scalarPicks
+        val picks = remembered.takeLast(need)
         // A **defaulted** slot is not waiting for anything (ScalarSlot.default), so it must not silently
         // adopt a pick that was meant for something else — and a length picked into a dimensionless ratio
         // would only make the point invalid (OP-7). So the longest **prefix** of picks whose dimensions are

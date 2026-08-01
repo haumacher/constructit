@@ -145,14 +145,19 @@ enum class ElementKind {
  * space is organizational + view state (OP-14's third column), and the only thing it contributes to a
  * construction is [plane] — the very argument `sketchOn` already takes. The default space is the **plan**
  * (world XY, [plane] null so every feature keeps building its own `planeXY` node exactly as before); a
- * *face* space names the solid and the boundary-piece index its plane is derived from (OP-8), and its
- * plane is the side face's, **flipped**, so its normal points into the material: that is the direction *Cut*
- * drills (`Document.cutOnFace`), while *Extrude* builds a boss outward from the same footprint.
+ * *face* space names the solid and the boundary-piece index its plane is derived from (OP-8), and its plane
+ * is the side face's own, whose normal points **out of the material** — you look at the face — so *Extrude*
+ * follows the plane's normal and builds a boss while *Cut* goes the other way and drills
+ * (`Document.cutOnFace`). One rule for every space, because a datum has the same one.
  *
  * A **datum** space is the general form of the same thing (GitHub #6): its plane contains the carrier of a
  * drawn line ([hinge]) and is rotated out of the space it was defined in by [angle], a live parameter. A
  * datum has no material side, so which way its features build is fixed by its own normal — see
  * `Document.createDatumSpace` for the conventions and `Geom3.datumPlane` for the frame.
+ *
+ * **Where the origin sits** is a property of the space rather than of the frame it is derived from
+ * ([intrinsic]): every non-plan space publishes its plane as `planeAnchored(intrinsic, anchor, dx, dy)`, so
+ * the origin can be moved without any consumer being rewired — see `Document.setSpaceOrigin`.
  */
 class SketchSpace(
     val name: String,
@@ -184,7 +189,34 @@ class SketchSpace(
     val offset: ScalarEntry? = null,
     /** DATUM only: the name of the space this plane was rotated out of (spaces compose). */
     val from: String = Document.PLAN_SPACE,
+    /**
+     * The frame **before** the origin control: the face's own intrinsic plane (the picked segment on the x
+     * axis, its midpoint the origin) or the datum's hinged/offset one. Null for the plan.
+     *
+     * Held because it is what an origin *anchor* must be measured in: the anchor moves [plane]'s origin, so a
+     * point stated in [plane]'s coordinates could not define it without depending on itself.
+     */
+    val intrinsic: PlaneRef? = null,
+    /**
+     * The **origin anchor** node: a free point at (0, 0) in [intrinsic]'s coordinates, welded onto a point of
+     * the plane once one is chosen (`Document.setSpaceOrigin`). Re-pointing it in place is what lets the
+     * origin move with no consumer of [plane] being rewired.
+     */
+    val originAnchor: PointRef? = null,
+    /** The in-plane offset applied after the anchor — ordinary scalar sources, wireable to parameters. */
+    val originDx: ScalarRef? = null,
+    val originDy: ScalarRef? = null,
 ) {
+    /**
+     * Which corner of this space's own section the origin is anchored on, or null while it sits at the
+     * frame's intrinsic origin — the *stored* form of the choice (OP-1/OP-18: an index, never a position).
+     */
+    var originCorner: Int? = null
+
+    /** The panel parameters the origin offsets read, when they are not the default zero. */
+    var originDxEntry: ScalarEntry? = null
+    var originDyEntry: ScalarEntry? = null
+
     /** The plan is exactly the space with no plane node of its own: the world XY plane, by construction. */
     val isPlan: Boolean get() = plane == null
 
@@ -1385,6 +1417,7 @@ class Document {
             when (kind) {
                 SectionInput.CORNER -> {
                     add(cx.sectionCorner(node, index), ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
+                        .also { sectionInputAddress[it.id] = Triple(space.name, kind, index) }
                 }
                 SectionInput.EDGE -> {
                     // the *kind* of the curve is part of the accessor and therefore of the step (three ids for
@@ -1399,6 +1432,135 @@ class Document {
                 }
             }
         }
+    }
+
+    // ---- the space origin: an anchor on the plane, plus an in-plane offset (OP-17) ----
+
+    /** Where a materialized section input came from: its space, kind and structural index (OP-18). */
+    private val sectionInputAddress = HashMap<String, Triple<String, SectionInput, Int>>()
+
+    /** The section node taken at a space's **intrinsic** frame, one per space — see [intrinsicSectionNode]. */
+    private val intrinsicSectionNodes = HashMap<String, SectionRef>()
+
+    /**
+     * The part's section at [space]'s **intrinsic** plane — the frame before the origin control.
+     *
+     * The one thing an origin anchor may be built from, and the reason is a circle it would otherwise close:
+     * the section a space *shows* is cut at the plane the space publishes, so a corner of it depends on the
+     * origin and could not define it. The intrinsic section is the same section translated, so a corner index
+     * addresses the same corner in both — guaranteed, because the face section's canonical ordering was made
+     * translation-invariant for exactly this (`Section3.rotatedToFirstCorner`).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun intrinsicSectionNode(space: SketchSpace): SectionRef? {
+        val plane = space.intrinsic ?: return null
+        val anchor = space.anchor ?: return null
+        if (anchor.kind != ElementKind.SOLID) return null
+        intrinsicSectionNodes[space.name]?.let { return it }
+        val node = cx.section(anchor.ref as SolidRef, plane)
+        intrinsicSectionNodes[space.name] = node
+        return node
+    }
+
+    /**
+     * Move [space]'s origin: onto the section corner [corner] (null = back to the frame's own origin), plus
+     * the in-plane offsets [dx] and [dy] (null = zero) — the two-layer origin control, generic over every
+     * sketch space that has a plane (OP-17, the user's design).
+     *
+     * **Nothing is rewired.** The anchor is a source point and the offsets are source scalars, all three
+     * inputs of the space's published plane from the moment it was created, so this is three in-place
+     * bindings — the welding substrate (OP-5). Every feature ever sketched here holds that same plane node,
+     * which is what makes re-anchoring **translate the whole sketch and everything built from it**: the 2D
+     * numbers keep their meaning and the frame they are read in moves. That is the parametrically correct
+     * reading rather than a limitation — it is how a sketch is moved on its face.
+     *
+     * The anchor is a *node*, so it tracks: drag the part's corner and the origin goes with it.
+     */
+    fun setSpaceOrigin(
+        space: SketchSpace,
+        corner: Int?,
+        dx: ScalarRef? = null,
+        dy: ScalarRef? = null,
+    ): Boolean =
+        recording(
+            "spaceorigin",
+            *listOfNotNull(
+                Arg.Label(space.name),
+                corner?.let { Arg.Keyed("corner", Arg.Text(it.toString())) },
+                dx?.let { Arg.Keyed("dx", Arg.Sc(scalarEntryFor(it))) },
+                dy?.let { Arg.Keyed("dy", Arg.Sc(scalarEntryFor(it))) },
+            ).toTypedArray(),
+            skipIfEmpty = true,
+        ) { setSpaceOriginNow(space, corner, dx, dy) }
+
+    private fun setSpaceOriginNow(
+        space: SketchSpace,
+        corner: Int?,
+        dx: ScalarRef?,
+        dy: ScalarRef?,
+    ): Boolean {
+        val anchorNode = space.originAnchor?.node as? SourceNode
+        if (anchorNode == null) {
+            note = "the plan's origin is the world origin — it is what everything else is measured from"
+            return false
+        }
+        if (corner != null) {
+            val section = intrinsicSectionNode(space)
+            if (section == null) {
+                note = "${space.name} has no part to take a corner from, so there is nothing to anchor its origin on"
+                return false
+            }
+            val at = (Evaluator().valueOf(section) as? SectionValue)?.section?.corners?.getOrNull(corner)
+            if (at?.at == null) {
+                note = "${space.name}'s section has no corner #${corner + 1} to anchor on${at?.reason?.let { " — $it" } ?: ""}"
+                return false
+            }
+            anchorNode.boundTo = cx.sectionCorner(section, corner).node
+        } else {
+            anchorNode.boundTo = null
+        }
+        space.originCorner = corner
+        (space.originDx?.node as? SourceNode)?.boundTo = dx?.node
+        (space.originDy?.node as? SourceNode)?.boundTo = dy?.node
+        // three in-place bindings and not one new element: without this the step would look empty and be
+        // dropped, exactly as the *Join points* weld once was (see [edits])
+        noteEdit()
+        space.originDxEntry = dx?.let { scalarEntryFor(it) }
+        space.originDyEntry = dy?.let { scalarEntryFor(it) }
+        // said out loud, because moving an origin moves a whole drawing and nothing on screen would
+        // otherwise distinguish "anchored here" from "anchored here, 10 mm along" (OP-3's speaking rule)
+        val shift = listOfNotNull(space.originDxEntry, space.originDyEntry)
+        note =
+            "${space.name}'s origin is now " +
+            (corner?.let { "section corner #${it + 1}" } ?: "the frame's own origin") +
+            (if (shift.isEmpty()) "" else ", offset by ${shift.joinToString(", ") { it.name }}") +
+            " — everything drawn here moved with the frame"
+        return true
+    }
+
+    /**
+     * The gesture's form of [setSpaceOrigin]: anchor the active space's origin on the point [at], which must
+     * be a **corner of this space's own section** — the face's own corners, the prime pick the user names
+     * ("a click, not a formula").
+     *
+     * Refused by name for anything else, and the reason is the one that makes the feature well-defined: a
+     * point *drawn* in this space rides the frame it would be defining, so its own coordinates could not
+     * anchor it. A corner of the part is stated independently of the frame, which is why it can.
+     */
+    fun setSpaceOriginAt(
+        at: Element,
+        dx: ScalarRef? = null,
+        dy: ScalarRef? = null,
+    ): Boolean {
+        val space = activeSpace
+        val addr = sectionInputAddress[at.id]
+        if (addr == null || addr.first != space.name || addr.second != SectionInput.CORNER) {
+            note =
+                "${nameOf(at)} cannot fix ${space.name}'s origin: anchor on a corner of the part's section here — " +
+                "a point drawn on this plane moves with the frame it would define"
+            return false
+        }
+        return setSpaceOrigin(space, addr.third, dx, dy)
     }
 
     /**
@@ -1467,14 +1629,21 @@ class Document {
     /**
      * Create a sketch space on boundary piece [piece] of the solid [solid] (OP-17), and make it active.
      *
-     * The plane is **derived**: `sideFacePlane` recomputes from the solid's own feature and is then flipped
-     * so its normal points into the material — the direction a *Cut* sweeps ([cutOnFace]); which way an
-     * operation builds is the operation's business, and a boss goes the other way ([extrudeSolid]). The flip
-     * stays because it is what fixes the drawing's own coordinates (`v` down from the top face): reversing a
-     * right-handed frame's normal mirrors `v`, so the frame is not a free choice once files exist. So the
-     * frame is parametric — stretch the part and the face, its sketch and everything built from it follow.
-     * That is face-**relative** positioning, and it is the honest intent here: a hole is dimensioned from
-     * the part's own edge, where a rider on a wall wants a world coordinate (OP-20's absolute rule).
+     * The plane is **derived**: `sideFacePlane` recomputes from the solid's own feature, so the frame is
+     * parametric — stretch the part and the face, its sketch and everything built from it follow. That is
+     * face-**relative** positioning, and it is the honest intent here: a hole is dimensioned from the part's
+     * own edge, where a rider on a wall wants a world coordinate (OP-20's absolute rule).
+     *
+     * **The frame is intrinsic** (session 32, the user's rule): the picked segment lies on the x axis about
+     * its own midpoint, `v` runs into the face's interior as seen from that segment, and the normal points
+     * out of the material — at the viewer. Nothing is flipped here any more, and nothing needs a persisted
+     * sign, because a face is locally on exactly one side of its own boundary edge. Which way an operation
+     * builds is the operation's business and reads off that normal: *Extrude* follows it out of the material
+     * as a boss ([extrudeSolid]), *Cut* goes the other way and drills ([cutOnFace]) — the same sentence that
+     * already held for a datum plane, now holding for a face too.
+     *
+     * The plane the space *publishes* is that frame with its origin under the space's own control
+     * ([setSpaceOrigin]): an anchor point and an in-plane (dx, dy), both zero to begin with.
      */
     @Suppress("UNCHECKED_CAST")
     fun createFaceSpace(
@@ -1487,12 +1656,47 @@ class Document {
         val name = named ?: nextSpaceName()
         if (spaceNamed(name) != null) return null
         return recording("sketchspace", Arg.Label(name), Arg.Keyed("el", Arg.El(solid)), Arg.Keyed("piece", Arg.Text(piece.toString()))) {
-            val plane = cx.planeFlipped(cx.sideFacePlane(solid.ref as SolidRef, piece))
-            val space = SketchSpace(name, plane, solid, piece)
-            spaces.add(space)
-            activeSpace = space
+            val intrinsic = cx.sideFacePlane(solid.ref as SolidRef, piece)
+            val space = addSpace(SketchSpace(name, null, solid, piece), intrinsic)
             space
         }
+    }
+
+    /**
+     * Register [proto] as a space whose plane is [intrinsic] under this document's **origin control** — the
+     * one place a non-plan space is built, so face and datum get the same two layers (OP-17).
+     *
+     * The three nodes are ordinary sources, which is exactly what makes the origin re-pointable in place: the
+     * anchor is a free point at the frame's own origin (welded onto a point on the plane when one is chosen)
+     * and the offsets are free scalars (wired to panel parameters when they are typed). Every consumer of the
+     * space holds the *published* plane, so moving the origin translates the whole sketch and everything
+     * built from it, rather than rewiring anything.
+     */
+    private fun addSpace(
+        proto: SketchSpace,
+        intrinsic: PlaneRef,
+    ): SketchSpace {
+        val anchor = cx.freePoint("${proto.name}.origin", 0.0.mm, 0.0.mm)
+        val dx = cx.const(0.0.mm)
+        val dy = cx.const(0.0.mm)
+        val space =
+            SketchSpace(
+                proto.name,
+                cx.planeAnchored(intrinsic, anchor, dx, dy),
+                proto.anchor,
+                proto.piece,
+                proto.hinge,
+                proto.angle,
+                proto.offset,
+                proto.from,
+                intrinsic,
+                anchor,
+                dx,
+                dy,
+            )
+        spaces.add(space)
+        activeSpace = space
+        return space
     }
 
     private fun nextSpaceName(): String {
@@ -1575,11 +1779,8 @@ class Document {
             *(if (cuts == null) emptyArray() else arrayOf(Arg.Keyed("part", Arg.El(cuts)))),
         ) {
             val hinged = cx.datumPlane(activePlane(), carrierLine(line), entry.ref)
-            val plane = if (shift == null) hinged else cx.planeOffset(hinged, shift.ref)
-            val space = SketchSpace(name, plane, cuts, hinge = line, angle = entry, offset = shift, from = base.name)
-            spaces.add(space)
-            activeSpace = space
-            space
+            val intrinsic = if (shift == null) hinged else cx.planeOffset(hinged, shift.ref)
+            addSpace(SketchSpace(name, null, cuts, hinge = line, angle = entry, offset = shift, from = base.name), intrinsic)
         }
     }
 
@@ -7121,34 +7322,21 @@ class Document {
      * satisfied through the parameter rather than through a 3D drag handle, which there is no picking in
      * this view to grab (see [Viewport3]).
      *
-     * **In a face space it builds a boss — outward, out of the material** (reported: an extrude on a face
-     * produced a solid buried inside the part, visible only as its base z-fighting the face). *Which way an
-     * operation builds is the operation's business, not the space's*: the space says where the drawing is and
-     * which way its `v` runs, and *Cut* is the operation that goes inward ([cutOnFace]). Realized without
-     * touching the space's frame — the sketch is put on the plane **[depth] behind** the face and swept the
-     * space's own way, so the material lands between the face and `depth` outside it, and every drawn (u, v)
-     * still means exactly what it meant (a right-handed frame cannot reverse its normal without mirroring `v`,
-     * and mirroring `v` would move every face-space drawing ever saved — see [createFaceSpace]).
-     *
-     * **On a datum plane it sweeps the plane's own +normal** and offsets nothing (GitHub #6). The two rules
-     * are the same rule stated against what each space actually has: a face plane points *into* material, so
-     * the directions are named against the material; a datum has no material side at all, so they are named
-     * against its own normal — which the **sign of its angle** turns round ([createDatumSpace]).
+     * **It sweeps the plane's own +normal**, in every space, and that one sentence covers both cases the
+     * editor has (GitHub #1, and the session-32 frame rule that made the two agree). A datum plane has no
+     * material side, so its normal is all there is — the **sign of its angle** turns it round
+     * ([createDatumSpace]). A **face** plane's normal points *out of the material* (you look at the face), so
+     * the very same sweep builds a boss outward, which is what an *Extrude* on a face means; *Cut* is the
+     * operation that goes inward ([cutOnFace]). The offset this used to need on a face — sketching `depth`
+     * behind it and sweeping inward, because the frame pointed into the material — is gone with the flip it
+     * was compensating for.
      */
     fun extrudeSolid(
         el: Element,
         depth: ScalarRef,
     ): Element? {
         val region = regionOf(el) ?: return null
-        val space = activeSpace
-        val plane =
-            when {
-                space.plane == null -> activePlane()
-                // a face: start `depth` behind the face, so the material lands outside it — a boss
-                space.isFace -> cx.planeOffset(space.plane, cx.neg(depth))
-                // a datum: along its own +normal, which is the direction its angle's sign chose
-                else -> space.plane
-            }
+        val plane = activeSpace.plane ?: activePlane()
         return add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
     }
 
@@ -7156,10 +7344,13 @@ class Document {
      * Extrude the area [el] by [depth] on the active **face** space's plane and subtract it from [part]
      * (OP-17): the drill, the pocket, the slot — one gesture.
      *
-     * **This is the operation that goes inward**, and it is the only one: it sweeps the face's own plane the
-     * space's way (the normal points into the material — [createFaceSpace]), which is what makes a drill a
-     * drill. Its twin *Extrude* builds the same footprint outward as a boss ([extrudeSolid]), so the pair
-     * covers both intents by naming them rather than by a sign the user cannot see.
+     * **This is the operation that goes inward**, and it is the only one: it sweeps **−normal**, which on a
+     * face means into the material (the face's normal points out of it — [createFaceSpace]) and is what makes
+     * a drill a drill. Its twin *Extrude* builds the same footprint the other way as a boss ([extrudeSolid]),
+     * so the pair covers both intents by naming them rather than by a sign the user cannot see. The backward
+     * sweep is [Construction.sketchBehind] — the drawing read on the flipped frame — rather than an offset
+     * plane the sweep runs back from, because only that keeps the tool's cap **exactly** on the face; see
+     * that function for the near-tangency an offset's rounding produces.
      *
      * Nothing here is new machinery: it is an extrude followed by [combineSolids], which is the click
      * path a user can also take by hand — with *Cut* rather than *Extrude* as the first half, since a
@@ -7172,11 +7363,10 @@ class Document {
      * time and the step records it by name, so a second cut chains onto the first instead of forking the
      * model (the sequential-feature rule). Null in the plan space, where there is no face to cut into.
      *
-     * **On a datum plane it sweeps −normal instead**, by starting the sweep `depth` behind the plane — the
-     * mirror image of what [extrudeSolid] does on a face, and for the mirror reason: a datum has no material
-     * side, so *Extrude* takes its +normal and *Cut* takes the other one, with the sign of the datum's angle
-     * choosing which is which (GitHub #6). The part it subtracts from is the one the datum's hinge belongs to
-     * ([datumPartOf]), chained by the same tip rule.
+     * **On a datum plane the same −normal sweep** is what "the other way" means there: a datum has no
+     * material side, so *Extrude* takes its +normal and *Cut* takes the other one, with the sign of the
+     * datum's angle choosing which is which (GitHub #6). The part it subtracts from is the one the datum's
+     * hinge belongs to ([datumPartOf]), chained by the same tip rule.
      */
     @Suppress("UNCHECKED_CAST")
     fun cutOnFace(
@@ -7184,12 +7374,10 @@ class Document {
         el: Element,
         depth: ScalarRef,
     ): Element? {
-        val space = activeSpace
-        val on = space.plane ?: return null
+        val on = activeSpace.plane ?: return null
         if (part.kind != ElementKind.SOLID) return null
         val region = regionOf(el) ?: return null
-        val plane = if (space.isFace) on else cx.planeOffset(on, cx.neg(depth))
-        val tool = add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
+        val tool = add(cx.extrude(cx.sketchBehind(on, region), depth), ElementKind.SOLID, Styles.SOLID)
         return add(cx.subtract(part.ref as SolidRef, tool.ref as SolidRef), ElementKind.SOLID, Styles.SOLID)
     }
 
@@ -7310,14 +7498,15 @@ class Document {
     }
 
     /**
-     * Which way "up" is for a point lifted off the **active** plane: −1 on a face, +1 everywhere else.
+     * Which way "up" is for a point lifted off the **active** plane: the plane's own +normal, everywhere.
      *
-     * *Extrude*'s own rule, stated once and shared by everything that lifts (OP-25): a face plane's normal
-     * points into the material (OP-8), so a positive height there must build **outward**. Structural — it is
-     * read from the space at build time and re-read on replay, never from a value — so nothing about it has
-     * to be persisted.
+     * *Extrude*'s own rule, stated once and shared by everything that lifts (OP-25). It used to make a face
+     * the exception (−1), because a face plane's normal pointed *into* the material and a positive height
+     * there must still stand outward; since the session-32 frame rule a face's normal points out of the
+     * material like every other space's, so the exception is gone rather than compensated. Structural — read
+     * from the space at build time and re-read on replay — so nothing about it is persisted either way.
      */
-    private fun liftSign(): Int = if (activeSpace.isFace) -1 else 1
+    private fun liftSign(): Int = 1
 
     /**
      * A **height point** over [base], standing [height] off the active sketch plane (OP-25) — the user's

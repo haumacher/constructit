@@ -73,10 +73,10 @@ class JtProbeTest {
         assertTrue(ed.activeSpace.isFace, "on the plate's front face: ${ed.statusHint}")
         ed.setTool(Tools.CIRCLE_R)
         ed.type("8")
-        ed.click(Vec2(40.0, 10.0))
+        ed.click(Vec2(0.0, 10.0)) // the middle of the face: its frame stands on the picked edge's midpoint
         ed.setTool(Tools.CUT)
         ed.type("60")
-        ed.click(Vec2(48.0, 10.0))
+        ed.click(Vec2(8.0, 10.0))
         val plate = ed.doc.elements.filter { it.kind == ElementKind.SOLID }.last()
 
         @Suppress("UNCHECKED_CAST")

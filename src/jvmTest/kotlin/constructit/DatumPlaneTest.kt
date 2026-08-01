@@ -200,14 +200,14 @@ class DatumPlaneTest {
     // ---- THE ACCEPTANCE TEST: sketch-on-face is the special case ----
 
     /**
-     * **90° on a boundary segment reproduces sketch-on-face's plane** (the issue's own claim), and −90°
-     * reproduces the *space* that tool opens — which is the face plane flipped, since a face space's normal
-     * points into the material (OP-17's frame note).
+     * **90° on a boundary segment reproduces sketch-on-face's plane** (the issue's own claim) — and since the
+     * session-32 frame rule it reproduces the *space* that tool opens as well, axes and normal alike, because
+     * a face space is no longer flipped: both normals point out of the material.
      *
      * The one thing that differs is the **anchoring**, deliberately and in one direction only: a face frame
-     * is anchored at the face's *top* edge because a hole is dimensioned from the part's own edge, while a
-     * datum is anchored on the base plane, absolutely. So the two frames are the same plane with the same
-     * axes, offset along `v` by the part's own height — asserted as exactly that.
+     * stands on the picked segment's own **midpoint**, because a hole is dimensioned from the part's own
+     * edge, while a datum is anchored on the base plane, absolutely (the carrier's foot). So the two frames
+     * are the same plane with the same axes, offset purely along `u` — asserted as exactly that.
      */
     @Test
     fun ninetyDegreesOnAFootprintEdgeIsTheSketchOnFacePlane() {
@@ -229,13 +229,20 @@ class DatumPlaneTest {
         // the same plane, then: the face's origin lies in it, offset purely along v (the plate's thickness)
         val off = f.origin - d.origin
         assertClose(off.dot(d.normal), 0.0, msg = "the face's frame sits in the datum's plane")
-        assertClose(off.dot(d.u), 0.0)
-        assertClose(off.dot(d.v), 20.0, msg = "offset along v by the part's height — the anchoring, and only that")
+        assertClose(off.dot(d.v), 0.0, msg = "both stand on the same edge")
+        assertClose(off.dot(d.u), 40.0, msg = "offset along u to the segment's midpoint — the anchoring, and only that")
     }
 
-    /** ...and the space *Sketch on face* opens is the same plane at −90°, since its normal points inward. */
+    /**
+     * ...and the space *Sketch on face* opens is that same **+90°** datum, differing only by where its origin
+     * stands — which is what "sketch-on-face is the datum's special case" now means end to end.
+     *
+     * It used to be the −90° one, because the face space's plane was the face's flipped: that is the reversal
+     * this test records. A drawing made on the face at (u, v) is the same world point as the same drawing made
+     * on the datum at (u + 40, v), 40 being half the picked edge.
+     */
     @Test
-    fun minusNinetyIsTheSpaceSketchOnFaceOpens() {
+    fun theSpaceSketchOnFaceOpensIsThePlusNinetyDatumMovedOntoItsEdge() {
         val faceSide = plate()
         faceSide.setTool(Tools.SKETCH_ON_FACE)
         faceSide.click(Vec2(40.0, 0.0))
@@ -243,18 +250,14 @@ class DatumPlaneTest {
 
         val ed = plate()
         ed.sketchPlaneOn(Vec2(40.0, 0.0), "90")
-        ed.doc.setParameter(assertNotNull(ed.activeSpace.angle), Quantity.deg(-90.0))
         val d = Evaluator().plane(assertNotNull(ed.activeSpace.plane))
 
         assertClose(d.u.x, fs.u.x, msg = "u along the edge, both of them")
-        assertClose(d.v.z, fs.v.z, msg = "v runs the same way (down, in the face space's mirrored frame)")
-        assertClose(d.normal.y, fs.normal.y, msg = "and the normal points into the material — the Cut direction")
-        // and a point drawn at the same face coordinates lands at the same place up to the anchoring offset:
-        // the face is anchored at its top edge, the datum on the base plane, and v runs *down* in both — so
-        // "8 mm below the top face" is v = 8 there and v = 8 − 20 here, and nothing else differs
-        val a = d.toWorld(Vec2(25.0, 8.0 - 20.0))
-        val b = fs.toWorld(Vec2(25.0, 8.0))
-        assertClose(a.x, b.x, msg = "the two frames differ by the 20 mm anchor offset along v and nothing else")
+        assertClose(d.v.z, fs.v.z, msg = "v up out of the base plane, and up into the face: the same direction")
+        assertClose(d.normal.y, fs.normal.y, msg = "and both normals point out of the material")
+        val a = d.toWorld(Vec2(-15.0 + 40.0, 12.0))
+        val b = fs.toWorld(Vec2(-15.0, 12.0))
+        assertClose(a.x, b.x, msg = "the two frames differ by the 40 mm anchor offset along u and nothing else")
         assertClose(a.y, b.y)
         assertClose(a.z, b.z)
     }

@@ -2051,13 +2051,20 @@ object Geom3 {
     /**
      * One **planar side face** of a prismatic solid: the frame it spans, and how big it is.
      *
-     * [plane]'s normal points **out of the material** — the same convention [facePlane] uses for `TOP`
-     * and `BOTTOM` — and its axes are `u` along the boundary piece, `v` = world **+Z**. The origin is the
-     * piece's start corner at the face's **top** edge, which is a deliberate choice and not an accident:
-     * a sketch on this face wants the *flipped* plane (normal into the material, the direction a cut
-     * sweeps), the flip mirrors `v` ([Plane3.flipped]), and only a top anchor leaves the face
-     * itself at `v` in `0..height` in those flipped coordinates. So in the space a user sketches in, `u`
-     * runs along the picked edge from its start and `v` runs **down the face from its top edge**.
+     * **The frame is intrinsic** (OP-17, session 32's rule, superseding the top-anchored one): the picked
+     * boundary segment lies **on the x axis**, `v` runs **into the face's interior as seen from that
+     * segment**, and the normal points **out of the material** — i.e. towards someone looking at the face.
+     * Right-handedness (`u × v` = normal) then fixes which way `u` runs along the segment, so nothing about
+     * this frame is a stored choice and nothing degenerates when a face turns parallel to a world axis: a
+     * face is locally on exactly one side of its own boundary edge, which is the whole of the derivation.
+     *
+     * The **origin is the segment's midpoint** — the one choice-free point on it — and a space may move it
+     * from there by an *anchor* and an in-plane offset (`Document.setSpaceOrigin`), which is a property of
+     * the space rather than of this accessor.
+     *
+     * For an upright prism that reads: the face's own bottom edge on the x axis, `v` = world up, the face
+     * itself covering `v` in `0..height` and `u` in `-length/2 .. +length/2`. A solid extruded *downwards*
+     * has its footprint edge at the face's **top**, and then `v` runs down — intrinsic, not world-anchored.
      *
      * [length] is the piece's length, [height] the solid's own z-extent — together the rectangle the face
      * covers, which is what a sketch space draws as its reference outline.
@@ -2125,15 +2132,26 @@ object Geom3 {
         if (zHi - zLo <= WELD_TOL) return null to "this solid has no height, so its side faces have no area"
         // A plane whose normal is −Z maps 2D orientation-reversingly into the world, so the boundary runs
         // the other way round there: traversing the piece backwards is what keeps the material on the left
-        // in the world, and hence what makes u × v point *out* of it.
+        // in the world, and hence what makes the piece's right point *out* of the material.
         val forward = n.z > 0.0
         val wa = plane.toWorld(if (forward) seg.a else seg.b)
         val wb = plane.toWorld(if (forward) seg.b else seg.a)
         val d = Vec2(wb.x - wa.x, wb.y - wa.y)
         val len = d.length()
         if (len <= WELD_TOL) return null to "that boundary edge has no length"
-        val u = Vec3(d.x / len, d.y / len, 0.0)
-        return SideFace(Plane3(Vec3(wa.x, wa.y, zHi), u, Vec3.Z), len, zHi - zLo) to null
+        val along = Vec3(d.x / len, d.y / len, 0.0)
+        // out of the material: the traversal direction's right, in the world
+        val outward = along.cross(Vec3.Z)
+        // Where the picked segment lies **on the face**, and which way the material runs from there: the
+        // footprint plane's own height, snapped to the near edge of the face's extent. For the ordinary
+        // upward extrude that is the bottom edge and the interior is up; a downward one picks its top edge
+        // and the interior is down. Intrinsic in both cases — the face is on one side of its own edge.
+        val up = plane.origin.z <= (zLo + zHi) / 2
+        val v = if (up) Vec3.Z else -Vec3.Z
+        // right-handed with the outward normal: u × v = outward
+        val u = v.cross(outward)
+        val mid = Vec3((wa.x + wb.x) / 2, (wa.y + wb.y) / 2, if (up) zLo else zHi)
+        return SideFace(Plane3(mid, u, v), len, zHi - zLo) to null
     }
 
     // ---- datum planes: an arbitrary sketch plane, by a line and an angle (OP-17, GitHub #6) ----

@@ -91,26 +91,26 @@ class PatternProbeTest {
         ed.setTool(Tools.EXTRUDE)
         ed.click(Vec2(60.0, 0.0))
         ed.setTool(Tools.SKETCH_ON_FACE)
-        ed.click(Vec2(60.0, 0.0)) // the front face: u along 120, v down 30
+        ed.click(Vec2(60.0, 0.0)) // the front face: u along the picked edge from its midpoint, v up 30
 
         // a ring of 4 small circles around the face centre
         ed.setTool(Tools.POINT)
-        ed.click(Vec2(60.0, 15.0)) // centre of the face
-        ed.click(Vec2(70.0, 15.0)) // reference
+        ed.click(Vec2(0.0, 15.0)) // centre of the face, which is where its frame stands
+        ed.click(Vec2(10.0, 15.0)) // reference
         ed.count = 4
         ed.setTool(Tools.PATTERN_CIRCULAR)
-        ed.click(Vec2(60.0, 15.0))
-        ed.click(Vec2(70.0, 15.0))
+        ed.click(Vec2(0.0, 15.0))
+        ed.click(Vec2(10.0, 15.0))
         ed.setTool(Tools.CIRCLE_R)
         ed.type("3")
-        ed.click(Vec2(70.0, 15.0)) // circle on ref0 — should orbit to 4 circles
+        ed.click(Vec2(10.0, 15.0)) // circle on ref0 — should orbit to 4 circles
         val circles = ed.doc.elements.count { it.kind == ElementKind.CIRCLE }
         assertEquals(4, circles, "the circle orbits the ring: ${ed.statusHint}")
 
         // ONE Cut on circle@0: the fan must chain four pockets (each cut targeting the tip)
         ed.setTool(Tools.CUT)
         ed.type("8")
-        ed.click(Vec2(73.0, 15.0))
+        ed.click(Vec2(13.0, 15.0))
         val solids = ed.doc.elements.filter { it.kind == ElementKind.SOLID }
         val tip = solids.last()
 

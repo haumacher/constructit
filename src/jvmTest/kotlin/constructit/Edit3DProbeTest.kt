@@ -57,21 +57,23 @@ class Edit3DProbeTest {
         vp.clickAt(Vec2(30.0, 0.0))
         assertTrue(ed.activeSpace.isFace, "on the face: ${ed.statusHint}")
 
-        // the face triangle and its incircle, computed independently
+        // the face triangle and its incircle, computed independently — in the face's intrinsic frame
+        // (session 32): the picked base edge on the x axis about its midpoint, the apex at +v
         val slant = sqrt(50.0 * 50.0 + 90.0 * 90.0)
-        val a = Vec2(0.0, 0.0)
-        val b = Vec2(-50.0, slant)
-        val c = Vec2(50.0, slant)
+        val a = Vec2(0.0, slant)
+        val b = Vec2(-50.0, 0.0)
+        val c = Vec2(50.0, 0.0)
         val la = (b - c).length()
         val lb = (c - a).length()
         val lc = (a - b).length()
         val incentre = (a * la + b * lb + c * lc) * (1.0 / (la + lb + lc))
         val r = (la * slant) / (la + lb + lc)
         val onCircle = incentre + Vec2(0.6 * r, 0.8 * r)
+        assertClose(incentre.y, r, tol = 1e-9, msg = "the incircle touches the base edge, which is the x axis here")
 
         // LLL through the 3D view — with an orbit detour after the second leg
         ed.setTool(Tools.CIRCLE_LLL)
-        vp.clickAt(Vec2(0.0, slant))
+        vp.clickAt(Vec2(0.0, 0.0))
         vp.clickAt(Vec2(-25.0, slant / 2.0))
         vp.cameraModifier = true
         vp.pointerDown(Vec2(400.0, 300.0))

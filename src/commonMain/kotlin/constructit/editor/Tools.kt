@@ -320,6 +320,19 @@ class ToolDef(
      * recorded click stays in *that* space's coordinates (see [Editor.setActiveSpace]).
      */
     val crossSpace: Boolean = false,
+    /**
+     * Whether this tool's optional scalars must have been **typed for it**, rather than remembered from the
+     * panel picks a previous tool left behind ([Editor] keeps a short memory of those, deliberately, so a
+     * parameter picked once can drive several gestures).
+     *
+     * Declared by exactly one tool so far, *Space origin*, and the reason is a rule about meanings rather
+     * than a special case: both of its slots are lengths and both are defaulted, so *any* length lying in
+     * that memory — the depth typed for the last cut — would fit them and silently move a drawing's origin.
+     * Where a tool's optional scalars have no dimension of their own to tell them apart, the honest reading
+     * of "nothing was typed" is *nothing*, and wiring the offset to an existing parameter afterwards is one
+     * panel click away.
+     */
+    val scalarsTypedOnly: Boolean = false,
     val build: (Document, Picks, List<ScalarRef>) -> Unit,
 ) {
     /** What slot [i] is for: this tool's own word ([slotNames]) or the slot kind's generic one. */
@@ -469,6 +482,13 @@ object Tools {
      * is its special case (a boundary segment at 90°) and *Section* is its parallel one.
      */
     const val SKETCH_PLANE = "sketchplane"
+
+    /**
+     * **Where a sketch space's origin sits** (OP-17, session 32): anchor it on a corner of the part's
+     * section here, plus an in-plane (dx, dy). Generic over spaces that have a plane — a face's and a
+     * datum's origin are moved by the same gesture and the same node.
+     */
+    const val SPACE_ORIGIN = "spaceorigin"
 
     // Booleans between same-axis prisms (OP-22), and the architectural application of them
     const val UNION = "union"
@@ -642,13 +662,19 @@ object Tools {
             // projects to exactly that edge, so the edge names the face and the solid at once. Like the
             // path and opening tools this one records a step of its own (`sketchspace`, naming the
             // boundary-piece index — a discrete choice, OP-18), so the Editor runs its click.
-            ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.SOLIDS, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that face, where u runs along the edge from its start and v runs down from the top. A flat face of a lofted solid works too — every face of a pyramid — while a ruled or curved one says so and points at Sketch plane. The part's section at that plane is drawn there, and its edges and corners can be clicked as inputs. Cut there drills into the material; Extrude builds a boss out of it.") { _, _, _ -> },
+            ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.SOLIDS, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that face, where that edge lies on the x axis with the origin at its middle and v runs up into the face (Space origin moves it onto a corner). A flat face of a lofted solid works too — every face of a pyramid — while a ruled or curved one says so and points at Sketch plane. The part's section at that plane is drawn there, and its edges and corners can be clicked as inputs. Cut there drills into the material; Extrude builds a boss out of it.") { _, _, _ -> },
             // ----- ...and the general form of the same thing (GitHub #6): **any** line, **any** angle. One
             // LINE pick (a line, a segment, a ray or an ortho leg — the ordinary carrier coercion) plus a
             // *defaulted* angle slot, so the gesture is one click and typing a number first tilts the plane.
             // It records its own `sketchspace` step, like the face tool, and does not replicate: a sketch
             // space is organisation, not geometry an orbit could fan (OP-23).
             ToolDef(SKETCH_PLANE, "Sketch plane (line + angle)", ToolCategory.SOLIDS, listOf(SlotKind.LINE), scalars = listOf(ang("angle", 90.0), len("offset", 0.0)), recordsSteps = true, replicates = false, help = "Type an angle (90° if you type none) — and, if you want the plane moved off the line, an offset after it — then click a line, segment or wall leg: the 2D view switches to a new sketch plane through that line, tilted by that angle out of the space you are in and shifted along its own normal by the offset. So 0° with an offset is a plane *parallel* to the one you are in, which is what a stack of loft sections wants. u runs along the line, v rises out of the old plane; Extrude builds along the new plane's normal and Cut goes the other way, so a negative angle swaps them. Both numbers stay parameters — retype either and the plane moves, with everything drawn on it.", slotNames = listOf("hinge line")) { d, p, s -> d.createDatumSpace(p.elements[0], s.firstOrNull(), offset = s.getOrNull(1)) },
+            // ----- where the coordinates on that plane start (OP-17's space origin). One pick — a corner of
+            // the part's section on this plane — plus two defaulted offsets, so the gesture is one click and
+            // typing numbers first shifts the origin off the corner. It does not replicate (a space is
+            // organisation, not geometry) and it builds nothing: it re-points the space's own origin nodes,
+            // which translates everything already drawn there (`Document.setSpaceOrigin`).
+            ToolDef(SPACE_ORIGIN, "Space origin", ToolCategory.SOLIDS, listOf(SlotKind.EXISTING_POINT), scalars = listOf(len("dx", 0.0), len("dy", 0.0)), replicates = false, scalarsTypedOnly = true, help = "In a face or datum view: click a corner of the part's section on this plane and the drawing's origin moves there — coordinates are then measured from that corner, and the origin follows it through every edit. Type dx (and dy) first to sit a fixed offset away from it; both stay parameters. Anchoring a plane that already carries a sketch moves that sketch with the frame — which is how a whole sketch is shifted on its face.", slotNames = listOf("anchor corner")) { d, p, s -> d.setSpaceOriginAt(p.elements[0], s.getOrNull(0), s.getOrNull(1)) },
             // `facePartOperand` makes elements[0] the part being cut — the *tip* of its boolean chain as it
             // stands, resolved by the editor and recorded in the step, so cuts chain instead of forking
             // it **does** replicate, and as a *chain*: the part operand is re-resolved per copy, so a Cut on one

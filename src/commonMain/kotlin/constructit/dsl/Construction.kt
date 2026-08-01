@@ -1899,6 +1899,33 @@ class Construction {
         op(plane) { EvalResult.Ok(PlaneValue((it[0] as PlaneValue).plane.flipped())) }
 
     /**
+     * [plane] with its **origin moved inside itself** — to the in-plane point [at], plus the in-plane offset
+     * ([dx], [dy]) — keeping its axes and its normal exactly as they are (OP-17's space origin).
+     *
+     * The two layers a sketch space's origin is made of, as one node. [at] is the *anchor*: an ordinary point
+     * node in this plane's own coordinates, so anchoring on a corner of the part means the frame follows that
+     * corner through every edit, and the default (0, 0) is the frame's own intrinsic origin. [dx] and [dy]
+     * are ordinary scalars, hence nameable, editable and wireable like any parameter.
+     *
+     * Only the origin moves, deliberately: a *rotation* would change what every recorded coordinate on the
+     * plane means, while a translation moves the drawing rigidly with the frame — which is exactly the
+     * "re-anchoring translates the sketch" reading the space work is built on.
+     */
+    fun planeAnchored(
+        plane: PlaneRef,
+        at: PointRef,
+        dx: ScalarRef,
+        dy: ScalarRef,
+    ): PlaneRef =
+        op(plane, at, dx, dy) {
+            val p = (it[0] as PlaneValue).plane
+            val a = pt(it[1])
+            val x = sc(it[2]).requireDim(Dimension.LENGTH, "space origin dx").mm
+            val y = sc(it[3]).requireDim(Dimension.LENGTH, "space origin dy").mm
+            EvalResult.Ok(PlaneValue(Plane3(p.toWorld(Vec2(a.x + x, a.y + y)), p.u, p.v)))
+        }
+
+    /**
      * **The seam** (OP-17): [regions] (OP-14's result layer) embedded on [plane].
      *
      * The 2D regions are untouched and unaware — which is what lets the same region be sketched on
@@ -1912,6 +1939,37 @@ class Construction {
             if (regions.isEmpty()) return@op EvalResult.Invalid("a sketch needs at least one region")
             val p = (args[0] as PlaneValue).plane
             EvalResult.Ok(SketchValue(Sketch3(p, args.drop(1).map { (it as RegionValue).region })))
+        }
+
+    /**
+     * The same embedding as [sketchOn], seen **from behind**: the very same points in the world, on
+     * [plane]'s flipped frame — so an [extrude] of it sweeps the plane's **−normal**.
+     *
+     * This is how *Cut* goes into the material (`Document.cutOnFace`), and the reason it is a sketch rather
+     * than an offset plane the sweep runs back from is **exactness**: starting `depth` behind the plane and
+     * sweeping forward lands the tool's cap on the face only up to rounding (the in-plane terms are added
+     * before the offset cancels), and a cap a femtometre off a face it is meant to be flush with is exactly
+     * the near-tangency the general boolean cannot close. Flipping the frame and mirroring the drawing in it
+     * is bit-exact — a negation and a product of negations — so the cap lies *on* the face, as it did when a
+     * face plane still pointed inwards.
+     *
+     * Mirroring keeps each loop's own orientation ([GeomMath.transform] re-orients after a reflection), so
+     * the sketch is a legal one: outer boundaries still run counter-clockwise in the frame they are read in.
+     */
+    fun sketchBehind(
+        plane: PlaneRef,
+        vararg regions: RegionRef,
+    ): SketchRef =
+        op(plane, *regions) { args ->
+            if (regions.isEmpty()) return@op EvalResult.Invalid("a sketch needs at least one region")
+            val p = (args[0] as PlaneValue).plane
+            val m = Affine(1.0, 0.0, 0.0, -1.0, 0.0, 0.0)
+            val rs =
+                args.drop(1).map { v ->
+                    val r = (v as RegionValue).region
+                    Region(GeomMath.transform(r.outer, m), r.holes.map { GeomMath.transform(it, m) })
+                }
+            EvalResult.Ok(SketchValue(Sketch3(p.flipped(), rs)))
         }
 
     /** The plane a sketch is embedded on — the accessor a further datum is offset from. */

@@ -197,12 +197,17 @@ drive *new* construction — forward only, never back into their own solid.
 
 **And on any planar face.** A drawing lives in a **sketch space**: the plan (world XY) by default, or a
 space on a solid's *side* face — created by clicking one of its footprint edges, because that edge is what
-the face projects to seen from above. The 2D canvas switches to that face and draws in its own coordinates:
-`u` along the picked edge, `v` down from the top face. Which way a feature builds is the operation's, not the
-space's: *Cut* drills **into** the material (extrude and subtract in one gesture), *Extrude* builds a **boss**
-standing out of it. The frame is
+the face projects to seen from above. The 2D canvas switches to that face and draws in its own coordinates,
+and that frame is **intrinsic**: the edge you picked lies on the x axis about its own midpoint, `v` runs up
+into the face, and the normal points at you — you are looking *at* the face. Which way a feature builds is the
+operation's, not the space's: *Extrude* follows the plane's normal and builds a **boss** standing out of the
+material, *Cut* goes the other way and drills **into** it (extrude and subtract in one gesture). Where the
+coordinates *start* is yours to move: *Space origin* anchors them on a corner of the part's own section on
+that plane — plus an optional (dx, dy) — and since the anchor is a node, the origin follows that corner
+through every edit; anchoring a plane that already carries a sketch moves the sketch with the frame, which is
+how a whole drawing is shifted on its face. The frame is
 derived from the part, not captured from it — stretch the plate and the hole rides the face, still 25 mm
-from the edge. That is what makes the plainest mechanical feature there is, a hole drilled in an edge, a
+from the edge it is measured from. That is what makes the plainest mechanical feature there is, a hole drilled in an edge, a
 matter of four clicks; the cut across the part's own axis is the general engine's, and the file records
 which space each step was drawn in. Features **chain**: each cut takes the part as it now stands, so a
 second bore on a second face lands in the part with the first bore in it rather than beside it, and the step

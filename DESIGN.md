@@ -3606,7 +3606,9 @@ immediately — the user's back-side drill, end to end, by clicking. `FaceSketch
     out* — dragging a rectangle's corner past its opposite — comes back reversed and renames its own
     edges. That is the same order-of-traversal limit OP-20 records for a reversed host line, and it is
     unreachable for a footprint that keeps its handedness.
-- **The frame, and the flip convention, stated once.** `Geom3.sideFace(feature, piece)` returns the face's
+- **The frame, and the flip convention, stated once.** *(SUPERSEDED in session 32 — the frame is intrinsic
+  now and nothing is flipped; see* **The face frame is intrinsic, and where a space's origin sits is the
+  space's own business** *below. Kept as written because the reversal argues against it.)* `Geom3.sideFace(feature, piece)` returns the face's
   plane with its normal pointing **out of the material** — the convention `facePlane` already uses for
   `TOP`/`BOTTOM` — with `u` along the picked edge and `v` = world **+Z**. The **sketch** plane is that
   plane *flipped*, so its normal points **into** the material, which is the direction a *Cut* sweeps (a plain
@@ -3620,7 +3622,9 @@ immediately — the user's back-side drill, end to end, by clicking. `FaceSketch
     of the part (the canvas viewer sits on the +normal side, which is *inside* the material — unavoidable
     once the normal points in), and thickening the plate moves a hole dimensioned from its top face. The
     alternative frame (`u` reversed, `v` up) trades the first wart for the second one's mirror image; the
-    axes were chosen the way OP-17 states them and the consequence is written down.
+    axes were chosen the way OP-17 states them and the consequence is written down. *(This paragraph is what
+    session 32 acted on: both consequences are gone with the flip, and the sweep direction that forced them
+    is an internal sign again.)*
   - Refused with a reason and healing (OP-3): a **curved** boundary piece, whose swept face is a cylinder
     (a rounded rectangle's corner, a circle's whole side); a solid with **no prism form** (a revolve, a
     general boolean — its faces are emergent, OP-9); a solid whose axis is **not vertical**, where "v =
@@ -3823,8 +3827,9 @@ click and typing a number first is what tilts it. `DatumPlaneTest` is the record
   nearest-origin point (OP-20's anchoring rule, one dimension up), not the picked segment's start: stretching
   the host must not slide the datum's coordinates along it, and only the carrier's foot has that property —
   dragging a segment's start 15 mm along its own carrier moves nothing on the plane, asserted. A face frame is
-  deliberately the other way (anchored at the face's *top* edge, so a bore stays 8 mm below the top face when
-  the plate is thickened) because a hole is dimensioned from the part's own edge. Same distinction OP-20 draws
+  deliberately the other way — *(since session 32: anchored at the picked segment's **midpoint**, so a bore
+  stays where the edge it was measured from is; it used to be the face's top edge)* — because a hole is
+  dimensioned from the part's own edge. Same distinction OP-20 draws
   between a host that merely *carries* a thing and a host that is what the thing is *measured from* — and here
   the two answers sit in one file, one line apart, which is why both are written down.
 - **Which way a feature builds: Extrude follows +normal, Cut follows −normal.** On a face the rule is stated
@@ -3832,15 +3837,17 @@ click and typing a number first is what tilts it. `DatumPlaneTest` is the record
   plane has a material side by construction. **A datum has none**, so the rule is stated against the datum's
   own normal instead, and the normal's sign is fixed by the right-hand rule about the line: **the sign of the
   angle flips both, deliberately**, and it is said in the tool's help, the space's note and the status line.
-  Mechanically the two are one implementation: the operation that goes the *other* way starts its sweep `depth`
-  behind the plane and sweeps positively, so the kernel's positive-depth cap rule is untouched and not one drawn
-  coordinate changes meaning (the same move GitHub #1's boss needed).
+  Mechanically the two are one implementation: the operation that goes the *other* way sweeps the drawing read
+  on the **flipped** frame, so the kernel's positive-depth cap rule is untouched and not one drawn coordinate
+  changes meaning. *(Session 32: this used to start the sweep `depth` behind the plane, which is exact only up
+  to rounding — see `Construction.sketchBehind` and the note below. And since a face plane points out of the
+  material now, the sentence above is the rule for **every** space, faces included.)*
 - **Sketch-on-face is the special case, asserted as an equivalence.** A **90°** datum on a footprint edge has
   the same `u`, the same `v` and the same normal as `sideFacePlane` derives for that edge, and the face plane's
-  origin lies in the datum's plane — the two frames differ by an offset **along `v` only**, the part's own
-  height, which is precisely the anchoring difference above. A **−90°** datum is the plane the *Sketch on face*
-  tool actually opens (that space's plane is the face's flipped, normal into the material), so "8 mm below the
-  top face" is `v = 8` there and `v = 8 − 20` here and nothing else differs. Both directions asserted.
+  origin lies in the datum's plane — the two frames differ by an offset along one axis only, which is precisely
+  the anchoring difference above. *(Session 32: that offset is now along **`u`**, to the picked segment's
+  midpoint, and the space the tool opens is the **+90°** datum rather than the −90° one, since a face plane is
+  no longer flipped. Both directions still asserted, in `DatumPlaneTest`.)*
 - **The part a datum cuts, and why it is a recorded choice.** *Cut* means "subtract from the part this plane
   belongs to", and a face space *names* its solid while a datum names a line. So the part is resolved from the
   hinge — the newest visible solid the line is part of the construction of (**ancestry**, not material, which is
@@ -4089,7 +4096,11 @@ at the incircle's centre — with **moving the apex** re-deriving every one of t
   tessellation artifacts rather than corners of the drawing — so an index into them would not survive a change
   of tolerance), and `sectionAt`, which wants a `Region`: a loft's section curves are inputs, but chaining them
   into one closed area is the analytic-loft-section piece of work, still not built.
-- **The frame of a loft's face, stated once.** `u` along the band's lower edge, `v` from the *later* section
+- **The frame of a loft's face, stated once.** *(SUPERSEDED in session 32, same rule change as the prism's:
+  the **reference edge** — the ring edge the picked footprint segment is — lies on the x axis about its own
+  midpoint, `v` runs across the face towards the opposite edge, and the normal points out of the material. For
+  a pyramid picked by its base edge that puts the **apex at `+v`**: the acceptance face is now the triangle
+  (0, 102.956), (−50, 0), (50, 0). What follows is what it replaced.)* `u` along the band's lower edge, `v` from the *later* section
   towards the earlier one, origin on the later section, normal out of the material — so the space's own
   (flipped) frame has the face at `v ≥ 0` exactly as an extrude's side face does ("v runs down from the top").
   For a pyramid the later section is the apex, which is therefore the drawing's origin: the acceptance face is
@@ -4269,6 +4280,141 @@ its endpoint dragged in 3D, and the box selection drawn as the plane rectangle i
 `theModifierDecidesWhoOwnsTheDrag` was updated deliberately — it asserted the old cut — and the browser E2E
 `buildAndDragInBrowser` now asserts both halves in real Chrome: a plain drag leaves the solids unturned, a
 Ctrl+drag orbits them.
+
+#### The face frame is intrinsic, and where a space's origin sits is the space's own business (as built — the user's design, session 32)
+
+The frame convention this OP has carried since its first slice — *"`u` along the edge from its start, `v`
+down from the top face, the normal into the material"* — is **superseded here**, deliberately and with no
+migration. Every passage above that states it is marked as superseded and points at this note; the two files
+in the test suite that recorded coordinates in the old frame were rewritten by hand so their drawings sit
+where they always sat (named below). The user's call on that: no release yet, all files throwaway, the rule
+simply changes.
+
+**Why the old frame had to go.** It was never chosen; it was *forced*, and the forcing came from a flip that
+does not belong to the frame at all. Because *Cut* had to sweep positively into the material, the sketch plane
+was the face's plane flipped; a right-handed frame cannot reverse its normal without mirroring `v`; and a
+mirrored `v` only leaves the face at `v ≥ 0` if the origin sits at the face's **top** edge. So a *direction an
+operation sweeps* — an internal sign — decided where the drawing's origin stood and which way up it was. The
+two consequences were recorded rather than defended: the face view showed the face **from inside the
+material**, and thickening a plate moved a hole that had been dimensioned from an edge nobody was thinking
+about.
+
+**The rule now, in the user's own terms.** A face space is made from a **picked boundary segment of a face**,
+and that is all the frame needs:
+
+- the **picked segment lies on the x axis**;
+- **`+v` points into the face's interior as seen from that segment** — well-defined, because a face is
+  locally on exactly one side of its own boundary edge, and therefore **stable by construction** under every
+  parameter edit: no persisted sign, nothing to re-score on load, nothing to drift;
+- the **outward normal points at the viewer** — you look *at* the face — and right-handedness of
+  (`u`, `v`, normal) then fixes which way `u` runs along the segment. On the 2D canvas that reads as `u` to
+  the right and `v` up, because the canvas draws `+v` upward in every space (asserted:
+  `FaceSketchTest.theFaceViewDrawsVUpwards`).
+
+An earlier draft anchored the frame on **world Z** and the user rejected it for the reason that decides it:
+world-Z degenerates the moment a derived face turns parallel to XY, and a rule with a degenerate case is not
+a rule. The intrinsic one has none — its inputs are the face and the edge, which is exactly what the pick
+already names.
+
+Where the interior direction comes from, exactly, so it can be checked: for a prism
+(`Geom3.sideFace`) the picked footprint segment is placed on the face's own near edge and `v` is the way the
+solid's extent runs from there (`+Z` for the ordinary upward extrude, `−Z` for one extruded downwards, whose
+footprint edge *is* the face's top edge — intrinsic, not world-anchored); for a loft's flat band
+(`Section3.bandFace`) it is the in-plane direction from the reference edge's midpoint toward the opposite
+edge, which is what puts a pyramid's **apex at `+v`** when the face is picked by its base edge. `u` is then
+`v × normal` in both, so it is never chosen twice.
+
+**The origin: the midpoint, and two layers over it.** The canonical default is the **midpoint of the picked
+segment** — the user's observation that it is the only choice-free point on it. Over that sit two layers,
+built **generically for every space that has a plane** (face and datum alike), because "where do my
+coordinates start" is not a face question:
+
+1. an optional **origin anchor** — a **corner of the part's own section on this plane**, picked by clicking
+   it ("a click, not a formula"). It is held as a *node*, so the origin tracks the geometry: drag the part's
+   corner and the frame goes with it.
+2. an in-plane **(dx, dy)**, default (0, 0) — ordinary scalar parameters, named, panel-editable and wireable
+   like any other, so "the same inset as that one" is a shared node rather than a repeated number.
+
+Mechanically all three are **source nodes that the space's plane has had since it was created**:
+`planeAnchored(intrinsic, anchor, dx, dy)`. Moving the origin is therefore three **in-place bindings** (the
+welding substrate, OP-5) and not a rewiring — which is what makes the promised behaviour fall out rather than
+be implemented: **re-anchoring a space that already carries a sketch translates that sketch**, and everything
+built from it, because every consumer holds that same plane node and the 2D numbers keep their meaning while
+the frame they are read in moves. Documented as a feature: it is how a whole drawing is shifted on its face.
+
+Four things this needed that the queue entry did not foresee, each recorded because each could have gone the
+other way:
+
+- **The anchor cannot be any point on the plane** — it must be one whose *world* position is stated
+  independently of the frame it defines, or it defines itself. A corner of the part's section is such a point;
+  a point *drawn* on the plane rides the frame and is refused by name (*"a point drawn in this space rides the
+  frame it would define"*). The anchor node is therefore built against the space's **intrinsic** section, not
+  the one the space displays — otherwise the plane would depend on a section cut at the plane.
+- **The section's canonical numbering had to stop depending on the origin.** A face section is normalised
+  counter-clockwise and then rotated to a canonical first corner; that used to be *"the corner nearest the
+  plane's origin"*, which would renumber a space's own edges the moment its origin moved. It is now the
+  corner **lowest in (v, then u)** — translation-invariant by construction, so an anchored space and its
+  intrinsic twin agree on every index, and for a face frame the numbering starts at the picked edge's own
+  first corner (`Section3.rotatedToFirstCorner`).
+- **Cut and Extrude kept their user-visible meaning through the flip, and the pair got simpler.** With the
+  normal now pointing out of the material, one sentence covers every space: *Extrude follows +normal, Cut
+  follows −normal*. On a face that is a boss outward and a drill inward — exactly what they did before — and
+  on a datum it is what the datum's own note already said, so the face's special case is gone rather than
+  compensated. The same disappearance retires the lift sign OP-25 needed (`Document.liftSign` is now `1`
+  everywhere: a height point on a face stands *out* of it because the plane's normal does).
+- **The backward sweep had to be exact.** Sweeping −normal by starting the sketch `depth` behind the plane —
+  the trick a datum's *Cut* has always used — lands the tool's cap on the face only up to rounding, because
+  the in-plane terms are added before the offset cancels. A femtometre of gap is precisely the near-tangency
+  the general boolean cannot close, and it showed up immediately as a drill through a pyramid's slant face
+  refusing to be a closed shell. `Construction.sketchBehind` replaces it: the same drawing read on the
+  **flipped frame** (a negation and a product of negations — bit-exact), so the cap lies *on* the face as it
+  did when the face plane still pointed inwards. Both kinds of space now use it.
+
+**The gesture** is one data-driven `ToolDef` like everything else — *Space origin*: one `EXISTING_POINT` pick
+(which the existing section-input machinery turns into a materialized corner, recorded by index) plus two
+defaulted length slots. It declares one new tool property, `scalarsTypedOnly`, and the reason is a rule rather
+than a special case: both of its optional scalars are lengths, so any length left in the editor's short memory
+of panel picks — the depth typed for the last cut — would fit them and silently move a drawing's origin. Where
+optional scalars have no dimension to tell them apart, the honest reading of "nothing was typed" is *nothing*.
+The operation speaks on success as well as on refusal, naming the corner and the offsets, because moving an
+origin moves a whole drawing and the canvas would otherwise show a silent change of numbers.
+
+**What the file records** is a step of its own, `spaceorigin "face1" corner=0 dx="ox" dy="oy"`, rather than an
+argument of `sketchspace`: moving an origin is an *edit* that happens after the space exists and after the
+sketches it translates. All three parts are descriptions and never positions — the corner is a structural
+index taken verbatim on replay (OP-1/OP-18), the offsets are named parameters whose own `param` steps restate
+their values. The plan space has no such step and declines to take one: its origin *is* the world origin,
+which is what everything else is measured from.
+
+One thing the work **found and did not fix**, recorded here because it is a real quirk and it is not this
+rule's: for a loft whose run is **inverted** (an apex below its base), clicking a footprint edge opens the
+lateral face over a *different* rail than the one clicked — the mapping `Geom3.loftPlan.railOfPiece` makes
+from a footprint piece to a rail does not follow the ring when the run direction reverses. The frame on the
+face it does open is correct in every respect (asserted in
+`FaceSketchTest.anInvertedPyramidsFaceRunsDownwardsFromItsBaseEdge`, which is also the case that shows `v`
+running *down* a face and so proves the rule is not "up" in disguise), so this is a naming defect in the loft's
+plan and not a frame one; it predates this package.
+
+**What this deliberately does not do**, stated so it is not looked for: there is no gesture that *removes* an
+anchor (the `Document` op takes `null`, and undo is the honest route back); the anchor is a section **corner**
+and not an arbitrary constructed point (see above — the general case would need a node rebuilt against the
+intrinsic frame, which is a graph-substitution question, not a geometric one); and the datum plane's own frame
+is untouched — a plane not born from a face and a segment keeps its own rule (a parallel-offset datum inherits
+its base frame, a hinge datum keeps the hinge on its axis), and only the origin layers are shared.
+
+Tests: `SpaceOriginTest` (9 — the anchor and what it measures from, the anchor tracking a dragged corner,
+re-anchoring translating a whole sketch, offsets as parameters that retype *and* wire, a drill through the
+anchored frame still cutting inward, the two refusals, the datum plane taking the same anchor, and byte-equal
+replay on four of them) plus `FaceSketchTest.theFaceFrameStandsOnThePickedEdgeAndRunsIntoTheFace` and
+`.theFaceViewDrawsVUpwards`. Updated deliberately for the new convention, each because it stated the old one:
+`FaceSketchTest` (the frame test, renamed, and every face coordinate in the file), `DatumPlaneTest`'s two
+equivalence tests (sketch-on-face is now the **+90°** datum, differing by a `u` offset to the segment's
+midpoint), `SectionInputTest`'s pyramid-face tests (apex at `+v`, base on the x axis), `Edit3DProbeTest`,
+`HeightPointTest.aHeightPointOnAFaceStandsOffThatFacesOwnPlane` (the lift sign), `FixWaveProbeTest`,
+`JtProbeTest`, `PatternTest` and `PatternProbeTest` (both bolt circles had to move onto the face — and the
+probe's was passing while half its pockets missed the plate, which the tighter fixture now catches), and the
+two embedded `.cit` fixtures `FaceExtrudeOutwardTest.ISSUE1` and `CreaseEdgeTest.POCKET`, whose face-space
+coordinates were rewritten into the new frame so the boss and the pocket stayed where the issues put them.
 
 ### The height point — one degree of freedom out of the plane (OP-25 — RESOLVED)
 
@@ -5905,7 +6051,8 @@ Three broad families (see OP-9 decision above):
   repeat themselves. Identity is the boundary-piece index (OP-8), a stored discrete choice like a `Select`
   sign, never re-identified from mesh topology. The caveat is written down: a ring turned inside out
   renames its edges, the same order-of-traversal limit OP-20 records for a reversed host line.
-  (2) **The flip convention, forced rather than chosen.** The face's plane has its normal out of the
+  (2) **The flip convention, forced rather than chosen.** *(SUPERSEDED in session 32 — see the intrinsic-frame
+  note under this OP; "forced rather than chosen" is exactly the sentence that made it worth reversing.)* The face's plane has its normal out of the
   material (as `facePlane` does); the *sketch* plane is that plane flipped, so a positive extrude depth
   drills **inward**. A right-handed frame cannot reverse its normal and keep its 2D coordinates, so the
   flip mirrors `v` — which then *forces* the anchor to the face's **top** edge, since only there does the
@@ -6352,7 +6499,8 @@ Three broad families (see OP-9 decision above):
   abstract and a space contributes only the plane its features sketch on, the whole feature is **one op**
   (`datumPlane`), one `ToolDef`, one variant of an existing step — no value type, no evaluation rule, no second
   concept, and the equivalence the user asserted is now a test rather than a claim: a 90° datum on a footprint edge
-  has the same `u`, `v` and normal as `sideFacePlane`, differing from the face frame by an offset along `v` only.
+  has the same `u`, `v` and normal as `sideFacePlane`, differing from the face frame by an offset along one axis
+  only (along `v` then; along `u`, to the segment's midpoint, since session 32's intrinsic frame).
   Five decisions were genuinely open, and each one had a right answer that the existing doctrine already implied.
   (1) **The frame is the base frame rotated about the line, right-hand rule.** Stated that way rather than as
   three formulas, it pays immediately: 0° *is* the space it came from, 90° stands upright, and the hinge lies in
@@ -8151,24 +8299,42 @@ which is honest but is still a plane rectangle), a height point is **no snap or 
 questions, and its base answers them), and a **general 3D point** with three degrees of freedom is a
 different design — the other two would need a gesture of their own.
 
-**Still queued, restated** — the last of session 29's three packages, designed in discussion
-(session 29), the design the user's, kept verbatim so a crashed session loses nothing:
+**Retired in session 32: face-frame orientation + the space origin — the last numbered queue line.** The
+entry, quoted whole so what was promised and what shipped can be compared:
 
-3. **Face-frame orientation + the space origin (user's design, session 29, superseding a world-Z draft
-   the user rightly rejected — world-Z degenerates when derived faces go parallel to XY).** The frame is
-   **intrinsic**: the picked segment on the x-axis, **+v into the face's interior as seen from that
-   segment** (well-defined — a face is locally on exactly one side of its own boundary edge — hence
-   stable by construction, no persisted sign needed), outward normal toward the viewer, right-handedness
-   fixing the rest. Origin: the segment **midpoint** is the canonical default (the user's observation —
-   the only choice-free point), refined by a two-layer control built generically for sketch spaces:
-   an optional **origin anchor** (any constructed point on the plane — an endpoint is a click, not a
-   formula, and the origin tracks the node) and an in-plane **(dx,dy)** parameter pair, default (0,0),
-   ordinary scalar nodes wireable via `boundTo`. Re-anchoring a space with sketches in it translates
-   them — the parametrically correct reading, documented as a feature. **No migration** — the user's
-   call: no release yet, all files throwaway; the rule simply changes.
+> 3. **Face-frame orientation + the space origin (user's design, session 29, superseding a world-Z draft
+>    the user rightly rejected — world-Z degenerates when derived faces go parallel to XY).** The frame is
+>    **intrinsic**: the picked segment on the x-axis, **+v into the face's interior as seen from that
+>    segment** (well-defined — a face is locally on exactly one side of its own boundary edge — hence
+>    stable by construction, no persisted sign needed), outward normal toward the viewer, right-handedness
+>    fixing the rest. Origin: the segment **midpoint** is the canonical default (the user's observation —
+>    the only choice-free point), refined by a two-layer control built generically for sketch spaces:
+>    an optional **origin anchor** (any constructed point on the plane — an endpoint is a click, not a
+>    formula, and the origin tracks the node) and an in-plane **(dx,dy)** parameter pair, default (0,0),
+>    ordinary scalar nodes wireable via `boundTo`. Re-anchoring a space with sketches in it translates
+>    them — the parametrically correct reading, documented as a feature. **No migration** — the user's
+>    call: no release yet, all files throwaway; the rule simply changes.
 
-The numbered queue otherwise holds only this one; what else remains is the parked list below, each item
-recorded at its source.
+All of it ships — see *The face frame is intrinsic, and where a space's origin sits is the space's own
+business* under OP-17. The frame rule holds verbatim for a prism's side face and for a loft's flat one (a
+pyramid picked by its base edge now shows the base on the x axis and its apex at `+v`), the origin's two
+layers are generic over every space that has a plane, and re-anchoring translates a whole sketch because the
+plane's three origin inputs are source nodes bound in place rather than a rewiring.
+
+Four things the entry did not foresee, each recorded with the work. The **anchor cannot be "any constructed
+point on the plane"**: a point drawn there rides the frame it would define, so the anchor is a **corner of the
+part's section** — stated independently of the frame, and refused by name otherwise. The section's canonical
+numbering had to stop depending on the origin (it rotated to "the corner nearest the origin", which would have
+renumbered a space's own edges whenever its origin moved). Cut and Extrude kept their meanings by **losing**
+their exception rather than gaining one — with a face normal pointing out of the material, *Extrude follows
++normal, Cut follows −normal* is now the rule for every space, and OP-25's lift sign goes with it. And the
+backward sweep had to be made **exact** (`Construction.sketchBehind`): the old "start `depth` behind the plane"
+lands a tool's cap on the face only up to rounding, which the general boolean saw as a near-tangency and
+refused. What stays out is stated with the work: no gesture *removes* an anchor (undo is the route back), the
+anchor is a section corner rather than an arbitrary constructed point, and a plane not born from a face and a
+segment keeps its own frame — only the origin layers are shared.
+
+**The numbered queue is empty again.** What remains is the parked list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc

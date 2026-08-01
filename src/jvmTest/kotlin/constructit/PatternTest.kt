@@ -393,21 +393,22 @@ class PatternTest {
         ed.click(Vec2(60.0, 0.0))
         ed.setTool(Tools.SKETCH_ON_FACE)
         ed.click(Vec2(60.0, 0.0))
+        // the face's own coordinates: u along the picked edge about its midpoint, v up into the face
         ed.setTool(Tools.POINT)
-        ed.click(Vec2(60.0, 15.0))
-        ed.click(Vec2(70.0, 15.0))
+        ed.click(Vec2(0.0, 15.0))
+        ed.click(Vec2(10.0, 15.0))
         ed.count = 4
         ed.setTool(Tools.PATTERN_CIRCULAR)
-        ed.click(Vec2(60.0, 15.0))
-        ed.click(Vec2(70.0, 15.0))
+        ed.click(Vec2(0.0, 15.0))
+        ed.click(Vec2(10.0, 15.0))
         ed.setTool(Tools.CIRCLE_R)
         ed.type("3")
-        ed.click(Vec2(70.0, 15.0))
+        ed.click(Vec2(10.0, 15.0))
         assertEquals(4, ed.doc.elements.count { it.kind == ElementKind.CIRCLE }, ed.statusHint)
 
         ed.setTool(Tools.CUT)
         ed.type("8")
-        ed.click(Vec2(73.0, 15.0))
+        ed.click(Vec2(13.0, 15.0))
         assertTrue(ed.statusHint.contains("4 copies round pattern P1"), ed.statusHint)
 
         fun plate(pockets: Int) = 120.0 * 80.0 * 30.0 - pockets * PI * 9.0 * 8.0

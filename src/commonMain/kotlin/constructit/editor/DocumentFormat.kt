@@ -639,6 +639,11 @@ object DocumentFormat {
             // moved comes back as *that* curve and one the plane no longer cuts comes back invalid with a
             // reason (OP-3) instead of quietly meaning its neighbour.
             "sectioninput" -> applySectionInput(doc, words)
+            // Where that space's **origin** sits (OP-17's space origin): the section corner it is anchored on
+            // — a discrete choice recorded by index like every other one — and the parameters holding its
+            // in-plane offsets. A step of its own rather than an argument of `sketchspace`, because moving an
+            // origin is an *edit* that happens after the space (and after the sketches it translates).
+            "spaceorigin" -> applySpaceOrigin(doc, words)
             "space" ->
                 if (!doc.switchSpace(unquote(words.getOrElse(1) { throw LoadError("space is missing a name") }), record = true)) {
                     throw LoadError("unknown sketch space '${unquote(words[1])}'")
@@ -755,6 +760,37 @@ object DocumentFormat {
         val on = solid ?: throw LoadError("sketchspace is missing 'el='")
         doc.createFaceSpace(on, piece, named = name)
             ?: throw LoadError("'${words.getOrNull(2)}' has no planar side face #${piece + 1}")
+    }
+
+    /**
+     * `spaceorigin "face1" corner=0 dx="ox" dy="oy"` — where a sketch space's origin stands (OP-17).
+     *
+     * All three parts are *descriptions*, never positions: the corner is a structural index into the space's
+     * own section (taken verbatim on replay, never re-scored — OP-1/OP-18), and the offsets are named
+     * parameters whose own `param` steps restate their values. So a part edited since comes back with its
+     * origin on the corner that corner now is.
+     */
+    private fun applySpaceOrigin(
+        doc: Document,
+        words: List<String>,
+    ) {
+        val name = unquote(words.getOrElse(1) { throw LoadError("spaceorigin is missing a sketch space") })
+        val space = doc.spaceNamed(name) ?: throw LoadError("unknown sketch space '$name'")
+        var corner: Int? = null
+        var dx: ScalarEntry? = null
+        var dy: ScalarEntry? = null
+        for (w in words.drop(2)) {
+            val v = w.substringAfter('=', "")
+            when (w.substringBefore('=')) {
+                "corner" -> corner = v.toIntOrNull() ?: throw LoadError("malformed corner index '$v'")
+                "dx" -> dx = namedScalar(doc, v)
+                "dy" -> dy = namedScalar(doc, v)
+                else -> throw LoadError("unknown spaceorigin argument '${w.substringBefore('=')}'")
+            }
+        }
+        if (!doc.setSpaceOrigin(space, corner, dx?.ref, dy?.ref)) {
+            throw LoadError(doc.takeNote() ?: "sketch space '$name' cannot take that origin")
+        }
     }
 
     /** `sectioninput "plane1" edge=2` / `corner=3` — one member of a working plane's section, by index. */

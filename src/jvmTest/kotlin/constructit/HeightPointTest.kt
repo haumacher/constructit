@@ -162,8 +162,9 @@ class HeightPointTest {
 
     /**
      * The tool on its own, on the **slant face** of a pyramid: the point stands off that face along its own
-     * normal — outward, since a face plane's normal points into the material — and the numbers are the exact
-     * ones the face's geometry prescribes.
+     * normal — which since the session-32 frame rule *is* outward, because a face plane's normal points out
+     * of the material — and the numbers are the exact ones the face's geometry prescribes. The lift sign that
+     * used to make a face the exception is gone rather than compensated (`Document.liftSign`).
      */
     @Test
     fun aHeightPointOnAFaceStandsOffThatFacesOwnPlane() {
@@ -180,11 +181,11 @@ class HeightPointTest {
         val point = ed.heightPoints().single { it.space == ed.activeSpace.name }
 
         val n = plane.normal.normalized()
-        val expected = plane.toWorld(base) - n * 25.0
+        val expected = plane.toWorld(base) + n * 25.0
         val got = at3(point)
-        assertClose((got - expected).length(), 0.0, tol = 1e-9, msg = "embed(base) - h * n on a face (outward): $got")
+        assertClose((got - expected).length(), 0.0, tol = 1e-9, msg = "embed(base) + h * n, and n points out of the face: $got")
         // ...which is to say: exactly 25 mm off the plane, on the side the material is not
-        assertClose(plane.distanceTo(got), -25.0, tol = 1e-9, msg = "25 mm clear of the face")
+        assertClose(plane.distanceTo(got), 25.0, tol = 1e-9, msg = "25 mm clear of the face")
         assertClose(plane.toLocal(got).x - base.x, 0.0, tol = 1e-9, msg = "and straight above its base in the face's own u")
         assertClose(plane.toLocal(got).y - base.y, 0.0, tol = 1e-9, msg = "...and in its v")
         // the slant is genuinely tilted, so this says something a plan test could not

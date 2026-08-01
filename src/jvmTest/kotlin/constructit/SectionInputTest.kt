@@ -107,22 +107,23 @@ class SectionInputTest {
         assertTrue(ed.activeSpace.isFace, "a flat face of a loft is a face space: ${ed.statusHint}")
         assertTrue(ed.statusHint.contains("3 curves and 3 corners"), "the note says what is on offer: ${ed.statusHint}")
 
-        // the face, in its own (u, v): the apex at the origin, the base edge at the slant height
+        // the face, in its own (u, v): the picked base edge on the x axis about its midpoint, the apex at +v
+        // (session 32's intrinsic frame — it used to be the other way up, with the apex at the origin)
         val section = assertNotNull(ed.doc.spaceSection(ed.activeSpace, Evaluator()))
         val slant = kotlin.math.sqrt(50.0 * 50.0 + 90.0 * 90.0)
         val corners = section.cornerPoints
         assertEquals(3, corners.size, "a triangle: $corners")
-        assertTrue(corners.any { it.length() < 1e-9 }, "the apex is the frame's origin: $corners")
-        assertTrue(corners.any { (it - Vec2(-50.0, slant)).length() < 1e-6 }, "and the base corners: $corners")
-        assertTrue(corners.any { (it - Vec2(50.0, slant)).length() < 1e-6 }, "and the base corners: $corners")
+        assertTrue(corners.any { (it - Vec2(0.0, slant)).length() < 1e-6 }, "the apex stands at +v: $corners")
+        assertTrue(corners.any { (it - Vec2(-50.0, 0.0)).length() < 1e-6 }, "and the base corners are on the x axis: $corners")
+        assertTrue(corners.any { (it - Vec2(50.0, 0.0)).length() < 1e-6 }, "and the base corners are on the x axis: $corners")
 
         // the three edges as inputs to the three-tangent circle, then the click that picks the inscribed one
         ed.setTool(Tools.CIRCLE_LLL)
-        ed.click(Vec2(0.0, slant)) // the base edge
+        ed.click(Vec2(0.0, 0.0)) // the base edge, which the frame stands on
         ed.click(Vec2(-25.0, slant / 2.0)) // the left edge
         ed.click(Vec2(25.0, slant / 2.0)) // the right edge
-        val incentre = incentreOf(Vec2(0.0, 0.0), Vec2(-50.0, slant), Vec2(50.0, slant))
-        ed.click(onIncircle(Vec2(0.0, 0.0), Vec2(-50.0, slant), Vec2(50.0, slant)))
+        val incentre = incentreOf(Vec2(0.0, slant), Vec2(-50.0, 0.0), Vec2(50.0, 0.0))
+        ed.click(onIncircle(Vec2(0.0, slant), Vec2(-50.0, 0.0), Vec2(50.0, 0.0)))
         val circle = ed.doc.elements.last { it.kind == ElementKind.CIRCLE }
         val c = assertNotNull(Evaluator().valueOf(circle.ref) as? constructit.core.CircleValue).circle
         assertClose(c.center.x, incentre.x, 1e-6, "the incentre of the face triangle")
@@ -131,7 +132,7 @@ class SectionInputTest {
 
         // the drill: a small circle at the incircle's centre, cut into the part
         ed.setTool(Tools.KEY_POINTS)
-        ed.click(onIncircle(Vec2(0.0, 0.0), Vec2(-50.0, slant), Vec2(50.0, slant)))
+        ed.click(onIncircle(Vec2(0.0, slant), Vec2(-50.0, 0.0), Vec2(50.0, 0.0)))
         val centre = ed.doc.elements.last { it.isPoint }
         assertClose(ed.pointAt(centre).x, incentre.x, 1e-6, "the circle's own centre, as a point")
         ed.setTool(Tools.CIRCLE_R)
@@ -157,10 +158,10 @@ class SectionInputTest {
         ed.click(Vec2(30.0, 0.0))
         val slant = kotlin.math.sqrt(50.0 * 50.0 + 90.0 * 90.0)
         ed.setTool(Tools.CIRCLE_LLL)
-        ed.click(Vec2(0.0, slant))
+        ed.click(Vec2(0.0, 0.0))
         ed.click(Vec2(-25.0, slant / 2.0))
         ed.click(Vec2(25.0, slant / 2.0))
-        ed.click(onIncircle(Vec2(0.0, 0.0), Vec2(-50.0, slant), Vec2(50.0, slant)))
+        ed.click(onIncircle(Vec2(0.0, slant), Vec2(-50.0, 0.0), Vec2(50.0, 0.0)))
         val circle = ed.doc.elements.last { it.kind == ElementKind.CIRCLE }
         val elementsBefore = ed.doc.elements.size
 
@@ -176,7 +177,7 @@ class SectionInputTest {
         assertTrue(ed.setActiveSpace(ed.doc.spaces.last().name))
         val section = assertNotNull(ed.doc.spaceSection(ed.activeSpace, Evaluator()))
         val cs = section.cornerPoints
-        val apexPt = assertNotNull(cs.minByOrNull { it.length() })
+        val apexPt = assertNotNull(cs.maxByOrNull { it.y }) // the corner off the picked edge, which lies at v = 0
         val base = cs.filter { it !== apexPt }
         val expect = incentreOf(apexPt, base[0], base[1])
         val c = assertNotNull(Evaluator().valueOf(circle.ref) as? constructit.core.CircleValue).circle
@@ -459,10 +460,10 @@ class SectionInputTest {
         assertEquals(0, space.piece, "the first boundary piece (OP-8)")
         val slant = kotlin.math.sqrt(50.0 * 50.0 + 90.0 * 90.0)
         ed.setTool(Tools.CIRCLE_LLL)
-        ed.click(Vec2(0.0, slant))
+        ed.click(Vec2(0.0, 0.0))
         ed.click(Vec2(-25.0, slant / 2.0))
         ed.click(Vec2(25.0, slant / 2.0))
-        ed.click(onIncircle(Vec2(0.0, 0.0), Vec2(-50.0, slant), Vec2(50.0, slant)))
+        ed.click(onIncircle(Vec2(0.0, slant), Vec2(-50.0, 0.0), Vec2(50.0, 0.0)))
         val circle = ed.doc.elements.last { it.kind == ElementKind.CIRCLE }
 
         // stretch the base: drag the far corner of the plan rectangle
@@ -474,7 +475,7 @@ class SectionInputTest {
         val section = assertNotNull(ed.doc.spaceSection(ed.activeSpace, Evaluator()))
         assertEquals(3, section.cornerPoints.size, "still that face's triangle")
         val cs = section.cornerPoints
-        val apexPt = assertNotNull(cs.minByOrNull { it.length() })
+        val apexPt = assertNotNull(cs.maxByOrNull { it.y }) // the corner off the picked edge, which lies at v = 0
         val base = cs.filter { it !== apexPt }
         val expect = incentreOf(apexPt, base[0], base[1])
         val c = assertNotNull(Evaluator().valueOf(circle.ref) as? constructit.core.CircleValue).circle
@@ -485,9 +486,10 @@ class SectionInputTest {
     // ---- 6. the old rectangle, subsumed ----
 
     /**
-     * An extrude's side-face space draws **the same rectangle as before** — corner for corner and in the same
-     * order — because that rectangle *is* the degenerate section of the plate at that plane. The mechanism
-     * generalized; the behaviour did not change.
+     * An extrude's side-face space draws **the rectangle the face covers**, corner for corner and in the
+     * order the frame prescribes, because that rectangle *is* the degenerate section of the plate at that
+     * plane. Since session 32 the frame stands on the picked edge's midpoint, so the rectangle is centred on
+     * it and the numbering starts at that edge's first corner (`Section3.rotatedToFirstCorner`).
      */
     @Test
     fun anExtrudesSideFaceStillDrawsItsRectangle() {
@@ -502,13 +504,13 @@ class SectionInputTest {
         ed.click(Vec2(40.0, 0.0))
         val r = assertNotNull(ed.doc.faceOutline(ed.activeSpace, Evaluator()))
         assertEquals(4, r.size)
-        assertClose(r[0].x, 0.0)
+        assertClose(r[0].x, -40.0)
         assertClose(r[0].y, 0.0)
-        assertClose(r[1].x, 80.0)
+        assertClose(r[1].x, 40.0)
         assertClose(r[1].y, 0.0)
-        assertClose(r[2].x, 80.0, msg = "as wide as the edge is long")
+        assertClose(r[2].x, 40.0, msg = "as wide as the edge is long, centred on the edge's midpoint")
         assertClose(r[2].y, 20.0, msg = "as tall as the plate is thick")
-        assertClose(r[3].x, 0.0)
+        assertClose(r[3].x, -40.0)
         assertClose(r[3].y, 20.0)
         // …and its four edges and corners are inputs now, which they were not before
         val section = assertNotNull(ed.doc.spaceSection(ed.activeSpace, Evaluator()))
