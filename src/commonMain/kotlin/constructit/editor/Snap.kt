@@ -43,6 +43,13 @@ class SnapResult(
     val other: Element? = null,
     /** [SnapKind.SECTION_CORNER] only: which corner of the section this is — the index that gets recorded. */
     val sectionCorner: Int = -1,
+    /**
+     * [SnapKind.SECTION_CORNER] only: **which solid's** section that index addresses (GitHub #9). A working
+     * plane cuts every solid built before it, so an index alone no longer names a corner — and dropping the
+     * solid here would materialize the anchor's corner of the same number instead of the one under the
+     * cursor.
+     */
+    val sectionSolid: Element? = null,
 ) {
     /** Name of the snap, for the status bar. */
     val label: String
@@ -99,7 +106,9 @@ object Snap {
         // makes one (the corner accessor), so it produces a real dependency exactly as an existing point does
         // — which is the rule this whole resolution is about (OP-17's section inputs).
         doc.sectionCandidateNear(world, tol, ev, Document.SectionInput.CORNER)?.let { c ->
-            if (c.refusal == null) return SnapResult(c.at, SnapKind.SECTION_CORNER, sectionCorner = c.index)
+            if (c.refusal == null) {
+                return SnapResult(c.at, SnapKind.SECTION_CORNER, sectionCorner = c.index, sectionSolid = c.solid)
+            }
         }
 
         // the attachable curves under the cursor, nearest first — the shared search, so "near a segment"

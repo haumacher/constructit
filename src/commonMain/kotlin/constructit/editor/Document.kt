@@ -206,6 +206,17 @@ class SketchSpace(
     /** The in-plane offset applied after the anchor — ordinary scalar sources, wireable to parameters. */
     val originDx: ScalarRef? = null,
     val originDy: ScalarRef? = null,
+    /**
+     * PARALLEL only: this plane is [from]'s plane moved along its own normal by [offset], with **no hinge**
+     * at all — *Plane at height* (GitHub #9, the user's design: *"the section tool basically creates a plane
+     * parallel to the base plane with a given distance; to create such plane, no solid selection is
+     * necessary"*).
+     *
+     * A datum in every other respect — a plane that is not a face of anything — which is why [isDatum] takes
+     * it in. What it has instead of a hinge is [Document.spaceAncestors]: its input geometry is the section
+     * of every solid that existed before it, and that needs no pick at all.
+     */
+    val parallel: Boolean = false,
 ) {
     /**
      * Which corner of this space's own section the origin is anchored on, or null while it sits at the
@@ -213,18 +224,33 @@ class SketchSpace(
      */
     var originCorner: Int? = null
 
+    /**
+     * Which **solid** [originCorner] indexes into, or null for this space's own [anchor] — since a plane's
+     * section is one per ancestor solid (GitHub #9), a corner index only means something together with the
+     * solid it is a corner of.
+     */
+    var originSolid: Element? = null
+
     /** The panel parameters the origin offsets read, when they are not the default zero. */
     var originDxEntry: ScalarEntry? = null
     var originDyEntry: ScalarEntry? = null
 
+    /**
+     * The document's element counter when this space was created — what makes *"created before"* a fact
+     * rather than a search (GitHub #9). See [Document.spaceAncestors]: a solid is this plane's input geometry
+     * exactly when it was born at or before this mark, which is what keeps the plane→section→solid edges
+     * pointing backwards in creation order and the graph acyclic by construction.
+     */
+    var bornAt: Int = 0
+
     /** The plan is exactly the space with no plane node of its own: the world XY plane, by construction. */
     val isPlan: Boolean get() = plane == null
 
-    /** A datum plane (a line and an angle), as opposed to a solid's face or the plan. */
-    val isDatum: Boolean get() = hinge != null
+    /** A datum plane (a line and an angle, or a bare height), as opposed to a solid's face or the plan. */
+    val isDatum: Boolean get() = hinge != null || parallel
 
     /** A space on a solid's planar side face (OP-8's `sideFacePlane`). */
-    val isFace: Boolean get() = plane != null && hinge == null
+    val isFace: Boolean get() = plane != null && hinge == null && !parallel
 }
 
 /** A retained, displayable/selectable graph output with style + kind. */
@@ -254,6 +280,14 @@ class Element(
      * space at a time, so geometry drawn on a face cannot be picked in the plan and vice versa.
      */
     var space: String = Document.PLAN_SPACE
+
+    /**
+     * **When** this element was born: the document's element counter at the moment [Document.add] created it,
+     * which only ever grows (GitHub #9). What a sketch space compares its own [SketchSpace.bornAt] against to
+     * answer *"was this solid created before me?"* — a question the element list's *order* cannot answer,
+     * since ortho-leg surgery removes and appends elements mid-document.
+     */
+    var born: Int = 0
 
     /**
      * Whether grabbing this element can actually move anything. An on-curve point qualifies only
@@ -1199,42 +1233,125 @@ class Document {
     }
 
     /**
-     * The **section node** of [space]: the part this plane belongs to, cut at this plane (OP-17's
-     * section-inputs package). Null for the plan, and null for a plane that belongs to no solid.
+     * The solids [space] takes its input geometry from: **every solid created before the space** (GitHub #9,
+     * the user's design — *"a plane should use all intersections with ancestor solids (created 'before'
+     * themselves) as input geometry"*). Empty for the plan, which is the drawing itself.
      *
-     * A real node, created **once per space** and shared by every input taken from it — which is what makes
-     * the inputs a construction rather than a drawing: they are pure functions of the solid and the plane, so
-     * retyping the plane's offset or dragging the part's corner slides the section and everything anchored on
-     * it (OP-21: recompute, never rebuild).
+     * This is *the* enumeration — the context the canvas draws ([spaceContext]), the members a click can take
+     * as an input ([sectionCandidateNear]) and the corners an origin can be anchored on ([setSpaceOrigin]) all
+     * come from it, so what is visible is what is pickable, on every kind of plane. Three rules make it:
      *
-     * The solid is the space's own **anchor** — the solid the plane is derived from, or the part a datum was
-     * resolved against at creation — and not [facePartTip]: the plane names a state of the model and its
-     * context is the section of *that*, while which solid a *pick* of the part lands on is the tip's question
-     * and keeps the tip's answer ([partOutlineOf]). Two questions, two answers, as the sequential-feature rule
-     * already says for the plane itself.
+     * - **Ancestors only.** A solid counts when it was born at or before the space's own [SketchSpace.bornAt]
+     *   mark. A solid created *afterwards* never appears here, however it is edited — which is what makes the
+     *   plane → sketch → solid → cut chain acyclic *by construction*: the section nodes this list feeds can
+     *   only ever take solids whose own inputs were fixed before the plane's node existed, so every
+     *   plane→solid edge points backwards in creation order. It is also the recorded-not-discovered rule:
+     *   a replay rebuilds the same list because it rebuilds the same history.
+     * - **Outputs, not material** ([isMaterial]) — the 3D view's rule, applied *within the ancestor set*: a
+     *   plate consumed by a boolean among the ancestors is that boolean's material and draws no section of
+     *   its own. Restricted to the set so that a later boolean cannot retroactively empty an older plane's
+     *   context, which is the same ancestors-only sentence read the other way round.
+     * - **Valid and visible** (OP-3): a solid whose parameters make it invalid, or one the user has hidden,
+     *   contributes nothing and comes back when it does.
+     *
+     * The space's own [anchor] is always in the list, first — the **face exception** the user states: a plane
+     * on a face keeps that face as its input geometry, which is not an intersection but the degenerate
+     * section [Section3.sectionOf] returns for a plane lying on a face, *in addition* to whatever else the
+     * plane cuts there.
+     */
+    fun spaceAncestors(
+        space: SketchSpace,
+        ev: Evaluator = Evaluator(),
+    ): List<Element> {
+        if (space.plane == null) return emptyList()
+        val anchor = space.anchor?.takeIf { it.kind == ElementKind.SOLID }
+        val born =
+            elements.filter { el ->
+                el.kind == ElementKind.SOLID && el.visible && el.born <= space.bornAt && ev.valueOf(el.ref) is SolidValue
+            }
+        if (born.isEmpty()) return listOfNotNull(anchor)
+        val consumed = consumedAmong(born, ev)
+        val out = ArrayList<Element>()
+        anchor?.let { out.add(it) }
+        for (el in born) if (el !== anchor && el.ref.node.id !in consumed) out.add(el)
+        return out
+    }
+
+    /**
+     * The node ids among [candidates] that another candidate is made **of** — [isMaterial] followed to the
+     * end, which is the very rule [constructit.editor.Scene3] tells an operand from an output by.
+     */
+    private fun consumedAmong(
+        candidates: List<Element>,
+        ev: Evaluator,
+    ): Set<String> {
+        val ids = candidates.mapTo(HashSet()) { it.ref.node.id }
+        val consumed = HashSet<String>()
+        val visited = HashSet<String>()
+
+        fun walk(node: Node) {
+            if (!visited.add(node.id)) return
+            for (input in node.inputs) {
+                if (!isMaterial(ev, input)) continue
+                if (input.id in ids) consumed.add(input.id)
+                walk(input)
+            }
+        }
+        candidates.forEach { walk(it.ref.node) }
+        return consumed
+    }
+
+    /**
+     * The **section node** of [solid] at [space]'s plane (OP-17's section-inputs package) — one node per
+     * (space, solid) pair, shared by every input taken from it.
+     *
+     * A real node, which is what makes the inputs a construction rather than a drawing: they are pure
+     * functions of the solid and the plane, so retyping the plane's offset or dragging the part's corner
+     * slides the section and everything anchored on it (OP-21: recompute, never rebuild).
      */
     @Suppress("UNCHECKED_CAST")
-    fun spaceSectionNode(space: SketchSpace): SectionRef? {
+    fun spaceSectionNodeOf(
+        space: SketchSpace,
+        solid: Element,
+    ): SectionRef? {
         val plane = space.plane ?: return null
-        val anchor = space.anchor ?: return null
-        if (anchor.kind != ElementKind.SOLID) return null
-        sectionNodes[space.name]?.let { return it }
-        val node = cx.section(anchor.ref as SolidRef, plane)
-        sectionNodes[space.name] = node
+        if (solid.kind != ElementKind.SOLID) return null
+        val key = space.name to solid.id
+        sectionNodes[key]?.let { return it }
+        val node = cx.section(solid.ref as SolidRef, plane)
+        sectionNodes[key] = node
         return node
     }
 
-    /** Section nodes by space name — one per space, so every input taken from it shares it (OP-5). */
-    private val sectionNodes = HashMap<String, SectionRef>()
+    /**
+     * The section node of [space]'s own **anchor** — the solid the plane is derived from, or the part a datum
+     * was resolved against at creation. Null for the plan and for a plane that belongs to no solid.
+     *
+     * Not [facePartTip]: the plane names a state of the model and its context is the section of *that*, while
+     * which solid a *pick* of the part lands on is the tip's question and keeps the tip's answer
+     * ([partOutlineOf]). Two questions, two answers, as the sequential-feature rule already says for the plane
+     * itself. Since GitHub #9 the anchor is only the *first* of the plane's inputs ([spaceAncestors]) — it
+     * stays singled out because it is what a face space is a face **of** and what a step's omitted `el=`
+     * means.
+     */
+    fun spaceSectionNode(space: SketchSpace): SectionRef? {
+        val anchor = space.anchor ?: return null
+        return spaceSectionNodeOf(space, anchor)
+    }
+
+    /** Section nodes by (space name, solid id) — one each, so every input taken from it shares it (OP-5). */
+    private val sectionNodes = HashMap<Pair<String, String>, SectionRef>()
 
     /**
-     * The **section of the part at [space]'s plane**, as it stands — the general mechanism behind a working
-     * plane's context *and* its inputs (OP-17).
+     * The **section of the part at [space]'s plane**, as it stands — the space's own [SketchSpace.anchor],
+     * which is the face a face space is a face of (OP-17).
      *
      * Null when there is nothing to cut. Otherwise this is the part's section in the space's own (u, v): a
      * face space's plane lies **on** a face, so its section is that face's boundary (which is what the face
      * view has always drawn, now derived rather than assumed); a datum plane's section is the curves the cut
      * produces. See [constructit.geom.Section3.sectionOf] for the exactness classes.
+     *
+     * Every *other* solid this plane cuts is in [spaceSections], which is what a click searches.
      */
     fun spaceSection(
         space: SketchSpace,
@@ -1242,6 +1359,28 @@ class Document {
     ): PlaneSection? {
         val node = spaceSectionNode(space) ?: return null
         return (ev.valueOf(node) as? SectionValue)?.section
+    }
+
+    /**
+     * Every ancestor solid's section at [space]'s plane, in creation order, skipping the ones the plane
+     * misses — the working plane's input geometry, whole (GitHub #9).
+     *
+     * One list, three readers: the context the canvas draws, the members a click can take, and the corners an
+     * origin can be anchored on. A plane that cuts nothing answers with an empty list and says so.
+     */
+    fun spaceSections(
+        space: SketchSpace,
+        ev: Evaluator,
+    ): List<Pair<Element, PlaneSection>> {
+        if (space.plane == null) return emptyList()
+        val out = ArrayList<Pair<Element, PlaneSection>>()
+        for (solid in spaceAncestors(space, ev)) {
+            val node = spaceSectionNodeOf(space, solid) ?: continue
+            val section = (ev.valueOf(node) as? SectionValue)?.section ?: continue
+            if (section.isEmpty) continue
+            out.add(solid to section)
+        }
+        return out
     }
 
     /**
@@ -1308,19 +1447,20 @@ class Document {
     ): List<Vec2>? = faceOutline(space, ev) ?: datumHinge(space, ev)
 
     /**
-     * Everything [space] draws as **context**, in its own (u, v): the part's section at this plane, plus a
-     * datum's hinge (its own u axis, over the extent the picked line reaches).
+     * Everything [space] draws as **context**, in its own (u, v): the section of **every ancestor solid** at
+     * this plane (GitHub #9), plus a datum's hinge (its own u axis, over the extent the picked line reaches).
      *
      * One query for the renderer, and the reason both are in it is that they answer different questions —
-     * the hinge says *where on the drawing am I standing*, the section says *where is the material*. A datum
-     * that cuts nothing draws its hinge alone and says so in its note; a face space's section is the face.
+     * the hinge says *where on the drawing am I standing*, the sections say *where is the material*. A plane
+     * that cuts nothing draws its hinge alone (or nothing at all) and says so in its note; a face space's
+     * first section is the face itself.
      */
     fun spaceContext(
         space: SketchSpace,
         ev: Evaluator,
     ): List<ProfileElement> {
         val out = ArrayList<ProfileElement>()
-        spaceSection(space, ev)?.let { out.addAll(it.drawn) }
+        for ((_, section) in spaceSections(space, ev)) out.addAll(section.drawn)
         datumHinge(space, ev)?.let { h -> if (h.size == 2) out.add(ProfileElement.Seg(Segment(h[0], h[1]))) }
         return out
     }
@@ -1355,6 +1495,11 @@ class Document {
      */
     class SectionCandidate(
         val space: SketchSpace,
+        /**
+         * **Which solid** this member is a section of (GitHub #9) — a plane cuts every ancestor, so an index
+         * only addresses a member together with the solid it indexes into. Recorded with the pick.
+         */
+        val solid: Element,
         val kind: SectionInput,
         val index: Int,
         val at: Vec2,
@@ -1368,11 +1513,13 @@ class Document {
     )
 
     /**
-     * The member of the active space's section nearest [at] within [tol] — corners first, then curves, which
+     * The member of the active space's sections nearest [at] within [tol] — corners first, then curves, which
      * is the same precedence a snap gives a point over the curve it lies on.
      *
-     * Nothing is created here: this answers *what would be taken*, so a tool slot that cannot use it can
-     * decline before a node exists (the pick pipeline's rule — an existing-only slot creates nothing on a
+     * Searched across **every ancestor solid's** section (GitHub #9), in creation order, nearest winning: the
+     * plane's input geometry is all of them, so a click reaches whichever it lands on and the candidate says
+     * which. Nothing is created here: this answers *what would be taken*, so a tool slot that cannot use it
+     * can decline before a node exists (the pick pipeline's rule — an existing-only slot creates nothing on a
      * miss).
      */
     fun sectionCandidateNear(
@@ -1382,49 +1529,56 @@ class Document {
         want: SectionInput? = null,
     ): SectionCandidate? {
         val space = activeSpace
-        val section = spaceSection(space, ev) ?: return null
+        val sections = spaceSections(space, ev)
+        if (sections.isEmpty()) return null
         var best: SectionCandidate? = null
         var bestDist = Double.MAX_VALUE
         if (want != SectionInput.EDGE) {
-            for ((i, c) in section.corners.withIndex()) {
-                val p = c.at ?: continue
-                val d = (p - at).length()
-                if (d <= tol && d < bestDist) {
-                    bestDist = d
-                    best =
-                        SectionCandidate(
-                            space, SectionInput.CORNER, i, p, c.provenance, section.inputsRefusal,
-                            ElementKind.DERIVED_POINT,
-                        )
+            for ((solid, section) in sections) {
+                for ((i, c) in section.corners.withIndex()) {
+                    val p = c.at ?: continue
+                    val d = (p - at).length()
+                    if (d <= tol && d < bestDist) {
+                        bestDist = d
+                        best =
+                            SectionCandidate(
+                                space, solid, SectionInput.CORNER, i, p, c.provenance, section.inputsRefusal,
+                                ElementKind.DERIVED_POINT,
+                            )
+                    }
                 }
             }
             if (best != null) return best
         }
         if (want == SectionInput.CORNER) return null
-        for ((i, e) in section.edges.withIndex()) {
-            val piece = e.curve ?: e.sampled?.let { pts -> pts.firstOrNull()?.let { ProfileElement.Seg(Segment(it, pts.last())) } }
-            val d =
-                if (e.curve != null) {
-                    HitTest.distanceToPiece(at, e.curve)
-                } else {
-                    e.sampled?.let { pts -> (0 until pts.size - 1).minOfOrNull { j -> HitTest.distanceToPiece(at, ProfileElement.Seg(Segment(pts[j], pts[j + 1]))) } }
-                } ?: continue
-            if (piece == null) continue
-            if (d <= tol && d < bestDist) {
-                bestDist = d
-                val why = section.inputsRefusal ?: sectionEdgeRefusal(section, i)
-                best = SectionCandidate(space, SectionInput.EDGE, i, at, e.provenance, why, edgeElementKind(e))
+        for ((solid, section) in sections) {
+            for ((i, e) in section.edges.withIndex()) {
+                val piece = e.curve ?: e.sampled?.let { pts -> pts.firstOrNull()?.let { ProfileElement.Seg(Segment(it, pts.last())) } }
+                val d =
+                    if (e.curve != null) {
+                        HitTest.distanceToPiece(at, e.curve)
+                    } else {
+                        e.sampled?.let { pts -> (0 until pts.size - 1).minOfOrNull { j -> HitTest.distanceToPiece(at, ProfileElement.Seg(Segment(pts[j], pts[j + 1]))) } }
+                    } ?: continue
+                if (piece == null) continue
+                if (d <= tol && d < bestDist) {
+                    bestDist = d
+                    val why = section.inputsRefusal ?: sectionEdgeRefusal(section, i)
+                    best = SectionCandidate(space, solid, SectionInput.EDGE, i, at, e.provenance, why, edgeElementKind(e))
+                }
             }
         }
         // …and a piece no index names at all (a face the plane cuts twice) still has to answer for itself
         if (best == null) {
-            val hit = section.drawn.minByOrNull { HitTest.distanceToPiece(at, it) }
-            if (hit != null && HitTest.distanceToPiece(at, hit) <= tol) {
+            for ((solid, section) in sections) {
+                val hit = section.drawn.minByOrNull { HitTest.distanceToPiece(at, it) } ?: continue
+                if (HitTest.distanceToPiece(at, hit) > tol) continue
                 val why =
                     section.inputsRefusal
                         ?: section.edges.firstNotNullOfOrNull { it.reason?.takeIf { r -> r.contains("separate pieces") } }
                         ?: "that piece of the section has no single name to take as an input"
-                best = SectionCandidate(space, SectionInput.EDGE, -1, at, "a piece of the section", why, ElementKind.SEGMENT)
+                best = SectionCandidate(space, solid, SectionInput.EDGE, -1, at, "a piece of the section", why, ElementKind.SEGMENT)
+                break
             }
         }
         return best
@@ -1470,30 +1624,41 @@ class Document {
             note = candidate.refusal
             return null
         }
-        return sectionInput(candidate.space, candidate.kind, candidate.index)
+        return sectionInput(candidate.space, candidate.kind, candidate.index, candidate.solid)
     }
 
     /**
      * The recorded form of [takeSectionInput] — also the loader's entry point, so a replay creates the same
      * node from the same index and never re-scores which curve was meant.
+     *
+     * [solid] is **which ancestor** the index addresses (GitHub #9), written into the step as `el=` and
+     * omitted when it is the space's own [SketchSpace.anchor] — which is what every `sectioninput` step
+     * written before a plane had more than one section meant, so no stored literal changes meaning and no
+     * version bump goes with the new argument (OP-18's doctrine). The *gesture* no longer picks a solid; the
+     * *recording* still names one, so a replay re-discovers nothing.
      */
     @Suppress("UNCHECKED_CAST")
     fun sectionInput(
         space: SketchSpace,
         kind: SectionInput,
         index: Int,
+        solid: Element? = null,
     ): Element? {
-        val node = spaceSectionNode(space) ?: return null
+        val of = solid ?: space.anchor ?: return null
+        val node = spaceSectionNodeOf(space, of) ?: return null
         val section = (Evaluator().valueOf(node) as? SectionValue)?.section
         return recording(
             "sectioninput",
-            Arg.Label(space.name),
-            Arg.Keyed(if (kind == SectionInput.CORNER) "corner" else "edge", Arg.Text(index.toString())),
+            *listOfNotNull(
+                Arg.Label(space.name),
+                if (of === space.anchor) null else Arg.Keyed("el", Arg.El(of)),
+                Arg.Keyed(if (kind == SectionInput.CORNER) "corner" else "edge", Arg.Text(index.toString())),
+            ).toTypedArray(),
         ) {
             when (kind) {
                 SectionInput.CORNER -> {
                     add(cx.sectionCorner(node, index), ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
-                        .also { sectionInputAddress[it.id] = Triple(space.name, kind, index) }
+                        .also { sectionInputAddress[it.id] = SectionAddress(space.name, of, kind, index) }
                 }
                 SectionInput.EDGE -> {
                     // the *kind* of the curve is part of the accessor and therefore of the step (three ids for
@@ -1512,29 +1677,44 @@ class Document {
 
     // ---- the space origin: an anchor on the plane, plus an in-plane offset (OP-17) ----
 
-    /** Where a materialized section input came from: its space, kind and structural index (OP-18). */
-    private val sectionInputAddress = HashMap<String, Triple<String, SectionInput, Int>>()
+    /** Where a materialized section input came from: its space, **its solid**, kind and index (OP-18). */
+    class SectionAddress(
+        val space: String,
+        val solid: Element,
+        val kind: SectionInput,
+        val index: Int,
+    )
 
-    /** The section node taken at a space's **intrinsic** frame, one per space — see [intrinsicSectionNode]. */
-    private val intrinsicSectionNodes = HashMap<String, SectionRef>()
+    private val sectionInputAddress = HashMap<String, SectionAddress>()
+
+    /** Section nodes at a space's **intrinsic** frame, one per (space, solid) — see [intrinsicSectionNode]. */
+    private val intrinsicSectionNodes = HashMap<Pair<String, String>, SectionRef>()
 
     /**
-     * The part's section at [space]'s **intrinsic** plane — the frame before the origin control.
+     * [solid]'s section at [space]'s **intrinsic** plane — the frame before the origin control.
      *
      * The one thing an origin anchor may be built from, and the reason is a circle it would otherwise close:
      * the section a space *shows* is cut at the plane the space publishes, so a corner of it depends on the
      * origin and could not define it. The intrinsic section is the same section translated, so a corner index
      * addresses the same corner in both — guaranteed, because the face section's canonical ordering was made
      * translation-invariant for exactly this (`Section3.rotatedToFirstCorner`).
+     *
+     * Any ancestor solid may carry the anchor (GitHub #9), not only the space's own: an ancestor is stated
+     * independently of this frame — it existed before it — so its corners can define the origin exactly as the
+     * anchor's can.
      */
     @Suppress("UNCHECKED_CAST")
-    fun intrinsicSectionNode(space: SketchSpace): SectionRef? {
+    fun intrinsicSectionNode(
+        space: SketchSpace,
+        solid: Element? = null,
+    ): SectionRef? {
         val plane = space.intrinsic ?: return null
-        val anchor = space.anchor ?: return null
-        if (anchor.kind != ElementKind.SOLID) return null
-        intrinsicSectionNodes[space.name]?.let { return it }
-        val node = cx.section(anchor.ref as SolidRef, plane)
-        intrinsicSectionNodes[space.name] = node
+        val of = solid ?: space.anchor ?: return null
+        if (of.kind != ElementKind.SOLID) return null
+        val key = space.name to of.id
+        intrinsicSectionNodes[key]?.let { return it }
+        val node = cx.section(of.ref as SolidRef, plane)
+        intrinsicSectionNodes[key] = node
         return node
     }
 
@@ -1557,31 +1737,35 @@ class Document {
         corner: Int?,
         dx: ScalarRef? = null,
         dy: ScalarRef? = null,
+        solid: Element? = null,
     ): Boolean =
         recording(
             "spaceorigin",
             *listOfNotNull(
                 Arg.Label(space.name),
+                solid?.takeIf { corner != null && it !== space.anchor }?.let { Arg.Keyed("el", Arg.El(it)) },
                 corner?.let { Arg.Keyed("corner", Arg.Text(it.toString())) },
                 dx?.let { Arg.Keyed("dx", Arg.Sc(scalarEntryFor(it))) },
                 dy?.let { Arg.Keyed("dy", Arg.Sc(scalarEntryFor(it))) },
             ).toTypedArray(),
             skipIfEmpty = true,
-        ) { setSpaceOriginNow(space, corner, dx, dy) }
+        ) { setSpaceOriginNow(space, corner, dx, dy, solid) }
 
     private fun setSpaceOriginNow(
         space: SketchSpace,
         corner: Int?,
         dx: ScalarRef?,
         dy: ScalarRef?,
+        solid: Element?,
     ): Boolean {
         val anchorNode = space.originAnchor?.node as? SourceNode
         if (anchorNode == null) {
             note = "the plan's origin is the world origin — it is what everything else is measured from"
             return false
         }
+        val of = solid ?: space.anchor
         if (corner != null) {
-            val section = intrinsicSectionNode(space)
+            val section = intrinsicSectionNode(space, of)
             if (section == null) {
                 note = "${space.name} has no part to take a corner from, so there is nothing to anchor its origin on"
                 return false
@@ -1596,6 +1780,7 @@ class Document {
             anchorNode.boundTo = null
         }
         space.originCorner = corner
+        space.originSolid = if (corner == null) null else of
         (space.originDx?.node as? SourceNode)?.boundTo = dx?.node
         (space.originDy?.node as? SourceNode)?.boundTo = dy?.node
         // three in-place bindings and not one new element: without this the step would look empty and be
@@ -1608,7 +1793,9 @@ class Document {
         val shift = listOfNotNull(space.originDxEntry, space.originDyEntry)
         note =
             "${space.name}'s origin is now " +
-            (corner?.let { "section corner #${it + 1}" } ?: "the frame's own origin") +
+            // the solid is named only when it is *not* the space's own anchor, which is what a plane with more
+            // than one section made possible (GitHub #9) — the ordinary case reads as it always did
+            (corner?.let { "section corner #${it + 1}${if (of !== space.anchor) " of ${of?.let { s -> nameOf(s) }}" else ""}" } ?: "the frame's own origin") +
             (if (shift.isEmpty()) "" else ", offset by ${shift.joinToString(", ") { it.name }}") +
             " — everything drawn here moved with the frame"
         return true
@@ -1616,12 +1803,12 @@ class Document {
 
     /**
      * The gesture's form of [setSpaceOrigin]: anchor the active space's origin on the point [at], which must
-     * be a **corner of this space's own section** — the face's own corners, the prime pick the user names
-     * ("a click, not a formula").
+     * be a **corner of a section on this plane** — the corners of the part, and of any other solid the plane
+     * cuts (GitHub #9), which is the prime pick the user names ("a click, not a formula").
      *
      * Refused by name for anything else, and the reason is the one that makes the feature well-defined: a
      * point *drawn* in this space rides the frame it would be defining, so its own coordinates could not
-     * anchor it. A corner of the part is stated independently of the frame, which is why it can.
+     * anchor it. A corner of an ancestor solid is stated independently of the frame, which is why it can.
      */
     fun setSpaceOriginAt(
         at: Element,
@@ -1630,13 +1817,13 @@ class Document {
     ): Boolean {
         val space = activeSpace
         val addr = sectionInputAddress[at.id]
-        if (addr == null || addr.first != space.name || addr.second != SectionInput.CORNER) {
+        if (addr == null || addr.space != space.name || addr.kind != SectionInput.CORNER) {
             note =
-                "${nameOf(at)} cannot fix ${space.name}'s origin: anchor on a corner of the part's section here — " +
+                "${nameOf(at)} cannot fix ${space.name}'s origin: anchor on a corner of a section on this plane — " +
                 "a point drawn on this plane moves with the frame it would define"
             return false
         }
-        return setSpaceOrigin(space, addr.third, dx, dy)
+        return setSpaceOrigin(space, addr.index, dx, dy, addr.solid)
     }
 
     /**
@@ -1769,7 +1956,11 @@ class Document {
                 anchor,
                 dx,
                 dy,
+                proto.parallel,
             )
+        // where "created before" is decided (GitHub #9): every element already born is this plane's ancestor,
+        // and nothing born after it ever becomes one — see [spaceAncestors]
+        space.bornAt = counter
         spaces.add(space)
         activeSpace = space
         return space
@@ -1861,6 +2052,68 @@ class Document {
     }
 
     /**
+     * Create a sketch space **parallel to the active one, [height] along its normal** — *Plane at height*
+     * (GitHub #9, the user's design: *"the section tool basically creates a plane parallel to the base plane
+     * with a given distance; to create such plane, no solid selection is necessary"*).
+     *
+     * The degenerate case the hinge-and-angle form could not state: a datum at 0° *is* the space it came
+     * from, so a plane 60 mm over the plan needs a number and nothing else — no line to hinge on, no solid to
+     * pick. Its input geometry arrives on its own, because a working plane's context is the section of every
+     * solid created before it ([spaceAncestors]) rather than of one picked part.
+     *
+     * The height is a live parameter, like a datum's angle: retype it and the plane slides, taking every
+     * feature sketched on it along. [part] is the solid a *Cut* here subtracts from — resolved once, at
+     * creation, as the newest visible ancestor this plane actually cuts, and then **recorded in the step**
+     * (OP-18: a choice is persisted at creation, never re-scored on replay), which is why a replay passes it
+     * back rather than re-deriving it. Null when the plane cuts nothing: then this is a free-standing sketch
+     * plane, *Extrude* works and *Cut* declines with a reason.
+     */
+    fun createParallelSpace(
+        height: ScalarRef,
+        named: String? = null,
+        part: Element? = null,
+    ): SketchSpace? {
+        val name = named ?: nextDatumName()
+        if (spaceNamed(name) != null) return null
+        val base = activeSpace
+        val entry = scalarEntryFor(height)
+        val cuts = part ?: if (replayingVersion != null) null else parallelPartAt(evalMm(height))
+        // the journal must be *in the base space* before this step, exactly as a datum's is ([noteSpaceSwitch])
+        noteSpaceSwitch()
+        return recording(
+            "sketchspace",
+            Arg.Label(name),
+            Arg.Keyed("offset", Arg.Sc(entry)),
+            *(if (cuts == null) emptyArray() else arrayOf(Arg.Keyed("part", Arg.El(cuts)))),
+        ) {
+            val intrinsic = cx.planeOffset(activePlane(), entry.ref)
+            addSpace(SketchSpace(name, null, cuts, offset = entry, from = base.name, parallel = true), intrinsic)
+        }
+    }
+
+    /**
+     * The solid a *Cut* on a plane [mm] over the active space subtracts from: the **newest visible solid the
+     * plane actually cuts**, or null (GitHub #9).
+     *
+     * The parallel plane's answer to [datumPartOf]'s question, and it has to be a different one: there is no
+     * hinge line whose construction names a part, so what names it is the geometry — which solid this plane
+     * passes through. Asked once, at creation, and recorded; nothing is re-derived on load. Computed from
+     * *values* rather than through a node, deliberately: the plane does not exist yet at this point, and a
+     * throwaway node would put the live and the replayed graph out of step.
+     */
+    private fun parallelPartAt(
+        mm: Double,
+        ev: Evaluator = Evaluator(),
+    ): Element? {
+        val base = activePlane3(ev) ?: return null
+        val plane = base.translated(mm)
+        return elements.lastOrNull { el ->
+            el.kind == ElementKind.SOLID && el.visible &&
+                (ev.valueOf(el.ref) as? SolidValue)?.let { !Section3.sectionOf(it.solid, plane).isEmpty } == true
+        }
+    }
+
+    /**
      * The solid a datum's features cut into: the **newest visible solid the line [line] is part of the
      * construction of**, or null (GitHub #6).
      *
@@ -1904,6 +2157,8 @@ class Document {
     fun spaceLabel(space: SketchSpace): String =
         when {
             space.isPlan -> "plan"
+            // the hinge-less parallel case (GitHub #9): a height, and the space it is a height above
+            space.parallel -> "${space.name} (${Format.num(spaceOffsetMm(space))} mm from ${space.from})"
             space.isDatum ->
                 "${space.name} (${Format.num(spaceAngleDeg(space))}° on ${space.hinge?.let { nameOf(it) }}" +
                     (space.offset?.let { ", ${Format.num(evalMm(it.ref))} mm off" } ?: "") +
@@ -2368,6 +2623,8 @@ class Document {
         val el = Element(nextId("e"), ref, kind, style)
         // the one place an element is born, hence the one place its sketch space is stamped (OP-17)
         el.space = activeSpace.name
+        // ...and the one place its birth is stamped (GitHub #9): what a plane's ancestors are measured by
+        el.born = counter
         elements.add(el)
         return el
     }
@@ -3829,6 +4086,9 @@ class Document {
         node.boundTo = masterNode
         alias.visible = false
         noteEdit()
+        // said here rather than only at the drag magnet's release, so the *Join points* tool speaks too
+        // (GitHub #9's silent-success sweep) — one sentence, whichever route reached it
+        note = "Joined ${nameOf(alias)} onto ${nameOf(master)}"
         return true
     }
 
@@ -7824,6 +8084,23 @@ class Document {
         val region = regionOf(el) ?: return null
         val plane = activeSpace.plane ?: activePlane()
         return add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
+            .also { madeSolid(it, "${nameOf(el)} extruded ${Format.num(evalMm(depth))} mm") }
+    }
+
+    /**
+     * Say that [solid] was made, and out of what — **the solid tools' success message** (GitHub #9's
+     * silent-success sweep, OP-3's speaking rule read the other way round).
+     *
+     * A solid is the one result the 2D canvas cannot show: it appears in the 3D viewport, which is a
+     * different pane and may not even be open, so a status line that stays empty is the same signal a
+     * refusal gives. One helper rather than a sentence per tool, so every one of them says the same shape of
+     * thing: what was made, out of what, and where it can be seen.
+     */
+    private fun madeSolid(
+        solid: Element,
+        what: String,
+    ) {
+        note = "${nameOf(solid)} is $what — a solid, shown in the 3D view"
     }
 
     /**
@@ -7865,6 +8142,9 @@ class Document {
         val region = regionOf(el) ?: return null
         val tool = add(cx.extrude(cx.sketchBehind(on, region), depth), ElementKind.SOLID, Styles.SOLID)
         return add(cx.subtract(part.ref as SolidRef, tool.ref as SolidRef), ElementKind.SOLID, Styles.SOLID)
+            .also {
+                madeSolid(it, "${nameOf(el)} cut ${Format.num(evalMm(depth))} mm into ${nameOf(part)} on ${activeSpace.name}")
+            }
     }
 
     // ---- the loft: a run of sections, and the pyramid gesture that is its two-section case (OP-17) ----
@@ -8158,6 +8438,9 @@ class Document {
         val region = regionOf(el) ?: return null
         val plane = cx.facePlane(base.ref as SolidRef, SolidFace.TOP)
         return add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
+            .also {
+                madeSolid(it, "${nameOf(el)} raised ${Format.num(evalMm(depth))} mm off ${nameOf(base)}'s top face")
+            }
     }
 
     /**
@@ -8167,6 +8450,12 @@ class Document {
      * in plan, it is pickable, it can be dimensioned, and it can be extruded again — including onto the
      * very solid it was cut from ([extrudeOnFace]). Being derived, it also *follows*: drag the wall the
      * solid came from and the section reshapes, with no node created and none rebuilt.
+     *
+     * **And it says so** (GitHub #9). This tool's success used to be silent, which made it read as broken:
+     * the area lands in the plan, and for a prism it is congruent with the footprint it lies on, so the
+     * screen does not change by one pixel. A success that says nothing is a defect by this project's own rule
+     * (OP-3: refusals speak — successes must too), so the note names what was made, of what, at what height,
+     * and where it now lies.
      */
     @Suppress("UNCHECKED_CAST")
     fun sectionSolid(
@@ -8175,7 +8464,13 @@ class Document {
     ): Element? {
         if (el.kind != ElementKind.SOLID) return null
         // RESULT, not FOOTPRINT: a section is a drawing in its own right, not the plan of a wall
-        return add(cx.sectionAt(el.ref as SolidRef, height), ElementKind.AREA, Styles.RESULT)
+        val area = add(cx.sectionAt(el.ref as SolidRef, height), ElementKind.AREA, Styles.RESULT)
+        val where = if (activeSpace.isPlan) "the plan" else activeSpace.name
+        note =
+            "${nameOf(area)} is the cross-section of ${nameOf(el)} at ${Format.num(evalMm(height))} mm — a 2D area " +
+            "drawn in $where, so a prism's lands exactly on its own footprint and nothing looks new. " +
+            "Dimension it, or extrude it again."
+        return area
     }
 
     /**
@@ -8203,6 +8498,7 @@ class Document {
         val line = carrierLine(axis)
         val ref = cx.revolve(cx.sketchOn(activePlane(), region), cx.lineOrigin(line), cx.lineDirection(line), angle)
         return add(ref, ElementKind.SOLID, Styles.SOLID)
+            .also { madeSolid(it, "${nameOf(el)} turned about ${nameOf(axis)}") }
     }
 
     // ---- booleans between solids (OP-22) ----
@@ -8222,7 +8518,12 @@ class Document {
         b: Element,
         kind: BoolOp,
     ): Element? {
-        if (a.kind != ElementKind.SOLID || b.kind != ElementKind.SOLID || a === b) return null
+        if (a.kind != ElementKind.SOLID || b.kind != ElementKind.SOLID) return null
+        if (a === b) {
+            // a refusal that said nothing was the other half of GitHub #9's silent-success sweep
+            note = "${nameOf(a)} cannot be combined with itself — click two different solids"
+            return null
+        }
         val ra = a.ref as SolidRef
         val rb = b.ref as SolidRef
         val ref =
@@ -8231,7 +8532,14 @@ class Document {
                 BoolOp.SUBTRACT -> cx.subtract(ra, rb)
                 BoolOp.INTERSECT -> cx.intersect(ra, rb)
             }
+        val word =
+            when (kind) {
+                BoolOp.UNION -> "fused with"
+                BoolOp.SUBTRACT -> "less"
+                BoolOp.INTERSECT -> "met with"
+            }
         return add(ref, ElementKind.SOLID, Styles.SOLID)
+            .also { madeSolid(it, "${nameOf(a)} $word ${nameOf(b)}") }
     }
 
     /**
@@ -8255,8 +8563,16 @@ class Document {
         if (solidEl.kind != ElementKind.SOLID) return null
         val tp =
             thickNetworks.firstOrNull { dependsOn(solidEl.ref.node, it.footprint.ref.node, HashSet()) }
-                ?: return null
-        if (tp.intervals.isEmpty()) return null
+                ?: run {
+                    note =
+                        "${nameOf(solidEl)} was not extruded from a wall footprint, so there are no openings to cut — " +
+                        "extrude a wall's footprint first, or use Subtract"
+                    return null
+                }
+        if (tp.intervals.isEmpty()) {
+            note = "the wall ${nameOf(solidEl)} was extruded from has no openings on it yet — place one with Opening first"
+            return null
+        }
         var cut = solidEl.ref as SolidRef
         for (iv in tp.intervals) {
             // one op per carrier case, for the same reason the footprint has two (see [ThickCarrier]) —
@@ -8272,7 +8588,9 @@ class Document {
             val box = cx.extrude(cx.sketchOn(cx.planeOffset(cx.planeXY(), iv.sill), region), cx.sub(iv.head, iv.sill))
             cut = cx.subtract(cut, box)
         }
+        val n = tp.intervals.size
         return add(cut, ElementKind.SOLID, Styles.SOLID)
+            .also { madeSolid(it, "${nameOf(solidEl)} with $n opening${if (n == 1) "" else "s"} cut out of it") }
     }
 
     // ---- imported bodies, and the placement that moves any solid (the JT import, OP-9) ----
@@ -8330,6 +8648,7 @@ class Document {
         if (el.kind != ElementKind.SOLID) return null
         val ref = cx.placeSolid(el.ref as SolidRef, activePlane(), at, angle ?: cx.const(Quantity.deg(0.0)))
         return add(ref, ElementKind.SOLID, Styles.SOLID)
+            .also { madeSolid(it, "${nameOf(el)} placed in ${activeSpace.name}") }
     }
 
     /** The named entry driving [ref] — every scalar a tool consumes came from the panel. */

@@ -641,12 +641,12 @@ object DocumentFormat {
             // the whole of the choice (OP-1/OP-18) — taken verbatim, never re-scored, so a curve that has
             // moved comes back as *that* curve and one the plane no longer cuts comes back invalid with a
             // reason (OP-3) instead of quietly meaning its neighbour.
-            "sectioninput" -> applySectionInput(doc, words)
+            "sectioninput" -> applySectionInput(doc, words, byName)
             // Where that space's **origin** sits (OP-17's space origin): the section corner it is anchored on
             // — a discrete choice recorded by index like every other one — and the parameters holding its
             // in-plane offsets. A step of its own rather than an argument of `sketchspace`, because moving an
             // origin is an *edit* that happens after the space (and after the sketches it translates).
-            "spaceorigin" -> applySpaceOrigin(doc, words)
+            "spaceorigin" -> applySpaceOrigin(doc, words, byName)
             "space" ->
                 if (!doc.switchSpace(unquote(words.getOrElse(1) { throw LoadError("space is missing a name") }), record = true)) {
                     throw LoadError("unknown sketch space '${unquote(words[1])}'")
@@ -722,7 +722,11 @@ object DocumentFormat {
      *   on, which parameter holds its angle, which parameter (if any) moves it along its own normal — the
      *   parallel case a stack of loft sections needs — and which solid a *Cut* there subtracts from
      *   (GitHub #6). Told apart by `line=`, and no version bump goes with either argument: one that never
-     *   existed cannot have meant something else, so no stored literal changes meaning (OP-18's doctrine).
+     *   existed cannot have meant something else, so no stored literal changes meaning (OP-18's doctrine);
+     * - a **plane at a height**: `sketchspace "name" offset="height" part=e5` — a plane parallel to the space
+     *   the step was made in, that far along its normal, with no hinge and no face (GitHub #9). Told apart by
+     *   having neither `line=` nor `el=`, which no earlier `sketchspace` step could be: both variants that
+     *   existed before it always carried one or the other. No version bump, for the same reason.
      *
      * Either way the step carries the *description* of the frame and never the frame itself, so the plane is
      * re-derived on load and a part edited since comes back with its faces where they now are. The piece
@@ -765,6 +769,13 @@ object DocumentFormat {
                 ?: throw LoadError("'${doc.nameOf(line)}' carries no line to place a sketch plane on")
             return
         }
+        // no hinge and no face: the plane-at-a-height variant (GitHub #9), whose whole description is a
+        // height and the part it was recorded as cutting
+        if (solid == null && offset != null) {
+            doc.createParallelSpace(offset.ref, named = name, part = part)
+                ?: throw LoadError("sketch space '$name' cannot be placed at that height")
+            return
+        }
         val on = solid ?: throw LoadError("sketchspace is missing 'el='")
         doc.createFaceSpace(on, piece, named = name)
             ?: throw LoadError("'${words.getOrNull(2)}' has no planar side face #${piece + 1}")
@@ -781,39 +792,54 @@ object DocumentFormat {
     private fun applySpaceOrigin(
         doc: Document,
         words: List<String>,
+        byName: Map<String, Element>,
     ) {
         val name = unquote(words.getOrElse(1) { throw LoadError("spaceorigin is missing a sketch space") })
         val space = doc.spaceNamed(name) ?: throw LoadError("unknown sketch space '$name'")
         var corner: Int? = null
         var dx: ScalarEntry? = null
         var dy: ScalarEntry? = null
+        var solid: Element? = null
         for (w in words.drop(2)) {
             val v = w.substringAfter('=', "")
             when (w.substringBefore('=')) {
+                // which solid's section the corner indexes into — omitted for the space's own anchor, as
+                // every step written before a plane had more than one section meant (GitHub #9)
+                "el" -> solid = byName[v] ?: throw LoadError("unknown element '$v'")
                 "corner" -> corner = v.toIntOrNull() ?: throw LoadError("malformed corner index '$v'")
                 "dx" -> dx = namedScalar(doc, v)
                 "dy" -> dy = namedScalar(doc, v)
                 else -> throw LoadError("unknown spaceorigin argument '${w.substringBefore('=')}'")
             }
         }
-        if (!doc.setSpaceOrigin(space, corner, dx?.ref, dy?.ref)) {
+        if (!doc.setSpaceOrigin(space, corner, dx?.ref, dy?.ref, solid)) {
             throw LoadError(doc.takeNote() ?: "sketch space '$name' cannot take that origin")
         }
     }
 
-    /** `sectioninput "plane1" edge=2` / `corner=3` — one member of a working plane's section, by index. */
+    /**
+     * `sectioninput "plane1" el=e4 edge=2` / `corner=3` — one member of a working plane's section, by index.
+     *
+     * `el=` says **which solid** the index addresses, since a plane's input geometry is the section of every
+     * solid created before it (GitHub #9). Omitted for the space's own anchor, which is exactly what every
+     * step written before a plane had more than one section meant — so no stored literal changes meaning and
+     * no version bump goes with the argument (OP-18's doctrine).
+     */
     private fun applySectionInput(
         doc: Document,
         words: List<String>,
+        byName: Map<String, Element>,
     ) {
         val name = unquote(words.getOrElse(1) { throw LoadError("sectioninput is missing a sketch space") })
         val space = doc.spaceNamed(name) ?: throw LoadError("unknown sketch space '$name'")
         var kind: Document.SectionInput? = null
         var index = -1
+        var solid: Element? = null
         for (w in words.drop(2)) {
             val v = w.substringAfter('=', "")
             val key = w.substringBefore('=')
             when (key) {
+                "el" -> solid = byName[v] ?: throw LoadError("unknown element '$v'")
                 "edge", "corner" -> {
                     kind = if (key == "edge") Document.SectionInput.EDGE else Document.SectionInput.CORNER
                     index = v.toIntOrNull() ?: throw LoadError("malformed section index '$v'")
@@ -822,7 +848,8 @@ object DocumentFormat {
             }
         }
         if (kind == null) throw LoadError("sectioninput needs edge= or corner=")
-        doc.sectionInput(space, kind, index) ?: throw LoadError("sketch space '$name' has no section to take an input from")
+        doc.sectionInput(space, kind, index, solid)
+            ?: throw LoadError("sketch space '$name' has no section to take an input from")
     }
 
     /** The panel entry a step names by name — a scalar is addressed by its name in the file (OP-18). */

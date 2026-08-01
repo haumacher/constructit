@@ -759,7 +759,7 @@ class Editor(
                 // a corner of the section: the accessor is materialized here, so what gets drawn hangs off
                 // the solid and the plane and follows every edit to either (OP-17's section inputs)
                 SnapKind.SECTION_CORNER ->
-                    doc.sectionInput(doc.activeSpace, Document.SectionInput.CORNER, s.sectionCorner)?.ref as? PointRef
+                    doc.sectionInput(doc.activeSpace, Document.SectionInput.CORNER, s.sectionCorner, s.sectionSolid)?.ref as? PointRef
                 else -> null
             }
         if (ref != null) statusHint = "Snapped to ${s.label}"
@@ -1026,6 +1026,14 @@ class Editor(
     private fun spaceNote(space: SketchSpace): String =
         when {
             space.isPlan -> "Plan view — the drawing's own space (world XY)."
+            // a plane at a height (GitHub #9): no hinge to name, so what it says is the height and what it cuts
+            space.parallel ->
+                "Sketching on ${space.name}, a plane parallel to ${space.from}, " +
+                    "${Format.num(doc.spaceOffsetMm(space))} mm along its normal: the same u and v as ${space.from}, " +
+                    "moved. Extrude builds along this plane's normal, Cut the other way. Retype the height to slide " +
+                    "the plane and everything on it." +
+                    (if (space.anchor == null) " Nothing here to cut into: this plane passes through no solid." else "") +
+                    sectionNote(space)
             // a datum plane (GitHub #6): the hinge, the angle, and the one thing its sign decides
             space.isDatum ->
                 "Sketching on ${space.name}, a datum plane on ${space.hinge?.let { doc.nameOf(it) }} at " +
@@ -1034,7 +1042,10 @@ class Editor(
                     ": u runs along that line, v rises out of " +
                     "${space.from} as the angle grows. Extrude builds along this plane's normal, Cut the other way — " +
                     "a negative angle swaps them. Retype the angle to tilt the plane and everything on it." +
-                    (if (space.anchor == null) " Nothing here to cut into: its line is part of no solid." else sectionNote(space))
+                    // what it can *cut* and what it can be *anchored on* are two questions since GitHub #9: a
+                    // hinge that belongs to no solid still has every ancestor it passes through as context
+                    (if (space.anchor == null) " Nothing here to cut into: its line is part of no solid." else "") +
+                    sectionNote(space)
             else ->
                 "Sketching on ${space.name}, the face of ${space.anchor?.let { doc.nameOf(it) }}: u along the edge you picked, " +
                     "v up into the face, the origin at that edge's middle" +
@@ -1044,27 +1055,48 @@ class Editor(
         }
 
     /**
-     * What this plane's **section** offers, in one sentence: how many curves and corners can be clicked as
+     * What this plane's **sections** offer, in one sentence: how many curves and corners can be clicked as
      * construction inputs, whether they are exact, and — where there are none — why (OP-17's section inputs).
      *
      * Said when the space is entered because it is the one thing the canvas cannot show about a drawing on a
      * plane: that the grey curves under the cursor are *inputs*, not a picture.
+     *
+     * Counted over **every ancestor solid the plane cuts** (GitHub #9), and it says how many solids those
+     * are — the fact that made the plane useful without a pick, and the one a single count would hide.
      */
     private fun sectionNote(space: SketchSpace): String {
-        val s = doc.spaceSection(space, ev()) ?: return ""
-        if (s.isEmpty) return " This plane cuts nothing of the part, so there is no context to anchor on."
-        s.inputsRefusal?.let { return " The section here draws but cannot be anchored on: $it." }
-        val curves = s.edges.count { it.curve != null }
-        val corners = s.corners.count { it.at != null }
-        val sampled = s.edges.count { it.approximated }
+        val sections = doc.spaceSections(space, ev())
+        if (sections.isEmpty()) {
+            return " This plane cuts nothing that was built before it, so there is no context to anchor on."
+        }
+        val refused = sections.mapNotNull { it.second.inputsRefusal }
+        var curves = 0
+        var corners = 0
+        var sampled = 0
+        for ((_, s) in sections) {
+            if (s.inputsRefusal != null) continue
+            curves += s.edges.count { it.curve != null }
+            corners += s.corners.count { it.at != null }
+            sampled += s.edges.count { it.approximated }
+        }
+        if (curves == 0 && corners == 0) {
+            return refused.firstOrNull()?.let { " The section here draws but cannot be anchored on: $it." } ?: ""
+        }
         val exact =
             if (sampled == 0) {
                 "exact"
             } else {
                 "$sampled of them approximated (a ruled face's cut has no name here; a cylinder's has, since conics)"
             }
-        return " Its section is $curves curve${if (curves == 1) "" else "s"} and $corners corner" +
-            "${if (corners == 1) "" else "s"} ($exact) — click one while a tool is collecting to use it as an input."
+        val whose =
+            if (sections.size == 1) {
+                "Its section is"
+            } else {
+                "It cuts ${sections.size} solids (${sections.joinToString(", ") { doc.nameOf(it.first) }}) — together"
+            }
+        return " $whose $curves curve${if (curves == 1) "" else "s"} and $corners corner" +
+            "${if (corners == 1) "" else "s"} ($exact) — click one while a tool is collecting to use it as an input." +
+            (if (refused.isEmpty()) "" else " One of them draws but cannot be anchored on: ${refused.first()}.")
     }
 
     /**
@@ -1073,9 +1105,11 @@ class Editor(
      * plane off screen.
      */
     private fun cameraFor(space: SketchSpace): Camera {
-        // the section counts as context too (OP-17's section inputs): a datum whose hinge is off to one side
-        // must still frame the material it cuts, or the first view shows an empty plane beside the part
-        val section = doc.spaceSection(space, ev())?.drawn?.flatMap { GeomMath.tessellatePiece(it) } ?: emptyList()
+        // the sections count as context too (OP-17's section inputs): a datum whose hinge is off to one side
+        // must still frame the material it cuts, or the first view shows an empty plane beside the part —
+        // and since GitHub #9 that is every ancestor it cuts, which is what a plane at a height has instead
+        // of a hinge
+        val section = doc.spaceSections(space, ev()).flatMap { (_, s) -> s.drawn.flatMap { GeomMath.tessellatePiece(it) } }
         val r =
             ((doc.spaceOutline(space, ev()) ?: emptyList()) + section).takeIf { it.isNotEmpty() }
                 ?: return Camera.centered(canvasW, canvasH)
@@ -3009,7 +3043,10 @@ class Editor(
                 val ok = if (ortho) doc.weldOrthoEndpointToPoint(dragged, weld) else doc.weld(dragged, weld)
                 // the magnet promised this join, so a release that quietly does nothing is the worst of the
                 // three outcomes — the reason is the document's, and the same one a path click reports
-                statusHint = if (ok) "Joined ${doc.nameOf(dragged)} onto ${doc.nameOf(weld)}" else joinRefused(dragged, weld)
+                // the document's own sentence when it has one (it does since the weld speaks for the *tool*
+                // too), so the note is consumed here rather than surfacing on the next unrelated operation
+                statusHint =
+                    if (ok) doc.takeNote() ?: "Joined ${doc.nameOf(dragged)} onto ${doc.nameOf(weld)}" else joinRefused(dragged, weld)
                 onChange()
             } else if (attach != null) {
                 val ok = if (ortho) doc.attachOrthoEndpointToCurve(dragged, attach) else doc.attachToCurve(dragged, attach)
@@ -3524,7 +3561,11 @@ class Editor(
         // here rather than at completion, so the reason is the one the user reads
         if (tool.facePartOperand && doc.facePartTip() == null) {
             statusHint =
-                if (doc.activeSpace.isDatum) {
+                if (doc.activeSpace.parallel) {
+                    // a plane at a height that passes through nothing (GitHub #9) — the same sentence, without a line
+                    "${tool.label} needs a part to cut into, and ${doc.activeSpace.name} passed through no solid " +
+                        "when it was made — Extrude builds a solid on this plane instead, or Subtract one from a part"
+                } else if (doc.activeSpace.isDatum) {
                     // a datum plane with no part (GitHub #6): honest, and it names the operation that does work
                     "${tool.label} needs a part to cut into, and ${doc.activeSpace.name}'s line " +
                         "(${doc.activeSpace.hinge?.let { doc.nameOf(it) }}) is part of no solid — Extrude builds a solid on this plane instead"
@@ -3831,7 +3872,9 @@ class Editor(
             return false
         }
         pickedElements.add(el)
-        statusHint = "Anchored on ${cand.provenance}"
+        // the solid is named too since a plane cuts every ancestor (GitHub #9): "corner #2 of the top face"
+        // says which corner, not of what, and with two sections on screen that is the ambiguous half
+        statusHint = "Anchored on ${cand.provenance} of ${doc.nameOf(cand.solid)}"
         return true
     }
 }

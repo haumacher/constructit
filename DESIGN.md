@@ -1250,6 +1250,8 @@ it:
 | `wall` justification, `breakarc` ccw, `opening pos/sill/head`, `place at/angle`, `count=`, `sketchspace piece=` | unchanged | none (absent justification still defaults to centred) |
 | `sketchspace line= / angle= / part=` — the **datum** variant (OP-17, GitHub #6) | new arguments in this build; the face variant (`el=`/`piece=`) is untouched and told apart by `line=` | none, and **no version bump**: an argument that never existed cannot have meant something else, so no stored literal changes meaning. `part=` is a choice recorded at creation (never re-derived on load); the angle is *state* and rides the `param` step of the parameter this one names |
 
+| `sketchspace offset=` **without** `line=`/`el=` — the *plane at a height* variant, and `sectioninput el=` / `spaceorigin el=` (OP-17, GitHub #9) | new arguments and a new *combination* in this build: no earlier `sketchspace` step lacked both `line=` and `el=`, and an omitted `el=` on the other two means the space's own anchor, which is exactly what every step written before a plane had more than one section meant | none, and **no version bump**, by the same argument as the row above: an argument that never existed cannot have meant something else. `part=` on the height variant is a choice recorded at creation; the height is *state* and rides its parameter's own `param` step |
+
 Known residual, recorded rather than papered over: the **Outline** tracer still resolves its handovers from
 that tool's own clicks on every replay (`jointBetween`), and a determined ortho meeting still picks its
 circle branch by nearness. Both are re-derived from geometry the same replay rebuilds, so they are stable
@@ -4259,8 +4261,11 @@ at the incircle's centre — with **moving the apex** re-deriving every one of t
     not be there, and which cap of an interface is a face needs a 2D boolean per interface. So a
     boolean-assembled prism takes the mesh route, and the message names *Section* for the horizontal cut,
     which is exact. Naming a prism's faces per slab is a well-defined piece of work and is not built.
-  - **A free-standing datum still cuts nothing.** The part a datum's section is *of* is the part the space
-    already names — resolved once at creation from the hinge's ancestry and recorded (GitHub #6's rule,
+  - **A free-standing datum still cuts nothing.** *(SUPERSEDED in session 33 by GitHub #9 — a plane's input
+    geometry is now every solid built before it, so a hinge that belongs to no solid still has context. The
+    paragraph it replaced follows; what stays true is the sentence about which solid a **Cut** takes, which is
+    still the recorded part and not the section's owner.)* The part a datum's section is *of* is the part the
+    space already names — resolved once at creation from the hinge's ancestry and recorded (GitHub #6's rule,
     unchanged), the same answer *Cut* uses. So a plane hinged on a line that belongs to no solid draws no
     section, and the note says so. The consequence worth naming: a solid whose footprint has **no straight
     edge** (a plain cylinder) has no line to hinge a datum on, so its section is reachable from the DSL and
@@ -4280,6 +4285,80 @@ at the incircle's centre — with **moving the apex** re-deriving every one of t
   - **No 3D picking.** Choosing a face by clicking the solid in the 3D view is edit-in-3D's slice 2; this
     package consumes the same provenance mechanism in the 2D editor first, which is the cheaper place to grow
     it — exactly as the queue entry scoped it.
+
+#### A plane's input geometry is every solid built before it (as built — the user's design, GitHub #9, session 33)
+
+The reporter's sentence, which is the whole design:
+
+> The section tool basically creates a plane parallel to the base plane with a given distance. To create such
+> plane, no solid selection is necessary. […] The only reason, why a plane creation could require selecting a
+> solid is that the intersection of that solid with the new plane is used as input geometry for that plane.
+> However this is not useful, since the plane-from-line-and-angle has no input solid, but of cause requires
+> also some input geometry. **Therefore, a plane should use all intersections with ancestor solids (created
+> from "before" themselves) as input geometry.** This makes creating a parallel plane more easy and makes the
+> plane-from-line-and-angle useful. Maybe, the pane-from-face is an exception — it should use the face as
+> input geometry (this is not an intersection) — maybe in addition to potential other intersections. All plane
+> creation tools should go to one section in the UI — the section-plane tool is not a solid creation tool.
+
+Adopted whole. The section-inputs machinery above is unchanged in kind — the same compound `section(solid,
+plane)` value, the same materialize-on-pick, the same recorded `sectioninput` step. What changed is **which
+solids a plane asks**, and the answer is now a *fact about history* rather than a pick.
+
+- **One enumeration, three readers.** `Document.spaceAncestors(space)` is the only place the question is
+  answered, and `spaceContext` (what the canvas draws), `sectionCandidateNear` (what a click can take) and
+  `setSpaceOrigin` (what a corner can anchor) all go through it — so what is visible is what is pickable, on
+  every kind of plane. Three rules make the list: **ancestors only** (born at or before the space's own
+  `bornAt` mark, an element counter stamped in `Document.add`, because the element *list* is not a birth order
+  — ortho-leg surgery removes and appends), **outputs not material** (`isMaterial`, the 3D view's own rule,
+  applied *within* the ancestor set so a later boolean cannot retro-empty an older plane's context), and
+  **valid and visible** (OP-3: an invalid or hidden solid contributes nothing and comes back when it does).
+  The space's own `anchor` is always first — the **face exception** the user names: a face space's plane lies
+  on a face, so `Section3.sectionOf` returns that face's own boundary rather than an intersection, and the
+  other ancestors' sections are *in addition* to it.
+- **Acyclicity, by construction.** A section node can only ever take a solid whose own inputs were fixed
+  before the plane's node existed, so every plane→solid edge points backwards in creation order and the
+  plane → sketch → solid → cut chain cannot close a loop. This is why *ancestors only* is not a limitation but
+  the mechanism: a solid built **after** a plane never appears in it, however the model is edited afterwards
+  (`PlaneAncestorTest.aSolidBuiltAfterThePlaneNeverBecomesItsContext`), and a plane therefore keeps drawing
+  the pre-cut state of a solid a *Cut on that very plane* has since consumed. That is the honest reading of a
+  recorded history, not a staleness bug.
+- **The gesture stops naming a solid; the recording does not.** Section nodes are one per **(space, solid)**
+  pair, so an index still means exactly what it always meant — a member of *that solid's* section — and the
+  step gains `el=`: `sectioninput "plane1" el=e9 corner=2`, omitted when the solid is the space's own anchor,
+  which is precisely what every step written before this build meant. No stored literal changes meaning, so
+  **no version bump** (OP-18's doctrine, the same argument `offset=` used). `spaceorigin` gained the same
+  optional `el=`, and `SnapResult` carries the solid beside the corner index — without it a corner snapped on
+  one solid would have materialized the anchor's corner of the same number.
+- **Plane at height** (`Tools.PLANE_AT_HEIGHT`, `Document.createParallelSpace`) is what the design makes
+  possible: type a height, click anywhere, and a plane parallel to the space you are in appears that far along
+  its normal — **no line, no solid, no pick at all**. Its step is `sketchspace "plane1" offset="height"
+  part=e18`, told apart from the other two variants by having neither `line=` nor `el=` (no earlier
+  `sketchspace` step could be, since both variants that existed always carried one). `part=` is the solid a
+  *Cut* there subtracts from: the newest visible solid the plane actually passes through, resolved **once at
+  creation from values** (the plane's node does not exist yet, and a throwaway node would put the live and the
+  replayed graph out of step) and then recorded, never re-derived on load — GitHub #6's rule for a datum's
+  part, restated for a plane that has no hinge to derive it from. A `SketchSpace` with `parallel = true` is a
+  datum in every other respect (`isDatum` takes it in, `isFace` excludes it).
+- **The hinged plane inherits it for free**, which is the user's *"this makes the plane-from-line-and-angle
+  useful"*: a datum hinged on a line belonging to no solid used to draw nothing at all, and now draws — and
+  offers as inputs — the section of everything it cuts. Its note says both things separately, because they are
+  two questions: what it can be **anchored on** (every ancestor) and what it can **cut** (the recorded part,
+  or nothing).
+- **The silent success that opened the issue.** *Section* was never broken: it made the cross-section AREA
+  with an **empty status message**, and for a prism that area is congruent with the footprint it lies on, so
+  the screen did not change. A success that says nothing is a defect by this project's own rule (refusals
+  speak — successes must too), and the tool stays, now naming what it made, of what, at what height and where
+  it lies. The sweep it prompted found the same silence across the **solid tools** — *Extrude*, *Revolve*,
+  *Extrude on face*, *Cut*, the three booleans, *Place solid*, *Cut openings*, *Join points* — every one of
+  which produces a result the 2D canvas cannot show at all. All now speak through one helper
+  (`Document.madeSolid`), and two refusals that were silent (a boolean of a solid with itself; *Cut openings*
+  on a solid that is not a wall's, or on a wall with no openings) now say why. **Not fixed, and reported as
+  found:** the generic tool path turns *any* `null` from a build lambda into an empty status line, so every
+  unspoken `return null` in `Document` is a latent silent refusal — a per-route audit, not this package's.
+- **UI: `ToolCategory.PLANES`.** *Plane at height*, *Sketch plane*, *Sketch on face* and *Space origin* moved
+  into a group of their own, because — the user's words — *"the section-plane tool is not a solid creation
+  tool"*. *Section* stays with the solids: it makes 2D geometry **from** a solid. The palette renders
+  categories from the enum, so `index.html` and `Main.kt` needed no change at all.
 
 ### Implementation status (as built — the 3D view edits, on the active working plane)
 
@@ -7087,6 +7166,32 @@ Three broad families (see OP-9 decision above):
   (`ellipse_and_arc`), every existing golden byte-identical, ktlint clean, and the
   numbered work queue empty for the first time.
 
+- **Session 33 — a plane's inputs are its ancestors, and a success that says nothing (GitHub #9).** The user's
+  issue was two things wearing one hat. The first is a design correction, and theirs: plane creation had been
+  built as if a working plane's context came from *one picked solid*, which made a parallel plane demand a
+  pick it has no use for and left the plane-from-line-and-angle with no context at all. Their rule —
+  *"a plane should use all intersections with ancestor solids (created 'before' themselves) as input
+  geometry"* — is better than the pick in three separate ways, and each of them is now recorded: it removes a
+  gesture (the *Plane at height* tool needs a number and a click that only says "now"), it makes an existing
+  tool useful rather than adding one, and it turns *which solids* into a fact about **history** rather than a
+  selection, which is what makes it acyclic — a plane can only ever reach backwards, so the plane → sketch →
+  solid → cut chain has no way to close a loop. The face exception is theirs too and falls out of the geometry
+  already built: a plane lying on a face sections to that face's own boundary, so "the face itself, in addition
+  to other intersections" needed no case of its own. What the generalization did force was one honest piece of
+  bookkeeping — an index means a member of *a* section, so a pick now records **which solid** it came from
+  (`sectioninput … el=`), including in the snap result, where dropping it would have quietly materialized the
+  anchor's corner of the same number.
+  (2) The second thing is a defect the reporter diagnosed themselves after we reproduced it: *Section* worked
+  perfectly and said **nothing**, and since a prism's cross-section is congruent with the footprint it lies on,
+  a working tool looked broken. The sweep it prompted was the valuable part — every **solid** tool was equally
+  silent, which is worse than it sounds because a solid is the one result the 2D canvas cannot show at all.
+  Eight tools and two refusals now speak, through one helper rather than a sentence each. The residue is
+  recorded rather than fixed: the generic tool path turns *any* unspoken `null` into an empty status line, so
+  the refusal side is a per-route audit still owed.
+  **8 new tests** (`PlaneAncestorTest`, the sweep's findings folded into them), **1245 → 1253 green**,
+  no golden changed, no version bump, and the palette gained a `PLANES` group for free because it renders from
+  the enum.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -8472,6 +8577,20 @@ lands a tool's cap on the face only up to rounding, which the general boolean sa
 refused. What stays out is stated with the work: no gesture *removes* an anchor (undo is the route back), the
 anchor is a section corner rather than an arbitrary constructed point, and a plane not born from a face and a
 segment keeps its own frame — only the origin layers are shared.
+
+**Retired in session 33: plane construction stops being specialized (GitHub #9).** Not a queue line — the
+user's own design, arriving as an issue and adopted whole: *"a plane should use all intersections with ancestor
+solids (created 'before' themselves) as input geometry"*. A working plane's context and pickable inputs are no
+longer one picked part's section but the section of **every solid built before the plane**, which makes a
+parallel plane need no pick at all (*Plane at height*, the new tool), makes the plane-from-line-and-angle
+useful on a line that belongs to no solid, and keeps a face space's own face as input geometry in addition —
+see *A plane's input geometry is every solid built before it* under OP-17. It retires the recorded cut *"a
+free-standing datum still cuts nothing"* (superseded there) and fixes the defect the issue opened with: the
+*Section* tool's success was silent, and so was every solid tool's. It leaves **three things parked**, each
+stated with the work: a plane keeps drawing the **pre-cut** state of an ancestor a later boolean consumed
+(the price of ancestors-only, and the acyclicity argument); the origin anchor still refuses anything that is
+not a **section corner**; and the generic tool path still turns an unspoken `null` from any build lambda into
+an empty status line, so a **per-route refusal audit** remains to be done.
 
 **The numbered queue is empty again.** What remains is the parked list below, each item recorded at its source.
 

@@ -113,8 +113,12 @@ class ScalarSlot(
  * CUSTOM is where a document's **user-defined macros** land (OP-6): a macro *is* a [ToolDef], so the
  * palette needs no second kind of button — only a category whose contents come from the document rather
  * than from [Tools.all]. See [Document.toolDef]: the registry is static plus the open document's macros.
+ *
+ * PLANES is where every tool that **creates a working plane** lands (GitHub #9, the user's rule: *"all plane
+ * creation tools should go to one section in the UI — the section-plane tool is not a solid creation tool"*).
+ * *Section* is not among them: it makes 2D geometry from a solid, so it stays with the solids.
  */
-enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, ANNOTATE, RESULT, SOLIDS, CUSTOM }
+enum class ToolCategory { POINTS, CURVES, CONSTRUCT, TRANSFORM, MEASURE, ANNOTATE, RESULT, SOLIDS, PLANES, CUSTOM }
 
 /**
  * Geometry picked so far for the active tool (split by kind), [at] = the last click's world
@@ -501,9 +505,16 @@ object Tools {
 
     /**
      * A **datum** sketch space: any line, any angle (OP-17's datum extension, GitHub #6). *Sketch on face*
-     * is its special case (a boundary segment at 90°) and *Section* is its parallel one.
+     * is its special case (a boundary segment at 90°) and [PLANE_AT_HEIGHT] is its parallel one.
      */
     const val SKETCH_PLANE = "sketchplane"
+
+    /**
+     * A sketch space **parallel to the one you are in, at a typed height** (GitHub #9) — no line, no solid,
+     * no pick at all. The degenerate case of [SKETCH_PLANE] (0°, an offset) that the hinge form cannot state,
+     * and the tool the user asked for: *"to create such plane, no solid selection is necessary"*.
+     */
+    const val PLANE_AT_HEIGHT = "planeheight"
 
     /**
      * **Where a sketch space's origin sits** (OP-17, session 32): anchor it on a corner of the part's
@@ -683,23 +694,6 @@ object Tools {
             // *Section* is the other direction: a solid's cross-section, as an ordinary 2D area.
             ToolDef(EXTRUDE_ON_FACE, "Extrude on face", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.AREA), scalars = listOf(len("depth")), help = "Type a depth (or pick a parameter in the panel), click the solid to build on, then the area to raise: it is extruded from that solid's top face (an upper storey, a boss).", slotNames = listOf("base solid", "profile"), icon = Icons.EXTRUDE_ON_FACE) { d, p, s -> d.extrudeOnFace(p.elements[0], p.elements[1], s[0]) },
             ToolDef(SECTION, "Section", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("height")), help = "Type a height (or pick a parameter in the panel), then click a solid: its cross-section at that height becomes an ordinary 2D area — dimension it, or extrude it again.", slotNames = listOf("solid"), icon = Icons.SECTION) { d, p, s -> d.sectionSolid(p.elements[0], s[0]) },
-            // ----- sketch on a *side* face (OP-17). One click, on a solid's footprint edge: a side face
-            // projects to exactly that edge, so the edge names the face and the solid at once. Like the
-            // path and opening tools this one records a step of its own (`sketchspace`, naming the
-            // boundary-piece index — a discrete choice, OP-18), so the Editor runs its click.
-            ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.SOLIDS, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that face, where that edge lies on the x axis with the origin at its middle and v runs up into the face (Space origin moves it onto a corner). A flat face of a lofted solid works too — every face of a pyramid — while a ruled or curved one says so and points at Sketch plane. The part's section at that plane is drawn there, and its edges and corners can be clicked as inputs. Cut there drills into the material; Extrude builds a boss out of it.") { _, _, _ -> },
-            // ----- ...and the general form of the same thing (GitHub #6): **any** line, **any** angle. One
-            // LINE pick (a line, a segment, a ray or an ortho leg — the ordinary carrier coercion) plus a
-            // *defaulted* angle slot, so the gesture is one click and typing a number first tilts the plane.
-            // It records its own `sketchspace` step, like the face tool, and does not replicate: a sketch
-            // space is organisation, not geometry an orbit could fan (OP-23).
-            ToolDef(SKETCH_PLANE, "Sketch plane (line + angle)", ToolCategory.SOLIDS, listOf(SlotKind.LINE), scalars = listOf(ang("angle", 90.0), len("offset", 0.0)), recordsSteps = true, replicates = false, help = "Type an angle (90° if you type none) — and, if you want the plane moved off the line, an offset after it — then click a line, segment or wall leg: the 2D view switches to a new sketch plane through that line, tilted by that angle out of the space you are in and shifted along its own normal by the offset. So 0° with an offset is a plane *parallel* to the one you are in, which is what a stack of loft sections wants. u runs along the line, v rises out of the old plane; Extrude builds along the new plane's normal and Cut goes the other way, so a negative angle swaps them. Both numbers stay parameters — retype either and the plane moves, with everything drawn on it.", slotNames = listOf("hinge line")) { d, p, s -> d.createDatumSpace(p.elements[0], s.firstOrNull(), offset = s.getOrNull(1)) },
-            // ----- where the coordinates on that plane start (OP-17's space origin). One pick — a corner of
-            // the part's section on this plane — plus two defaulted offsets, so the gesture is one click and
-            // typing numbers first shifts the origin off the corner. It does not replicate (a space is
-            // organisation, not geometry) and it builds nothing: it re-points the space's own origin nodes,
-            // which translates everything already drawn there (`Document.setSpaceOrigin`).
-            ToolDef(SPACE_ORIGIN, "Space origin", ToolCategory.SOLIDS, listOf(SlotKind.EXISTING_POINT), scalars = listOf(len("dx", 0.0), len("dy", 0.0)), replicates = false, scalarsTypedOnly = true, help = "In a face or datum view: click a corner of the part's section on this plane and the drawing's origin moves there — coordinates are then measured from that corner, and the origin follows it through every edit. Type dx (and dy) first to sit a fixed offset away from it; both stay parameters. Anchoring a plane that already carries a sketch moves that sketch with the frame — which is how a whole sketch is shifted on its face.", slotNames = listOf("anchor corner")) { d, p, s -> d.setSpaceOriginAt(p.elements[0], s.getOrNull(0), s.getOrNull(1)) },
             // `facePartOperand` makes elements[0] the part being cut — the *tip* of its boolean chain as it
             // stands, resolved by the editor and recorded in the step, so cuts chain instead of forking
             // it **does** replicate, and as a *chain*: the part operand is re-resolved per copy, so a Cut on one
@@ -718,6 +712,33 @@ object Tools {
             // named body (OP-23).
             ToolDef(PLACE_SOLID, "Place solid", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.POINT), scalars = listOf(ang("angle", 0.0)), replicates = false, help = "Type an angle if you want one, then click a solid and the point it should sit at: the body is moved so its own coordinates are read from the sketch space you are in, at that point, turned by that angle. The point and the angle stay live — drag the point and the body follows, retype the angle and it turns. An imported reference body arrives already placed this way.", slotNames = listOf("solid", "at point")) { d, p, s -> d.placeSolid(p.elements[0], p.points[0], s.firstOrNull()) },
             ToolDef(CUT_OPENINGS, "Cut openings", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), help = "Click a solid extruded from a wall footprint: every opening on that wall becomes a subtracted box, sill to head. Openings added later need the tool again.", slotNames = listOf("wall solid")) { d, p, _ -> d.cutOpenings(p.elements[0]) },
+            // ----- Planes: every tool that creates a working plane, in one group (GitHub #9, the user's
+            // rule — "the section-plane tool is not a solid creation tool"). *Section* is not here: it makes
+            // 2D geometry *from* a solid and stays with the solids. What they share is that each records its
+            // own `sketchspace` step and none of them replicates — a sketch space is organisation, not
+            // geometry an orbit could fan (OP-23).
+            //
+            // The parallel plane needs **no pick at all** (GitHub #9): a height, then a click that only says
+            // "now" — the same no-slot shape *Point (x, y)* has. Its input geometry arrives on its own, being
+            // the section of every solid created before it (`Document.spaceAncestors`).
+            ToolDef(PLANE_AT_HEIGHT, "Plane at height", ToolCategory.PLANES, emptyList(), scalars = listOf(len("height")), recordsSteps = true, replicates = false, help = "Type a height (or pick a parameter in the panel), then click anywhere: a new sketch plane parallel to the one you are in, that far along its normal — no line and no solid to pick. Everything the plane cuts is drawn there and can be clicked as an input: the section of every solid built before it. Extrude builds along the plane's normal, Cut goes the other way. The height stays a parameter — retype it and the plane slides, with everything drawn on it.") { d, _, s -> d.createParallelSpace(s[0]) },
+            // ----- ...and the general form of the same thing (GitHub #6): **any** line, **any** angle. One
+            // LINE pick (a line, a segment, a ray or an ortho leg — the ordinary carrier coercion) plus a
+            // *defaulted* angle slot, so the gesture is one click and typing a number first tilts the plane.
+            // It records its own `sketchspace` step, like the face tool, and does not replicate: a sketch
+            // space is organisation, not geometry an orbit could fan (OP-23).
+            ToolDef(SKETCH_PLANE, "Sketch plane (line + angle)", ToolCategory.PLANES, listOf(SlotKind.LINE), scalars = listOf(ang("angle", 90.0), len("offset", 0.0)), recordsSteps = true, replicates = false, help = "Type an angle (90° if you type none) — and, if you want the plane moved off the line, an offset after it — then click a line, segment or wall leg: the 2D view switches to a new sketch plane through that line, tilted by that angle out of the space you are in and shifted along its own normal by the offset. So 0° with an offset is a plane *parallel* to the one you are in, which is what a stack of loft sections wants. u runs along the line, v rises out of the old plane; Extrude builds along the new plane's normal and Cut goes the other way, so a negative angle swaps them. Both numbers stay parameters — retype either and the plane moves, with everything drawn on it.", slotNames = listOf("hinge line")) { d, p, s -> d.createDatumSpace(p.elements[0], s.firstOrNull(), offset = s.getOrNull(1)) },
+            // ----- sketch on a *side* face (OP-17). One click, on a solid's footprint edge: a side face
+            // projects to exactly that edge, so the edge names the face and the solid at once. Like the
+            // path and opening tools this one records a step of its own (`sketchspace`, naming the
+            // boundary-piece index — a discrete choice, OP-18), so the Editor runs its click.
+            ToolDef(SKETCH_ON_FACE, "Sketch on face", ToolCategory.PLANES, emptyList(), help = "Click a straight footprint edge of a solid: the 2D view switches to that face, where that edge lies on the x axis with the origin at its middle and v runs up into the face (Space origin moves it onto a corner). A flat face of a lofted solid works too — every face of a pyramid — while a ruled or curved one says so and points at Sketch plane. The part's section at that plane is drawn there, and its edges and corners can be clicked as inputs. Cut there drills into the material; Extrude builds a boss out of it.") { _, _, _ -> },
+            // ----- where the coordinates on that plane start (OP-17's space origin). One pick — a corner of
+            // the part's section on this plane — plus two defaulted offsets, so the gesture is one click and
+            // typing numbers first shifts the origin off the corner. It does not replicate (a space is
+            // organisation, not geometry) and it builds nothing: it re-points the space's own origin nodes,
+            // which translates everything already drawn there (`Document.setSpaceOrigin`).
+            ToolDef(SPACE_ORIGIN, "Space origin", ToolCategory.PLANES, listOf(SlotKind.EXISTING_POINT), scalars = listOf(len("dx", 0.0), len("dy", 0.0)), replicates = false, scalarsTypedOnly = true, help = "In a face or datum view: click a corner of any section on this plane — the part's, or any other solid the plane cuts — and the drawing's origin moves there — coordinates are then measured from that corner, and the origin follows it through every edit. Type dx (and dy) first to sit a fixed offset away from it; both stay parameters. Anchoring a plane that already carries a sketch moves that sketch with the frame — which is how a whole sketch is shifted on its face.", slotNames = listOf("anchor corner")) { d, p, s -> d.setSpaceOriginAt(p.elements[0], s.getOrNull(0), s.getOrNull(1)) },
             // ----- Construct -----
             // the same defaulted factor as Midpoint: with none it is the bisector, with one it is the
             // perpendicular through that ratio point — composed from the ops that already exist
