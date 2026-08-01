@@ -1380,11 +1380,14 @@ class BrowserE2ETest {
             assertEquals("glTF", String(bytes, 0, 4, Charsets.US_ASCII), "a glTF binary container, by its magic")
             assertTrue(fileNote().contains("1 solid"), "the panel says what went out: ${fileNote()}")
 
-            // ...and the same for the two print formats, so all three buttons are known to be wired
+            // ...and the same for the two print formats and the interchange one, so all four buttons are
+            // known to be wired
             val threeMf = page.waitForDownload { page.click("#x-3mf") }
             assertEquals("drawing.3mf", threeMf.suggestedFilename())
             val stl = page.waitForDownload { page.click("#x-stl") }
             assertEquals("drawing.stl", stl.suggestedFilename())
+            val jt = page.waitForDownload { page.click("#x-jt") }
+            assertEquals("drawing.jt", jt.suggestedFilename())
 
             // ---- and the editing views still work, with the preview closed again ----
             page.click("#v-3d")

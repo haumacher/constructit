@@ -889,6 +889,7 @@ private fun setupApp() {
     (document.getElementById("x-glb") as HTMLElement).addEventListener("click", { exportBytes(ExportFormat.GLB) })
     (document.getElementById("x-3mf") as HTMLElement).addEventListener("click", { exportBytes(ExportFormat.THREE_MF) })
     (document.getElementById("x-stl") as HTMLElement).addEventListener("click", { exportBytes(ExportFormat.STL) })
+    (document.getElementById("x-jt") as HTMLElement).addEventListener("click", { exportBytes(ExportFormat.JT) })
     (document.getElementById("f-download") as HTMLElement).addEventListener("click", { saveDrawing(askForFile = false) })
     (document.getElementById("f-saveas") as HTMLElement).addEventListener("click", { saveDrawing(askForFile = true) })
     val filePicker = document.getElementById("f-file") as HTMLInputElement

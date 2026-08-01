@@ -130,11 +130,14 @@ first-class goal and the current implementation focus.
   opening, sill to head, following the parameters live. Those drawn jambs are **grabbable**: dragging
   the near one slides the whole opening along its wall, the far one sets its width, and both clamp to
   the wall's extent — the same two numbers the panel shows, since dragging and typing are one thing.
-- **Export, and a realistic preview** — the finished solids leave the app three ways, all off the *same*
+- **Export, and a realistic preview** — the finished solids leave the app four ways, all off the *same*
   neutral scene: **GLB** (glTF 2.0) for viewing, one named node and one PBR material per solid, with glTF's
   metres and +Y-up applied once at the root so every vertex in the file is still the model's own millimetre;
   **3MF** for printing, with the unit stated (`unit="millimeter"`) and every mesh re-checked watertight before
-  it is written — refused **by name** if it is not; and **binary STL** as the universal fallback. Hidden and
+  it is written — refused **by name** if it is not; **binary STL** as the universal fallback; and **JT**
+  (ISO 14306) for CAD interchange, written by the [kotlinJT](https://github.com/haumacher/kotlinJT) sibling
+  library off the same scene — millimetres declared in the file, one named part per solid, coordinates
+  unconverted because JT declares no up-axis. Hidden and
   invalid solids are named rather than silently dropped, a boolean's operands are not exported beside the part
   they built, and an empty drawing refuses with a reason. Alongside them, a **realistic preview** on three.js:
   a third, display-only view where the solids are lit, tone-mapped and shown with their materials — reading the
@@ -154,7 +157,7 @@ Kotlin Multiplatform, layered so the UI/shell is a late, reversible choice:
 |-------|----------|-------|
 | Core engine | `src/commonMain` | model, type system, DAG eval, geometry ops, DSL — zero UI deps |
 | Editor core | `src/commonMain/.../editor` | document, tools, camera, hit-testing, scene renderer (behind a `DrawTarget` seam) |
-| Exchange | `src/commonMain/.../exchange` | the neutral export scene + the GLB / 3MF / STL writers — pure byte producers, no platform |
+| Exchange | `src/commonMain/.../exchange` | the neutral export scene + the GLB / 3MF / STL writers and the JT adapter — pure byte producers, no platform |
 | Browser shell | `src/jsMain` | HTML5 canvas `DrawTarget` + DOM chrome (palette, panels), one WebGL program for the 3D view, three.js for the preview |
 | Tests | `src/jvmTest` | headless gesture tests, SVG golden snapshots, opt-in Playwright E2E |
 
@@ -329,10 +332,10 @@ did not previously complete at all. What the measuring produced:
   picks are highlighted on the canvas and a click that hits nothing says so. The recorded step still lists
   every piece in order, so nothing is re-discovered when the file is reloaded.
 
-1138 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included — down to opening the
+1153 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included — down to opening the
 preview panel and catching a real GLB download.
 
-**Mesh export is done** (GLB / 3MF / binary STL, plus the in-app three.js preview and a material per solid),
+**Mesh export is done** (GLB / 3MF / binary STL / JT, plus the in-app three.js preview and a material per solid),
 and **conics are first class**: an ellipse and an elliptic arc are curve values like any other — drawn,
 ridden, broken, traced, extruded and thickened — with line ∩ ellipse a two-branch set and conic ∩ conic a
 four-branch one, and with the inclined section of a cylinder now an **exact** ellipse (semi-axes r and
@@ -341,8 +344,10 @@ Planned next: picking a face in the 3D view to choose the working plane (edit-in
 second slice) — which is also what per-face materials wait on — textures by projection at export time, regions
 with holes from traced outlines, and line styles in the render seam. Deliberately not planned: **STEP export**,
 because the kernel is mesh-based and holds no exact B-rep for a solid, so exact-geometry export would be either
-dishonest or a compliance project; **JT** is a separate library project (kotlinJT) that will consume this
-package's scene seam rather than an export route here.
+dishonest or a compliance project. **JT** shipped the way it was scoped: still a separate library project
+(kotlinJT), consuming this package's scene seam — the export here is a one-page adapter, not a format
+implementation. Reading JT *into* a drawing is a future extension with its own design question (what a
+non-parametric reference body is inside a construction DAG).
 
 ## Documentation
 

@@ -4612,11 +4612,110 @@ in three's own layout, imports the library by bare name and so needs an import m
 **Deliberately out, stated so it is not looked for.** **STEP** stays out for the reason OP-9 already gave: the
 kernel is mesh-based and holds no exact B-rep for a solid, so an exact-geometry export would be either dishonest
 or a compliance project. **JT** stays a separate project (the kotlinJT library) and is *not* an export route
-here — what binds the two is this package's scene seam, which is now real. No format flags "for later": the
-`ExportFormat` enum has exactly the three writers that exist. Per-face materials, textures and a material editor
+here — what binds the two is this package's scene seam, which is now real. *(Superseded in session 28, and the
+sentence stands as it was written because what changed is the world, not the judgement: the library exists, so
+the route the seam was built for is now the fourth writer — see* JT export *below. What the sentence got right
+is that ConstructIt still writes no JT byte: the adapter is a page and the format is the sibling's.)* No format
+flags "for later": the `ExportFormat` enum has exactly the writers that exist — four, since JT joined. Per-face
+materials, textures and a material editor
 are Tiers 2–4, queued with their own mechanisms. And the export uses the **download** route rather than the File
 System Access API that *Save* uses: an export is a derived artefact, not the drawing — there is nothing to write
 back to and no handle worth keeping.
+
+### JT export (as built — the fourth writer, and the page it was promised to be)
+
+**`exchange/Jt.kt` is 160 lines, most of them prose, and that is the result being reported.** The seam did what
+it was built to do: the sibling library's Layer 2 `Scene` façade (`de.haumacher.kotlinjt.scene`, its issue #1)
+was designed as *this* handoff, so the adapter maps named nodes to named nodes, one material to one material,
+one unit declaration to another, and calls `writeJt`. No geometry, no encoding, no format knowledge on this side
+of the seam — ConstructIt still writes no JT byte, exactly as the "separate project" decision said it would not.
+The library is a **Gradle composite build** (`includeBuild("../kotlinJT")`), so the two projects move together
+without a publish step, and the dependency sits in `commonMain`: the JT writer is platform-free Kotlin, so the
+browser gets the format for free the way it gets 3MF.
+
+**Structure: root carries the tree, leaves carry the geometry** — and that is the library's rule, not a
+preference. Its writer *refuses* a node with geometry **and** children, because its own reader would hand the
+geometry back on an extra unnamed child; the scene this package already produces (a root named after the
+drawing, one named body under it) is that shape verbatim, so the naming authority's answer (OP-18) rides
+through into the file's structure tree, which is the thing JT is exported *for*.
+
+**Units declared, axes untouched — the asymmetry with GLB is the format's, not a choice.** `LengthUnit.MILLIMETERS`
+is written into the file (JT's own `JT_PROP_MEASUREMENT_UNITS`), and the coordinates go out world-space, Z-up,
+in millimetres, **unconverted**: glTF states "+Y-up, metres" normatively, which is why the GLB writer turns and
+scales once at the root, but **JT declares no up-axis at all**, so converting here would be inventing a
+convention the file has no way to state. Every vertex in an exported JT is therefore the model's own millimetre
+number — the same property the GLB has for the opposite reason.
+
+**Transforms map element for element, and that is a result rather than an assumption.** `constructit.editor.Mat4`
+is column-major with the column-vector convention; the library's `Mat4` is row-major with the row-vector one.
+Transposing the convention and transposing the storage cancel: both read the same sixteen numbers the same way
+and both keep translation in elements 12–14, so the conversion is a copy — which is also why glTF's matrices
+interchange with the library's without transposition. `ExportNode.transform` is identity for every node this
+kernel produces (it emits world-space meshes), so the mapping is written generally and **tested on a matrix that
+is not the identity** (a quarter turn plus a translation, asserted three ways: where the translation lands, that
+both libraries transform a point to the same place, and that the placement survives the file).
+
+**Normals: computed, from the one authority — the honest option was not the empty one.** The kernel stores no
+normals and the library's `Mesh` does allow an empty normal list (every corner index −1), which looks like the
+truthful answer. It is not the one taken, and the reason is that the choice is not between data and no data but
+between *our* shading answer and *a reader's*: JT's installed base binds per-vertex normals on every shape, so a
+viewer handed none invents them, and what it invents is per-facet — a tessellated bore in visible strips, where
+the GLB and the in-app preview show it smooth. So JT consumes the same `RenderMesh` every other consumer does
+(crease threshold `Scene3.CREASE_ANGLE_RAD`, the 30° the 3D view draws feature edges at), and the one-authority
+property extends to a fourth file: *what the preview shows is what every exported file shows*. Nothing is
+invented — the normals are a pure function of the mesh — and nothing is duplicated: positions and normals cross
+in lockstep rather than through the library's dual indexing, because its writer expands every mesh to per-corner
+records anyway, so dual indexing would save nothing on the wire while giving the crease logic a second home.
+
+**What JT cannot carry, said out loud: metalness.** A JT material is Phong. The library maps roughness onto the
+shininess exponent and back exactly (agreement well under 1e-5), and deliberately does **not** encode metallic —
+classic JT has no metalness concept and deriving one from specular chroma would be a guess. So a Tier-1 metalness
+of 0.9 reads back as 0. The adapter passes it through anyway (the scene says what the drawing says; what a format
+cannot keep is the format's statement to make), and the loss is recorded in the writer's KDoc and asserted in the
+test — the same way STL's loss of names and materials is recorded rather than noted at runtime, since a
+format-inherent limit is documentation, not a per-export surprise.
+
+**The refusal path speaks, and cannot fire.** `writeJt` throws `JtWriteException` for a scene its own reader
+would hand back differently (undeclared units, geometry-plus-children, more than ten LOD tiers, a child its
+structural collapse would splice out or absorb). `Exports.export` catches it and returns the message as the
+not-exported reason, the way the 3MF watertight check refuses **by name** — a refusal that escapes as a crash is
+a refusal that does not speak. Every one of those refusals is nevertheless unreachable through this adapter **by
+construction**, and the test asserts the structure that makes it so rather than inventing a refusal: the unit is
+always declared, the root carries no geometry, a body carries no children, one mesh is one tier, and an export
+name is never empty (the naming authority falls back to the script name `e7`, and clearing a user name restores
+exactly that). The exception path is then proved real on a scene the *seam's constructors* allow but the
+extractor never produces — a body with no name — which is also the shape a future assembly-structured JT export
+could reach, so the catch is not decoration.
+
+**MIME type: `application/octet-stream`, deliberately.** JT has no registered media type; `model/jt` is passed
+around but names no registry entry, and minting a `model` subtype nobody can look up is a claim the bytes cannot
+back. The extension is what every JT consumer keys on, and the browser downloads either way.
+
+**The cost, measured and recorded, because it is the largest one this package has taken.** The main JS bundle
+goes **726,533 → 886,286 bytes (+159,753, +22.0 %)**: the whole sibling library — its element model, its
+codecs, its writer — plus the `pako` npm package its JS zlib is implemented over (which is why
+`kotlin-js-store/yarn.lock` grew a line). Unlike three.js, this cannot ride a lazy chunk today: three is an
+*npm* dependency behind a dynamic `import('three')`, while kotlinJT is a *Kotlin* dependency that webpack sees
+as part of the one module. Recorded rather than paid quietly, and the mitigation is named without being
+promised: a `jsMain`-side split (the JT writer behind a dynamically imported Kotlin module) is possible and
+would be worth doing if the bundle becomes a complaint — it is not one at 886 KB for a CAD tool that already
+fetches a 541 KB WASM kernel.
+
+**Acceptance (`JtExportTest`, 5 tests).** The loop closes through the library's own reader: a drilled, renamed,
+copper-dressed pyramid exported through `Exports.export(…, JT)` and read back with `readScene` — millimetres
+declared, zero read notes, the renamed part where a viewer's tree shows it, the **drilled volume recomputed from
+the file's own triangles** (which says winding and coordinates, not merely that a mesh is present), normals
+bound on every corner, and the material's linear base colour and roughness round-tripping while metalness comes
+back 0. Plus the non-identity transform mapping, the unreachable-refusals structural assertion with the refusal
+path proved, the empty-drawing refusal shared with the other three formats, and two bodies becoming two
+distinctly named parts. The browser E2E clicks `#x-jt` and asserts a real `drawing.jt` download, so the fourth
+button is wired in real Chrome like the other three.
+
+**Still a future extension, with its own design question: JT *import*.** Reading a JT as a reference body inside
+a parametric drawing is not the inverse of this page — an imported mesh is not a construction, so where it hangs
+in the DAG (a source node whose value is a fixed mesh, placed by parameters?) and what it means when it is
+edited are the questions to answer before any reading code is written. The library reads JT already; what is
+missing is the model decision, which is the honest reason it is not here.
 
 ### Representation families considered (background)
 Three broad families (see OP-9 decision above):
@@ -7539,8 +7638,37 @@ shape of parking the rest of the Apollonius family already has. **Plane ∩ cone
 deferral, and the reason is recorded with it: a cone here is a loft with no cone parameters to read, so
 answering would mean recognising one from a shape, which is discovery.
 
-The numbered queue is now **empty**; what remains is the parked list below, each item recorded at its
-source.
+**Retired in session 28 — JT export via the kotlinJT sibling.** The entry, quoted so the retirement is
+legible:
+
+> **Queued in session 28 — JT export via the kotlinJT sibling.** The library exists now
+> (https://github.com/haumacher/kotlinJT, developed as `../kotlinJT`, wired in as a Gradle composite
+> build): its Layer 2 `Scene` façade was designed as exactly this seam (its issue #1), and the
+> `Exports.kt` doc comment that recorded JT as deliberately absent promised "the adapter is a page when
+> the library exists". Deliver that page: an `ExportScene → de.haumacher.kotlinjt.scene.Scene` adapter
+> in `exchange/Jt.kt`, a fourth `ExportFormat.JT` entry dispatching to `writeJt`, the `x-jt` button in
+> the browser shell, millimetres declared (`LengthUnit.MILLIMETERS`), Tier-1 materials mapped, and the
+> acceptance that closes the loop: a drilled, renamed, dressed part exported to JT bytes and **read back
+> through kotlinJT's own `readScene`** — same name, same volume, same material. Reading JT files *into*
+> a drawing (a reference body in a parametric model) is a future extension with its own design question.
+
+Delivered exactly as stated — see *JT export (as built — the fourth writer, and the page it was promised
+to be)* under OP-9. The page really was a page: an adapter with no geometry and no format knowledge, one
+`ExportFormat.JT` entry, one button, one listener. Three decisions the entry did not pre-empt are recorded
+where they live, because each could have gone the other way: **normals are computed** from the one
+`RenderMesh` authority rather than left empty (the library allows empty, but a JT viewer handed none
+invents per-facet ones, so the "honest" option would have shipped a faceted bore where the preview shows it
+smooth); **coordinates are not converted** (JT declares no up-axis, so unlike GLB there is no root
+transform to apply — the asymmetry is the format's); and **metalness is dropped by JT itself** (a Phong
+material has no such concept and the library refuses to invent one), recorded in the writer's KDoc and
+asserted in the test the way STL's losses are. The transform mapping turned out to be a **copy** —
+column-major/column-vector against row-major/row-vector, the two transposes cancelling — and is tested on a
+non-identity matrix, since that is the only way the claim means anything. What the entry left as a future
+extension stays one, with its reason sharpened: **JT import** waits on a *model* decision (what a
+non-parametric reference body is in a construction DAG), not on reading code — the library already reads.
+
+The numbered queue is again **empty**; what remains is the parked list below, each item recorded at
+its source.
 
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc

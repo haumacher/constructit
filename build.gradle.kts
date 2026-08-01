@@ -83,7 +83,12 @@ kotlin {
     }
 
     sourceSets {
-        val commonMain by getting
+        val commonMain by getting {
+            dependencies {
+                // the JT writer/reader (sibling project, substituted by the composite build in settings)
+                implementation("de.haumacher.kotlinjt:kotlinJT:0.1.0-SNAPSHOT")
+            }
+        }
         val commonTest by getting {
             dependencies {
                 implementation(kotlin("test"))
