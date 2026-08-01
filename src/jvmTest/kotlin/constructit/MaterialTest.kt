@@ -5,6 +5,8 @@ import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.Element
 import constructit.editor.ElementKind
+import constructit.editor.Painter3
+import constructit.editor.Scene3
 import constructit.editor.Tools
 import constructit.exchange.ExportScene
 import constructit.exchange.Glb
@@ -177,6 +179,63 @@ class MaterialTest {
             json.contains(""""baseColorFactor":[${Glb.num(rgb[0])},${Glb.num(rgb[1])},${Glb.num(rgb[2])},1]"""),
             json.substringAfter("\"materials\""),
         )
+    }
+
+    /**
+     * **The 3D construction view shades the assigned colour** (GitHub issue #8), and keeps the identification
+     * palette for a solid nobody has dressed — so a choice is visible where the modelling happens without
+     * making every undressed body the same grey.
+     */
+    @Test
+    fun theConstructionViewShadesTheAssignedColourAndPalettesTheRest() {
+        val ed = pyramid()
+        ed.setTool(Tools.RECTANGLE)
+        ed.click(Vec2(150.0, 0.0))
+        ed.click(Vec2(200.0, 50.0))
+        ed.activeScalar = ed.doc.newParameter("h", constructit.units.Quantity.mm(20.0))
+        ed.setTool(Tools.EXTRUDE)
+        ed.click(Vec2(175.0, 0.0))
+        val solids = ed.doc.elements.filter { it.kind == ElementKind.SOLID }
+        assertEquals(2, solids.size)
+
+        // undressed: both wear their palette entries, and they are told apart
+        val before = Scene3.extract(ed.doc)
+        assertEquals(solids.map { Scene3.colorFor(it.id) }, before.solids.map { it.color }, "the palette is the default")
+        assertTrue(before.solids[0].color != before.solids[1].color, "two undressed bodies stay distinguishable")
+
+        // dress one: it carries its own colour, the other is untouched
+        ed.setMaterial(solids[0], Appearance("#b87333", roughness = 0.35, metallic = 0.9))
+        val dressed = Scene3.extract(ed.doc)
+        assertEquals("#b87333", dressed.solids[0].color, "the assigned base colour is what the view shades")
+        assertEquals(Scene3.colorFor(solids[1].id), dressed.solids[1].color, "the undressed sibling keeps its palette entry")
+        // ...and the feature edges follow, because an edge is that colour darkened — one authority, not two
+        assertEquals(Painter3.shade("#b87333", Scene3.EDGE_SHADE), dressed.solids[0].edgeColor)
+
+        // an *edit* is followed on the next extraction: the scene is a value, so there is no cache to miss it
+        ed.setMaterial(solids[0], Appearance("#123456"))
+        assertEquals("#123456", Scene3.extract(ed.doc).solids[0].color)
+
+        // ...and clearing it hands the body back to the palette
+        ed.setMaterial(solids[0], null)
+        assertEquals(Scene3.colorFor(solids[0].id), Scene3.extract(ed.doc).solids[0].color)
+    }
+
+    /**
+     * The view takes the **colour and nothing else**: roughness and metalness are stated as not applying to a
+     * flat-shaded technical view (see `Scene3.colorOf`), so two solids that differ only in those two numbers
+     * are drawn identically. Pinned, because "we deliberately did not implement it" is only a decision if
+     * something notices when it quietly changes.
+     */
+    @Test
+    fun roughnessAndMetalnessDoNotReachTheConstructionView() {
+        val ed = pyramid()
+        val solid = ed.solid()
+        ed.setMaterial(solid, Appearance("#b87333", roughness = 0.0, metallic = 1.0))
+        val metal = Scene3.extract(ed.doc).solids.single()
+        ed.setMaterial(solid, Appearance("#b87333", roughness = 1.0, metallic = 0.0))
+        val plastic = Scene3.extract(ed.doc).solids.single()
+        assertEquals(metal.color, plastic.color)
+        assertEquals(metal.edgeColor, plastic.edgeColor)
     }
 
     /** A material assigned to one body is not worn by another: the record is per element. */

@@ -3604,20 +3604,154 @@ class Document {
         return true
     }
 
-    /** Un-weld / detach: the point resumes as an independent free point at its current position. */
-    fun unweld(alias: Element) = recording("unweld", Arg.El(alias), skipIfEmpty = true) { unweldNow(alias) }
+    /**
+     * Un-weld / detach: the point resumes as an independent free point **at its current position**.
+     *
+     * [dofs] is that position as a replay hands it back (OP-18) — the same `dofs=` seam every other
+     * re-parameterization rides ([relativeDofs]). It is needed, and the need is not obvious: replay runs the
+     * `weld` step first, so by the time this one runs the point *reads* its master's position, and re-deriving
+     * from that would drag every point ever unlinked-and-then-moved back onto the master it left. So the freed
+     * position is **state on this step**, exactly as a freed rider's coordinates are ([detachRider]).
+     *
+     * Absent — an older file, written before the step restated anything — the current value is read as before,
+     * which is what such a file meant: nothing had moved since. No stored literal changed meaning, so no
+     * format version bump is owed (OP-18's versioning rule).
+     */
+    fun unweld(
+        alias: Element,
+        dofs: List<Quantity> = emptyList(),
+    ) = recording("unweld", Arg.El(alias), skipIfEmpty = true) { unweldNow(alias, dofs) }
 
-    private fun unweldNow(alias: Element) {
+    private fun unweldNow(
+        alias: Element,
+        dofs: List<Quantity> = emptyList(),
+    ) {
         val node = literalNode(alias) ?: return
-        val cur = (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p }
-        if (node.boundTo != null) noteEdit()
+        val lengths = dofs.filter { it.dim == Dimension.LENGTH }
+        val cur =
+            if (lengths.size == 2) {
+                Vec2(lengths[0].mm, lengths[1].mm)
+            } else {
+                (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as? PointValue)?.p }
+            }
+        val was = node.boundTo != null
+        if (was) noteEdit()
         node.boundTo = null
         relatives.remove(alias.id)
         if (cur != null) node.value = PointValue(cur)
         alias.kind = ElementKind.POINT
         alias.handle = FreePointHandle(node) // an independent free point again, handle included
         alias.style = Styles.FREE_POINT
-        alias.visible = true
+        // back to visible, pickable life — **unless it is hidden by construction for the other reason**: a
+        // boundary's duplicate joint marker is hidden because a point element already stands there (OP-14),
+        // which has nothing to do with the weld and does not end with it. One predicate, asked rather than
+        // assumed ([hiddenByConstruction]), so the inverse of a weld cannot resurrect a marker.
+        alias.visible = alias.id !in duplicateJointMarkers
+        if (was) {
+            // it rides nothing any more. A point *drag-attached* onto a curve carries a rider record and a
+            // registration for the gesture-time compensation a carrier-anchored parameter needs (OP-20); both
+            // describe a bond that has just ended, and leaving them behind left a free point still claiming a
+            // host — the same clean-up [detachRider] does for the other shape a rider can have.
+            riders.remove(alias.id)?.let { rec -> carrierRiders.removeAll { it.dof === rec.param } }
+            // the position it now owns is state this step must restate (OP-18) — see [unweld], [relativeDofs]
+            unwelded.add(alias.id)
+            noteReparam(alias)
+        }
+    }
+
+    /**
+     * Points whose own literal was handed back by [unweldNow], by element id: what tells [relativeDofs] that
+     * the step which freed them owns their coordinates from then on.
+     *
+     * A set rather than a flag on the element for the reason every other such record here is one — an element
+     * is a view of the graph, and what a *step* must restate is the step's business (OP-18).
+     */
+    private val unwelded = HashSet<String>()
+
+    /**
+     * **Unlink — the inverse of Join** (GitHub issue #10): the point named leaves the bond that drives it and
+     * is a free degree of freedom again, right where it stands.
+     *
+     * The bond is the `boundTo` substrate welding is built on (OP-16/OP-5): a point joined to another point
+     * with *Join*, one drag-welded onto another by the magnet, or one drag-attached onto a curve. All three are
+     * "this point's own source is driven by something else", and all three end the same way — the driven value
+     * is read out and **restated as the node's own**, so nothing moves at the moment of the change ("a click is
+     * a choice, state restates as a value"). Everything built on the point keeps working and simply stops
+     * following.
+     *
+     * **Where several points were joined into one, only the named one leaves.** That falls out of the
+     * substrate rather than being arranged: each alias holds its own `boundTo`, so clearing one says nothing
+     * about the others. It is also why the gesture is *on the selection* — the merged dot is one visual point,
+     * and a click cannot say which of the points under it is meant, while the element tree can.
+     *
+     * The two neighbours it must not be confused with, and why each is answered as it is:
+     *
+     * - A **rider** whose freedom is a parameter along its host (the *Point on line* / *Point on circle*
+     *   tools) is not welded — its position is published through a re-pointable view, and freeing it is
+     *   [detachRider]'s conversion. Unlink **delegates** there rather than refusing, because a rider created
+     *   by a tool and a point drag-attached onto the same curve are indistinguishable on screen (both are
+     *   `ON_CURVE`, both slide along it) and the second one *is* inside this substrate: refusing one and
+     *   freeing the other would be a distinction the user has no way to see.
+     * - A **relative point** (OP-4 case b) is bound too, and is *not* unlinked — it is refused, naming its
+     *   anchor and the conversion that undoes it. Nothing drives it: its two degrees of freedom are still its
+     *   own, written as a distance and an angle instead of as x and y. "Give this point plain coordinates
+     *   back" is a different request from "let this point go", and *Make absolute* is the tool that says it.
+     */
+    fun unlink(
+        pt: Element,
+        dofs: List<Quantity> = emptyList(),
+    ): Boolean {
+        // Deliberately **not** wrapped in a `recording` of its own: what this performs is one of two existing
+        // operations, and each records the step that replays *it* (`unweld`, or `absolute` for the rider it
+        // delegates to). A wrapper here would record a third kind whose replay could only guess which of the
+        // two was meant. A refusal records nothing at all, since it rewires nothing.
+        if (!pt.isPoint) {
+            note = "${nameOf(pt)} is ${kindWord(pt)}, not a point — Unlink frees a point that was joined to something"
+            return false
+        }
+        val node = literalNode(pt)
+        if (node != null && node.boundTo != null) {
+            relativeOf(pt)?.let { r ->
+                note =
+                    "${nameOf(pt)} is not joined to anything: it is measured from ${nameOf(elementFor(r.anchor) ?: pt)} " +
+                    "(a distance and an angle of its own) — Make absolute gives it plain coordinates back"
+                return false
+            }
+            if (isFramed(pt)) {
+                val g = placedGroupOf(pt) ?: allGroups.firstOrNull { grp -> grp.captures.any { it.original === node } }
+                note =
+                    "${nameOf(pt)} is placed by group ${g?.name ?: "it belongs to"}, not joined to another point — " +
+                    "move or unplace the group to free it"
+                return false
+            }
+            val to = node.boundTo?.let { labelOf(it) }
+            unweld(pt, dofs)
+            note = "${nameOf(pt)} is a free point again, where it stands${if (to == null) "" else " — it no longer follows $to"}"
+            return true
+        }
+        // a rider the *tool* created: not welded, but the same request — see this function's note
+        val rec = riderOf(pt)
+        if (node == null && rec != null) {
+            if (makeAbsolute(pt, dofs)) return true
+            note = note ?: "${nameOf(pt)} rides ${nameOf(rec.host)} and could not be freed"
+            return false
+        }
+        note =
+            if (node != null) {
+                "${nameOf(pt)} is already free — it is joined to nothing"
+            } else {
+                val from = Dependencies.inputsOf(this, pt).map { nameOf(it.element) }
+                "${nameOf(pt)} is derived by the construction" +
+                    (if (from.isEmpty()) "" else " from ${from.joinToString(" and ")}") +
+                    ", so there is no bond to leave and no position of its own to hand back"
+            }
+        return false
+    }
+
+    /** The word a refusal uses for what an element *is* — "a circle", "an elliptic arc". */
+    private fun kindWord(el: Element): String {
+        val w = el.kind.name.lowercase().replace('_', ' ')
+        return (if (w.first() in "aeiou") "an " else "a ") + w
     }
 
     // ---- relative points: re-parameterize a free point onto an anchor (OP-4 case b) ----
@@ -3976,6 +4110,18 @@ class Document {
         // placement capture must not make the step describe post-capture geometry
         if (detached.containsKey(el.id)) {
             restatedPosition(el, stepIndex, ev)?.let { return listOf(Quantity.mm(it.x), Quantity.mm(it.y)) }
+        }
+        // an **unlinked** point (a weld or an attach left behind, see [unweld]) owns its coordinates from the
+        // moment its step ran, for exactly the same reason — and its step must restate them, or replay would
+        // re-derive them from the master the earlier `weld` step has just re-bound it to and put the point
+        // back where it was joined.
+        if (el.id in unwelded) {
+            val n = literalNode(el)
+            // free now: the same placement-capture correction every restated position gets. Bound *again*
+            // since (unlinked, moved, re-joined elsewhere): its own literal is what this step restored, and
+            // the later weld step re-binds it — reading the value would describe the new master instead.
+            val p = if (n != null && n.boundTo != null) (n.value as? PointValue)?.p else restatedPosition(el, stepIndex, ev)
+            p?.let { return listOf(Quantity.mm(it.x), Quantity.mm(it.y)) }
         }
         return emptyList()
     }

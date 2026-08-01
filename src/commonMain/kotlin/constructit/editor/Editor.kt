@@ -944,7 +944,30 @@ class Editor(
             } else {
                 ""
             }
+        if (applyToSelection()) return // it ran, and said what happened
         onChange()
+    }
+
+    /**
+     * Run the just-armed tool on **what is already selected**, if it declares [ToolDef.fromSelection] and
+     * exactly one element is selected. True when it ran (successfully or refused out loud).
+     *
+     * The one generic thing a tool needed to reach a point no click can: a welded alias is hidden by
+     * construction, and a merged dot names no single one of the points under it — see [ToolDef.fromSelection]
+     * for the whole argument. Handled here, in the slot collector, rather than in the tool: what fills a slot
+     * has always been the editor's business, and the tool still sees an ordinary [Picks].
+     */
+    private fun applyToSelection(): Boolean {
+        val tool = doc.toolDef(toolId) ?: return false
+        if (!tool.fromSelection || tool.slots.size != 1 || tool.scalars.isNotEmpty()) return false
+        val el = selection?.takeIf { selected.size == 1 } ?: return false
+        // whatever is selected, not only what the slot would accept: a wrong pick is refused *by name* in the
+        // build, which is the whole difference between a refusal and a tool that quietly waits instead
+        pickedElements.add(el)
+        // and **no click is recorded**, because none happened: a click in a step is a choice a replay must
+        // repeat (OP-18), and inventing a position here would state a choice nobody made
+        filledSlots = 1
+        return maybeCompleteTool(null)
     }
 
     // ---- sketch spaces: which 2D space this canvas is showing (OP-17) ----

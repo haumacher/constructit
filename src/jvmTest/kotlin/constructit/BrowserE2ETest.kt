@@ -439,6 +439,40 @@ class BrowserE2ETest {
             )
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/12-broken-segment.png")))
 
+            // ---- Join, then **Unlink** through the element tree (GitHub issue #10) ----
+            //
+            // Here for the one thing only a browser can vouch for: a welded alias is hidden *by
+            // construction*, so no click on the canvas can reach it and the element tree is the only place
+            // that names it. Selecting its row and arming the tool is the whole gesture — the shell's half of
+            // `ToolDef.fromSelection`.
+            val ux1 = box.x + box.width * 0.80
+            val ux2 = box.x + box.width * 0.92
+            val uy = box.y + box.height * 0.88
+            page.click("#tool-${Tools.POINT}")
+            page.keyboard().down("Alt") // raw clicks: no snapping onto anything already drawn
+            page.mouse().click(ux1, uy)
+            page.mouse().click(ux2, uy)
+            page.keyboard().up("Alt")
+            val itemsBeforeJoin = page.querySelectorAll("#tree .item").size
+            page.click("#tool-${Tools.JOIN}")
+            page.mouse().click(ux1, uy)
+            page.mouse().click(ux2, uy)
+            assertEquals(itemsBeforeJoin, page.querySelectorAll("#tree .item").size, "a join builds nothing")
+            // the alias is the last element created, and it is still *listed* although it is not drawn
+            page.click("#tree .item:last-child")
+            page.click("#tool-${Tools.UNLINK}")
+            assertTrue(
+                page.querySelector("#status").textContent().contains("free point again"),
+                "Unlink on the selected alias should free it; got: ${page.querySelector("#status").textContent()}",
+            )
+            assertTrue(
+                page.querySelector("#status").textContent().contains("no longer follows"),
+                "…and say what it stopped following, which only a point that really was welded can: " +
+                    page.querySelector("#status").textContent(),
+            )
+            assertEquals(itemsBeforeJoin, page.querySelectorAll("#tree .item").size, "and unlinking builds nothing either")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/12b-unlinked.png")))
+
             assertTrue(
                 meshBoolLines.size == 1 && meshBoolLines[0].contains("Manifold"),
                 "the general boolean engine should report itself exactly once (OP-9); got: $meshBoolLines",
@@ -797,6 +831,47 @@ class BrowserE2ETest {
             }
             """.trimIndent(),
         ).let { (it as Number).toInt() }
+
+    /**
+     * How many **warm** and how many **cool** pixels a canvas is showing — the one question a browser can be
+     * asked about a colour on a GL surface.
+     *
+     * A balance rather than an exact match, deliberately: the realistic preview puts the base colour through a
+     * PBR material, an environment map and ACES tone mapping, and the construction view scales it by a diffuse
+     * term, so no pixel is ever the assigned hex. What survives all of that is which side of neutral the body
+     * is on — and the furniture (a grey room, a grey grid) sits on neither, which is what makes the count read
+     * as "the body", not as "the picture".
+     *
+     * The GL canvas is drawn into a scratch 2D canvas because `getImageData` is a 2D-context call; both GL
+     * canvases are created with `preserveDrawingBuffer`, which is exactly what makes that legal here.
+     */
+    private fun warmCool(
+        page: Page,
+        selector: String = "#canvas-preview",
+    ): Pair<Int, Int> {
+        @Suppress("UNCHECKED_CAST")
+        val counts =
+            page.evaluate(
+                """
+                (sel) => {
+                  const src = document.querySelector(sel);
+                  const s = document.createElement('canvas');
+                  s.width = src.width; s.height = src.height;
+                  const g = s.getContext('2d');
+                  g.drawImage(src, 0, 0);
+                  const d = g.getImageData(0, 0, s.width, s.height).data;
+                  let warm = 0, cool = 0;
+                  for (let i = 0; i < d.length; i += 4) {
+                    const r = d[i], b = d[i + 2];
+                    if (r > b + 25) warm++; else if (b > r + 25) cool++;
+                  }
+                  return [warm, cool];
+                }
+                """.trimIndent(),
+                selector,
+            ) as List<Any?>
+        return (counts[0] as Number).toInt() to (counts[1] as Number).toInt()
+    }
 
     /**
      * The distribution over **http**, from the JDK's own server — because one thing in this app only works
@@ -1381,6 +1456,35 @@ class BrowserE2ETest {
             assertEquals(itemsBefore, tree().size, "a display-only view must not build anything")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/25-preview-orbited.png")))
 
+            // ---- a colour picked **while the preview is up** (GitHub issue #8, the second half) ----
+            //
+            // The material above was assigned before the preview existed, so it proves only that the scene is
+            // read at open. What was reported is a *live* change, and the headless contract for it
+            // (`PreviewSyncTest`: a material change restyles without a geometry rebuild) can only say that the
+            // decision is right — not that the shell ever asks. So the assertion is on the pixels, and it is
+            // about the **colour** rather than about "something changed": an orbit changes pixels too. The
+            // copper body is warm, the room it stands in is neutral grey, so a body turned blue has to swing
+            // the warm/cool balance right over.
+            val warmBefore = warmCool(page)
+            assertTrue(warmBefore.first > warmBefore.second * 3, "the copper body reads warm: $warmBefore")
+            page.click("#tree .item:last-child")
+            page.waitForSelector("#insp-color")
+            page.evaluate(
+                """
+                () => {
+                  const f = document.getElementById('insp-color');
+                  f.value = '#1040ff';
+                  f.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                """.trimIndent(),
+            )
+            assertTrue(status().contains("#1040ff"), "the panel took the new colour: ${status()}")
+            page.waitForCondition { warmCool(page).let { it.second > it.first } }
+            val coolAfter = warmCool(page)
+            assertTrue(coolAfter.second > coolAfter.first * 3, "…and the preview really restyled the body: $coolAfter")
+            assertEquals(itemsBefore, tree().size, "a restyle builds nothing")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/25b-preview-restyled.png")))
+
             // ---- the GLB export: a real download, and its first four bytes ----
             val download = page.waitForDownload { page.click("#x-glb") }
             assertEquals("drawing.glb", download.suggestedFilename(), "named after the drawing")
@@ -1406,6 +1510,17 @@ class BrowserE2ETest {
             page.click("#v-3d")
             page.waitForCondition { page.querySelector("#canvas-preview").isHidden }
             val solid3d = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
+            // **and the 3D construction view shades the assigned colour too** — issue #8's headline, in the
+            // real shell: the palette is the default, not the law, so a dressed body wears what it was given
+            // in the view the modelling happens in. Asserted the same way, on the balance rather than on an
+            // exact pixel: the flat shading scales the colour, so every lit face of a #1040ff body is cool
+            // while the grid and the ground stay neutral.
+            val view3dBalance = warmCool(page, "#canvas3")
+            assertTrue(
+                view3dBalance.second > view3dBalance.first * 3,
+                "the construction view should shade the assigned blue, not a palette colour: $view3dBalance",
+            )
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/25c-view3d-material.png")))
             page.click("#v-2d")
             page.click("#tool-${Tools.POINT}")
             page.mouse().click(rx1, ry1 - 40)

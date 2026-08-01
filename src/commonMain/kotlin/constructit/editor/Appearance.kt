@@ -49,9 +49,15 @@ data class Appearance(
          * object — which is why there is no "unset" state in this record.
          *
          * Deliberately *not* the 3D view's per-element palette colour ([Scene3.PALETTE]). That palette is
-         * part identification — "the colour it is always drawn in", so a sibling going away cannot recolour
-         * a part — and identification is not a material. An exported file carries what the user assigned,
-         * and a light grey is the honest answer for what they have not.
+         * part identification — a stable colour per element, so a sibling going away cannot recolour a part
+         * — and identification is not a material. An exported file carries what the user assigned, and a
+         * light grey is the honest answer for what they have not.
+         *
+         * The traffic runs the *other* way, and only for a solid that has been dressed (GitHub issue #8): the
+         * 3D construction view shades an **assigned** material's colour and keeps the palette for everything
+         * else ([Scene3.colorOf]). So a choice is visible where the modelling happens, and the absence of a
+         * choice still tells two bodies apart — which is what would be lost if this default became the palette
+         * or the palette became this default.
          */
         const val DEFAULT_COLOR = "#c8c8c8"
         const val DEFAULT_ROUGHNESS = 0.6

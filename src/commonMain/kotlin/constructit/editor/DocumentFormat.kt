@@ -236,7 +236,10 @@ object DocumentFormat {
             // coordinates from then on and may be dragged anywhere, so they are state on this step. Every
             // other reading of *Make absolute* restates nothing, because what it restores was already stated
             // by the step that created the point.
-            "relative", "absolute" -> {
+            // ...and `unweld` for the same reason once more (GitHub issue #10, the *Unlink* tool): a point
+            // freed from a weld or an attach owns its coordinates from that step on, and the `weld` step that
+            // replays before it has just re-bound them — so they are state on this step or they are lost.
+            "relative", "absolute", "unweld" -> {
                 val dofs = relativeDofs(doc, step, ev)
                 if (dofs.isEmpty()) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(dofs))
             }
@@ -663,7 +666,12 @@ object DocumentFormat {
             "attach" -> doc.attachToCurve(el(1), el(2))
             "weldortho" -> doc.weldOrthoEndpointToPoint(el(1), el(2))
             "attachortho" -> doc.attachOrthoEndpointToCurve(el(1), el(2))
-            "unweld" -> doc.unweld(el(1))
+            // `dofs=` is the freed point's own position, restated (see [restate]): replay runs the `weld` step
+            // first, so without it the point would be handed back the master's position instead of the one it
+            // has been dragged to since. A script written before it was recorded has none and frees the point
+            // where the geometry puts it, exactly as the gesture did — no stored literal changed meaning, so
+            // this needs no version bump (OP-18).
+            "unweld" -> doc.unweld(el(1), keyedNums(words, "dofs"))
             "wire" -> doc.wireParameter(scalar(1), scalar(3))
             // `sign=` is the branch the click chose, restated (OP-1); a format-1 script carries none, and the
             // click scores it once more — this time for good, since the save that follows writes it down

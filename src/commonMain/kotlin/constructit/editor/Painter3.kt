@@ -20,7 +20,11 @@ import kotlin.math.min
  * - **Back faces are culled**, which for a watertight mesh (OP-2 guarantees one) leaves exactly the
  *   silhouette and halves the work.
  * - **One headlight.** Diffuse shading from a light at the eye, plus an ambient floor, which is all it
- *   takes to read a shape. No specular, no shadows: this is a preview of a *sink* (OP-9).
+ *   takes to read a shape. No specular, no shadows: this is a preview of a *sink* (OP-9). It shades
+ *   whatever colour [Scene3] hands it — an assigned material's base colour, or the identification palette
+ *   ([Scene3.colorOf]) — and takes **nothing else** from a material: with no specular term and no
+ *   environment there is nothing for a roughness or a metalness to do here, and the realistic preview is
+ *   where those two are honest.
  * - **Feature edges over the faces.** One headlight cannot separate two coplanar faces (GitHub issue #3),
  *   so each solid's [Edge3] creases are drawn as lines in a darker shade of its colour.
  */

@@ -364,6 +364,25 @@ WebGlRenderer3 (jsMain) — one program: position+normal+colour, uniform MVP, he
   GPU path has a real depth test, so the artifact is confined to goldens.
 - **One new `DrawTarget` primitive: `polygon`.** A shaded triangle is an *area*, so it cannot be
   expressed with the stroke primitives 2D drawing needed. Both back ends implement it.
+- **A dressed solid wears its own colour here; the palette is the default, not the law** (GitHub issue #8).
+  `Scene3.colorFor` assigned a palette entry by element id and `Document.materialOf` was never asked, so a
+  colour picked in the panel reached the GLB and the realistic preview but *never the view the modelling
+  happens in*. It is `assignedMaterial` — not `materialOf` — that is asked, and the distinction is the whole
+  design: `materialOf` answers `Appearance.DEFAULT` for an undressed solid, and a scene of identical light
+  greys is a scene in which nothing can be told apart. So a **choice** is shown and the **absence** of one
+  keeps the identification palette. Nothing is cached: the colour is read per extraction like the rest of the
+  scene, so an edit shows on the next repaint.
+  - **Roughness and metalness deliberately do not arrive, and cannot.** This view is one headlight, a diffuse
+    term, an ambient floor and feature edges — there is no specular term for a roughness to spread and no
+    environment for a metal to reflect, so those two numbers could only differ by some invented darkening
+    that looked like PBR and meant nothing. The realistic preview and the GLB are where they are honest; here
+    the colour is the whole of what an appearance can say. Pinned by a test, because "we deliberately did not
+    implement it" is only a decision if something notices when it quietly changes.
+  - **The preview half of the report was not a defect.** `PreviewSyncTest` already held the headless contract
+    (a material change restyles without a geometry rebuild), and the browser E2E now holds the rest: with the
+    preview open, a colour written into the panel's well swings the rendered body from warm to cool inside
+    the same page — asserted on the *balance of the pixels* rather than on "something changed", since an
+    orbit changes pixels too. What was missing was only ever this view.
 - **Flat shading by duplicated vertices** in the WebGL path: each triangle carries its own face normal.
   No derivative extension, no vertex-normal averaging that would round off a machined edge — a solid's
   facets are what it *is* (OP-9: the mesh is the sink, shown as it will be printed). Both renderers use
@@ -608,6 +627,47 @@ excluded (cycle check), and the point's own endpoints therefore never self-attac
 over curves when both are in snap range. `unweld` detaches either kind back to a free point.
 Remaining: attach onto **arcs** (needs the arc's carrier circle) and onto a **derived/intersection
 point** (alias, 2→0 DOF).
+
+##### Unlink — the inverse of Join, and the gesture it needed (as built, GitHub issue #10)
+
+"Fully reversible" was true of the *document* and false of the *drawing*: `unweld` had existed since the
+weld did, and `makeAbsolute` routed to it — but both are reached by **clicking a point**, and a welded
+alias is hidden *by construction* (`hiddenByConstruction`), because the whole promise of a weld is that
+the pair reads as one dot. So there was no click that could reach it, and where three points had been
+joined into one there would have been no click that could say *which* of them was meant. Reported by the
+user with the answer attached: an *Unlink* tool that **acts on the current selection**, since a selection
+names an element where a click can only name a place.
+
+- **The tool is `fromSelection`** — one new `ToolDef` flag, declared by exactly this tool: arming it with a
+  single element selected fills its one slot straight away, and an ordinary click is the fallback for a
+  point that is visible after all. The selection is fed **whatever it is**, unfiltered, so a wrong pick is
+  refused *by name* in the build rather than silently ignored (a tool that waits instead of speaking is a
+  silent refusal, which the doctrine forbids).
+- **Nothing jumps, and that made the step grow a `dofs=`.** Freeing reads the driven value out and restates
+  it as the node's own — but replay runs the `weld` step *first*, so a point that was unlinked and then
+  dragged would be handed straight back to its old master. The freed position is therefore **state on the
+  unlink step**, restated on every save exactly as a freed rider's coordinates are. A script written before
+  this carries no `dofs=` and still means what it always meant (the point frees where the geometry puts
+  it), so no stored literal changed meaning and **no version bump is owed** — OP-18's own test.
+- **Only the named point leaves.** Each alias holds its own `boundTo`, so a three-way weld loses exactly
+  the selected member and stays welded otherwise. That is the substrate paying for itself again, not a case.
+- **The refusals are where the vocabulary is taught.** A free point ("already free — joined to nothing"), a
+  non-point (named by what it is instead), a derived point (named by what it is derived *from*), a placed
+  member (named by its group). A **relative** point (OP-4 case b) is bound too and is deliberately *not*
+  unlinked: nothing drives it — its two degrees of freedom are still its own, written as a distance and an
+  angle — so it is refused with a pointer to *Make absolute*, which is the conversion that does undo it.
+- **A rider is delegated, not refused.** A rider the point-on-line/circle tools created has no literal to
+  hand back (its position is published through a re-pointable view — see *Freeing a rider* under OP-4), so
+  Unlink routes it to that conversion. Refusing would have drawn a line the user cannot see: a tool-made
+  rider and a point *drag-attached* onto the same curve are the same dot with the same behaviour, and the
+  second one is squarely inside this substrate.
+- **The inverse of the hiding rule is completed with it.** Unlinking restores visibility — but *asks*
+  `duplicateJointMarkers` rather than assuming, so the one predicate stays the one predicate. Today's two
+  cases cannot overlap (a boundary's duplicate marker is a derived point, and only a free point can be
+  welded — OP-14, session 29), and that is exactly why the question has to be asked here rather than
+  answered from memory: the day they do overlap, the inverse of a weld must not resurrect a marker. And a bond that ends
+  takes its bookkeeping with it: a drag-attached point's rider record and its OP-20 compensation
+  registration are dropped, where before a freed point went on claiming a host.
 
 #### Snapping while placing (`Snap`)
 
@@ -4927,6 +4987,13 @@ through the ordinary reference rule. **No format version bump**, and the version
 why: a bump is owed when a *stored literal changes meaning*, and a step kind that never existed before cannot
 have meant something else. A pre-materials fixture is kept as a permanent test — it loads with the defaults,
 says nothing, and saves back byte-identically.
+
+The traffic between the two runs **one way only, and only for a solid that has been dressed** (GitHub issue #8,
+see *The 3D viewport*): the construction view shades an *assigned* material's base colour and keeps the palette
+for everything else. So a choice is visible where the modelling happens, while the absence of a choice still
+tells two bodies apart — which is exactly what would be lost if this default became the palette or the palette
+became this default. The colour is all that crosses: a flat-shaded technical view has nothing to do with a
+roughness or a metalness, and says so rather than inventing a shading term for them.
 
 **The preview — a third view, display-only, on three.js.** All three boundaries the queue entry named are
 visible in `Preview3` (`jsMain` only). It consumes the *same* `ExportScene` the GLB writer does, through the

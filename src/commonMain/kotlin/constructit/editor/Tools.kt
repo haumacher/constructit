@@ -333,6 +333,22 @@ class ToolDef(
      * panel click away.
      */
     val scalarsTypedOnly: Boolean = false,
+    /**
+     * Whether arming this tool with **one element already selected** fills its first slot with that element
+     * straight away, so the tool runs on the selection instead of waiting for a click.
+     *
+     * Declared by exactly one tool, *Unlink*, and the reason is a property of what it operates on rather than
+     * a shortcut: a welded alias is **hidden by construction** ([Document.hiddenByConstruction]) — the whole
+     * point of a weld is that the pair reads as one dot — so no click can ever reach it, and where three
+     * points were joined into one no click could say which of them is meant either. The element tree can:
+     * a selection *names* an element. So the gesture is "select the point, then Unlink", with the ordinary
+     * click as the fallback for a point that is visible after all.
+     *
+     * The selection is fed **whatever it is**, without filtering by the slot kind, so a wrong pick reaches
+     * [build] and is refused there *by name* — a tool that silently ignored the selection and waited for a
+     * click would be a tool that declined without saying so.
+     */
+    val fromSelection: Boolean = false,
     val build: (Document, Picks, List<ScalarRef>) -> Unit,
 ) {
     /** What slot [i] is for: this tool's own word ([slotNames]) or the slot kind's generic one. */
@@ -407,6 +423,12 @@ object Tools {
     // takes two points while "make absolute" takes one.
     const val MAKE_RELATIVE = "makerel"
     const val MAKE_ABSOLUTE = "makeabs"
+
+    /**
+     * **The inverse of [JOIN]** (GitHub issue #10): the point named leaves the weld and is a free degree of
+     * freedom again, where it stands. See [Document.unlink] for what counts as a bond and what is refused.
+     */
+    const val UNLINK = "unlink"
 
     // Curves
     const val LINE = "line"
@@ -597,6 +619,9 @@ object Tools {
             // placement is (OP-13/OP-18), so a dragged or typed distance comes back
             ToolDef(MAKE_RELATIVE, "Make relative", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), replicates = false, help = "Click a free point, then the point it should follow: it keeps its distance and angle to that anchor, so moving the anchor takes it along. Drag it (or type distance / angle) to change the offset; Make absolute undoes it.", slotNames = listOf("point", "anchor")) { d, p, _ -> d.makeRelative(p.elements[0], p.elements[1], p.dofs) },
             ToolDef(MAKE_ABSOLUTE, "Make absolute", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), replicates = false, help = "Click a point that follows something — relative to an anchor, welded, or riding a curve — to give it its own coordinates again, where it now stands.", slotNames = listOf("point")) { d, p, _ -> d.makeAbsolute(p.elements[0], p.dofs) },
+            // the inverse of *Join* (GitHub issue #10). `fromSelection`, because a welded alias is hidden by
+            // construction and a merged dot names no one point — see [ToolDef.fromSelection].
+            ToolDef(UNLINK, "Unlink", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), replicates = false, fromSelection = true, help = "Select a joined point (in the element tree, where a welded point is still listed) and press this: it becomes a free point again, right where it stands. Everything built on it keeps working and simply stops following. Where several points were joined into one, only the selected one leaves.", slotNames = listOf("point"), icon = Icons.UNLINK) { d, p, _ -> d.unlink(p.elements[0], p.dofs) },
             // ----- Curves -----
             ToolDef(LINE, "Line", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to draw an infinite line.", preview = Previews::line, slotNames = listOf("through", "through"), icon = Icons.LINE) { d, p, _ -> d.line(p.points[0], p.points[1]) },
             ToolDef(SEGMENT, "Segment", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), shortcut = 'L', help = "Click two points to draw a segment.", preview = Previews::segment, slotNames = listOf("from", "to"), icon = Icons.SEGMENT) { d, p, _ -> d.segment(p.points[0], p.points[1]) },

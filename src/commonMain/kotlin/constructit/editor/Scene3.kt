@@ -15,13 +15,16 @@ import kotlin.math.min
 import kotlin.math.pow
 
 /**
- * One solid as the 3D view sees it: the element it belongs to, the mesh to draw, the colour it is
- * *always* drawn in, and the [Edge3] creases that make its shape read.
+ * One solid as the 3D view sees it: the element it belongs to, the mesh to draw, the colour it is drawn
+ * in, and the [Edge3] creases that make its shape read.
  *
  * The mesh is taken straight out of the [SolidValue] — the 3D view is a **consumer of the sink**
  * (OP-9), not a second geometry pipeline: nothing here re-derives, re-tessellates or repairs anything,
  * so what is on screen is exactly what an STL export would contain. The edges are no exception: they are
  * *read off* that same mesh, not constructed beside it.
+ *
+ * [color] is the **assigned material's base colour where there is one, and the identification palette
+ * where there is not** (OP-18's Tier 1, GitHub issue #8) — see [Scene3.colorOf].
  */
 class SolidItem(
     val elementId: String,
@@ -74,9 +77,15 @@ class Scene3(val solids: List<SolidItem>, val lines: List<Line3>) {
 
     companion object {
         /**
-         * The solid palette. A **stable colour per element**, taken by the element's own id rather than
-         * by its position in the list, so deleting one solid never recolours the others — a solid that
-         * changes colour when a sibling goes reads as a different part.
+         * The solid palette — **what an *undressed* solid is drawn in**. A stable colour per element,
+         * taken by the element's own id rather than by its position in the list, so deleting one solid
+         * never recolours the others — a solid that changes colour when a sibling goes reads as a
+         * different part.
+         *
+         * It is a *default*, not the law: a solid the user has given a material wears that material's
+         * colour here ([colorOf]). See [Appearance]'s own note for why the palette is still not the
+         * material default — identification and appearance are two different questions, and only the
+         * second one is exported.
          */
         val PALETTE =
             listOf("#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#b07aa1", "#76b7b2", "#edc948", "#9c755f")
@@ -210,11 +219,40 @@ class Scene3(val solids: List<SolidItem>, val lines: List<Line3>) {
         }
 
         /**
+         * What [el] is shaded with in the **3D construction view**: the base colour of the material the user
+         * assigned it, or the identification [PALETTE] entry while nobody has dressed it (GitHub issue #8).
+         *
+         * Reported as *"the colour of a solid should be reflected in the 3D construction view"*: the view had
+         * only ever asked [colorFor], so a colour picked in the panel could reach the GLB and the realistic
+         * preview but never this view — the one the modelling actually happens in. Asking [Document.materialOf]
+         * would have been the wrong question, because it answers [Appearance.DEFAULT] for an undressed solid
+         * and a scene of identical light-grey bodies is a scene in which nothing can be told apart.
+         * [Document.assignedMaterial] is the right one: it distinguishes *a choice* from *no choice*, so the
+         * palette keeps doing its own job — identification — for everything the user has not spoken about.
+         *
+         * **Roughness and metalness deliberately do not arrive here, and cannot.** This is a flat-shaded
+         * line-and-fill technical view: one headlight, a diffuse term and an ambient floor ([Painter3]), with
+         * feature edges carrying the topology that shading cannot. There is no specular term for a roughness to
+         * spread and no environment for a metal to reflect, so a "metallic" solid could differ from a plastic
+         * one only by some invented darkening — a number that looked like PBR and meant nothing. The
+         * realistic preview and the GLB export are where those two numbers are honest; here the colour is the
+         * whole of what an appearance can say, and that is stated rather than half-implemented.
+         */
+        fun colorOf(
+            doc: Document,
+            el: Element,
+        ): String = doc.assignedMaterial(el)?.color ?: colorFor(el.id)
+
+        /**
          * The scene of [doc]: every visible element whose value is a solid, plus a ground grid sized to
          * the model.
          *
          * Invalid solids simply contribute nothing, which is OP-3's rule unchanged — a depth dragged to
          * zero makes the part vanish from the 3D view and come back when it is dragged open again.
+         *
+         * Each solid's colour is read from the document here, per extraction ([colorOf]), so an assigned
+         * material shows up on the very next repaint with no cache in between — the same *value, not state*
+         * discipline the rest of this scene follows.
          */
         fun extract(
             doc: Document,
@@ -250,7 +288,7 @@ class Scene3(val solids: List<SolidItem>, val lines: List<Line3>) {
                 if (el.ref.node.id in consumedIds) continue
                 val v = ev.valueOf(el.ref) as? SolidValue ?: continue
                 if (v.solid.mesh.triangles.isEmpty()) continue
-                solids.add(SolidItem(el.id, v.solid.mesh, colorFor(el.id)))
+                solids.add(SolidItem(el.id, v.solid.mesh, colorOf(doc, el)))
             }
             return Scene3(solids, furniture(gridStepFor(boundsOf(solids))))
         }
