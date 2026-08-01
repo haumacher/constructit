@@ -4598,6 +4598,18 @@ the same in both). And it is **incremental for free**: an unchanged solid hands 
 geometry upload at all. "Realistic" is configuration, not code — a PBR material from the Tier-1 numbers, a
 room-like environment pre-filtered through `PMREMGenerator`, and ACES tone mapping.
 
+> **Session 28, a user-reported defect, and the "no decision worth a headless test" sentence above eating its
+> words.** A parameter edit piled stale bodies into the preview: the rebuild path disposed the replaced body's
+> GPU resources but never detached its `THREE.Mesh` from the scene — and three.js re-uploads a disposed
+> geometry that is still attached, so every edit added one more ghost (the removal path four lines below did
+> both halves correctly, which is how the split went unseen). The fix is structural, not a patched line: the
+> three-case diff (same mesh identity → at most a restyle; new mesh → replace; gone → take down) moved out of
+> `Preview3` into `SceneSync` in `commonMain`, whose backend contract has **one** `remove` meaning *detached
+> and disposed, always together* — the halves can no longer come apart by construction. `PreviewSyncTest`
+> holds the regression with a real document and a real parameter edit, counting exactly what the scene graph
+> would hold; its unchanged-document case also pins the OP-5 claim (same `Mesh3` identity across extracts →
+> zero uploads) that the whole incremental arrangement rests on. `Preview3` keeps only the three.js *how*.
+
 **Lazy loading worked, and the number is the point.** `import('three')` is a dynamic import, so webpack splits
 the library into a chunk of its own: the main bundle went **655,384 → 690,947 bytes (+35.6 KB, +5.4 %)** for the
 whole package — the three writers, the seam, the materials and the preview's own code — while three.js itself

@@ -3,8 +3,8 @@ package constructit.editor
 import constructit.exchange.ExportNode
 import constructit.exchange.ExportScene
 import constructit.exchange.RenderMesh
+import constructit.exchange.SceneSync
 import constructit.geom.Geom3
-import constructit.geom.Mesh3
 import constructit.geom.Vec3
 import constructit.three.THREE
 import org.khronos.webgl.Float32Array
@@ -25,7 +25,9 @@ import kotlin.math.min
  *    pipelines being kept in step by hand.
  * 2. **A second viewer, never the editing surface.** No picking, no gizmos, no tools, no hit-testing. The
  *    working 3D view ([Viewport3]) keeps the ray seam and the working-plane gestures; here a drag is always the
- *    camera's, which is why there is no decision in this file worth a headless test.
+ *    camera's. The one decision this view *does* take — which bodies to rebuild on a document change — turned
+ *    out to be worth a headless test after all (a parameter edit once piled up stale bodies), so it lives in
+ *    [SceneSync] in `commonMain` and this file keeps only the three.js *how*.
  * 3. **Incremental for free.** OP-5's argument-identity memo means an unchanged solid hands back the *same*
  *    [Mesh3] object, so mesh identity says which bodies changed and only their buffers are re-uploaded. An
  *    edit to one part of an assembly costs one geometry rebuild, not all of them.
@@ -35,10 +37,8 @@ import kotlin.math.min
  * off instead of clipping). That trio is what makes flat-coloured solids read as physical objects.
  */
 class Preview3(private val canvas: HTMLCanvasElement) {
-    /** One body on screen, and what it was built from — the identity that says whether to rebuild it. */
+    /** One body's live objects. What it was built *from* — the rebuild decision — is [SceneSync]'s. */
     private class Entry(
-        val mesh: Mesh3,
-        var material: Appearance,
         val geometry: THREE.BufferGeometry,
         val standard: THREE.MeshStandardMaterial,
         val node: THREE.Mesh,
@@ -47,15 +47,14 @@ class Preview3(private val canvas: HTMLCanvasElement) {
     private var renderer: THREE.WebGLRenderer? = null
     private var scene: THREE.Scene? = null
     private var cam: THREE.PerspectiveCamera? = null
-    private val shown = HashMap<String, Entry>()
+    private var sync: SceneSync<Entry>? = null
 
     /** The orbit camera — the same one the working 3D view uses, so both views turn the same way. */
     var camera: Camera3 = Camera3()
         private set
 
     /** How many geometries the last [update] had to re-upload. Zero is the answer an orbit should give. */
-    var lastUploads: Int = 0
-        private set
+    val lastUploads: Int get() = sync?.lastUploads ?: 0
 
     /** Whether the module is up and a context was obtained. */
     val ready: Boolean get() = renderer != null
@@ -146,6 +145,26 @@ class Preview3(private val canvas: HTMLCanvasElement) {
         renderer = r
         scene = s
         cam = THREE.PerspectiveCamera(45.0, 1.0, 0.1, 1e6)
+        sync =
+            SceneSync(
+                object : SceneSync.Backend<Entry> {
+                    override fun add(node: ExportNode): Entry = build(node).also { s.add(it.node) }
+
+                    override fun remove(handle: Entry) {
+                        // both halves together, always: detached but undisposed leaks GPU memory, disposed
+                        // but attached is a ghost the renderer re-uploads on the next frame — the stale-body
+                        // pileup the SceneSync regression pins down
+                        s.remove(handle.node)
+                        handle.geometry.dispose()
+                        handle.standard.dispose()
+                    }
+
+                    override fun material(
+                        handle: Entry,
+                        material: Appearance,
+                    ) = apply(handle.standard, material)
+                },
+            )
         return true
     }
 
@@ -194,40 +213,15 @@ class Preview3(private val canvas: HTMLCanvasElement) {
     /**
      * Bring the preview in step with [exported] — **re-uploading only what changed**.
      *
-     * Three cases per body, and the middle one is the point of the whole arrangement: the mesh object is the
-     * same as last time (nothing upstream of it moved), so its buffers are left alone and at most its material
-     * is written; the mesh is new, so its geometry is rebuilt; or the body is gone, so its geometry and
-     * material are disposed. [lastUploads] counts the rebuilds, which is how the flow is observed from outside.
+     * The decision of what changed is [SceneSync]'s (headlessly tested — `PreviewSyncTest` holds the
+     * regression for the stale-body pileup a parameter edit once caused); this backend only says *how*: a
+     * body attaches as a [THREE.Mesh], detaching removes it from the scene **and** disposes its GPU
+     * resources in the same breath, and a restyle writes the material without touching the geometry.
+     * [lastUploads] counts the rebuilds, which is how the flow is observed from outside.
      */
     fun update(exported: ExportScene) {
         if (!init()) return
-        val s = scene ?: return
-        var uploads = 0
-        val live = HashSet<String>()
-        for (node in exported.nodes) {
-            live.add(node.name)
-            val had = shown[node.name]
-            if (had != null && had.mesh === node.mesh) {
-                // nothing upstream of this body moved (OP-5): keep its buffers, and write the material only if
-                // *that* changed — a colour picked in the panel must not cost a geometry upload
-                if (had.material != node.material) {
-                    apply(had.standard, node.material)
-                    had.material = node.material
-                }
-                continue
-            }
-            had?.let { drop(it) }
-            shown[node.name] = build(node).also { s.add(it.node) }
-            uploads++
-        }
-        for (name in shown.keys.toList()) {
-            if (name in live) continue
-            shown.remove(name)?.let {
-                s.remove(it.node)
-                drop(it)
-            }
-        }
-        lastUploads = uploads
+        sync?.update(exported)
     }
 
     private fun build(node: ExportNode): Entry {
@@ -249,7 +243,7 @@ class Preview3(private val canvas: HTMLCanvasElement) {
         apply(material, node.material)
         val mesh = THREE.Mesh(geometry, material)
         mesh.name = node.name
-        return Entry(node.mesh, node.material, geometry, material, mesh)
+        return Entry(geometry, material, mesh)
     }
 
     /**
@@ -265,11 +259,6 @@ class Preview3(private val canvas: HTMLCanvasElement) {
         material.color.setRGB(rgb[0], rgb[1], rgb[2])
         material.roughness = appearance.roughnessClamped
         material.metalness = appearance.metallicClamped
-    }
-
-    private fun drop(entry: Entry) {
-        entry.geometry.dispose()
-        entry.standard.dispose()
     }
 
     /** Point the camera at [exported] — [Camera3.framing], so this view opens exactly as the 3D view does. */
