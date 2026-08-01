@@ -1573,8 +1573,16 @@ class Editor(
                 // a change of *anchor* rather than of coordinates — so it is named as such (OP-4 case b)
                 "${result.capturedRiders} rider${if (result.capturedRiders == 1) "" else "s"} re-anchored to their carrier"
                     .takeIf { result.capturedRiders > 0 },
+                // a junction is a connection's own freedom, carried the same way and worth naming for the
+                // same reason: what moved is the *anchor*, not a coordinate (OP-16 × OP-20)
+                "${result.capturedJunctions} connection${if (result.capturedJunctions == 1) "" else "s"} re-anchored to the wall they meet"
+                    .takeIf { result.capturedJunctions > 0 },
             ).joinToString(" and ")
-        statusHint = "Placed ${g.name}: ${carried.ifEmpty { "its own freedom" }} now frame-relative$deforms"
+        // the other honest boundary, stated where it is decided: a group whose runs follow the frame through
+        // their connections moves rigidly but cannot be *turned* (OP-16 × OP-20), and that is invisible until
+        // someone types an angle
+        val turn = doc.turnRefusal(g)?.let { " — it moves as one, but cannot be turned (${it.substringAfter("cannot be turned: ")})" } ?: ""
+        statusHint = "Placed ${g.name}: ${carried.ifEmpty { "its own freedom" }} now frame-relative$deforms$turn"
         onChange()
         return true
     }
@@ -1750,7 +1758,17 @@ class Editor(
         value: Double,
     ): Boolean {
         val f = selectionFields().getOrNull(index) ?: return false
-        if (!f.writable) return false
+        if (!f.writable) {
+            // a refusal explains itself where the model has words for it (OP-16, OP-20): a frame that cannot
+            // be turned is the one refusal a *frame* field has, and it is invisible on canvas
+            selectedFrame()?.let { g ->
+                doc.turnRefusal(g)?.let {
+                    statusHint = "Can't turn: $it"
+                    onChange()
+                }
+            }
+            return false
+        }
         compensating { f.write(quantityOf(f.dim, value)) }
         checkpoint()
         // a write the geometry **bounded** has something to say — an opening clamped to its leg (OP-21) — and

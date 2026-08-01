@@ -405,6 +405,15 @@ class Group(val id: String, var name: String) {
      */
     internal val capturedRiders = ArrayList<Document.RiderRecord>()
 
+    /**
+     * The **junctions** this placement re-anchored to a point of their own carrier (OP-16 × OP-20). A
+     * connection owns a degree of freedom just as a rider does — its position along the wall it meets —
+     * and that parameter is stated in the world, so a frame that moves the wall would leave the junction
+     * standing and every run hanging on it would be torn off. Inverted by unplacing, like every other
+     * part of the capture.
+     */
+    internal val capturedJunctions = ArrayList<JunctionCapture>()
+
     /** The journal step that recorded the placement — dropped again by unplace. */
     internal var placeStep: Step? = null
 
@@ -434,6 +443,30 @@ class FrameCapture(
 
 /** A free point of a placed group's closure that something *outside* the group also uses (OP-16). */
 class SharedPoint(val point: String, val consumer: Element)
+
+/**
+ * One re-anchored **junction** of a placed group (OP-16 × OP-20) — the connection analogue of
+ * [FrameCapture], and of the rider re-anchoring beside it.
+ *
+ * A junction riding a wall states its position in the world (a coordinate the host leaves free, or a
+ * distance along the carrier line). That is right while the wall merely carries it — dragging the wall's
+ * far corner then does not drag the branch — and wrong the moment the *group* is the thing being moved,
+ * because the frame moves the wall and the parameter does not follow. So placing binds the parameter onto
+ * `base's position along the carrier + offset`, exactly as *Make relative* does for a rider: one degree of
+ * freedom before and after, nothing moves at the moment of the change, and unplacing gives the absolute
+ * parameter back where the junction then stands.
+ */
+class JunctionCapture internal constructor(
+    internal val junction: Junction,
+    private val priorHandle: Handle?,
+    private val priorPlace: (axis: Int, value: Double) -> Boolean,
+) {
+    /** Put the junction's own freedom back the way the capture found it — [Document.unplaceGroup]'s half. */
+    internal fun restore() {
+        junction.handle = priorHandle
+        junction.place = priorPlace
+    }
+}
 
 /**
  * Which **kind** of degree of freedom an element owns (OP-16's placement question, and the create dialog's
@@ -493,6 +526,12 @@ class Placement(
     /** Riders the placement would re-anchor to a point of their own carrier — see [Document.placeGroup]. */
     val ridersToAnchor: List<Freedom> = emptyList(),
     /**
+     * **Junctions** the placement would re-anchor the same way (OP-16 × OP-20) — the freedom a *connection*
+     * owns, which is a group's own whenever the wall it rides is a member. Listed separately from
+     * [ridersToAnchor] only because a junction has no element of its own; it is carried identically.
+     */
+    val junctionsToAnchor: List<Junction> = emptyList(),
+    /**
      * Freedoms the group owns that are **already** rigid under a frame — a polar offset from an anchor
      * inside the group, an angle about a circle inside it. They need no rebinding at all, and counting them
      * is what makes such a group placeable instead of "owning no free point".
@@ -502,7 +541,10 @@ class Placement(
     val uncapturable: List<String> = emptyList(),
 ) {
     /** Whether the frame would carry any freedom at all — else it would have nothing to move. */
-    val carriesSomething: Boolean get() = candidates.isNotEmpty() || paths.isNotEmpty() || ridersToAnchor.isNotEmpty() || rigid.isNotEmpty()
+    val carriesSomething: Boolean
+        get() =
+            candidates.isNotEmpty() || paths.isNotEmpty() || ridersToAnchor.isNotEmpty() ||
+                junctionsToAnchor.isNotEmpty() || rigid.isNotEmpty()
 }
 
 /** The outcome of a placement: how much the frame carries, and what it does *not*. */
@@ -519,6 +561,8 @@ class PlaceResult(
     val unfollowed: List<Element>,
     /** How many riders the placement re-anchored to their own carrier — see [Group.capturedRiders]. */
     val capturedRiders: Int = 0,
+    /** How many **junctions** it re-anchored the same way — see [Group.capturedJunctions]. */
+    val capturedJunctions: Int = 0,
 )
 
 /**
@@ -600,7 +644,39 @@ class OrthoPath {
  * two coordinates. Everything meeting there binds to it, so no participant owns the shared freedom and
  * all of them reach it the same way: through [handle], one structural hop away — no search, no probing.
  */
-class Junction(val point: PointRef, val handle: Handle?, val curve: Element?) {
+class Junction(val point: PointRef, handle: Handle?, val curve: Element?) {
+    /**
+     * How the junction's own freedom is reached by a drag. A `var` because a placement **re-anchors** that
+     * freedom to a point of the carrier (OP-16 × OP-4 case b) and the offset is then what a drag writes —
+     * the same swap a re-anchored rider's element handle makes.
+     */
+    var handle: Handle? = handle
+
+    /**
+     * This junction's one degree of freedom, when it rides a curve: the parameter node, and which of
+     * [Document.RiderForm]'s forms it is stated in (null for a junction at a free point, whose freedom is
+     * that point's own coordinates).
+     *
+     * Held because a **placement** has to carry it (OP-16): a junction's parameter is anchored to the
+     * *world* — a coordinate the host leaves free, or a distance along the carrier line (OP-20) — so a
+     * frame that moves the carrier leaves the junction where it was and the figure hung on it deforms.
+     * That is the same question a rider's [Document.RiderRecord] answers, asked of a connection instead of
+     * an element.
+     */
+    internal var param: SourceNode? = null
+    internal var form: Document.RiderForm? = null
+    internal var line: LineRef? = null
+    internal var axis: Int? = null
+
+    /** The carrier point this junction has been measured from since a placement captured it (OP-16). */
+    internal var base: Element? = null
+
+    /** Its signed offset from [base] — the junction's freedom in the re-anchored, frame-rigid form. */
+    internal var offset: SourceNode? = null
+
+    /** True while the position is stated **relative to [base]** rather than to the world (OP-4 case b). */
+    val carrierRelative: Boolean get() = offset != null
+
     /**
      * Put this junction where its coordinate [axis] (0 = x, 1 = y) equals [value], exactly, by solving
      * for its own parameter. Closed form per curve kind — a line is affine in its parameter, a circle
@@ -2685,6 +2761,20 @@ class Document {
             }
         }
         val paths = orthoPaths.filter { it.frame == null && ownsPath(it, memberSet) && capturablePath(it) }
+        // …and the freedom the *connections* own (OP-20): a junction riding a member's wall is the group's
+        // own degree of freedom exactly as a rider on a member's curve is, and is carried the same way
+        val junctionsToAnchor = ArrayList<Junction>()
+        for (j in ownedJunctions(memberSet)) {
+            when {
+                j.carrierRelative -> {}
+                junctionBaseFor(j) == null ->
+                    uncapturable.add("${junctionName(j)} meets ${nameOf(j.curve!!)}, which has no point of its own to measure from")
+                else -> junctionsToAnchor.add(j)
+            }
+        }
+        for (j in outsideJunctions(memberSet)) {
+            uncapturable.add("${junctionName(j)} meets ${nameOf(j.curve!!)}, which is not in the group")
+        }
         val conflicts = ArrayList<SharedPoint>()
         // what the capture would take over: the free point sources, plus each captured path's vertices
         // (their published node) and the coordinate masters behind them
@@ -2693,6 +2783,7 @@ class Document {
             p.vertices.forEach { captured.add(it.ref.node) }
             captured.addAll(coordMasters(p, 0) + coordMasters(p, 1))
         }
+        for (j in junctionsToAnchor) j.param?.let { captured.add(it) }
         if (captured.isNotEmpty()) {
             for (el in elements) {
                 if (el in memberSet) continue
@@ -2705,9 +2796,67 @@ class Document {
             paths,
             conflicts,
             ridersToAnchor,
+            junctionsToAnchor,
             rigid,
             uncapturable,
         )
+    }
+
+    /**
+     * The junctions whose freedom is **the group's own** — those riding a curve that is a member (OP-16 ×
+     * OP-20), and the one enumeration everything about placing a connection asks.
+     *
+     * A junction at a free point (no [Junction.curve]) is deliberately not one: its freedom *is* that
+     * point's own coordinates, so the free-point capture already answers for it. A junction whose parameter
+     * is already bound has none left to carry.
+     */
+    private fun ownedJunctions(members: Set<Element>): List<Junction> =
+        junctions.filter { j ->
+            val host = j.curve ?: return@filter false
+            val param = j.param ?: return@filter false
+            host in members && param.boundTo == null && drivesAnyOf(j, members)
+        }
+
+    /** Junctions a member hangs on whose carrier the frame does *not* move — the boundary, named. */
+    private fun outsideJunctions(members: Set<Element>): List<Junction> =
+        junctions.filter { j -> j.curve != null && j.param != null && j.curve !in members && drivesAnyOf(j, members) }
+
+    /** Whether any of [members] leans on [j]'s position — else the junction is none of the group's business. */
+    private fun drivesAnyOf(
+        j: Junction,
+        members: Set<Element>,
+    ): Boolean = members.any { m -> dependsOn(m.ref.node, j.point.node, HashSet()) }
+
+    /**
+     * How to name a junction to the user: the member it drives, since a junction has no element of its own.
+     * "e16 meets e15" is what the drawing shows; the junction's node id is not a thing the user has seen.
+     */
+    private fun junctionName(j: Junction): String {
+        val el = elements.firstOrNull { it.isPoint && dependsOn(it.ref.node, j.point.node, HashSet()) }
+        return el?.let { nameOf(it) } ?: "a connection"
+    }
+
+    /**
+     * A point of [j]'s carrier its position can be measured from — an **end of the wall it meets**, taken
+     * from the path's own topology where there is one, else any point the carrier is built from.
+     *
+     * Stated rather than derived for the same reason a rider's base is ([carrierBaseFor]): a distance from
+     * *that* end is what a drawing dimensions, and it is what makes the junction rigid under the group's
+     * frame, since the carrier's end follows the frame.
+     */
+    private fun junctionBaseFor(j: Junction): Element? {
+        val host = j.curve ?: return null
+        legOf(host)?.let { (path, i) ->
+            val ends = path.legEnds(i)
+            listOf(ends.first, ends.second).forEach { v ->
+                elementFor(v.ref)?.let { el -> if (!dependsOn(el.ref.node, j.point.node, HashSet())) return el }
+            }
+        }
+        return elements.firstOrNull { el ->
+            el.isPoint && riderOf(el) == null &&
+                dependsOn(host.ref.node, el.ref.node, HashSet()) &&
+                !dependsOn(el.ref.node, j.point.node, HashSet())
+        }
     }
 
     /**
@@ -2725,6 +2874,7 @@ class Document {
         // an unticked candidate costs, and it is invisible on canvas until the group is moved
         val prospective = HashSet<SourceNode>(a.candidates)
         for (p in a.paths) prospective.addAll(coordMasters(p, 0) + coordMasters(p, 1))
+        for (j in a.junctionsToAnchor) j.param?.let { prospective.add(it) }
         val (stuck, drivers) = deformingMembers(groupMembers(g), prospective)
         if (stuck.isNotEmpty()) {
             out.add(
@@ -2873,7 +3023,7 @@ class Document {
                 Arg.Label(g.name),
                 Arg.Keyed("at", Arg.Pos(at)),
                 Arg.Keyed("angle", Arg.Num(Quantity.rad(angle))),
-            ) { placeGroupNow(g, at, angle, analysis.candidates, analysis.paths, analysis.ridersToAnchor) }
+            ) { placeGroupNow(g, at, angle, analysis.candidates, analysis.paths, analysis.ridersToAnchor, analysis.junctionsToAnchor) }
         g.placeStep = journal.lastOrNull()?.takeIf { it.kind == "place" }
         return result
     }
@@ -2885,12 +3035,13 @@ class Document {
         candidates: List<SourceNode>,
         paths: List<OrthoPath>,
         riders: List<Freedom> = emptyList(),
+        junctionsToAnchor: List<Junction> = emptyList(),
     ): PlaceResult {
         val f = FrameValue(at, angle)
         val node = SourceNode(nextId("fr"), f)
         val frame = Ref<FrameValue>(node)
         g.frame = frame
-        g.frameHandle = FrameHandle(node)
+        g.frameHandle = FrameHandle(node) { turnRefusal(g) == null }
         // every world position is read *before* any binding: reading them as the retrofit proceeds would
         // describe a half-placed document
         val ev = Evaluator()
@@ -2907,6 +3058,22 @@ class Document {
                 val here = ((ev.eval(rec.param) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
                 val there = carrierBaseParamValue(rec, base, ev)
                 if (here == null || there == null) null else Triple(r.element, base, Quantity.mm(here - there))
+            }
+        // …and each junction's offset from the end of the wall it meets, read in the same untouched geometry
+        // and for the same reason (OP-16 × OP-20): a connection owns a degree of freedom too
+        val junctionOffsets =
+            junctionsToAnchor.mapNotNull { j ->
+                val base = junctionBaseFor(j) ?: return@mapNotNull null
+                val param = j.param ?: return@mapNotNull null
+                val line = j.line ?: return@mapNotNull null
+                val form = j.form ?: return@mapNotNull null
+                val here = ((ev.eval(param) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
+                val basePoint = base.ref as? PointRef
+                val there =
+                    basePoint?.let {
+                        ((ev.eval(carrierBaseParam(form, j.axis, it, line).node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
+                    }
+                if (here == null || there == null) null else Triple(j, base, Quantity.mm(here - there))
             }
         for ((i, src) in candidates.withIndex()) {
             val w = world[i] ?: continue
@@ -2932,8 +3099,18 @@ class Document {
             val rec = riderOf(element) ?: continue
             if (anchorRiderTo(element, base, d)) g.capturedRiders.add(rec)
         }
+        // …and the junctions, for the identical reason one level up: the freedom a *connection* owns is
+        // stated in the world too, and a run hanging on an un-carried junction is what tore the reported
+        // drawing apart when its frame moved (GitHub issue #11)
+        for ((j, base, d) in junctionOffsets) anchorJunctionTo(j, base, d)?.let { g.capturedJunctions.add(it) }
         note = null // the capture's per-rider notes are not what the placement has to say
-        return PlaceResult(g.captures.size, g.capturedPaths.size, deformingMembers(g), g.capturedRiders.size)
+        return PlaceResult(
+            g.captures.size,
+            g.capturedPaths.size,
+            deformingMembers(g),
+            g.capturedRiders.size,
+            g.capturedJunctions.size,
+        )
     }
 
     /**
@@ -3006,16 +3183,19 @@ class Document {
      * Members the frame does not carry *entirely*: they depend on a position that is pinned in world
      * coordinates and is not one of the group's own locals, so moving the frame stretches them.
      *
-     * The pinned kinds are exactly two — a **free point source** owned by something outside the group (a
-     * weld or an attach that left it), and an **ortho vertex coordinate the capture did not take**, which
-     * stays an absolute world coordinate (a path whose freedom leaves the group at a junction). A curve
-     * parameter (a point-on-line's distance, a point-on-circle's angle) is deliberately *not* one: it is
-     * relative to a curve that itself follows the frame, so such a point is carried rigidly.
+     * The pinned kinds are exactly three — a **free point source** owned by something outside the group (a
+     * weld or an attach that left it), an **ortho vertex coordinate the capture did not take**, which stays
+     * an absolute world coordinate, and a **junction parameter** the capture did not re-anchor, which pins a
+     * connection's position on a wall that moves (GitHub issue #11). A curve parameter of a *rider* is
+     * deliberately not one once it is carrier-relative: it is then relative to a curve that itself follows
+     * the frame, so such a point is carried rigidly.
      */
     private fun deformingMembers(g: Group): List<Element> {
-        // what the frame does drive: the captured points' locals, and the captured paths' own coordinates
+        // what the frame does drive: the captured points' locals, the captured paths' own coordinates, and
+        // each re-anchored junction's offset from the wall it meets
         val carried = g.captures.mapTo(HashSet<SourceNode>()) { it.local }
         for (p in g.capturedPaths) carried.addAll(coordMasters(p, 0) + coordMasters(p, 1))
+        for (c in g.capturedJunctions) c.junction.offset?.let { carried.add(it) }
         return deformingMembers(groupMembers(g), carried).first
     }
 
@@ -3038,10 +3218,13 @@ class Document {
                 orthoCoords.add(v.corner.yNode)
             }
         }
+        // a junction's parameter is a world quantity too (OP-20), so an un-carried one pins whatever hangs
+        // on that connection just as surely as a coordinate does — the blind spot GitHub issue #11 found
+        val junctionParams = junctions.mapNotNullTo(HashSet<SourceNode>()) { it.param }
 
         fun pinned(m: Element): List<SourceNode> =
             ancestors(listOf(m.ref.node)).filterIsInstance<SourceNode>().filter { s ->
-                s.boundTo == null && s !in carried && (s.value is PointValue || s in orthoCoords)
+                s.boundTo == null && s !in carried && (s.value is PointValue || s in orthoCoords || s in junctionParams)
             }
         val bad = members.filter { pinned(it).isNotEmpty() }
         val drivers = LinkedHashSet<String>()
@@ -3083,11 +3266,46 @@ class Document {
         // re-anchoring the capture performed, and world-invariant for the same reason
         for (rec in g.capturedRiders) releaseRiderNow(rec.element)
         g.capturedRiders.clear()
+        // and the junctions likewise, *after* the paths have been given their world coordinates back: a
+        // junction's parameter must restate where it stands in the geometry the unplacing leaves behind
+        for (c in g.capturedJunctions) {
+            releaseJunction(c.junction)
+            c.restore()
+        }
+        g.capturedJunctions.clear()
         g.frame = null
         g.frameHandle = null
         g.placeStep?.let { s -> journal.removeAll { it === s } }
         g.placeStep = null
         return true
+    }
+
+    /**
+     * Why [g]'s frame may not be **turned**, in the user's words — null when it may.
+     *
+     * A group is rigid under rotation only where every run it holds is *captured*, because a captured path's
+     * legs are axis-aligned in the group's own axes and turn with them (OP-16's *ortho-path bonus*). A run
+     * that follows the frame through its **connections** instead — an interior wall whose ends are welded or
+     * attached to the outline it meets (OP-20) — keeps its legs aligned to the **world's** axes, since that
+     * is what the shared coordinate nodes still say. Such a group translates rigidly and cannot turn: the
+     * axis lines its meetings are built on would run parallel to the walls they must cross.
+     *
+     * Stated rather than approximated, and refused at the one place a rotation can enter (the angle field,
+     * OP-13) rather than discovered afterwards as vanished geometry.
+     */
+    fun turnRefusal(g: Group): String? {
+        val frame = g.frameNode ?: return null
+        val members = groupMembers(g).toHashSet()
+        val stuck =
+            orthoPaths.filter { p ->
+                p.frame == null &&
+                    p.vertices.any { v -> elementFor(v.ref)?.let { it in members } == true } &&
+                    p.vertices.any { v -> dependsOn(v.ref.node, frame, HashSet()) }
+            }
+        if (stuck.isEmpty()) return null
+        val names = stuck.mapNotNull { p -> p.vertices.firstNotNullOfOrNull { elementFor(it.ref) }?.let { nameOf(it) } }
+        return "${g.name} cannot be turned: the run at ${names.joinToString(", ")} follows the frame through the walls it " +
+            "meets, and its legs are aligned to the world's axes, not to the group's — move it, or unjoin that run first"
     }
 
     /**
@@ -3162,8 +3380,18 @@ class Document {
         return owner in members
     }
 
-    /** How to name a source node to the user: the element showing it (by its one name, OP-18), else the node's own id. */
-    private fun labelOf(node: Node): String = (node as? SourceNode)?.let { elementOwning(it) }?.let { nameOf(it) } ?: node.id
+    /**
+     * How to name a source node to the user: the element showing it (by its one name, OP-18), the meeting it
+     * is the freedom of (OP-20 — a junction has no element, and a raw node id is not something the user has
+     * ever seen), else the node's own id as a last resort.
+     */
+    private fun labelOf(node: Node): String {
+        (node as? SourceNode)?.let { s ->
+            elementOwning(s)?.let { return nameOf(it) }
+            junctions.firstOrNull { it.param === s }?.let { return "the connection at ${junctionName(it)}" }
+        }
+        return node.id
+    }
 
     /** [roots] and every node they (transitively) depend on. */
     private fun ancestors(roots: List<Node>): List<Node> {
@@ -4027,6 +4255,99 @@ class Document {
     }
 
     /**
+     * Re-anchor **junction** [j] so its position is stated as a signed distance from [base] along the wall
+     * it meets — the very same conversion [anchorRiderTo] performs on a rider, applied to the freedom a
+     * *connection* owns (OP-16 × OP-20 × OP-4 case b).
+     *
+     * This is the DOF kind a placement used to miss. A junction's parameter is a **world** quantity — the
+     * coordinate an axis-aligned host leaves free, or a distance along the carrier line — so a frame that
+     * moves the wall leaves the junction standing in world space and the run hanging on it slides along the
+     * moving wall to keep that coordinate. Binding the parameter onto `base's position along the carrier +
+     * offset` states the motion instead: one degree of freedom before and after, nothing moves at the moment
+     * of the change, and the whole figure travels with the frame.
+     *
+     * [d] is read off the geometry **before** any binding, for the reason the free-point capture already
+     * states: a parameter derived after the points are bound would be derived against turned geometry.
+     */
+    private fun anchorJunctionTo(
+        j: Junction,
+        base: Element,
+        d: Quantity?,
+    ): JunctionCapture? {
+        val param = j.param ?: return null
+        val line = j.line ?: return null
+        val form = j.form ?: return null
+
+        @Suppress("UNCHECKED_CAST")
+        val basePoint = base.ref as? PointRef ?: return null
+        val baseParam = carrierBaseParam(form, j.axis, basePoint, line)
+        val ev = Evaluator()
+        val here = ((ev.eval(param) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm ?: return null
+        val there = ((ev.eval(baseParam.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm ?: return null
+        val offset = SourceNode(nextId("jd"), ScalarValue(Quantity.mm(d?.mm ?: (here - there))))
+        val bound = cx.add(baseParam, Ref<ScalarValue>(offset))
+        // the acyclicity every connection is checked for (OP-4): a base that already follows this junction
+        // would put it inside its own input cone
+        if (dependsOn(bound.node, param, HashSet())) return null
+        val capture = JunctionCapture(j, j.handle, j.place)
+        param.boundTo = bound.node
+        j.base = base
+        j.offset = offset
+        // typing a driven coordinate and dragging one stay the same operation (OP-13): both now write the
+        // offset, since the parameter itself is derived from the base from here on
+        val axis = j.axis
+        j.handle = CarrierOffsetHandle(baseParam.node, offset, paramOfCarrier(form, line, axis))
+        j.place = { a, value ->
+            val want = paramForCoord(form, line, axis, a, value)
+            val from = ((Evaluator().eval(baseParam.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
+            if (want == null || from == null) {
+                false
+            } else {
+                offset.value = ScalarValue(Quantity.mm(want - from))
+                true
+            }
+        }
+        // its motion under an edit of the host is now fully stated, so there is nothing to compensate (OP-20)
+        carrierRiders.removeAll { it.dof === param }
+        return capture
+    }
+
+    /** Give a re-anchored junction its absolute parameter back, where it now stands — the inverse above. */
+    private fun releaseJunction(j: Junction) {
+        val param = j.param ?: return
+        val now = ((Evaluator().eval(param) as? EvalResult.Ok)?.value as? ScalarValue)?.q ?: return
+        param.boundTo = null
+        param.value = ScalarValue(now)
+        j.base = null
+        j.offset = null
+        if (j.form == RiderForm.ALONG_LINE) j.line?.let { noteCarrierRider(j.point, it, param) }
+    }
+
+    /**
+     * The parameter value that puts a rider of [form] at coordinate [value] on [axis] — the closed-form
+     * inverse [Junction.place] needs once the parameter is measured from a base rather than from the world.
+     */
+    private fun paramForCoord(
+        form: RiderForm,
+        line: LineRef?,
+        riderAxis: Int?,
+        axis: Int,
+        value: Double,
+    ): Double? =
+        when (form) {
+            RiderForm.AXIS_COORD -> if (axis == riderAxis) value else null
+            RiderForm.ALONG_LINE -> {
+                // a line is affine in its parameter: t = (value - anchor) / dir, exactly (see [riderOn])
+                val l = line?.let { ((Evaluator().eval(it.node) as? EvalResult.Ok)?.value as? LineValue)?.line }
+                val dir = if (axis == 0) l?.dir?.x else l?.dir?.y
+                val anchor = l?.let { it.origin - it.dir * it.origin.dot(it.dir) }
+                val o = if (axis == 0) anchor?.x else anchor?.y
+                if (dir == null || o == null || abs(dir) < Vec2.EPS) null else (value - o) / dir
+            }
+            else -> null
+        }
+
+    /**
      * Where [base] sits in [rec]'s **own** parameter — the quantity an offset from it is added to: its position
      * along the carrier, or its coordinate on the axis the host leaves free (see [riderOn]'s two forms).
      */
@@ -4034,9 +4355,17 @@ class Document {
         rec: RiderRecord,
         base: PointRef,
         line: LineRef,
+    ): ScalarRef = carrierBaseParam(rec.form, rec.axis, base, line)
+
+    /** The same question asked of a bare form — what a [Junction]'s re-anchoring needs, having no record. */
+    private fun carrierBaseParam(
+        form: RiderForm,
+        axis: Int?,
+        base: PointRef,
+        line: LineRef,
     ): ScalarRef =
-        when (rec.form) {
-            RiderForm.AXIS_COORD -> if (rec.axis == 0) cx.measureX(base) else cx.measureY(base)
+        when (form) {
+            RiderForm.AXIS_COORD -> if (axis == 0) cx.measureX(base) else cx.measureY(base)
             else -> cx.lineParam(line, base)
         }
 
@@ -4053,11 +4382,16 @@ class Document {
     }
 
     /** How a cursor becomes a value of [rec]'s own parameter — the inverse the offset handle writes through. */
-    private fun paramOfCarrier(rec: RiderRecord): (Vec2, Evaluator) -> Double? {
-        val line = rec.line
-        val axis = rec.axis
+    private fun paramOfCarrier(rec: RiderRecord): (Vec2, Evaluator) -> Double? = paramOfCarrier(rec.form, rec.line, rec.axis)
+
+    /** The same inverse for a bare form — what a re-anchored [Junction]'s handle writes through. */
+    private fun paramOfCarrier(
+        form: RiderForm,
+        line: LineRef?,
+        axis: Int?,
+    ): (Vec2, Evaluator) -> Double? {
         return { world, ev ->
-            if (rec.form == RiderForm.AXIS_COORD) {
+            if (form == RiderForm.AXIS_COORD) {
                 if (axis == 0) world.x else world.y
             } else {
                 ((ev.eval(line!!.node) as? EvalResult.Ok)?.value as? LineValue)?.line?.dir?.let { world.dot(it) }
@@ -4934,6 +5268,12 @@ class Document {
         val junction = Junction(rider.point, rider.handle, curve)
         junction.place = rider.place
         junction.placeable = rider.placeable
+        // the freedom this junction *is*, kept so a placement can carry it (OP-16): without this the
+        // parameter stayed a world quantity and a frame drag left every run hanging on the junction behind
+        junction.param = rider.dof
+        junction.form = rider.form
+        junction.line = rider.line
+        junction.axis = rider.axis
         junctions.add(junction)
         return junction
     }

@@ -3137,7 +3137,8 @@ has, and each kind has one honest answer about placement:
 | **relative point** (polar offset, anchor inside the group) | nothing — already rigid (see the angle limit below) | the offset is measured from member geometry, so it follows whatever the anchor does |
 | **ratio point** (a share of a span) | nothing — already rigid | dimensionless: it says nothing about the world, so it survives rotation too |
 | **rider on a member circle** (angle about the centre) | nothing — already rigid (same limit) | centre-relative; a circle has no ends to stretch |
-| a rider whose **carrier is not a member**, an offset whose **anchor is outside** | not carried, **named** | it follows something the frame does not move: the boundary-attachment rule, reported |
+| **junction on a member wall** (1 DOF along what it meets — OP-20) | **re-anchored** to a point of that wall, identically | a connection owns a degree of freedom too, and states it in the world; a run whose ends are both joined has *no other* freedom left, so missing this left the whole interior of a room standing while its outline moved (GitHub #11) |
+| a rider whose **carrier is not a member**, an offset whose **anchor is outside**, a junction on a **non-member** wall | not carried, **named** | it follows something the frame does not move: the boundary-attachment rule, reported |
 
 Four things worth recording about that.
 
@@ -3180,8 +3181,16 @@ asserted by tests rather than assumed:
   accessor and an answer to what the *number* in the panel then means (a bearing in the group, or in the world).
 - **A rider on a host axis-aligned by construction** keeps a world **axis** in its parameter, so re-anchoring
   makes it rigid under translation but a turned frame still slides it along its leg (an axis line does not
-  turn). Walls live there and a turned group of walls turns through the *path* capture instead, so nothing
-  reachable today hits it; the honest fix is to impose the along-line form at capture.
+  turn). Walls live there and a turned group of walls turns through the *path* capture instead. **Since
+  GitHub #11 that limit is reachable** — an interior run joined at both ends follows the frame through its
+  junctions, whose parameters have exactly this form — and it is therefore no longer parked silently: the
+  frame's angle field **refuses** for such a group and says why (`Document.turnRefusal`, see the as-built
+  note below). The eventual fix is still to impose the along-line form at capture, and it buys nothing on its
+  own: such a run's *legs* are held axis-aligned in the world by their shared coordinates, so making the
+  meetings turn correctly would still leave the run unturned. Turning it means capturing the path itself,
+  which needs the whole meeting construction pulled into the frame's space — a frame-inverse op and a rebuild
+  of every world-axis line a meeting is built on. Named, sized, and left to the session that wants a room
+  drawn straight and sited at 30°.
 
 ### Implementation status (as built — ortho paths and walls under a frame)
 
@@ -3238,7 +3247,10 @@ position, so a captured vertex may not be driven by one: the coordinate would be
 consequences, both stated in the app. A path whose freedom leaves it at a junction — an end welded or
 attached to anything — is **not captured** (a path is one unit of freedom: its coordinate nodes are shared
 along each run, so half a capture would bend it where nothing moved), and its members are reported as not
-following the frame, which is OP-16's boundary-attachment rule one granularity up. And an end of an
+following the frame, which is OP-16's boundary-attachment rule one granularity up. *(Amended by GitHub #11:
+such a path is still not captured, but it does now **follow** the frame whenever the walls it meets are
+members, because the **junctions** are captured instead — see the as-built note below. What it cannot do is
+turn, and that refusal now speaks.)* And an end of an
 already-placed path **refuses** to weld or attach outward: the magnet does not offer it, so no halo
 promises a join the release would refuse. The other direction is fine and is how a run reaches a placed
 wall — something outside joins *onto* a placed corner, reading its world position.
@@ -3259,6 +3271,58 @@ placement (a break inside a placed group) runs on already-captured geometry and 
 into the frame, so there the world position is what is written. The file still holds no local coordinates
 and no node names — only positions its own steps can be replayed from, and `save → load → save` is
 byte-equal after placing, a frame drag, a corner drag, a rotation and a break.
+
+### Implementation status (as built — a **connection** owns a degree of freedom too, GitHub #11)
+
+> "The whole assembly is not moved when moving the group. Some segments stay where they are."
+
+The reported drawing was a room outline with two interior runs branched off it — one welded to a corner and
+attached to the far wall, one attached to *that* run and to the wall again. All of it grouped, all of it
+placed, and a frame drag of (50,30) moved the outline whole while the interior tore: one corner moved (0,0),
+its neighbours (50,0) and (0,30), which is exactly what "some segments stay where they are" looks like.
+
+**The blind spot was a kind of freedom, not a case.** The capture understood free point sources, whole ortho
+paths and riders on member curves. An interior run's freedom is none of those: once both its ends are joined,
+every coordinate it holds is *driven*, and what is left free are the **junction parameters** of the meetings
+themselves (OP-20) — a world coordinate the wall it rides leaves free, or a distance along that wall's carrier
+line. Those are anchored to the world, so the frame moved the walls and the meetings stayed behind; the runs
+then slid along the moving walls to keep their world coordinate, which is what produced the (50,0)/(0,30)
+split. The table above now has its missing row, and the freedom sweep is complete: *point coordinates,
+ortho-path coordinates, rider parameters, junction parameters*, plus the three that are relative already.
+
+**The fix is the conversion that was already there, applied one level up.** A junction is a rider with no
+element of its own, so placing re-anchors its parameter to a point of the wall it meets — `base's position
+along the carrier + offset`, the very same operation *Make relative* performs on a rider (OP-4 case b), and
+the same thing OP-16 already did for element riders. One degree of freedom before and after, nothing moves at
+the moment of the change, and unplacing gives the absolute parameter back where the junction then stands. The
+junction keeps its own handle and its own `place`, both re-installed to write the offset, so typing a driven
+coordinate and dragging it still refuse and succeed together (OP-13) — a branch still slides along its wall
+inside the placed group. **This is the stated-anchor principle again: explicit relative anchoring is what
+makes a group rigid, and a connection is a thing that can state an anchor.**
+
+**What the honest report had missed, and why.** `deformingMembers` looked for two pinned kinds — a free point
+source outside the group and an un-captured ortho coordinate — and a junction parameter is neither, being a
+plain scalar with no element. So the placement said nothing at all about a group it could not carry. A
+junction parameter is now a third pinned kind, which is what makes the *partial* case speak: grouping the
+interior run **without** the outline it hangs on is refused with the walls named ("e16 meets e15, which is not
+in the group"), OP-16's boundary-attachment rule reaching the connection layer.
+
+**A turned frame is the boundary, and it now refuses out loud.** A path the frame carries by *capture* is
+axis-aligned in the **group's** axes and turns with it — the rotated project frame. A run that follows the
+frame through its **connections** is not: its shared coordinates still say "world x", and the axis lines its
+meetings are built on would run parallel to the very walls they must cross, so turning such a group does not
+deform it quietly, it invalidates it. `Document.turnRefusal` therefore states the limit where a rotation can
+enter — the frame's **angle field is not writable** for such a group, with the reason in the status line, and
+the placement says it at the moment it decides it. This extends, rather than replaces, the two parked angle
+limits above (a polar bearing and an on-circle angle do not turn either): all three are the same sentence —
+*an angle stated in the world's axes is not the group's to turn* — and all three are now named where they
+bite. Translation is rigid in every case; it is rotation that has a frontier.
+
+**No format change.** A junction has no step of its own: it is rebuilt by replaying `weldortho`/`attachortho`
+from the geometry as it then stands, and the `place` step that follows re-does the capture from that same
+geometry. So the reported file replays to the fixed behaviour untouched, and `save → load → save` stays
+byte-equal after a frame drag — which is the regression, carrying the user's script verbatim
+(`PlacedJunctionTest`).
 
 ### Implementation status (as built — a whole group as a tool *operand*)
 

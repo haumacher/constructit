@@ -250,7 +250,17 @@ private fun frameOf(
  * by typed number for free (OP-13) — and since the members' points are bound to `frameApply` nodes over
  * this one source, a move is a single literal write whatever the group contains.
  */
-class FrameHandle(private val node: SourceNode) : Handle {
+class FrameHandle(
+    private val node: SourceNode,
+    /**
+     * Whether this frame may be **turned** at all (OP-16). A group whose runs follow the frame only through
+     * their *connections* — an interior wall hung on the outline it meets — is rigid under translation and
+     * cannot be rotated: its legs are held axis-aligned in the **world**, not in the group, so a turn would
+     * tear it off the walls it is joined to. Typing and dragging refuse together (OP-13), and the panel
+     * shows the angle as derived rather than accepting a number that would break the drawing.
+     */
+    private val turnable: () -> Boolean = { true },
+) : Handle {
     override val dragNodes: List<SourceNode> get() = listOf(node)
 
     /** Where the frame sits now — the grab anchor, so dragging a group never makes it jump. */
@@ -267,7 +277,7 @@ class FrameHandle(private val node: SourceNode) : Handle {
     }
 
     override fun fields(): List<HandleField> =
-        listOf(frameCoordField("x", node, 0), frameCoordField("y", node, 1), frameAngleField("angle", node))
+        listOf(frameCoordField("x", node, 0), frameCoordField("y", node, 1), frameAngleField("angle", node, turnable))
 }
 
 /** A field over one coordinate of a frame's origin: [axis] 0 = x, 1 = y. */
@@ -290,6 +300,7 @@ fun frameCoordField(
 fun frameAngleField(
     label: String,
     node: SourceNode,
+    turnable: () -> Boolean = { true },
 ) = HandleField(
     label,
     node,
@@ -299,6 +310,7 @@ fun frameAngleField(
         val f = frameOf(node, Evaluator()) ?: return@HandleField
         node.value = FrameValue(f.origin, q.base)
     },
+    writableWhen = { isFreeSource(node) && turnable() },
 )
 
 /**
