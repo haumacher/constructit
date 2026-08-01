@@ -175,6 +175,24 @@ object DocumentFormat {
                 val given = el?.let { doc.userNameOf(it) }
                 if (given == null) step.args else listOf(step.args[0], Arg.Label(given))
             }
+            // the material a user assigned to a solid (Tier 1 of the appearance package): restated for the
+            // same reason a name is, since re-picking a colour must not add a second step. A *new step kind*
+            // needs no version bump — no stored literal changed its meaning (OP-18's versioning rule), and a
+            // drawing written before materials existed simply carries none and loads with the defaults.
+            "material" -> {
+                val el = (step.args.firstOrNull() as? Arg.El)?.el
+                val m = el?.let { doc.assignedMaterial(it) }
+                if (m == null) {
+                    step.args
+                } else {
+                    listOf(
+                        step.args[0],
+                        Arg.Keyed("color", Arg.Text(m.color)),
+                        Arg.Keyed("rough", Arg.Num(Quantity.number(m.roughness))),
+                        Arg.Keyed("metal", Arg.Num(Quantity.number(m.metallic))),
+                    )
+                }
+            }
             // a placement's frame is state (OP-16 step 2): the origin and angle are re-read from the frame
             // source, so a dragged or typed group comes back where it now is. The members' own steps are
             // replayed *before* this one retrofits them, and each restates the position that retrofit
@@ -645,6 +663,17 @@ object DocumentFormat {
             "name" ->
                 doc.nameElement(el(1), unquote(words.getOrElse(2) { throw LoadError("name is missing a name") }))
                     ?: throw LoadError("element '${words[1]}' cannot carry a name")
+            // the material assigned to a solid (appearance Tier 1): all three numbers stated, so a reader
+            // never has to know what this build's defaults happen to be
+            "material" ->
+                doc.setMaterial(
+                    el(1),
+                    Appearance(
+                        color = keyed(words, "color") ?: Appearance.DEFAULT_COLOR,
+                        roughness = keyed(words, "rough")?.toDoubleOrNull() ?: Appearance.DEFAULT_ROUGHNESS,
+                        metallic = keyed(words, "metal")?.toDoubleOrNull() ?: Appearance.DEFAULT_METALLIC,
+                    ),
+                ) ?: throw LoadError("element '${words[1]}' cannot carry a material")
             else -> throw LoadError("unknown step '$kind'")
         }
     }
@@ -1050,6 +1079,12 @@ object DocumentFormat {
         words.firstOrNull { it.startsWith("$key=") }
             ?.removePrefix("$key=")?.split(';')?.filter { it.isNotEmpty() }?.map { quantity(it) }
             ?: emptyList()
+
+    /** The bare `key=value` word of a step, or null when it carries none. */
+    private fun keyed(
+        words: List<String>,
+        key: String,
+    ): String? = words.firstOrNull { it.startsWith("$key=") }?.removePrefix("$key=")
 
     /** The `key=1;-1` integers of a step — a discrete choice, so plain integers and no unit. */
     private fun keyedInts(

@@ -2,6 +2,7 @@ package constructit
 
 import constructit.core.Evaluator
 import constructit.dsl.scalar
+import constructit.editor.Appearance
 import constructit.editor.BrowserCanvasDrawTarget
 import constructit.editor.Camera
 import constructit.editor.CreateDialog
@@ -12,10 +13,14 @@ import constructit.editor.Editor
 import constructit.editor.Format
 import constructit.editor.Icons
 import constructit.editor.PointerButton
+import constructit.editor.Preview3
 import constructit.editor.Scene3
 import constructit.editor.Tools
 import constructit.editor.Viewport3
 import constructit.editor.WebGlRenderer3
+import constructit.exchange.ExportFormat
+import constructit.exchange.ExportScene
+import constructit.exchange.Exports
 import constructit.geom.Justification
 import constructit.geom.MeshBool
 import constructit.geom.Vec2
@@ -23,6 +28,8 @@ import constructit.units.Dimension
 import constructit.units.Quantity
 import kotlinx.browser.document
 import kotlinx.browser.window
+import org.khronos.webgl.Int8Array
+import org.khronos.webgl.Uint8Array
 import org.w3c.dom.CanvasRenderingContext2D
 import org.w3c.dom.HTMLCanvasElement
 import org.w3c.dom.HTMLElement
@@ -98,6 +105,24 @@ private fun setupApp() {
         canvas3.style.cursor = if (viewport.editing()) "crosshair" else "grab"
     }
 
+    // ---- the realistic preview: a *third* view, display-only (three.js, loaded on first open) ----
+    //
+    // Its own canvas over the same area, so the two editing views keep working exactly as they did: nothing
+    // here touches them, and turning the preview off puts the pointer back where it was. What crosses into it
+    // is the neutral `ExportScene` — the very scene the GLB writer consumes — so what this shows is what an
+    // exported file shows, by construction.
+    val canvasPreview = document.getElementById("canvas-preview") as HTMLCanvasElement
+    val preview = Preview3(canvasPreview)
+    var previewOn = false
+
+    fun drawPreview() {
+        // The scene's *name* is the exported file's root-node name and nothing else, so the preview does not
+        // need the drawing's name at all — it needs the bodies and their materials.
+        val scene = ExportScene.extract(editor.doc)
+        preview.update(scene)
+        preview.draw()
+    }
+
     fun repaint() {
         // the drawing buffer must match the element's CSS size on *every* paint, not only on window
         // resize: panel content or a wrapping status line changes the canvas box too, and a stale buffer
@@ -112,6 +137,9 @@ private fun setupApp() {
         } else {
             editor.render(target)
         }
+        // the preview follows every document change like the other two views — and costs a *buffer upload*
+        // only for the bodies whose mesh actually changed (OP-5, see Preview3.update)
+        if (previewOn && preview.ready) drawPreview()
         renderPanel(editor, view3d, viewport)
     }
     editor.onChange = { repaint() }
@@ -150,8 +178,56 @@ private fun setupApp() {
         }
         repaint()
     }
-    (document.getElementById("v-2d") as HTMLElement).addEventListener("click", { setView3d(false) })
-    (document.getElementById("v-3d") as HTMLElement).addEventListener("click", { setView3d(true) })
+
+    /** What the status line says while the preview is up: what is in it, and what it deliberately is not. */
+    fun previewNote(scene: ExportScene): String =
+        scene.refusal
+            ?: "Preview: ${scene.nodes.size} solid(s), ${scene.triangleCount} triangles — display only " +
+            "(drag to orbit, wheel to zoom, Space+drag to move, double-click to reframe)" +
+            if (scene.notes.isEmpty()) "" else " · ${scene.notes.joinToString("; ")}"
+
+    /**
+     * Show or hide the preview. **The editing views are untouched by its presence**: it is a canvas above
+     * them, and turning it off gives the pointer straight back to whichever of them was in front.
+     *
+     * three.js is fetched here, on the first open — not in the main bundle (see [Preview3.load]) — so this is
+     * the one place in the shell that has to cope with a view that is not ready yet. It copes the way the
+     * WASM engine's arrival is coped with (OP-3): the app carries on, and the panel says what happened.
+     */
+    fun setPreview(on: Boolean) {
+        previewOn = on
+        canvasPreview.hidden = !on
+        (document.getElementById("v-prev") as HTMLElement).className = if (on) "active" else ""
+        if (!on) {
+            editor.note("")
+            repaint()
+            return
+        }
+        preview.load { ok ->
+            val scene = ExportScene.extract(editor.doc)
+            // `update` is what starts the renderer, so `ready` is only meaningful after it
+            if (ok) preview.update(scene)
+            if (ok && preview.ready) {
+                if (!scene.isEmpty) preview.frame(scene)
+                preview.draw()
+                editor.note(previewNote(scene))
+                console.log("[Preview] ready — ${scene.nodes.size} solid(s), ${scene.triangleCount} triangles")
+            } else {
+                editor.note(preview.problem ?: "the preview could not start")
+            }
+            renderPanel(editor, view3d, viewport)
+        }
+        repaint()
+    }
+    (document.getElementById("v-2d") as HTMLElement).addEventListener("click", {
+        setPreview(false)
+        setView3d(false)
+    })
+    (document.getElementById("v-3d") as HTMLElement).addEventListener("click", {
+        setPreview(false)
+        setView3d(true)
+    })
+    (document.getElementById("v-prev") as HTMLElement).addEventListener("click", { setPreview(!previewOn) })
 
     // Which sketch space is active (OP-17): the view indicator *and* the way back to the plan.
     // A `<select>` because that is what "one of these, and here is which" is; the Editor owns the switch
@@ -227,6 +303,43 @@ private fun setupApp() {
     // double-click reframes — unless a tool is drawing here, where it means what it means on the canvas:
     // finish the run. The decision is the controller's, so it is asserted headlessly like the rest.
     canvas3.addEventListener("dblclick", { viewport.doubleClick(Scene3.extract(editor.doc)) })
+
+    // ---- preview input: the camera, and nothing else ----
+    //
+    // No routing decision to make here, and that is the point of a display-only view: there is no tool to
+    // give a drag to, no ray to cast, no pick to resolve. So the shell maps the gesture straight onto the
+    // *same* orbit camera the working 3D view uses ([Camera3], whose arithmetic is headlessly tested) —
+    // Space or the middle button meaning "move what the view looks at", exactly as it does over there.
+    var previewDrag: Vec2? = null
+    var previewPan = false
+    canvasPreview.addEventListener("mousedown", {
+        val e = it as MouseEvent
+        if (e.button.toInt() == 1) e.preventDefault()
+        previewPan = e.button.toInt() == 1 || spaceDown
+        previewDrag = Vec2(e.clientX.toDouble(), e.clientY.toDouble())
+    })
+    canvasPreview.addEventListener("mousemove", {
+        val e = it as MouseEvent
+        val from = previewDrag ?: return@addEventListener
+        val dx = e.clientX - from.x
+        val dy = e.clientY - from.y
+        previewDrag = Vec2(e.clientX.toDouble(), e.clientY.toDouble())
+        if (previewPan) preview.pan(dx, dy) else preview.orbit(dx, dy)
+        preview.draw()
+    })
+    canvasPreview.addEventListener("mouseup", { previewDrag = null })
+    canvasPreview.addEventListener("mouseleave", { previewDrag = null })
+    canvasPreview.addEventListener("wheel", {
+        val e = it as WheelEvent
+        e.preventDefault()
+        preview.zoom(e.deltaY)
+        preview.draw()
+    })
+    canvasPreview.addEventListener("dblclick", {
+        val scene = ExportScene.extract(editor.doc)
+        if (!scene.isEmpty) preview.frame(scene)
+        preview.draw()
+    })
     document.addEventListener("keydown", {
         val e = it as org.w3c.dom.events.KeyboardEvent
         val key = e.key
@@ -472,6 +585,28 @@ private fun setupApp() {
         // clash or a blank field makes different from what was typed, exactly as a parameter's does
         if (t.id == "insp-name") {
             editor.selection?.let { el -> t.value = editor.nameElement(el, t.value) ?: editor.doc.userNameOf(el) ?: "" }
+            repaint()
+            return@addEventListener
+        }
+        // the solid's **material** (appearance Tier 1): three fields, one record, one recorded step. Read
+        // together rather than one at a time, because they are one value — and the Editor is what decides
+        // what it took, exactly as it does for a name.
+        if (t.id == "insp-color" || t.id == "insp-rough" || t.id == "insp-metal") {
+            val el = editor.selection ?: return@addEventListener
+            val was = editor.doc.materialOf(el)
+
+            fun field(
+                id: String,
+                fallback: Double,
+            ): Double = (document.getElementById(id) as? HTMLInputElement)?.value?.toDoubleOrNull() ?: fallback
+            editor.setMaterial(
+                el,
+                Appearance(
+                    color = (document.getElementById("insp-color") as? HTMLInputElement)?.value ?: was.color,
+                    roughness = field("insp-rough", was.roughness),
+                    metallic = field("insp-metal", was.metallic),
+                ),
+            )
             repaint()
             return@addEventListener
         }
@@ -721,6 +856,39 @@ private fun setupApp() {
             { note("Clipboard refused; use Save instead", error = true) },
         )
     })
+
+    /**
+     * **Export**: bytes out, named after the drawing, downloaded.
+     *
+     * The shell's entire contribution is the last five lines — a blob and a click. *Which* bodies go into the
+     * file, what it is called, what the status line says and every refusal are [Exports]'s, in `commonMain`,
+     * which is why the whole flow is covered headlessly and this cannot drift from what the tests assert.
+     *
+     * Deliberately the download route and not the File System Access API that Save uses: an export is a
+     * *derived artefact*, not the drawing — there is nothing to write back to, and no handle worth keeping.
+     */
+    fun exportBytes(format: ExportFormat) {
+        val result = Exports.export(editor.doc, docName(), format)
+        val bytes = result.bytes
+        if (bytes == null) {
+            note(result.message, error = true)
+            return
+        }
+        // Kotlin/JS holds a ByteArray as an `Int8Array`, so the bytes are handed to the Blob as a *view* over
+        // the same buffer — a copy of a 50 MB mesh here would be a stall nobody could explain.
+        val signed = bytes.unsafeCast<Int8Array>()
+        val view = Uint8Array(signed.buffer, signed.byteOffset, signed.length)
+        val blob = Blob(arrayOf(view), BlobPropertyBag(type = format.mimeType))
+        val url = URL.createObjectURL(blob)
+        anchor.href = url
+        anchor.download = result.fileName
+        anchor.click()
+        URL.revokeObjectURL(url)
+        note(result.message)
+    }
+    (document.getElementById("x-glb") as HTMLElement).addEventListener("click", { exportBytes(ExportFormat.GLB) })
+    (document.getElementById("x-3mf") as HTMLElement).addEventListener("click", { exportBytes(ExportFormat.THREE_MF) })
+    (document.getElementById("x-stl") as HTMLElement).addEventListener("click", { exportBytes(ExportFormat.STL) })
     (document.getElementById("f-download") as HTMLElement).addEventListener("click", { saveDrawing(askForFile = false) })
     (document.getElementById("f-saveas") as HTMLElement).addEventListener("click", { saveDrawing(askForFile = true) })
     val filePicker = document.getElementById("f-file") as HTMLInputElement
@@ -949,6 +1117,7 @@ private fun renderPanel(
             } else {
                 "<div class=\"selname\">${editor.selectionLabel()}</div>" +
                     elementNameRow(editor) +
+                    materialRow(editor) +
                     fields.withIndex().joinToString("") { (i, f) ->
                         val q = f.read(ev)
                         val shown = q?.let { displayValue(it) } ?: ""
@@ -1079,6 +1248,29 @@ private fun elementNameRow(editor: Editor): String {
         "<input id=\"insp-name\" class=\"fname\" value=\"$given\" placeholder=\"${editor.doc.nameOf(el)}\" " +
         "title=\"A name of your own for this element. The script name stays what the file and every message call it; " +
         "clear the field to drop the name.\"></div>"
+}
+
+/**
+ * The selected solid's **material** — appearance Tier 1, in one row: a colour, a roughness and a metalness.
+ *
+ * Only for a solid, and only where the file can carry it (`Document.canSetMaterial`), which is the rule the
+ * name row above follows for the same reason. Three inputs rather than a dialog because that is the whole of
+ * Tier 1: five numbers is what makes a GLB render honestly in any viewer, and anything more — a material
+ * library, a texture, a per-face assignment — is a later tier with its own mechanism.
+ */
+private fun materialRow(editor: Editor): String {
+    val el = editor.selection?.takeIf { editor.selectionCount == 1 } ?: return ""
+    if (!editor.doc.canSetMaterial(el)) return ""
+    val m = editor.doc.materialOf(el)
+    val assigned = if (editor.doc.assignedMaterial(el) == null) " (default)" else ""
+    return "<div class=\"frow\"><span class=\"flabel\">material$assigned</span>" +
+        "<input id=\"insp-color\" class=\"fcolor\" type=\"color\" value=\"${m.color}\" " +
+        "title=\"Base colour. What an exported GLB and the realistic preview both render — one material, two consumers.\">" +
+        "<input id=\"insp-rough\" class=\"fmat\" type=\"number\" min=\"0\" max=\"1\" step=\"0.05\" value=\"${Format.num(m.roughness)}\" " +
+        "title=\"Roughness: 0 is mirror-smooth, 1 is fully diffuse.\">" +
+        "<input id=\"insp-metal\" class=\"fmat\" type=\"number\" min=\"0\" max=\"1\" step=\"0.05\" value=\"${Format.num(m.metallic)}\" " +
+        "title=\"Metalness: 0 is a dielectric (plastic, wood), 1 is bare metal.\">" +
+        "</div>"
 }
 
 /**

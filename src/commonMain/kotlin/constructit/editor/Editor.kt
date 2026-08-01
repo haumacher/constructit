@@ -1189,6 +1189,40 @@ class Editor(
     }
 
     /**
+     * Give a solid a **material** (Tier 1 of the appearance package) — the panel's own operation, shaped
+     * exactly as [nameElement] is: one user-level change, one checkpoint, and what it actually took comes back
+     * so the row can show the result rather than the request. Null clears it, back to the default.
+     */
+    fun setMaterial(
+        el: Element,
+        material: Appearance?,
+    ): Appearance? {
+        val was = doc.assignedMaterial(el)
+        val now = doc.setMaterial(el, material)
+        if (now == null) {
+            statusHint =
+                if (el.kind != ElementKind.SOLID) {
+                    "${doc.nameOf(el)} is not a solid — a material is what a solid is made to look like"
+                } else {
+                    "${doc.nameOf(el)} was not built by a step of its own, so the file has nowhere to put a material for it"
+                }
+            onChange()
+            return null
+        }
+        if (now != (was ?: Appearance.DEFAULT)) {
+            checkpoint()
+            statusHint =
+                if (material == null) {
+                    "${doc.nameOf(el)} is back to the default material"
+                } else {
+                    "${doc.nameOf(el)}: ${now.color}, roughness ${Format.num(now.roughness)}, metallic ${Format.num(now.metallic)}"
+                }
+        }
+        onChange()
+        return now
+    }
+
+    /**
      * Rename group [g] (OP-16 × OP-7). The same shape as [renameParameter]: uniquified, one checkpoint, and
      * the name it actually took comes back so the field can show the result rather than the request.
      */

@@ -126,4 +126,33 @@ object Golden {
         }
         assertEquals(file.readText(), svg, "SVG golden mismatch for '$name' (delete ${file.path} to regenerate)")
     }
+
+    /**
+     * The same discipline for a **binary** golden — the exported GLB.
+     *
+     * Byte-equality is the only assertion that can notice a writer change nobody meant: a reordered JSON key,
+     * a normal computed a hair differently, a padding byte gone missing. It is only possible because the
+     * writers are deterministic by design (fixed key order, one canonical number format, no clock, no hash
+     * iteration), so a mismatch here is always a real change rather than noise.
+     */
+    fun checkBytes(
+        name: String,
+        bytes: ByteArray,
+    ) {
+        val file = File(dir, name)
+        if (!file.exists()) {
+            dir.mkdirs()
+            file.writeBytes(bytes)
+            println("[golden] wrote ${file.path} (inspect & commit)")
+            return
+        }
+        val want = file.readBytes()
+        assertEquals(want.size, bytes.size, "golden '$name' has ${want.size} bytes, output has ${bytes.size}")
+        val at = want.indices.firstOrNull { want[it] != bytes[it] }
+        assertTrue(
+            at == null,
+            "binary golden mismatch for '$name' at byte $at (${want.getOrNull(at ?: 0)} vs ${bytes.getOrNull(at ?: 0)}) " +
+                "— delete ${file.path} to regenerate",
+        )
+    }
 }

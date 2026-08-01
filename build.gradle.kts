@@ -44,6 +44,15 @@ val lwjglAssimpClassifier =
 val manifoldNpmVersion = "3.5.1"
 
 /**
+ * three.js, for the in-app realistic preview (`Preview3`, src/jsMain). Declared here so the version is one
+ * fact, and **loaded by a dynamic `import('three')`** rather than a static one: webpack then splits it into a
+ * chunk of its own, so the ~600 KB library rides only the sessions that open the preview panel and the main
+ * bundle is unchanged. The Kotlin side is a hand-written external declaration of the dozen classes the preview
+ * touches (src/jsMain/kotlin/constructit/three/THREE.kt), not a generated binding.
+ */
+val threeNpmVersion = "0.166.1"
+
+/**
  * The browser half of the seam: **copy `manifold.js` and `manifold.wasm` out of the resolved npm package
  * into the app's own resources**, so they are served next to `index.html` and the app works offline.
  *
@@ -106,6 +115,8 @@ kotlin {
                 implementation("org.jetbrains.kotlinx:kotlinx-html-js:0.11.0")
                 // the same engine as WASM (OP-9); loaded at startup, see `MeshBool` in src/jsMain
                 implementation(npm("manifold-3d", manifoldNpmVersion))
+                // the realistic preview's renderer, code-split by its dynamic import (see above)
+                implementation(npm("three", threeNpmVersion))
             }
             // ...and its two files ride along as resources, so they land next to index.html
             resources.srcDir(manifoldWasm)

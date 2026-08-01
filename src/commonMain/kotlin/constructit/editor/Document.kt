@@ -1765,6 +1765,76 @@ class Document {
         return took
     }
 
+    // ---- appearance, Tier 1: a material per solid (one panel row, one recorded step) ----
+
+    /**
+     * The materials the user has assigned, by runtime id — the same shape as [elementNames] and for the same
+     * reason: an appearance is a **decision about the drawing**, so it is a recorded step and not a field on
+     * the element, and it is rebuilt by replay like everything else.
+     */
+    private val elementMaterials = HashMap<String, Appearance>()
+
+    /**
+     * What [el] is made to look like — the assigned material, or [Appearance.DEFAULT] when none was assigned.
+     *
+     * There is no "unset" answer, deliberately: both consumers (the GLB writer and the preview) need five
+     * numbers per solid, and a solid nobody has dressed still has to look like an object. [assignedMaterial]
+     * is the question the *panel* asks, since a row must know whether it is showing a default or a choice.
+     */
+    fun materialOf(el: Element): Appearance = elementMaterials[el.id] ?: Appearance.DEFAULT
+
+    /** The material the user actually assigned to [el], or null while it is wearing the default. */
+    fun assignedMaterial(el: Element): Appearance? = elementMaterials[el.id]
+
+    /**
+     * Whether [el] can carry a material: a **solid** the file names ([canNameElement]'s rule).
+     *
+     * Solids only, because Tier 1 is *a material per solid* — that is what a PBR viewer renders and what the
+     * two consumers ask for. A material on a construction line would be a value with no consumer, which is
+     * the definition of a setting nobody asked for.
+     */
+    fun canSetMaterial(el: Element): Boolean = el.kind == ElementKind.SOLID && creatingStep(el) != null
+
+    /**
+     * Give [el] a material (null clears it, back to the default). Returns what it now wears, or null when
+     * [el] cannot carry one.
+     *
+     * One step per dressed solid, created on the first assignment and **restated** at save from then on
+     * ([DocumentFormat.restate]) — the element-rename pattern verbatim, because a material is state in
+     * exactly the same way a name is: the writer re-reads it rather than the journal remembering the first
+     * value typed. Clearing drops the step outright, and deleting the solid drops it through the ordinary
+     * reference rule ([dependentSteps]), since the step names the element as an argument.
+     */
+    fun setMaterial(
+        el: Element,
+        material: Appearance?,
+    ): Appearance? {
+        if (!canSetMaterial(el)) return null
+        val existing = journal.firstOrNull { s -> s.kind == "material" && s.args.any { a -> a is Arg.El && a.el === el } }
+        if (material == null) {
+            elementMaterials.remove(el.id)
+            existing?.let { s -> journal.removeAll { it === s } }
+            return Appearance.DEFAULT
+        }
+        val took =
+            Appearance(
+                color = Appearance.parseHex(material.color)?.let { Appearance.hexOf(it) } ?: Appearance.DEFAULT_COLOR,
+                roughness = material.roughnessClamped,
+                metallic = material.metallicClamped,
+            )
+        elementMaterials[el.id] = took
+        if (existing == null) {
+            recording(
+                "material",
+                Arg.El(el),
+                Arg.Keyed("color", Arg.Text(took.color)),
+                Arg.Keyed("rough", Arg.Num(Quantity.number(took.roughness))),
+                Arg.Keyed("metal", Arg.Num(Quantity.number(took.metallic))),
+            ) { }
+        }
+        return took
+    }
+
     private fun uniqueElementName(
         base: String,
         except: Element,

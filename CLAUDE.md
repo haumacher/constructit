@@ -53,7 +53,8 @@ Layered so the UI shell is a late, reversible choice. The engine is pure Kotlin 
 | Geometry + units | `geom/` (`Vec2`, `Line`, `Circle`, `Arc`, `Profile`, affine), `units/Units.kt` (dimensional analysis) |
 | Construction DSL | `dsl/Construction.kt` (typed builder), `dsl/Shapes.kt` (macros) |
 | Editor core | `editor/` — `Document`, `Editor`, `Tools`, `HitTest`, `Camera`, `SceneRenderer` |
-| Browser shell | `src/jsMain` — `Main.kt` (DOM chrome), `BrowserCanvasDrawTarget.kt` |
+| Export / preview | `exchange/` — `ExportScene` (the neutral seam), `Glb.kt`, `ThreeMf.kt`, `Stl.kt` (pure byte producers) |
+| Browser shell | `src/jsMain` — `Main.kt` (DOM chrome), `BrowserCanvasDrawTarget.kt`, `Preview3.kt` (three.js) |
 | Tests | `src/jvmTest` — gesture tests, SVG goldens, opt-in Playwright E2E |
 
 ### Core engine (`core/Model.kt`)

@@ -117,6 +117,19 @@ first-class goal and the current implementation focus.
   opening, sill to head, following the parameters live. Those drawn jambs are **grabbable**: dragging
   the near one slides the whole opening along its wall, the far one sets its width, and both clamp to
   the wall's extent — the same two numbers the panel shows, since dragging and typing are one thing.
+- **Export, and a realistic preview** — the finished solids leave the app three ways, all off the *same*
+  neutral scene: **GLB** (glTF 2.0) for viewing, one named node and one PBR material per solid, with glTF's
+  metres and +Y-up applied once at the root so every vertex in the file is still the model's own millimetre;
+  **3MF** for printing, with the unit stated (`unit="millimeter"`) and every mesh re-checked watertight before
+  it is written — refused **by name** if it is not; and **binary STL** as the universal fallback. Hidden and
+  invalid solids are named rather than silently dropped, a boolean's operands are not exported beside the part
+  they built, and an empty drawing refuses with a reason. Alongside them, a **realistic preview** on three.js:
+  a third, display-only view where the solids are lit, tone-mapped and shown with their materials — reading the
+  same scene the GLB writer does, so what you see is what the exported file contains. It re-uploads only the
+  bodies that actually changed, and the library is fetched the first time you open the panel, not with the app.
+- **A material per solid** — base colour, roughness and metalness, one row in the inspector, recorded in the
+  drawing like any other decision and restated on every save. Five numbers is what makes an exported file
+  render honestly in any PBR viewer — and the preview and the export read the same five.
 - **Browser canvas** — an interactive HTML5-canvas editor; the engine is pure Kotlin shared between
   the JVM and the browser.
 
@@ -128,7 +141,8 @@ Kotlin Multiplatform, layered so the UI/shell is a late, reversible choice:
 |-------|----------|-------|
 | Core engine | `src/commonMain` | model, type system, DAG eval, geometry ops, DSL — zero UI deps |
 | Editor core | `src/commonMain/.../editor` | document, tools, camera, hit-testing, scene renderer (behind a `DrawTarget` seam) |
-| Browser shell | `src/jsMain` | HTML5 canvas `DrawTarget` + DOM chrome (palette, panels) + one WebGL program for the 3D view |
+| Exchange | `src/commonMain/.../exchange` | the neutral export scene + the GLB / 3MF / STL writers — pure byte producers, no platform |
+| Browser shell | `src/jsMain` | HTML5 canvas `DrawTarget` + DOM chrome (palette, panels), one WebGL program for the 3D view, three.js for the preview |
 | Tests | `src/jvmTest` | headless gesture tests, SVG golden snapshots, opt-in Playwright E2E |
 
 The renderer draws through a backend-agnostic `DrawTarget` (SVG for tests, Canvas2D in the browser),
@@ -302,12 +316,17 @@ did not previously complete at all. What the measuring produced:
   picks are highlighted on the canvas and a click that hits nothing says so. The recorded step still lists
   every piece in order, so nothing is re-discovered when the file is reloaded.
 
-1068 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included.
+1108 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included — down to opening the
+preview panel and catching a real GLB download.
 
+**Mesh export is done** (GLB / 3MF / binary STL, plus the in-app three.js preview and a material per solid).
 Planned next: conics as first-class curves (an ellipse arc, which is what would make an inclined section of a
 cylinder exact instead of flagged), picking a face in the 3D view to choose the working plane (edit-in-3D's
-second slice), mesh export (GLB / 3MF / STL), regions with holes from traced outlines, and line styles in the
-render seam.
+second slice) — which is also what per-face materials wait on — textures by projection at export time, regions
+with holes from traced outlines, and line styles in the render seam. Deliberately not planned: **STEP export**,
+because the kernel is mesh-based and holds no exact B-rep for a solid, so exact-geometry export would be either
+dishonest or a compliance project; **JT** is a separate library project (kotlinJT) that will consume this
+package's scene seam rather than an export route here.
 
 ## Documentation
 

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.io.File
 import java.nio.file.Paths
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -1252,6 +1253,148 @@ class BrowserE2ETest {
             // which is a quarter of a millimetre at the canvas' 4 px/mm, and an ortho corner is made of two of
             // them. Everything else — the steps, the ids, the names, the structure — is compared exactly.
             assertSameConstruction(script(), drawnIn3d, tol = 1.0)
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+        server.stop(0)
+    }
+
+    /**
+     * **The export package in real Chrome**: a solid built by clicking, given a material in the panel, shown in
+     * the realistic preview, and downloaded as a GLB.
+     *
+     * Served over http, and that is not incidental — the preview's three.js is a **lazily imported chunk**
+     * (webpack code-splitting: the library is a separate file, so it rides only the sessions that open the
+     * panel), and a browser will not fetch a chunk from a `file:` page any more than it will load the WASM
+     * engine there. So this test is the only place that can vouch for four things at once: the chunk really
+     * loads, WebGL really renders it, the material assigned in the panel really reaches the preview's shader,
+     * and the export button really produces a downloadable file whose first four bytes spell `glTF`.
+     *
+     * The two editing views are checked to still work *after* the preview has been up, because "a third view
+     * that breaks the other two" is the failure mode a display-only viewer is worth having only if it avoids.
+     */
+    @Test
+    fun previewAndExportInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val dist = File("build/dist/js/productionExecutable")
+        assertTrue(File(dist, "index.html").exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+        val server = serve(dist)
+        val url = "http://127.0.0.1:${server.address.port}/index.html"
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            val previewLines = ArrayList<String>()
+            page.onConsoleMessage { if (it.text().startsWith("[Preview]")) previewLines.add(it.text()) }
+            page.setViewportSize(1000, 700)
+            page.navigate(url)
+            page.waitForSelector("#canvas")
+
+            fun status() = page.querySelector("#status").textContent()
+
+            fun fileNote() = page.querySelector("#file-note").textContent()
+
+            fun tree() = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+            // ---- a plate: a rectangle in plan, then 20 mm of thickness ----
+            val box = page.querySelector("#canvas").boundingBox()
+            val rx1 = box.x + box.width * 0.32
+            val rx2 = box.x + box.width * 0.68
+            val ry1 = box.y + box.height * 0.35
+            val ry2 = box.y + box.height * 0.62
+            page.click("#tool-${Tools.RECTANGLE}")
+            page.mouse().click(rx1, ry1)
+            page.mouse().click(rx2, ry2)
+            page.fill("#p-name", "thickness")
+            page.fill("#p-value", "20")
+            page.click("#p-add")
+            page.click("#tool-${Tools.EXTRUDE}")
+            page.mouse().click((rx1 + rx2) / 2, ry2) // a leg of the footprint, not the area inside it
+            assertTrue(tree().any { it.startsWith("solid") }, "the plate became a solid: ${status()}")
+
+            // ---- its material, in the inspector (appearance Tier 1) ----
+            //
+            // A colour well takes no keystrokes, so the value is written and committed the way the browser
+            // itself would — which is also what proves the shell listens for `change` on that field.
+            page.click("#tree .item:last-child")
+            page.waitForSelector("#insp-color")
+            page.evaluate(
+                """
+                () => {
+                  const set = (id, v) => {
+                    const f = document.getElementById(id);
+                    f.value = v;
+                    f.dispatchEvent(new Event('change', { bubbles: true }));
+                  };
+                  set('insp-color', '#b87333');
+                  set('insp-rough', '0.35');
+                  set('insp-metal', '0.9');
+                }
+                """.trimIndent(),
+            )
+            assertTrue(status().contains("#b87333"), "the panel says what the material now is: ${status()}")
+            page.click("#f-copy")
+            page.waitForCondition { fileNote().contains("clipboard") || fileNote().contains("Clipboard") }
+
+            // ---- the realistic preview: the lazily-loaded chunk, and a frame on the canvas ----
+            val blank = page.evaluate("() => document.querySelector('#canvas-preview').toDataURL()") as String
+            page.click("#v-prev")
+            page.waitForCondition { previewLines.any { it.startsWith("[Preview] ready") } }
+            assertTrue(
+                previewLines.any { it.contains("three.js r") },
+                "the module reports itself, so the chunk really loaded: $previewLines",
+            )
+            assertTrue(previewLines.last().contains("1 solid"), "…with the drawing's one body in it: $previewLines")
+            assertTrue(status().startsWith("Preview:"), "the status line says what the view is: ${status()}")
+            page.waitForCondition {
+                (page.evaluate("() => document.querySelector('#canvas-preview').toDataURL()") as String) != blank
+            }
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/24-preview.png")))
+            val shown = page.evaluate("() => document.querySelector('#canvas-preview').toDataURL()") as String
+
+            // it is a *view*: dragging orbits it, and nothing about the drawing changes
+            val itemsBefore = tree().size
+            page.mouse().move(box.x + box.width / 2, box.y + box.height / 2)
+            page.mouse().down()
+            page.mouse().move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 40)
+            page.mouse().up()
+            assertTrue(
+                (page.evaluate("() => document.querySelector('#canvas-preview').toDataURL()") as String) != shown,
+                "dragging in the preview should orbit it and redraw",
+            )
+            assertEquals(itemsBefore, tree().size, "a display-only view must not build anything")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/25-preview-orbited.png")))
+
+            // ---- the GLB export: a real download, and its first four bytes ----
+            val download = page.waitForDownload { page.click("#x-glb") }
+            assertEquals("drawing.glb", download.suggestedFilename(), "named after the drawing")
+            val saved = File("build/e2e/export.glb")
+            download.saveAs(saved.toPath())
+            val bytes = saved.readBytes()
+            assertTrue(bytes.size > 100, "the GLB has content: ${bytes.size} bytes")
+            assertEquals("glTF", String(bytes, 0, 4, Charsets.US_ASCII), "a glTF binary container, by its magic")
+            assertTrue(fileNote().contains("1 solid"), "the panel says what went out: ${fileNote()}")
+
+            // ...and the same for the two print formats, so all three buttons are known to be wired
+            val threeMf = page.waitForDownload { page.click("#x-3mf") }
+            assertEquals("drawing.3mf", threeMf.suggestedFilename())
+            val stl = page.waitForDownload { page.click("#x-stl") }
+            assertEquals("drawing.stl", stl.suggestedFilename())
+
+            // ---- and the editing views still work, with the preview closed again ----
+            page.click("#v-3d")
+            page.waitForCondition { page.querySelector("#canvas-preview").isHidden }
+            val solid3d = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
+            page.click("#v-2d")
+            page.click("#tool-${Tools.POINT}")
+            page.mouse().click(rx1, ry1 - 40)
+            assertEquals(itemsBefore + 1, tree().size, "the 2D view still draws: ${status()}")
+            assertTrue(solid3d.length > 1000, "the 3D view still renders the part")
 
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()

@@ -4279,6 +4279,121 @@ direction it must err: an inscribed bore removes slightly too little, so a bored
   fits behind the same signature; the brute-force one was chosen because the degenerate-case honesty above
   is the part that is hard, and it is much easier to get right without a sweep's status flags.
 
+### The export package (as built — one neutral scene, three writers and a preview)
+
+**The whole package is one seam and four consumers.** GLB, 3MF, binary STL and the in-app three.js preview
+read a single `ExportScene` (`commonMain`, `constructit.exchange`) and nothing else — named nodes, transforms,
+indexed triangle meshes, one material per node, and the unit and up-axis stated **in the model** rather than
+left to each reader's folklore. The reason the seam exists rather than four readers of the `Document`: every
+one of them would otherwise have to re-decide what counts as an exportable body, and five answers to that
+question is five different files out of one drawing. It is also the handoff the JT sibling project is scoped
+around, so that adapter stays a page.
+
+**What the scene contains is decided once.** Solids only (an export writes bodies; a construction line is not
+one). Visible solids only — hiding is a recorded decision about the drawing (OP-18's visibility reversal), so a
+hidden body is not exported and **is named in the notes**. Valid solids only (OP-3), the invalid one named too.
+And **outputs, not material**: a solid another visible solid is built *of* is that solid's construction
+material (`Document.isMaterial`, the rule the 3D view already followed), so a drilled pyramid exports as **one**
+body — and the operands are *not* noted, because they were never bodies of their own. `notes` is therefore the
+whole of what an export has to say, which makes the rule worth relying on: **silence means success**, and a
+refusal names what it skipped (*"nothing to export: e5 is hidden"*) instead of shrugging.
+
+**The mesh crosses the seam by reference.** `ExportNode.mesh` *is* the kernel's `Mesh3` object — never copied,
+re-tessellated or repaired (OP-9's sink rule). Two things fall out, and both are load-bearing: an export is a
+re-encoding rather than geometry work, and **mesh identity says whether a body changed** (OP-5's
+argument-identity memo), which is exactly what the preview's incremental upload keys on. The scene-seam test
+asserts object identity (`assertSame`), not equality, because that is the property the preview depends on.
+
+**Normals are computed once, for both renderers.** `RenderMesh` turns a mesh into the flat position/normal/index
+arrays that a glTF primitive and a `THREE.BufferGeometry` both want, field for field. Neither naive answer is
+acceptable and both are tempting: averaging every incident face rounds a box's corners, one normal per facet
+turns a tessellated bore into a barrel of visible strips. So a corner averages only the incident faces within a
+**crease threshold** of its own — and the threshold is not a new number, it is `Scene3.CREASE_ANGLE_RAD`, the
+same 30° the 3D view already draws feature edges at. One authority: a crease the editing view draws a line
+along is a crease the preview and the exported GLB shade as one. Deterministic by construction (corners in
+triangle order, incident faces in ascending index, output vertices emitted on first sight), which is what makes
+a byte-golden GLB possible at all.
+
+**GLB — the two conversions are spec'd, so they are done once, at the root.** glTF is *metres* and *+Y-up* by
+specification, not by convention, which is precisely why this file kind is safe to write without a compliance
+project: the root node carries `scale = 0.001` and the quaternion for −90° about X (`(−√2/2, 0, 0, √2/2)`), and
+**every vertex in the file is still the model's own millimetre number** — a reader that undoes the root gets
+millimetres back exactly, and no rounding was spent on the conversion. Core spec only: positions, normals,
+indices, one node and one metallic-roughness material per solid, no extensions and no textures (Tier 2 is
+queued elsewhere). The spec corners that had to be right, and are pinned by a test that *parses the bytes back*
+the way a viewer does: chunk lengths include their padding and each chunk is 4-byte aligned (JSON padded with
+**spaces** so it stays text, BIN with zeros); every buffer view starts on a 4-byte boundary, which satisfies the
+"accessor offset is a multiple of its component size" rule for every component type written; `POSITION` carries
+the `min`/`max` the spec *requires* for that attribute and the others do not carry numbers a reader ignores;
+indices are `UNSIGNED_SHORT` while the vertex count allows it and `UNSIGNED_INT` above; and `baseColorFactor` is
+**linear** RGB, not the sRGB the colour was picked in. The writer emits fixed key order and one canonical number
+format (never scientific notation — the file format's own `trim` rule, applied to the other file this project
+writes), so the acceptance pyramid has a **byte golden**.
+
+**3MF — the doctrine as a file format.** Core spec only: an OPC/ZIP container with three parts
+(`[Content_Types].xml`, `_rels/.rels`, `3D/3dmodel.model`), `unit="millimeter"` — the engine's own canonical
+base unit, so nothing is converted — one object per body with the drawing's own name, and a build item that
+actually places each of them. The spec *requires* a manifold, consistently oriented mesh, which is OP-9's
+watertight-or-refused doctrine written down as a format; the kernel guarantees it upstream and this writer
+**re-checks it at the boundary and refuses by name**, because a guarantee that is never checked where the file
+leaves the app is a guarantee that quietly stops holding. The ZIP is written by hand in `commonMain` with
+**stored** entries and a twenty-line CRC-32: Store is legal ZIP, legal OPC and legal 3MF, and deflate would have
+needed either a compressor of our own or an `expect/actual` seam the rest of this package deliberately does not
+have — every writer here is a pure byte producer, which is why all three are testable on the JVM and usable in
+the browser unchanged. A fixed 1980-01-01 timestamp, because a clock in the bytes is a golden that cannot hold.
+
+**Binary STL — the fallback, honestly labelled.** Fifty bytes per facet off the same triangles, one normal per
+facet from its own winding, the attribute field left at zero (the colour conventions layered onto it are
+mutually incompatible, so writing anything there would be guessing at a reader). Every body lands in the one
+triangle soup because that is all the format can hold — which is the reason 3MF is the printing recommendation
+and this is the fallback. The test recomputes the enclosed **volume** from the file's own triangles: a much
+stronger statement than counting facets, since it says the corners came out in the right order, with the right
+winding, at the right coordinates.
+
+**Appearance Tier 1 — five numbers, one panel row, one recorded step.** `Appearance` (base colour, roughness,
+metalness) is a per-element record with a default that *reads* rather than one that is neutral: light grey,
+roughness 0.6, metalness 0.1, so a solid nobody has dressed still looks like an object and there is no "unset"
+state for a consumer to interpret. Deliberately **not** the 3D view's per-element palette colour: that palette
+is part *identification* (a stable colour per element id, so a sibling going away cannot recolour a part), and
+identification is not a material. Persistence is the element-rename pattern verbatim — a `material e7
+color=#b87333 rough=0.35 metal=0.9` step, created on the first assignment and **restated** at save from then
+on, so re-picking a colour never grows the file, clearing it drops the step, and deleting the solid drops it
+through the ordinary reference rule. **No format version bump**, and the versioning doctrine's own test says
+why: a bump is owed when a *stored literal changes meaning*, and a step kind that never existed before cannot
+have meant something else. A pre-materials fixture is kept as a permanent test — it loads with the defaults,
+says nothing, and saves back byte-identically.
+
+**The preview — a third view, display-only, on three.js.** All three boundaries the queue entry named are
+visible in `Preview3` (`jsMain` only). It consumes the *same* `ExportScene` the GLB writer does, through the
+same `RenderMesh`, so **what the preview shows is what the exported GLB shows by construction** rather than by
+two pipelines being kept in step by hand. It never picks, never edits and owns no gizmo — the working 3D view
+keeps the ray seam and the working-plane gestures, and here a drag is always the camera's, which is why there
+is no decision in that file worth a headless test (the orbit constants are `Viewport3`'s own, so a drag feels
+the same in both). And it is **incremental for free**: an unchanged solid hands back the same `Mesh3` object, so
+`update` re-uploads only the bodies whose mesh actually changed and a colour picked in the panel costs no
+geometry upload at all. "Realistic" is configuration, not code — a PBR material from the Tier-1 numbers, a
+room-like environment pre-filtered through `PMREMGenerator`, and ACES tone mapping.
+
+**Lazy loading worked, and the number is the point.** `import('three')` is a dynamic import, so webpack splits
+the library into a chunk of its own: the main bundle went **655,384 → 690,947 bytes (+35.6 KB, +5.4 %)** for the
+whole package — the three writers, the seam, the materials and the preview's own code — while three.js itself
+(**684,748 bytes**) rides in a separate `560.js` that is fetched only when the Preview button is first pressed.
+The module namespace is published as the global `THREE` the hand-written external declarations
+(`src/jsMain/kotlin/constructit/three/THREE.kt`) are written against; hand-written rather than generated because
+the preview touches a dozen classes and a generated binding would be tens of thousands of lines of surface able
+to drift without anything noticing. The environment is built here rather than imported from three's
+`RoomEnvironment` addon — a dozen lines for a box and three panels, against a second dependency surface which,
+in three's own layout, imports the library by bare name and so needs an import map a `file:` page cannot have.
+
+**Deliberately out, stated so it is not looked for.** **STEP** stays out for the reason OP-9 already gave: the
+kernel is mesh-based and holds no exact B-rep for a solid, so an exact-geometry export would be either dishonest
+or a compliance project. **JT** stays a separate project (the kotlinJT library) and is *not* an export route
+here — what binds the two is this package's scene seam, which is now real. No format flags "for later": the
+`ExportFormat` enum has exactly the three writers that exist. Per-face materials, textures and a material editor
+are Tiers 2–4, queued with their own mechanisms. And the export uses the **download** route rather than the File
+System Access API that *Save* uses: an export is a derived artefact, not the drawing — there is nothing to write
+back to and no handle worth keeping.
+
 ### Representation families considered (background)
 Three broad families (see OP-9 decision above):
   - **B-rep (OpenCASCADE / OCCT):** precise, real fillets/chamfers, native STEP; C++ with
@@ -5857,6 +5972,47 @@ Three broad families (see OP-9 decision above):
   existing golden byte-identical plus one new one of the composed editing view, ktlint clean, the JS bundle
   built and all seven browser E2E flows passing.
 
+- **Session 26 — the export package: one neutral scene, three writers, and a preview that cannot disagree with
+  them.** The last of the session-21 queue, and the shape of it was decided by a question the entry asked
+  without naming: *how many things get to decide what an exportable body is?* Four consumers were coming — GLB,
+  3MF, STL, an in-app preview — and a fifth (the kotlinJT library) is scoped around the same handoff, so the
+  first commit was the seam, not a writer. Five decisions worth keeping.
+  (1) **The seam, not four readers of the document.** `ExportScene` answers "which bodies, called what, in what
+  unit, which way up" exactly once. Solids only, visible only, valid only, and *outputs* rather than material —
+  the last one reusing `Document.isMaterial`, so a drilled part exports as one body for the same reason the 3D
+  view draws one. What that buys beyond consistency is a **notes** discipline: every skip is named, operands are
+  not (they were never bodies), and therefore silence means success — a refusal says *"nothing to export: e5 is
+  hidden"* rather than shrugging.
+  (2) **Handed over by reference, which is two features at once.** The scene carries the kernel's own `Mesh3`
+  object, so an export is a re-encoding rather than geometry work, *and* OP-5's argument-identity memo turns
+  mesh identity into the answer to "what changed" — which is the whole of the preview's incremental upload. The
+  seam test asserts `assertSame`, not equality, because identity is the property something depends on.
+  (3) **The conversions a spec makes for you are the ones worth doing once.** glTF being metres and +Y-up *by
+  specification* is precisely why this file kind needed no compliance project: both go on the root node, and
+  every vertex in the file stays the model's own millimetre number. The corners that do bite are the ones a
+  writer can get wrong silently — chunk padding counted into the declared length, 4-byte-aligned views,
+  `POSITION`'s required `min`/`max`, and `baseColorFactor` being **linear** where the colour was picked in
+  sRGB — so the test parses the bytes back the way a viewer does, and the pyramid has a byte golden.
+  (4) **A guarantee is only a guarantee where it is checked.** OP-9 has promised watertight-or-refused for many
+  sessions and 3MF *requires* it, so the writer re-verifies every mesh at the boundary and refuses **by name**.
+  The check is a dozen lines; the alternative is a doctrine that quietly stops holding the day something
+  upstream slips.
+  (5) **Two renderers, one normal.** Averaging every incident face rounds a box; one normal per facet barrels a
+  bore. The crease threshold that separates them already existed for the 3D view's feature edges
+  (`Scene3.CREASE_ANGLE_RAD`), so the shared `RenderMesh` uses *that* number — one authority, and the preview,
+  the GLB and the edge lines agree about what a crease is. The same instinct decided appearance Tier 1's
+  default: light grey rather than the 3D view's palette colour, because that palette is part *identification*
+  and identification is not a material.
+  Tier 1 persists as a restated `material` step — the element-rename pattern verbatim — with **no version
+  bump**, since a step kind that never existed cannot have meant something else; a pre-materials fixture is a
+  permanent test. The preview's three.js is a **dynamic import**, and the number is the point: the main bundle
+  grew 655,384 → 690,947 bytes (+35.6 KB) for the whole package, while the library's 684 KB rides a chunk
+  fetched on first open. **38 new tests** (`ExportSceneTest` 7, `MaterialTest` 9, `GlbExportTest` 6,
+  `ThreeMfExportTest` 6, `StlExportTest` 5, `RenderMeshTest` 4, one browser E2E), **1070 → 1108 green**, one new
+  byte golden (`export-pyramid.glb`), every existing golden byte-identical, ktlint clean, and all eight browser
+  E2E flows passing — the new one building a plate, dressing it in the panel, opening the preview and catching
+  three real downloads in Chrome.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -6952,78 +7108,111 @@ slice 2 — not even the cheap ray-cast).
   gesture: with the ray seam and face picking both in place, "put the next section on that face, 40 mm out" is
   two clicks in the 3D view rather than a plan-view detour.
 
-**Queued in session 21, at the end of the queue (user-directed): the export package — GLB for viewing,
-3MF + binary STL for printing.** The session-3 directive is hereby *clarified, not reversed*: format work
-was deferred ("no standard compliance is required **yet**"), never banned, and its time is after the
-modeling queue above. All three exports are one package because they are the same export: the
-already-guaranteed-manifold tessellated mesh (OP-9's watertight-or-refused doctrine did the hard part
-years of sessions ago), written three ways, refusing by name for anything that is not a solid.
-**GLB** (glTF 2.0, single binary container) is the viewing half — the "JPEG of 3D": indexed triangle
-mesh, which is what MeshGL already is nearly verbatim; one node per solid named by the naming authority
-(OP-18) so viewers show an honest tree; simple PBR base colors from element styles; glTF is *metres* and
-*+Y-up* by spec, so the writer scales mm→m and turns the Z-up world once at the root node — units and
-orientation are spec'd, not folk convention, which is why this file kind is safe to write without a
-compliance project. **3MF** is the printing half done honestly: units explicit (mm, our canonical base),
-indexed mesh, and the spec *requires* manifold consistent orientation — the doctrine as a file format;
-core spec only (ZIP + one XML model), no materials/settings extensions. **Binary STL** rides along as the
-universal fallback (~50 lines off the same triangles; no units in the format, mm by convention).
-Deliberately out, stated so it is not looked for: **STEP export** — the kernel is mesh-based and holds no
-exact B-rep for solids, so exact-geometry export would be either dishonest or a compliance project, and
-the "STEP into the slicer" trend is unreachable from here by design.
+**Retired in session 26: the export package — GLB, 3MF and binary STL, the in-app three.js preview, and
+appearance Tier 1.** The two queue entries, quoted whole so what was promised can be compared with what
+shipped; the **JT sibling project** and **appearance Tiers 2–4** are untouched by this and are restated after
+them.
 
-**JT (ISO 14306, Siemens) — a separate project by the user's decision, session 22.** After reading the
-spec the user judged it *"a separate project — but a doable one"*: a standalone **Kotlin multiplatform JT
-library** (read + write), not a ConstructIt export route — now real: **https://github.com/haumacher/kotlinJT**,
-whose issue #1 is the scope contract mirroring this note. What binds the two projects is the seam, and it
-already exists in this entry: the library's top-layer façade takes the same **format-agnostic scene**
-(named nodes, transforms, indexed-triangle meshes per LOD, simple materials, units explicit in the model)
-that the GLB writer and the three.js preview consume — so when the library exists, ConstructIt feeds it
-through the identical neutral handoff and the adapter is a page. Library shape agreed in discussion:
-three layers (segments+codecs behind a KMP `expect/actual` seam; a faithful lossless document model with
-unknown segments preserved as opaque blobs; the scene façade), write one version / read broadly, B-rep/XT
-preserved opaquely and never interpreted, round-trip tests against NX/JT2Go-produced fixtures as the
-acceptance spine, refusals-with-names for undecodable segments. Later hooks, in order of realism: export
-(tessellation + structure tree + names + materials, honest without B-rep — unlike STEP, tessellation-only
-JT is the format's own majority use), **PMI from ConstructIt's dimensions** (they are real model objects),
-import as view-only reference underlay (context, per the section-inputs anchor story).
+> **Queued in session 21, at the end of the queue (user-directed): the export package — GLB for viewing,
+> 3MF + binary STL for printing.** The session-3 directive is hereby *clarified, not reversed*: format work
+> was deferred ("no standard compliance is required **yet**"), never banned, and its time is after the
+> modeling queue above. All three exports are one package because they are the same export: the
+> already-guaranteed-manifold tessellated mesh (OP-9's watertight-or-refused doctrine did the hard part
+> years of sessions ago), written three ways, refusing by name for anything that is not a solid.
+> **GLB** (glTF 2.0, single binary container) is the viewing half — the "JPEG of 3D": indexed triangle
+> mesh, which is what MeshGL already is nearly verbatim; one node per solid named by the naming authority
+> (OP-18) so viewers show an honest tree; simple PBR base colors from element styles; glTF is *metres* and
+> *+Y-up* by spec, so the writer scales mm→m and turns the Z-up world once at the root node — units and
+> orientation are spec'd, not folk convention, which is why this file kind is safe to write without a
+> compliance project. **3MF** is the printing half done honestly: units explicit (mm, our canonical base),
+> indexed mesh, and the spec *requires* manifold consistent orientation — the doctrine as a file format;
+> core spec only (ZIP + one XML model), no materials/settings extensions. **Binary STL** rides along as the
+> universal fallback (~50 lines off the same triangles; no units in the format, mm by convention).
+> Deliberately out, stated so it is not looked for: **STEP export** — the kernel is mesh-based and holds no
+> exact B-rep for solids, so exact-geometry export would be either dishonest or a compliance project, and
+> the "STEP into the slicer" trend is unreachable from here by design.
 
-**In this package too (recorded in session 22 at the user's ask): the in-app realistic preview, on
-three.js.** The app is already Kotlin/JS in the browser, so three.js is an npm dependency of `jsMain`
-with external declarations — and the preview does not even need the GLB round trip: MeshGL maps onto
-`THREE.BufferGeometry` nearly field-for-field, in memory. "Realistic" is configuration, not code: a PBR
-material from the Tier-1 numbers, an environment map (`RoomEnvironment`/PMREM), ACES tone mapping — that
-trio is what makes flat-colored solids read as physical objects. Three boundaries keep it honest to the
-architecture: **(1) `jsMain` only** — the engine stays platform-free and hands over the same neutral
-mesh+appearance data the GLB writer consumes, one appearance model with two consumers, so *what the
-preview shows is what the exported GLB shows, by construction*; **(2) a second viewer, never the editing
-surface** — the working 3D view keeps the ray seam, picking and working-plane gestures; the preview panel
-is display-only, no picking, no gizmos; **(3) incremental for free** — OP-5's argument-identity memo means
-mesh identity says which solids changed, so the preview re-uploads only those buffers and stays live
-during editing. One practical note: three.js is a ~600 KB dependency, so the preview module loads lazily
-on first open rather than riding the main bundle.
+> **In this package too (recorded in session 22 at the user's ask): the in-app realistic preview, on
+> three.js.** The app is already Kotlin/JS in the browser, so three.js is an npm dependency of `jsMain`
+> with external declarations — and the preview does not even need the GLB round trip: MeshGL maps onto
+> `THREE.BufferGeometry` nearly field-for-field, in memory. "Realistic" is configuration, not code: a PBR
+> material from the Tier-1 numbers, an environment map (`RoomEnvironment`/PMREM), ACES tone mapping — that
+> trio is what makes flat-colored solids read as physical objects. Three boundaries keep it honest to the
+> architecture: **(1) `jsMain` only** — the engine stays platform-free and hands over the same neutral
+> mesh+appearance data the GLB writer consumes, one appearance model with two consumers, so *what the
+> preview shows is what the exported GLB shows, by construction*; **(2) a second viewer, never the editing
+> surface** — the working 3D view keeps the ray seam, picking and working-plane gestures; the preview panel
+> is display-only, no picking, no gizmos; **(3) incremental for free** — OP-5's argument-identity memo means
+> mesh identity says which solids changed, so the preview re-uploads only those buffers and stays live
+> during editing. One practical note: three.js is a ~600 KB dependency, so the preview module loads lazily
+> on first open rather than riding the main bundle.
 
-**Appearance, scoped in session 21 — three tiers queued, the fourth a future extension (corrected the
-same session).** For viewing, the modeler's
-job is to *assign* appearance, never to render it — rendering (lighting, shadows, reflections) is
-precisely what the GLB export delegates to real PBR viewers. The tiers, in queue order: **Tier 1, a
-material per solid** (base color, roughness, metallic — a handful of numbers, one panel row) rides the
-export package above, because five numbers per solid is what makes a GLB render honestly in any viewer.
-**Tier 2, textures by projection**, is an *export-time operator*, not a modeling-time subsystem: the model
-stores a material reference plus a projection rule (planar/box/cylindrical), and the exporter bakes
-per-vertex UVs from mesh positions — no UV tools in the app, the bitmap embedded in the GLB. **Tier 3,
-per-face assignment**, waits deliberately for edit-in-3D's slice 2, because naming a face durably is the
-same face-ID provenance mechanism that click-a-working-plane needs — one mechanism, two consumers, built
-once. **Tier 4 — a material editor, bitmap import, UV control — is deferred as a future extension, not
-refused.** The first recording of this entry called it "out, permanently" with "open the GLB in Blender
-(or any PBR pipeline)" as the stated alternative; the user overruled that within the hour, and the
-reversal is recorded with its reason, which is stronger than the rationale it replaces: an external DCC
-is **not parametric** — every material placement, every unwrap done there is throwaway the moment a
-parameter moves, so "do it in Blender" is never an alternative for anything living downstream of
-parameters. It is the recorded-never-discovered rule one level up: when high-fidelity appearance is
-wanted beyond the tiers above, it will have to be *parametric appearance* — materials as named values,
-projections bound to construction geometry, replayable like every other step. And the general lesson,
-stated as the user stated it: there are no permanent non-goals in this design record, only "future
-extensions at best/worst" — work whose time has not come.
+All of it shipped, in one package as the entry insisted, and the as-built record is *The export package (as
+built — one neutral scene, three writers and a preview)* under OP-9: the neutral `ExportScene` every consumer
+reads (and the JT library is scoped around), the two glTF conversions done once at the root, 3MF's
+manifold-or-refused check at the boundary, STL's fifty bytes a facet, Tier 1 as a restated `material` step with
+**no version bump**, and the preview as a display-only third view whose three.js loads as a separate chunk
+(main bundle +35.6 KB; the library's 684 KB is fetched on first open). What stays cut, stated with the work:
+**STEP** (the kernel holds no exact B-rep — OP-9's own reason), **no format flags for later** (the enum has
+exactly the three writers that exist), and nothing of Tiers 2–4.
+
+**Still standing, restated — the JT sibling project.** Unchanged by this package except that the seam it
+binds to is now real:
+
+> **JT (ISO 14306, Siemens) — a separate project by the user's decision, session 22.** After reading the
+> spec the user judged it *"a separate project — but a doable one"*: a standalone **Kotlin multiplatform JT
+> library** (read + write), not a ConstructIt export route — now real: **https://github.com/haumacher/kotlinJT**,
+> whose issue #1 is the scope contract mirroring this note. What binds the two projects is the seam, and it
+> already exists in this entry: the library's top-layer façade takes the same **format-agnostic scene**
+> (named nodes, transforms, indexed-triangle meshes per LOD, simple materials, units explicit in the model)
+> that the GLB writer and the three.js preview consume — so when the library exists, ConstructIt feeds it
+> through the identical neutral handoff and the adapter is a page. Library shape agreed in discussion:
+> three layers (segments+codecs behind a KMP `expect/actual` seam; a faithful lossless document model with
+> unknown segments preserved as opaque blobs; the scene façade), write one version / read broadly, B-rep/XT
+> preserved opaquely and never interpreted, round-trip tests against NX/JT2Go-produced fixtures as the
+> acceptance spine, refusals-with-names for undecodable segments. Later hooks, in order of realism: export
+> (tessellation + structure tree + names + materials, honest without B-rep — unlike STEP, tessellation-only
+> JT is the format's own majority use), **PMI from ConstructIt's dimensions** (they are real model objects),
+> import as view-only reference underlay (context, per the section-inputs anchor story).
+
+**Retired in session 26 — Tier 1 only, of the appearance entry.** What the entry said about it, quoted:
+
+> **Tier 1, a material per solid** (base color, roughness, metallic — a handful of numbers, one panel row)
+> rides the export package above, because five numbers per solid is what makes a GLB render honestly in any
+> viewer.
+
+Shipped exactly there and exactly that: a per-solid `Appearance` (base colour, roughness, metalness) with
+defaults that read (light grey, 0.6, 0.1), one inspector row, one restated `material` step, and **two**
+consumers of the one record — the GLB's metallic-roughness material and the preview's `MeshStandardMaterial` —
+so what the preview shows is what the exported file shows by construction. **Tiers 2, 3 and 4 stay queued,
+restated whole:**
+
+> **Appearance, scoped in session 21 — three tiers queued, the fourth a future extension (corrected the
+> same session).** For viewing, the modeler's
+> job is to *assign* appearance, never to render it — rendering (lighting, shadows, reflections) is
+> precisely what the GLB export delegates to real PBR viewers. The tiers, in queue order: **Tier 1, a
+> material per solid** (base color, roughness, metallic — a handful of numbers, one panel row) rides the
+> export package above, because five numbers per solid is what makes a GLB render honestly in any viewer.
+> **Tier 2, textures by projection**, is an *export-time operator*, not a modeling-time subsystem: the model
+> stores a material reference plus a projection rule (planar/box/cylindrical), and the exporter bakes
+> per-vertex UVs from mesh positions — no UV tools in the app, the bitmap embedded in the GLB. **Tier 3,
+> per-face assignment**, waits deliberately for edit-in-3D's slice 2, because naming a face durably is the
+> same face-ID provenance mechanism that click-a-working-plane needs — one mechanism, two consumers, built
+> once. **Tier 4 — a material editor, bitmap import, UV control — is deferred as a future extension, not
+> refused.** The first recording of this entry called it "out, permanently" with "open the GLB in Blender
+> (or any PBR pipeline)" as the stated alternative; the user overruled that within the hour, and the
+> reversal is recorded with its reason, which is stronger than the rationale it replaces: an external DCC
+> is **not parametric** — every material placement, every unwrap done there is throwaway the moment a
+> parameter moves, so "do it in Blender" is never an alternative for anything living downstream of
+> parameters. It is the recorded-never-discovered rule one level up: when high-fidelity appearance is
+> wanted beyond the tiers above, it will have to be *parametric appearance* — materials as named values,
+> projections bound to construction geometry, replayable like every other step. And the general lesson,
+> stated as the user stated it: there are no permanent non-goals in this design record, only "future
+> extensions at best/worst" — work whose time has not come.
+
+Nothing about those three changed here. Tier 3 still waits on edit-in-3D's **slice 2**, for the reason both
+entries give: naming a face durably is the same face-ID provenance mechanism click-a-working-plane needs, built
+once for two consumers.
 
 **Queued in session 22, after the four above (user-directed): conics as first-class curve values —
 ellipse and elliptic arc.** Not "an ellipse tool": the tool is one of three consumers, and the reason the
