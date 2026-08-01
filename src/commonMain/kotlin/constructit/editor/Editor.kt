@@ -1684,7 +1684,7 @@ class Editor(
     }
 
     /** Whether every live member of [g] is currently drawn — the panel's toggle state. */
-    fun isGroupVisible(g: Group): Boolean = doc.groupMembers(g).all { it.visible || doc.isWelded(it) }
+    fun isGroupVisible(g: Group): Boolean = doc.groupMembers(g).all { it.visible || doc.hiddenByConstruction(it) }
 
     /**
      * Write [value] (in the display unit of the field's dimension) into selection field [index].

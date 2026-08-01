@@ -387,7 +387,17 @@ private fun setupApp() {
         // read off the key state at the press ([Viewport3.cameraModifier])
         if ((key == "Control" || key == "Meta") && !viewport.cameraModifier) {
             viewport.cameraModifier = true
-            if (viewport.editing()) editor.note("Ctrl: drag to orbit the view without leaving the tool (release to draw again)")
+            // what the modifier gives back on release depends on what the plain drag now does — since the
+            // reversal that is selecting and moving geometry under SELECT, not only drawing under a tool
+            if (viewport.editing()) {
+                editor.note(
+                    if (viewport.drawing()) {
+                        "Ctrl: drag to orbit the view without leaving the tool (release to draw again)"
+                    } else {
+                        "Ctrl: drag to orbit the view (release to select and drag on the plane again)"
+                    },
+                )
+            }
             repaint()
         }
     })
@@ -1048,8 +1058,8 @@ private fun renderPanel(
     view3d: Boolean,
     viewport: Viewport3,
 ) {
-    // In the 3D view the drawing tools are inert (there is no 3D picking in this slice), so the status
-    // line says what the view *does* rather than describing clicks that will not happen.
+    // In the 3D view the gestures are the viewport's to describe — which tool is drawing on which plane, or
+    // that a plain drag now selects and moves there while Ctrl orbits — so the status line asks it.
     (document.getElementById("status") as HTMLElement).textContent =
         when {
             editor.statusHint.isNotEmpty() -> editor.statusHint

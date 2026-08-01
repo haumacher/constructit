@@ -276,11 +276,14 @@ object SceneRenderer {
         // band's own style, because it is the same promise about the same click, and drawn *before* the band
         // so the two can never disagree about who is on top.
         for (s in previews) drawPreview(s, proj, target, view)
-        // rubber band of a marquee in progress — the rectangle whose contents the release will select
+        // Rubber band of a marquee in progress — the rectangle whose contents the release will select, drawn
+        // as the rectangle **on the plane** rather than on the screen. Identical on the 2D canvas, whose map
+        // is an axis-aligned similarity (the same four screen numbers, by construction); under a perspective
+        // it is the difference between drawing what the release takes and drawing something else, since
+        // [HitTest.within] spans its rectangle in plane coordinates and a screen rectangle is not one.
         marquee?.let { (a, b) ->
-            val p = proj.toScreen(a)
-            val q = proj.toScreen(b)
-            if (p != null && q != null) target.polyline(listOf(p, Vec2(q.x, p.y), q, Vec2(p.x, q.y), p), marqueeStyle)
+            val corners = listOf(a, Vec2(b.x, a.y), b, Vec2(a.x, b.y), a).map { proj.toScreen(it) }
+            if (corners.all { it != null }) target.polyline(corners.filterNotNull(), marqueeStyle)
         }
         // rubber-band preview of the next ortho-path leg
         preview?.let { poly(proj, target, listOf(it.first, it.second), previewStyle) }

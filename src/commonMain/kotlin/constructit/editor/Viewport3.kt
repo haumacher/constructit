@@ -84,15 +84,28 @@ class Viewport3(
     }
 
     /**
-     * Whether a **plain** drag belongs to the armed tool rather than to the camera.
+     * Whether a **plain** drag belongs to the editor rather than to the camera: **whenever there is a working
+     * plane under this view**, for every tool including SELECT.
      *
-     * With no tool armed the answer is no, which is exactly the read-only view this has always been: a drag
-     * orbits and a click selects nothing. SELECT's own gestures — the marquee, dragging a point — are
-     * deliberately still the 2D canvas', because the one gesture they would compete with is the orbit, and
-     * an orbit is this view's habit. A tool's *picks* are not affected: a tool that asks for a curve gets
-     * the click through the ray seam like any other.
+     * This reverses slice 1's cut, which read *"SELECT's own gestures — the marquee, dragging a point — are
+     * deliberately still the 2D canvas', because the one gesture they would compete with is the orbit, and an
+     * orbit is this view's habit"*. That was decided before there was a working plane to point at; with one in
+     * hand the user's answer is the other way round — *"it is not possible to move free points there … I'd vote
+     * for using a modifier to rotate the scene, instead"* — and it is the better rule, because a view that can
+     * draw a point it cannot then move is a view that owns half a gesture. The camera keeps the middle button,
+     * Space ([panMode]) and the modifier ([cameraModifier]); the wheel is still always its own.
+     *
+     * With no plane — no editor, or a view nobody is looking at — the answer is no, and this is the read-only
+     * viewport it has always been: a drag orbits and a click selects nothing.
      */
-    fun editing(): Boolean = editor?.let { it.toolId != Tools.SELECT } == true && projection() != null
+    fun editing(): Boolean = editor != null && projection() != null
+
+    /**
+     * Whether a **tool** is drawing here — [editing] minus SELECT, which is a different question from who owns
+     * a drag and is asked in the two places that are about *building* geometry: what a double-click means
+     * (finish the run, or reframe) and what the status line says.
+     */
+    fun drawing(): Boolean = editor?.let { it.toolId != Tools.SELECT } == true && projection() != null
 
     /**
      * Give the editor the projection it should be pointing and drawing through — or take it away.
@@ -198,11 +211,12 @@ class Viewport3(
      * A double-click: **finish the run** while a tool is drawing here (exactly what it means on the canvas),
      * and otherwise reframe — the cheap way back when an orbit has wandered off the part.
      *
-     * One gesture, two meanings, decided by the same question everything else here is: is a tool armed on a
-     * working plane. Reframing mid-path would throw the view away just as a wall was being closed.
+     * One gesture, two meanings, decided by whether a tool is *drawing* here ([drawing]) rather than by who
+     * owns a drag: reframing mid-path would throw the view away just as a wall was being closed, while under
+     * SELECT — which now takes the plain drag too — a double-click has no run to finish and reframes as ever.
      */
     fun doubleClick(scene: Scene3) {
-        if (editing()) {
+        if (drawing()) {
             syncPointing()
             editor?.finishPath()
         } else {
@@ -259,8 +273,13 @@ class Viewport3(
             return "3D view: drawing $tool on ${e.doc.activeSpace.name} — click on the plane. " +
                 "Hold Ctrl to orbit (wheel zooms, Space+drag pans), then carry on."
         }
-        val where = if (e != null && plane != null) " Arm a tool to draw on ${e.doc.activeSpace.name} here." else ""
-        return "3D view: drag to orbit, wheel to zoom, middle-drag or Space+drag to pan.$where"
+        // with a plane under the view SELECT drags geometry here like it does on the canvas, so the line says
+        // what the gestures now are rather than describing an orbit the modifier has taken over
+        if (e != null && plane != null) {
+            return "3D view: click to select and drag to move on ${e.doc.activeSpace.name}; a drag on empty " +
+                "space boxes a selection. Ctrl+drag orbits (wheel zooms, Space+drag pans)."
+        }
+        return "3D view: drag to orbit, wheel to zoom, middle-drag or Space+drag to pan."
     }
 
     companion object {

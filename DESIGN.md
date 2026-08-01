@@ -2526,6 +2526,43 @@ The load-bearing part is what it reads and what it records:
   favour of a different closing piece — the escape is Escape, or one undo. Worth it, because a forced
   continuation is by definition not a decision the user was making.
 
+#### One point, one marker (as built — a user report, session 29)
+
+*"Free points are normally rendered blue to distinguish them from derived points. However, if you e.g. have a
+polygon extruded, then all points on the corners are rendered in green making the free one undistinguishable
+from the others."* — and the user's own diagnosis, confirmed by reproduction: *"the wrong color is from the
+outline construction — the outline points are on top of the original points."*
+
+The **node** layer was right and the **element** layer did not follow it. `jointBetween` prefers the point the
+two pieces already share (`sharedEndBetween`) precisely so that "pieces that already meet hand over there
+instead of being re-intersected" — but the handover was then *published* as a fresh `DERIVED_POINT` element,
+so tracing a rectangle laid four green markers exactly over its four blue corners. The free points were still
+there, still draggable and still underneath; what was lost is the one thing the colour is for — being able to
+see which points carry the drawing's degrees of freedom.
+
+The rule now: **a boundary publishes no second marker where a point element already stands**. It is about the
+joint, not about corners — a fillet's tangency, a chamfer's bevel end and a genuine re-intersection mark
+places nothing marked before, and keep their visible point exactly as before.
+
+**The marker is hidden, not un-created — and that is a format decision, not a shortcut.** The file names
+elements by the order the journal's steps create them (`tool outline … -> e9,e10,e11,e12,e13`), and a load
+refuses outright when a step creates a different number of elements than the script declares (*"the file was
+written by a different version"*, OP-18). Publishing one element fewer per joint would therefore renumber
+every element after an outline **and break every stored drawing that contains one** — a semantic change to a
+stored literal, which is exactly what OP-23's versioning doctrine says must not happen quietly. So the graph,
+the element list and the file are bit-for-bit what they were; what changes is one boolean, the same one a weld
+sets on the alias it hides, and for the same reason. The two cases are now one predicate
+(`Document.hiddenByConstruction`): both are **hidden by construction**, so neither is recorded in a step and
+neither can be shown back into a doubled point.
+
+Tests: `OutlineMarkerTest` (5) — the user's rectangle traced with reused corner endpoints (no visible derived
+point on any free point, the eight markers still *published* and all hidden, and refusing to be shown), the
+free corner still dragging the geometry with the hidden joint riding along, the traced outline still
+extruding to 30000 mm³, save → load → save byte-equal with the same element count on replay, and a filleted
+corner keeping both its tangency markers while its three plain corners take none. Goldens regenerated,
+deliberately: `editor_outline_spline.svg` and `editor_outline_spline_dimmed.svg`, each losing exactly the two
+duplicate markers that stood on the spline's shared endpoints.
+
 **Deliberately not done here:** containment is not verified (a hole outside the outer boundary, or
 two overlapping holes, are accepted; only holes removing more than the boundary encloses are
 rejected) — real containment needs the point-in-region predicate, which this slice does not need.
@@ -4172,7 +4209,9 @@ Viewport3           — now also the router: whose gesture is this, the tool's o
 - **Cuts, stated.** (1) **SELECT is still the canvas'**: with no tool armed a drag orbits and a click selects
   nothing, exactly as before — the one gesture that competes with the orbit is the marquee, and picking *in*
   the 3D view properly means picking the solids, which is slice 2. A tool's own picks are unaffected: a slot
-  wanting a curve gets its click through the ray seam like any other. (2) **No grid and no ruler on the plane
+  wanting a curve gets its click through the ray seam like any other. *(**Reversed** in session 29 on the
+  user's report — see "The drag belongs to the drawing" below; what still stands of this cut is its second
+  half, that picking the **solids** is slice 2's job, since a click here still reaches the plane's geometry.)* (2) **No grid and no ruler on the plane
   in 3D.** Both are stated in screen pixels, which means one length everywhere — true only under a similarity;
   the 3D view's world ground grid is that statement made where perspective can carry it. Grid *snapping* still
   works, through the local scale. (3) **Nothing of slice 2**: no ray–triangle picking against the meshes, no
@@ -4187,6 +4226,49 @@ Viewport3           — now also the router: whose gesture is this, the tool's o
   clamp, and the modifier gate both ways — plus one browser E2E (`drawingOnTheWorkingPlaneInThe3DView`) that
   draws a rectangle in the 3D viewport with a Ctrl-orbit in the middle and reads the document back out of the
   app's own Copy button.
+
+#### The drag belongs to the drawing (a recorded reversal — user report, session 29)
+
+Slice 1 cut SELECT out of this view on purpose, and said so in the code: *"SELECT's own gestures — the
+marquee, dragging a point — are deliberately still the 2D canvas', because the one gesture they would compete
+with is the orbit, and an orbit is this view's habit"*, with the cut restated above as *"with no tool armed a
+drag orbits and a click selects nothing, exactly as before"*.
+
+The user overruled it, with the working plane in hand: *"Construction in the 3D display works pretty well,
+however, it is not possible to move free points there. The mouse gesture click and drag is bound to rotate the
+scene, not move points. I'd vote for using a modifier to rotate the scene, instead."* The old rationale was
+reasoned from a view that could not point at anything; once the same view builds geometry, a view that can
+*draw* a point but not *move* it owns half a gesture — and the modifier that slice already introduced for the
+drawing tools is exactly the escape the orbit needs.
+
+The new rule, and what it deliberately leaves alone:
+
+- **A working plane under the view makes a plain primary drag the editor's — for every tool, SELECT
+  included.** `Viewport3.editing()` is now "there is a projection", nothing more. The camera keeps the middle
+  button, Space (`panMode`) and the modifier (`cameraModifier`, Ctrl); the wheel is still always its own.
+- **No plane, no change.** With no editor attached, or a view nobody is looking through, a plain drag orbits
+  exactly as it always did — the read-only viewport is untouched.
+- **Who owns a drag is now a different question from what a double-click means**, so the predicate split in
+  two: `editing()` routes the drag, `drawing()` (a tool other than SELECT, on a plane) decides whether a
+  double-click finishes the run or reframes, and what the status line says. Mid-gesture semantics are
+  unchanged and still stated where they were: the owner is decided at the press and held to the release.
+- **The box selection was made honest rather than cut.** `HitTest.within` has always spanned its rectangle in
+  *plane* coordinates while the rubber band was drawn as a *screen* rectangle — two shapes that agree only
+  under a similarity. The band is now drawn from the plane rectangle's own four corners, projected, so what it
+  covers is what the release takes. Every 2D golden is byte-identical by construction: the canvas' map is an
+  axis-aligned similarity, so those four corners project to the very four screen numbers the old code composed
+  by hand.
+- The shell's share is what it always was — the tooltip and the two status lines that named the old binding,
+  and nothing else: every routing decision stayed in `commonMain`.
+
+Tests: `Edit3DSelectTest` (7) — a plain drag moving a free point while the camera does not move at all, the
+grab following the *local* px→mm tolerance (a hit at six pixels' worth of millimetres, a miss at four
+tolerances), the modifier still orbiting and moving nothing, middle-drag and Space+drag still panning, a
+plane-less view still orbiting on a plain drag, a whole tool flow surviving an orbit detour and *then* having
+its endpoint dragged in 3D, and the box selection drawn as the plane rectangle it selects by. `Edit3DTest`'s
+`theModifierDecidesWhoOwnsTheDrag` was updated deliberately — it asserted the old cut — and the browser E2E
+`buildAndDragInBrowser` now asserts both halves in real Chrome: a plain drag leaves the solids unturned, a
+Ctrl+drag orbits them.
 
 ### 3D representation & CNC (OP-9, OP-8, OP-11 — RESOLVED)
 
@@ -7679,8 +7761,47 @@ non-identity matrix, since that is the only way the claim means anything. What t
 extension stays one, with its reason sharpened: **JT import** waits on a *model* decision (what a
 non-parametric reference body is in a construction DAG), not on reading code — the library already reads.
 
-The numbered queue is again **empty**; what remains is the parked list below, each item recorded at
-its source.
+**Queued in session 29 — three user-designed packages, in order.** All three were designed in discussion
+(session 28/29); the designs are the user's, restated here so a crashed session loses nothing.
+
+1. **JT import: reference bodies, with parametric placement.** The model decision the export entry said
+   this waits on is now taken, in discussion with the user. An imported body is a **frozen solid literal
+   with a parametric placement** — the tracing-paper model in 3D. `Imports.kt` mirrors `Exports.kt`
+   (bytes in → `readScene` → `Mesh3` solids; the browser contributes only a file picker). The journal
+   step embeds the **extracted mesh**, never the JT bytes — replay must not re-run the reader, or a
+   library upgrade could silently change an old drawing. Watertight-or-refused by name at import; units
+   honored (a unit-less file is refused with that reason — a "state the unit" prompt is a recorded
+   refinement); finest LOD; names through the naming authority; materials to Tier-1. **Placement is the
+   user's design**: each geometry-bearing node's file transform does *not* bake into vertices — it
+   initializes a placement node ("a click is a choice, state restates as a value"), thereafter editable
+   and re-anchorable (a sketch space, a point, an angle; rigid, so nothing in the honesty ledger
+   degrades), and the placement op is built **generic over solids** — an import merely uses it.
+   Acceptance both ways: export→import round trip (volume, name, material), and a Siemens-written
+   fixture from the sibling's set, so the library is validated against bytes we did not produce.
+
+2. **The height point — the apex generalized (user's design, session 28).** `heightPoint(base, h)`:
+   `base` a 2D point in any sketch space, `h` a named scalar, value = `embed(base) + h · normal` — "1 DOF
+   over its base point", the user's words. `EXTRUDE_TO_POINT` and the loft apex become consumers of it.
+   The reverse drag, also the user's design: dragging the point in the 3D view is **ray-to-line** — the
+   closest-point parameter on the height line through the base *is* the new height, restated into the
+   scalar exactly as a 2D drag restates coordinates. A wired height follows the 2D welded rule; a ray
+   near-parallel to the height line clamps instead of exploding.
+
+3. **Face-frame orientation + the space origin (user's design, session 29, superseding a world-Z draft
+   the user rightly rejected — world-Z degenerates when derived faces go parallel to XY).** The frame is
+   **intrinsic**: the picked segment on the x-axis, **+v into the face's interior as seen from that
+   segment** (well-defined — a face is locally on exactly one side of its own boundary edge — hence
+   stable by construction, no persisted sign needed), outward normal toward the viewer, right-handedness
+   fixing the rest. Origin: the segment **midpoint** is the canonical default (the user's observation —
+   the only choice-free point), refined by a two-layer control built generically for sketch spaces:
+   an optional **origin anchor** (any constructed point on the plane — an endpoint is a click, not a
+   formula, and the origin tracks the node) and an in-plane **(dx,dy)** parameter pair, default (0,0),
+   ordinary scalar nodes wireable via `boundTo`. Re-anchoring a space with sketches in it translates
+   them — the parametrically correct reading, documented as a feature. **No migration** — the user's
+   call: no release yet, all files throwaway; the rule simply changes.
+
+The numbered queue otherwise holds only these; what else remains is the parked list below, each item
+recorded at its source.
 
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc

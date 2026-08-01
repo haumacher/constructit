@@ -502,14 +502,22 @@ class Edit3DTest {
         assertTrue(abs(vp.camera.yaw - yaw) > 1e-9, "the modifier gave the drag to the camera")
         assertEquals(1, ed.doc.elements.size, "…and nothing was drawn by it")
 
-        val (plain, view) = armed(Tools.SELECT)
-        assertTrue(!view.editing(), "SELECT leaves this the read-only view it has always been")
+        // SELECT: since the reversal (see [Edit3DSelectTest]) the plain drag is the *editor's* here too, and
+        // only the modifier orbits — what used to be asserted here was the opposite, and the user overruled it
+        val (_, view) = armed(Tools.SELECT)
+        assertTrue(view.editing(), "a working plane makes this an editing view under SELECT as well")
+        assertTrue(!view.drawing(), "…though no tool is drawing, which is what a double-click still asks")
+        val yaw2 = view.camera.yaw
         val c = Vec2(400.0, 300.0)
         view.pointerDown(c)
         view.pointerMove(Vec2(c.x + 60.0, c.y))
         view.pointerUp(Vec2(c.x + 60.0, c.y))
-        assertClose(view.camera.yaw, Camera3().yaw - 60.0 * Viewport3.ORBIT_RAD_PER_PX, 1e-12, "the drag orbited")
-        assertEquals(0, plain.doc.elements.size, "and selected nothing, which is this view's standing cut")
+        assertClose(view.camera.yaw, yaw2, 1e-12, "the plain drag no longer orbits")
+        view.cameraModifier = true
+        view.pointerDown(c)
+        view.pointerMove(Vec2(c.x + 60.0, c.y))
+        view.pointerUp(Vec2(c.x + 60.0, c.y))
+        assertClose(view.camera.yaw, yaw2 - 60.0 * Viewport3.ORBIT_RAD_PER_PX, 1e-12, "the modifier still orbits it")
     }
 
     /**

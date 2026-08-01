@@ -6198,6 +6198,10 @@ class Document {
                 js
             }
 
+        // the element layer follows the node layer: where the handover is a spot a point element already
+        // marks, this boundary publishes no second marker over it (OP-14 — see [quietDuplicateMarker])
+        joints.forEach { quietDuplicateMarker(it, ev) }
+
         val pieces = ArrayList<Ref<*>>(n)
         for (i in 0 until n) {
             val from = joints[(i - 1 + n) % n]
@@ -6205,6 +6209,64 @@ class Document {
             pieces.add(trimPiece(picks[i], from, to, clicks[i], ev) ?: return null)
         }
         return add(cx.loop(*pieces.toTypedArray()), ElementKind.OUTLINE, Styles.RESULT)
+    }
+
+    /**
+     * Point markers a boundary's handover published **where a point element already stood** — hidden by
+     * construction, and this is the set that says so (OP-14).
+     *
+     * Synthetic, like the joint registry and the handles beside it (OP-18): the step that traced the
+     * boundary re-runs on replay and hides them again, so nothing about this is in the file — and, crucially,
+     * *nothing about the file changes*. See [quietDuplicateMarker] for why that is the mechanism.
+     */
+    private val duplicateJointMarkers = HashSet<String>()
+
+    /**
+     * Whether [el] is hidden **by construction** and must therefore never be shown: a welded alias
+     * ([isWelded]), or a duplicate joint marker ([quietDuplicateMarker]).
+     *
+     * One predicate for one rule, because the two cases are the same rule: showing either would draw a
+     * second point on top of a point that is already there.
+     */
+    fun hiddenByConstruction(el: Element): Boolean = isWelded(el) || el.id in duplicateJointMarkers
+
+    /**
+     * Hide the marker [ref] just published, if a point element **already marks that spot** (OP-14).
+     *
+     * A boundary hands over at the *existing* shared point wherever it can ([sharedEndBetween]) — that is
+     * the construction being honest about where two pieces meet. What the element layer did with it was not:
+     * it published a fresh green `DERIVED_POINT` at every joint, so tracing a rectangle laid four green
+     * markers exactly over its four blue corners. The free points were still there and still draggable, but
+     * a user could no longer *see* which points carry the drawing's degrees of freedom — reported as
+     * *"free points are rendered blue … if you e.g. have a polygon extruded, then all points on the corners
+     * are rendered in green making the free one undistinguishable"*.
+     *
+     * **The marker is hidden rather than never created**, and that is a format decision, not a shortcut. The
+     * file names elements by the order the journal's steps create them (`-> e9,e10,e11,e12,e13`), and a load
+     * refuses outright when a step creates a different number of elements than the script declares — *"the
+     * file was written by a different version"*. Publishing one element fewer per joint would therefore make
+     * every stored drawing containing an outline fail to load, and would renumber everything after it. So the
+     * node graph, the element list and the file all stay exactly as they were; what changes is one boolean,
+     * the same one a weld sets on the alias it hides ([weldNow]) — and for the same reason.
+     *
+     * The rule is about *any* joint that lands on an existing point, not about corners: a fillet's tangency
+     * or a genuine re-intersection marks a place nothing marked before, so it keeps its visible point.
+     */
+    private fun quietDuplicateMarker(
+        ref: PointRef,
+        ev: Evaluator,
+    ) {
+        val el = elementFor(ref) ?: return
+        if (!el.isPoint || !el.visible) return
+        val at = (ev.valueOf(ref) as? PointValue)?.p ?: return
+        val already =
+            elements.any { other ->
+                other !== el && other.isPoint && other.space == el.space &&
+                    ((ev.valueOf(other.ref) as? PointValue)?.p?.let { (it - at).length() <= GeomMath.JOIN_TOL } == true)
+            }
+        if (!already) return
+        el.visible = false
+        duplicateJointMarkers.add(el.id)
     }
 
     /** Where two picks hand over, chosen as the meeting nearest to where *both* were clicked. */
@@ -6679,8 +6741,9 @@ class Document {
         els: List<Element>,
         visible: Boolean,
     ): Int {
-        // a welded alias is hidden by construction, so it is never *shown* and never named in a step
-        val subject = els.filter { el -> elements.any { it === el } && !(visible && isWelded(el)) }
+        // what is hidden by construction is never *shown* and never named in a step: a welded alias, and a
+        // boundary's duplicate joint marker (OP-14) — showing either draws a second point on the first
+        val subject = els.filter { el -> elements.any { it === el } && !(visible && hiddenByConstruction(el)) }
         val changed = subject.count { it.visible != visible }
         if (changed == 0) return 0
         // the step asserts the state of everything the gesture named, not only what moved: replaying it must

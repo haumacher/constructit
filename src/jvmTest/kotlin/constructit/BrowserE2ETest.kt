@@ -285,12 +285,23 @@ class BrowserE2ETest {
             val blank = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
             val cx3 = box.x + box.width * 0.5
             val cy3 = box.y + box.height * 0.5
+            // **The reversal, in real Chrome**: with a working plane under the view a plain drag belongs to
+            // the drawing (here, on empty ground, a box selection that leaves the solids exactly as they
+            // were), and the orbit is the modifier's — the binding this test used to assert the other way.
             page.mouse().move(cx3, cy3)
             page.mouse().down()
             page.mouse().move(cx3 + 90.0, cy3 - 40.0)
             page.mouse().up()
+            val unturned = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
+            assertTrue(blank == unturned, "a plain drag in the 3D view no longer orbits the camera")
+            page.keyboard().down("Control")
+            page.mouse().move(cx3, cy3)
+            page.mouse().down()
+            page.mouse().move(cx3 + 90.0, cy3 - 40.0)
+            page.mouse().up()
+            page.keyboard().up("Control")
             val orbited = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
-            assertTrue(blank != orbited, "dragging in the 3D view should orbit the camera and redraw")
+            assertTrue(blank != orbited, "Ctrl+drag in the 3D view should orbit the camera and redraw")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/06-solid-3d.png")))
             page.click("#v-2d")
             page.waitForSelector("#canvas:visible")
