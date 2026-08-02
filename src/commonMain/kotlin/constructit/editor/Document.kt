@@ -2,6 +2,7 @@ package constructit.editor
 
 import constructit.core.ArcValue
 import constructit.core.BezierValue
+import constructit.core.ChainValue
 import constructit.core.CircleValue
 import constructit.core.EllipseValue
 import constructit.core.EllipticArcValue
@@ -26,6 +27,7 @@ import constructit.core.SourceNode
 import constructit.core.Value
 import constructit.dsl.ArcRef
 import constructit.dsl.BezierRef
+import constructit.dsl.ChainRef
 import constructit.dsl.CircleRef
 import constructit.dsl.Construction
 import constructit.dsl.EllipseRef
@@ -56,6 +58,7 @@ import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
+import constructit.geom.Chains
 import constructit.geom.Conics
 import constructit.geom.Feature3
 import constructit.geom.FilletLeg
@@ -122,6 +125,17 @@ enum class ElementKind {
      * projection so that it is visible and pickable there (see [SceneRenderer] and [HitTest]).
      */
     SPACE_CURVE,
+
+    /**
+     * A **cutting chain** (OP-22's extension): a curve that separates its sketch plane into two sides — a
+     * finite run of pieces with a ray at each end (`constructit.geom.Chain`).
+     *
+     * Its own kind rather than a member of [Element.isCurve], for the reason the slot kinds exist at all: a
+     * chain is not something to intersect, trim or bound an area with — it is something to **cut with**, and
+     * a curve slot handed one would be handed a value it cannot read. What it is like is a ray: unbounded,
+     * drawn clipped to the view, and picked by the distance to what is drawn.
+     */
+    CHAIN,
 
     /**
      * A whole **ellipse** (OP-24) — a first-class conic, closed like a circle, so it bounds an area by
@@ -3707,6 +3721,9 @@ class Document {
             is LineValue -> listOf(v.line.origin)
             is RayValue -> listOf(v.ray.origin)
             is LoopValue -> v.loop.elements.flatMap { GeomMath.bounds(it).toList() }
+            // a cutting chain's extent is its **finite** run: its rays have none, exactly as a line's and a
+            // ray's own extent above is the point that defines them
+            is ChainValue -> v.chain.pieces.flatMap { GeomMath.bounds(it).toList() }
             is RegionValue ->
                 (v.region.outer.elements + v.region.holes.flatMap { it.elements }).flatMap { GeomMath.bounds(it).toList() }
             else -> emptyList()
@@ -8868,6 +8885,145 @@ class Document {
             .also { madeSolid(it, "${nameOf(solidEl)} with $n opening${if (n == 1) "" else "s"} cut out of it") }
     }
 
+    // ---- cutting with an unbounded chain (OP-22's extension, step 1) ----
+
+    /**
+     * A **cutting chain** through the points that were clicked (OP-22's extension): the finite run between
+     * them, with a ray running out of each end.
+     *
+     * The gesture places ordinary 2D points, so a chain is live in the way everything else here is — drag a
+     * point and every cut made with it recomputes — and clicking an *existing* point shares its node, since
+     * that is what a point pick already does (`Editor.placePoint` snaps first). Two clicks give an infinite
+     * **line**; each further click bends it.
+     *
+     * Refused **by name** for the one thing that is about *how many* points there are, and refused there
+     * rather than in the node because a run of one point is not a run. Everything about *where* they are —
+     * two of them in the same place, a chain that crosses itself — is the node's business and is reported as
+     * the reason it is invalid, so it heals when the drawing moves (OP-3,
+     * [Construction.chainThrough]).
+     */
+    fun chainThroughPoints(points: List<PointRef>): Element? {
+        if (points.size < 2) {
+            note = "Chain: click at least two points — one point states no direction, so there is no ray to continue it"
+            return null
+        }
+        val chain = add(cx.chainThrough(points), ElementKind.CHAIN, Styles.CHAIN)
+        note =
+            "${nameOf(chain)} is a cutting chain through ${points.size} points, running to infinity at both ends — " +
+            "cut a solid with it, or split one in two"
+        return chain
+    }
+
+    /**
+     * [el] as a chain to cut with, or null when it is neither one nor a closed boundary.
+     *
+     * The **closed case falls out of the same slot**, which is the whole of "one operator, not a ladder": a
+     * circle, a traced outline, a rectangle or a wall footprint already separates the plane, so it is coerced
+     * ([Construction.closedChain]) exactly as a curve that bounds an area is coerced into a region for the
+     * seam ([regionOf]) — a node, no element, and the through-bore is then the ordinary cut.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun chainOf(el: Element): ChainRef? =
+        when (el.kind) {
+            ElementKind.CHAIN -> el.ref as ChainRef
+            else -> regionOf(el)?.let { cx.closedChain(it) }
+        }
+
+    /** Whether [el] can fill a chain slot: a drawn chain, or anything closed enough to bound an area. */
+    fun isChainCandidate(
+        el: Element,
+        ev: Evaluator,
+    ): Boolean = el.kind == ElementKind.CHAIN || areaPickFilter(ev)(el)
+
+    /**
+     * **Cut** the solid [solidEl] with the chain [chainEl], keeping the side the click at [at] is on.
+     *
+     * A cut *is* a split with one half kept, which is why this builds the same node
+     * ([Construction.splitSolid]) as [splitByChain] and differs only in how many halves become elements. The
+     * kept side is a **discrete choice scored once from the gesture** and then persisted in the step's
+     * `signs=` (OP-1/OP-18): [signs] is what a replay hands back, and when it is present nothing is scored
+     * again — so an edit that moves the chain across the body keeps the half the user chose instead of
+     * quietly swapping to the other one.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun cutByChain(
+        solidEl: Element,
+        chainEl: Element,
+        at: Vec2? = null,
+        signs: List<Int> = emptyList(),
+    ): Element? {
+        val chain = chainRefFor(solidEl, chainEl) ?: return null
+        val side = signs.firstOrNull() ?: sideScoredAt(chain, at)
+        val cut =
+            add(
+                cx.splitSolid(solidEl.ref as SolidRef, chain, planeOfSpace(chainEl.space), side),
+                ElementKind.SOLID,
+                Styles.SOLID,
+            )
+        registerSigns(cut, listOf(side))
+        madeSolid(cut, "${nameOf(solidEl)} cut by ${nameOf(chainEl)}, keeping the ${sideWord(side)} side")
+        return cut
+    }
+
+    /**
+     * **Split** the solid [solidEl] in two along the chain [chainEl]: both halves, as two solids.
+     *
+     * The general operation, and the one a clamshell housing is. Nothing is scored here and nothing is
+     * persisted beyond the step itself: the pair is *ordered* by the chain's own direction of travel — left
+     * half first — which is a property of the value, so replay rebuilds the same two bodies without a choice
+     * having been recorded (OP-1's ordered solution set, with both branches taken instead of one).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun splitByChain(
+        solidEl: Element,
+        chainEl: Element,
+    ): Element? {
+        val chain = chainRefFor(solidEl, chainEl) ?: return null
+        val plane = planeOfSpace(chainEl.space)
+        val ref = solidEl.ref as SolidRef
+        val left = add(cx.splitSolid(ref, chain, plane, 1), ElementKind.SOLID, Styles.SOLID)
+        val right = add(cx.splitSolid(ref, chain, plane, -1), ElementKind.SOLID, Styles.SOLID)
+        note =
+            "${nameOf(solidEl)} split by ${nameOf(chainEl)} into ${nameOf(left)} (the left of the chain's run) and " +
+            "${nameOf(right)} (its right) — two solids, either of which can be hidden or cut again"
+        return left
+    }
+
+    /** The chain [chainEl] hands a cut, with both gesture refusals made by name — or null. */
+    private fun chainRefFor(
+        solidEl: Element,
+        chainEl: Element,
+    ): ChainRef? {
+        if (solidEl.kind != ElementKind.SOLID) {
+            note = "Cut by chain: ${nameOf(solidEl)} is ${kindWord(solidEl)}, not a solid — click the body to cut first"
+            return null
+        }
+        openShellRefusal(solidEl)?.let {
+            note = it
+            return null
+        }
+        return chainOf(chainEl) ?: run {
+            note =
+                "Cut by chain: ${nameOf(chainEl)} is ${kindWord(chainEl)} — cut with a chain, or with anything that " +
+                "closes (a circle, an outline, a rectangle), which separates the plane just as well"
+            return null
+        }
+    }
+
+    /**
+     * Which side of [chain] a click at [at] means, as the sign the step will persist (OP-1): `+1` the left of
+     * the chain's run, `-1` its right. A replay never comes here — it is handed the sign it recorded.
+     */
+    private fun sideScoredAt(
+        chain: ChainRef,
+        at: Vec2?,
+    ): Int {
+        val v = (Evaluator().valueOf(chain) as? ChainValue)?.chain ?: return 1
+        return if (at == null) 1 else Chains.sideAt(v, at)
+    }
+
+    private fun sideWord(side: Int): String = if (side >= 0) "left" else "right"
+
     // ---- imported bodies, and the placement that moves any solid (the JT import, OP-9) ----
 
     /**
@@ -10809,6 +10965,14 @@ object Styles {
      * the plan and another on the GPU.
      */
     val SPACE_CURVE = Style(stroke = "#8c564b", width = 2.0)
+
+    /**
+     * A **cutting chain** (OP-22's extension). Its own colour, for the reason a space curve has one: it is
+     * not geometry the drawing is made of but a *tool* — what it says is "material stops here" — and a
+     * reader who cannot tell it from a drawn curve cannot tell a cut from an outline. Thin, because the cut
+     * it makes is the thing to look at.
+     */
+    val CHAIN = Style(stroke = "#d62728", width = 1.4)
 
     /** Scaffolding, once a result exists to contrast it with — dimmed, not hidden. */
     val DIMMED = Style(stroke = "#c9c9c9", width = 1.0)

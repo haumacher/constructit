@@ -2,6 +2,7 @@ package constructit.editor
 
 import constructit.core.ArcValue
 import constructit.core.BezierValue
+import constructit.core.ChainValue
 import constructit.core.CircleValue
 import constructit.core.EllipseValue
 import constructit.core.EllipticArcValue
@@ -17,6 +18,7 @@ import constructit.core.SegmentValue
 import constructit.core.SolidValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
+import constructit.geom.Chain
 import constructit.geom.Curves3
 import constructit.geom.GeomMath
 import constructit.geom.Path3
@@ -241,6 +243,14 @@ object HitTest {
             is BezierValue ->
                 GeomMath.tessellateBezier(v.bezier).zipWithNext().minOfOrNull { (a, b) -> distToSegment(world, a, b) }
             is LoopValue -> v.loop.elements.minOfOrNull { distToPiece(world, it) }
+            // A cutting chain (OP-22's extension) is measured against everything it draws: its finite run,
+            // and — where it is unbounded — the two rays, by the same rule a drawn ray is picked by. One
+            // distance rule, one place to add a kind.
+            is ChainValue ->
+                (
+                    v.chain.pieces.map { distToPiece(world, it) } +
+                        ((v.chain as? Chain.Open)?.let { listOf(distToRay(world, it.start.origin, it.start.dir), distToRay(world, it.end.origin, it.end.dir)) } ?: emptyList())
+                ).minOrNull()
             is RegionValue ->
                 (v.region.outer.elements + v.region.holes.flatMap { it.elements })
                     .minOfOrNull { distToPiece(world, it) }
@@ -425,6 +435,11 @@ object HitTest {
             is EllipticArcValue -> polyMeets(SceneRenderer.tessellate(v.arc), lo, hi)
             is BezierValue -> polyMeets(GeomMath.tessellateBezier(v.bezier), lo, hi)
             is LoopValue -> v.loop.elements.any { pieceMeets(it, lo, hi) }
+            is ChainValue ->
+                v.chain.pieces.any { pieceMeets(it, lo, hi) } ||
+                    (v.chain as? Chain.Open)?.let { c ->
+                        listOf(c.start, c.end).any { spanMeets(it.origin, it.dir, lo, hi, 0.0, Double.POSITIVE_INFINITY) }
+                    } == true
             is RegionValue ->
                 v.region.outer.elements.any { pieceMeets(it, lo, hi) } ||
                     v.region.holes.any { h -> h.elements.any { pieceMeets(it, lo, hi) } }

@@ -2,6 +2,7 @@ package constructit.editor
 
 import constructit.core.ArcValue
 import constructit.core.BezierValue
+import constructit.core.ChainValue
 import constructit.core.CircleValue
 import constructit.core.EllipseValue
 import constructit.core.EllipticArcValue
@@ -17,6 +18,7 @@ import constructit.geom.Affine
 import constructit.geom.Arc
 import constructit.geom.Bezier
 import constructit.geom.CarrierCurve
+import constructit.geom.Chain
 import constructit.geom.Circle
 import constructit.geom.Conics
 import constructit.geom.Ellipse
@@ -196,6 +198,11 @@ object Previews {
             is EllipticArcValue -> listOf(PreviewShape.EllArc(v.arc))
             is BezierValue -> listOf(PreviewShape.Bez(v.bezier))
             is LoopValue -> loopShapes(v.loop)
+            // a cutting chain (OP-22's extension): its run and its two rays, so a mirrored or copied chain
+            // ghosts as the whole curve rather than as the part that happens to be finite
+            is ChainValue ->
+                pieceShapes(v.chain.pieces) +
+                    ((v.chain as? Chain.Open)?.let { listOf(PreviewShape.Ry(it.start), PreviewShape.Ry(it.end)) } ?: emptyList())
             is RegionValue -> regionShapes(v.region)
             else -> emptyList()
         }
@@ -363,8 +370,10 @@ object Previews {
             else -> null
         }
 
-    private fun loopShapes(l: Loop): List<PreviewShape> =
-        l.elements.map {
+    private fun loopShapes(l: Loop): List<PreviewShape> = pieceShapes(l.elements)
+
+    private fun pieceShapes(elements: List<ProfileElement>): List<PreviewShape> =
+        elements.map {
             when (it) {
                 is ProfileElement.Seg -> PreviewShape.Seg(it.segment)
                 is ProfileElement.ArcE -> PreviewShape.ArcS(it.arc)

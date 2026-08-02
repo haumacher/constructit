@@ -1,6 +1,7 @@
 package constructit.core
 
 import constructit.geom.Affine
+import constructit.geom.Chains
 import constructit.geom.Circle
 import constructit.geom.Conics
 import constructit.geom.Direction
@@ -32,6 +33,9 @@ fun transformValue(
         is PointSetValue -> PointSetValue(PointSet(v.set.points.map { t.apply(it) }))
         is ProfileValue -> ProfileValue(Profile(v.profile.elements.map { GeomMath.transform(it, t) }))
         is LoopValue -> LoopValue(GeomMath.transform(v.loop, t))
+        // …and a cutting chain (OP-22's extension) transforms like the curve it is: an affine map takes rays
+        // to rays, so a mirrored chain is a chain, and the side it keeps follows the mirror with it.
+        is ChainValue -> ChainValue(Chains.transform(v.chain, t))
         is RegionValue ->
             RegionValue(
                 Region(

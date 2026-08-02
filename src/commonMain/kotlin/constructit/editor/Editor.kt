@@ -3665,6 +3665,9 @@ class Editor(
                 SlotKind.AREA -> pickElement(world, doc.areaPickFilter(ev()))
                 // the boolean slot (OP-22): a solid, picked in 2D by the footprint hint it draws
                 SlotKind.SOLID -> pickElement(world) { it.kind == ElementKind.SOLID }
+                // a cutting chain (OP-22's extension), or anything closed — the coercion between them is
+                // the document's (`Document.chainOf`), exactly as it is for an area slot
+                SlotKind.CHAIN -> pickElement(world) { doc.isChainCandidate(it, ev()) }
                 // a loft's slot (OP-17): a section, an apex point or a guide curve, told apart by the document
                 // (`loftRoleOf`) rather than by the click — so one repeating slot collects the whole feature
                 SlotKind.LOFT_PART -> pickElement(world) { doc.loftRoleOf(it) != null }

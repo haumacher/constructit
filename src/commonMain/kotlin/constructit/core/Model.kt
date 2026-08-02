@@ -2,6 +2,7 @@ package constructit.core
 
 import constructit.geom.Arc
 import constructit.geom.Bezier
+import constructit.geom.Chain
 import constructit.geom.Circle
 import constructit.geom.Direction
 import constructit.geom.Ellipse
@@ -91,6 +92,18 @@ data class BezierValue(val bezier: Bezier) : Value
 
 /** A closed, oriented boundary — the result layer's own value type (OP-14). */
 data class LoopValue(val loop: Loop) : Value
+
+/**
+ * A curve that **separates its plane into two sides** (OP-22's extension) — see [Chain].
+ *
+ * A value kind of its own rather than a [ProfileValue] with two rays bolted on, and the reason is what the
+ * type is *for*: every other 2D curve value is a thing to be drawn, intersected or bounded, while this one
+ * is a thing to be **cut with**, and it is legal only while it is properly embedded. Keeping it apart is
+ * what lets that condition be a property of the value — a self-intersecting chain is an invalid node with a
+ * reason (OP-3), so it hides everything cut with it and heals when a point is dragged clear — instead of a
+ * refusal each consumer would have to remember to make.
+ */
+data class ChainValue(val chain: Chain) : Value
 
 /** An area (outer boundary + holes): what the 2D→3D seam consumes (OP-14, OP-17). */
 data class RegionValue(val region: Region) : Value

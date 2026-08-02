@@ -78,6 +78,17 @@ enum class SlotKind {
     SOLID,
 
     /**
+     * A **cutting chain** (OP-22's extension): a drawn chain, **or anything closed** — a circle, a traced
+     * outline, a rectangle, a wall footprint.
+     *
+     * The second half is the slot doing the same job [AREA] does: a closed loop separates its plane exactly
+     * as a two-ended chain does, so the through-slot and the through-bore are the ordinary cut rather than
+     * features of their own, and the coercion is the document's (`Document.chainOf`) rather than a second
+     * pick.
+     */
+    CHAIN,
+
+    /**
      * A **part of a loft** (OP-17): anything that bounds an area (a section), a point (an apex), or an *open*
      * curve (a guide). One slot for the three, because the loft tool collects them in one repeating gesture and
      * which one a pick is is a question about the element, not about the click — `Document.loftRoleOf` answers
@@ -602,6 +613,19 @@ object Tools {
     const val CUT_OPENINGS = "cutopenings"
 
     /**
+     * **Cutting with an unbounded chain** (OP-22's extension, step 1): the chain itself, then the two ways
+     * to use it.
+     *
+     * Two ids for the use, and not because the operation differs — it is one node either way — but because
+     * *how many halves become elements* is what the user is choosing, and a tool id is what the file records
+     * (OP-18). [SPLIT_BY_CHAIN] keeps both; [CUT_BY_CHAIN] keeps the one that was clicked, which is split
+     * with one side kept, and the side is a persisted sign (OP-1).
+     */
+    const val CHAIN = "chain"
+    const val CUT_BY_CHAIN = "cutbychain"
+    const val SPLIT_BY_CHAIN = "splitbychain"
+
+    /**
      * **Place a solid**: read its own coordinates in the active sketch space's frame, at a picked point,
      * turned by an angle. Generic over solids — an imported reference body and an extruded part place
      * identically — which is why it lives here with the other solid operations and not with the import.
@@ -809,6 +833,13 @@ object Tools {
             // named body (OP-23).
             ToolDef(PLACE_SOLID, "Place solid", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.POINT), scalars = listOf(ang("angle", 0.0)), replicates = false, help = "Type an angle if you want one, then click a solid and the point it should sit at: the body is moved so its own coordinates are read from the sketch space you are in, at that point, turned by that angle. The point and the angle stay live — drag the point and the body follows, retype the angle and it turns. An imported reference body arrives already placed this way.", slotNames = listOf("solid", "at point")) { d, p, s -> d.placeSolid(p.elements[0], p.points[0], s.firstOrNull()) },
             ToolDef(CUT_OPENINGS, "Cut openings", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), help = "Click a solid extruded from a wall footprint: every opening on that wall becomes a subtracted box, sill to head. Openings added later need the tool again.", slotNames = listOf("wall solid")) { d, p, _ -> d.cutOpenings(p.elements[0]) },
+            // ----- Cutting with an *unbounded* tool (OP-22's extension). The chain is drawn like any other
+            // run of points and is a value of its own; the two tools that use it are one node with a
+            // different number of halves kept, and the kept side rides `signs=` like every other scored
+            // discrete choice (OP-1).
+            ToolDef(CHAIN, "Chain (cutting curve)", ToolCategory.CURVES, listOf(SlotKind.POINT), repeating = true, minPicks = 2, help = "Click the points the cut runs through, then press Enter: the first and last become rays, so the chain runs to infinity at both ends and separates the drawing into two sides. Two clicks give an infinite line; each further click bends it. Cut or split a solid with it afterwards — or cut with any closed curve you have already drawn.", slotNames = listOf("point on the chain")) { d, p, _ -> d.chainThroughPoints(p.points) },
+            ToolDef(CUT_BY_CHAIN, "Cut by chain", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.CHAIN, SlotKind.SIDE), help = "Click the solid, then the chain to cut it with (a drawn chain, or any closed curve — a circle cuts a through-bore), then click the side to keep. The side is remembered, so moving the chain afterwards never swaps which half survives.", slotNames = listOf("solid", "chain", "side to keep")) { d, p, _ -> d.cutByChain(p.elements[0], p.elements[1], p.clicks.lastOrNull(), p.signs) },
+            ToolDef(SPLIT_BY_CHAIN, "Split by chain", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.CHAIN), help = "Click the solid, then the chain: both halves become solids, so a clamshell housing is one gesture. Hide or cut either afterwards.", slotNames = listOf("solid", "chain")) { d, p, _ -> d.splitByChain(p.elements[0], p.elements[1]) },
             // ----- Planes: every tool that creates a working plane, in one group (GitHub #9, the user's
             // rule — "the section-plane tool is not a solid creation tool"). *Section* is not here: it makes
             // 2D geometry *from* a solid and stays with the solids. What they share is that each records its
@@ -948,6 +979,7 @@ object Tools {
             SlotKind.SIDE -> "side"
             SlotKind.AREA -> "area"
             SlotKind.SOLID -> "solid"
+            SlotKind.CHAIN -> "chain or closed curve"
             SlotKind.LOFT_PART -> "section, apex or guide"
             SlotKind.POINT3 -> "point in space"
             SlotKind.PATH3 -> "curve in space"

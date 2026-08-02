@@ -8451,6 +8451,38 @@ says so in its own words, because the interaction is worth knowing: a tube as fa
   rather than a side effect. **1378 → 1390 green**, no new golden, no version bump. See *Implementation status
   (as built — the sweep's embedding criterion)* under *Curves in space, and the sweep*.
 
+- **Session 41 — an unbounded tool is a legitimate operand: the chain, and the cut that is a split
+  (OP-22's extension, step 1).** *"Cutting something away does not require the subtracted part to be
+  bounded"* — the user's framing from session 37, built. A **chain** is now a value: a run of pieces with a
+  **ray at each end**, which is not decoration but properness — a curve that goes to infinity at both ends
+  separates its plane into exactly two components, so *"which side to keep"* has a referent, and a chain
+  that merely stops leaves a crack space flows around. A chain that **meets itself** is refused for the same
+  reason and not for tidiness: it does not separate cleanly, so the question has no answer. The **closed**
+  case needed no second operator and, better, needed no second *gesture*: a circle, an outline, a rectangle
+  or a wall footprint already separates its plane, so the chain slot takes one and coerces it — the
+  through-bore is *cut with the circle you already drew*. What was built is **split**, with cut defined as
+  split keeping one side; the two halves are two nodes with opposite signs rather than one node with two
+  outputs, which is OP-1's own shape (an ordered pair, a discrete selector) rather than a variation on it.
+  Side `+1` is the **left of the chain's direction of travel**, one rule that covers the half-space and the
+  bore alike, scored once from a click and then persisted in `signs=` — asserted by dragging the chain clear
+  across the point that was clicked and getting the *same* half, where re-scoring would have given the
+  complement. **Unbounded in the statement, bounded in the implementation**: the tool is clipped to the
+  target's own extent plus a margin at evaluation time, closed strictly outside it, and handed to the
+  *existing* boolean dispatch — extracted, not copied, because *which engine ran* must have one answer — so
+  a plan chain over an extruded block is exact (OP-22) and a chain on a vertical plane is a general boolean
+  (OP-9), and neither is a new path. The **margin is two numbers answering two questions**: any positive
+  margin makes coplanarity unreachable *by construction*, and `max(1 mm, 5 %)` is what makes "strictly
+  greater" survive float32's relative resolution and the kernel's three absolute 1e-7 mm epsilons. Tested as
+  a claim rather than inferred: the chain is placed wholly inside the block — the case where a naive bound
+  is the target's box *exactly* — and no vertex of either tool comes within a margin of any face of it.
+  Computing **both** halves is what makes the two silent failures exact rather than a comparison against a
+  tolerance: an empty discarded half means the cut removes nothing (and that silence is precisely what
+  picking the wrong side looks like), an empty kept half means it removes everything. Three tool rows, one
+  new value type, two exhaustive `when`s answered, and nothing needed in the 3D view, the export seam or the
+  file format. **1388 → 1414 green**, one new SVG golden, no version bump. See *Implementation status (as
+  built — the unbounded chain, and the cut that is a split)* under *An unbounded tool is a legitimate
+  operand*.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -8504,7 +8536,7 @@ carried for later 3D even though invisible in 2D.
 > faces*, cutting the plan geometry at each opening. That conflates the plan drawing with the solid,
 > and it is one of the two reasons the as-built wall needs rework. See *A wall is an output feature*.
 
-## An unbounded tool is a legitimate operand (OP-22's extension — DESIGN AGREED, unimplemented)
+## An unbounded tool is a legitimate operand (OP-22's extension — step 1 BUILT, step 2 unimplemented)
 
 **The gap, in the user's own framing (session 37).** Subtraction today requires the *removed* operand to be
 a solid — something with a bounded volume. But *"cutting something away does not require the subtracted
@@ -8593,7 +8625,8 @@ can be trimmed to mate with another — and since a face space already exists an
 every ancestor solid (GitHub #9), that composes with what is already built.
 
 **The order of work — two steps, each whole.**
-1. **The unbounded chain and the straight cut.** The unbounded 2D chain as a value (a chain beginning and
+1. **The unbounded chain and the straight cut** — **BUILT** (session 41; see *Implementation status (as
+   built — the unbounded chain, and the cut that is a split)* below). The unbounded 2D chain as a value (a chain beginning and
    ending in rays) and the gesture that draws one; the operator with the **straight** directrix, which is
    half-space, quarter-space/step and through-prism; **split**, with cut defined as split-keeping-one-side
    and the kept side a persisted sign; eval-time bounding against the target's extent; the refusals above.
@@ -8606,6 +8639,131 @@ every ancestor solid (GitHub #9), that composes with what is already built.
 **Queue position.** Not part of OP-26 and not behind it — it is independent of curves. Ranked **above** the
 remaining curve steps once the sweep has landed, and **above** 3D blends, because blends are the harder
 kernel problem while this is mostly a new operand rule over machinery that exists.
+
+### Implementation status (as built — the unbounded chain, and the cut that is a split)
+
+Step 1 whole: a chain is a value, a cut is a split with one side kept, and the bound the tool needs is
+derived from the target every time it is evaluated. Three tool rows, two node kinds, one new value type, and
+**no second boolean path** — which is the claim worth stating first, because it is what makes this a new
+*operand* rather than a new operation.
+
+**The value: `Chain` (`geom/Chain.kt`), a curve that separates its plane.** A sealed pair, and the pair is
+the design's "one operator, not a ladder" in the type system:
+
+- **`Chain.Open(start: Ray, pieces, end: Ray)`** — the finite run with a ray at each end. `Ray` was already
+  a first-class value here, so properness cost a field rather than a concept.
+- **`Chain.Closed(area: Region)`** — a closed boundary, holes included, its inside read by the same nonzero
+  winding rule every other area is read by. It carries a `Region` and not a `Loop` deliberately: a wall
+  footprint or a plate outline may have holes, and dropping them silently would be the wrong kind of cheap.
+
+**A closed chain is never *drawn*, and that is the point.** The drawing already holds closed curves — a
+circle, a traced outline, a rectangle, a wall footprint — so the `CHAIN` slot accepts them and
+`Document.chainOf` coerces one through `Construction.closedChain`, exactly as `regionOf` coerces a curve
+that bounds an area for the seam. So the through-bore is *cut with a circle you already drew*, no new
+gesture, and the closed case genuinely falls out of the same operator instead of being a second one that
+happens to agree.
+
+**How the gesture states the rays, and what it costs.** *Chain* is a repeating point tool: click the points,
+press Enter. The **first ray runs backwards along the first span and the last runs forwards along the last**
+— the chain continues out of each end in the direction it was already going, which needs no extra input and
+is one sentence to explain. Two clicks therefore give an infinite **line**, three a corner, and each further
+click bends it again. The cost is real and is stated rather than hidden: **the two asymptotic directions are
+not independently addressable.** To send an end off at some other angle you add a point — which is the same
+one click a separate "state the direction" input would have cost, and it leaves the direction *constructed*
+(a draggable point) instead of typed. The points are ordinary 2D points, so a chain is live like everything
+else: drag one and every cut made with it recomputes, and clicking an existing point shares its node.
+
+**Split's two halves are two nodes with opposite signs, not one node with two outputs.** `splitSolid(solid,
+chain, plane, side)` produces *one* solid — the half `side` names — and *Split by chain* runs it twice. That
+is OP-1's shape rather than a variation on it: an ordered pair of branches with a discrete selector, where
+`Select` picks one of a `PointSet`'s points and this picks one of a partition's halves. The alternative — a
+compound `SolidSetValue` with a `Select` over it — would have bought nothing and cost a value type, an
+accessor and a case in every exhaustive `when`, because unlike an intersection's solution set there is
+never a *number* of halves to address: there are two, always, and which is which is a property of the value.
+
+**Which half is which is a property of the value, and it is one rule for both forms.** Side `+1` is the half
+to the **left of the chain's direction of travel**; the pieces are ordered, so the chain has one. For a
+closed chain, whose outer boundary runs counter-clockwise by OP-14's convention, the left of travel *is* the
+inside — so the same sentence covers the half-space and the through-bore, and it turns with the chain under
+a rigid motion exactly as OP-1's own orderings do. A **click** scores it once (`Chains.sideAt`), the step
+records it as `signs=`, and replay consumes it verbatim: dragging the chain clear across the point that was
+clicked afterwards keeps the same half, which is asserted directly (`theKeptSideIsAPersistedSignThat`
+`ReplayNeverScoresAgain` — the re-scoring answer would be the complementary body, so the test cannot pass by
+accident).
+
+**The bound, and the margin argument.** `Chains.tools` takes the target's **mesh vertices**, projects them
+into the chain's plane, unions that box with the chain's own finite extent, inflates by a margin, clips each
+ray where it leaves the box, closes the clipped chain along the box's boundary, and extrudes the two halves
+across the target's full thickness plus the same margin. What comes back is two ordinary prisms. Nothing is
+stored, so a target that grows is bounded larger next pass — asserted by making a block 25× taller and
+watching the same cut go through it.
+
+The margin is `max(1 mm, 5 % of the largest extent)`, and **the two numbers answer two different questions**:
+
+- *Why a margin at all.* Every face of the closure then lies strictly outside the target, which makes the
+  **coplanar-face degeneracy unreachable by construction** — every point of the target satisfies
+  `u ≤ uMax < uMax + margin`. That is the whole argument for the feature over the workaround it replaces: a
+  box sized by eye eventually lands a face exactly on a face of the target, which is the class the exact path
+  refuses and the general path resolves by epsilon.
+- *Why not any positive number.* Because "strictly greater" has to survive every epsilon that decides
+  coplanarity downstream. The **relative** term answers the general engine's float32 mesh positions (~1e-7
+  relative, OP-9): 5 % is five to six orders above it at any drawing size, so a bracket and a building are
+  equally safe. The **absolute floor** answers the three absolute ones — `RegionBool.EPS`, `Geom3.Z_EPS` and
+  `Geom3.WELD_TOL`, all 1e-7 mm — so a target a hair wide still gets a bound that is a separate surface.
+  Being over-generous costs one slightly larger prism and nothing else, which is why the floor is set well
+  clear rather than finely. The claim is tested as a claim, not inferred from a cut succeeding:
+  `theDerivedBoundIsStrictlyOutsideTheTargetSoNoFaceIsEverCoplanar` places the chain wholly *inside* the
+  block — the case where a naive bound would be the target's box exactly, putting four side faces and both
+  caps coplanar — and asserts that **no vertex of either tool lies within a margin of any face plane of the
+  target**.
+
+**Which boolean path the tool solid takes was not a choice.** The two halves are handed to
+`Construction.booleanValue`, the dispatch extracted out of `booleanOf` so that both callers take the *same*
+route: same-axis prisms go to OP-22's exact slab algebra, everything else to Manifold (OP-9). So a chain
+drawn in the plan over a solid extruded along +Z is **exact** — volumes assert to 1e-6 mm³ — and a chain
+drawn on a vertical plane, which is how a draft or a chamfer is actually stated, is a general boolean and
+says so in its type (`Feature3.MeshBoolean`). Extracting the dispatch rather than inlining a second copy is
+the load-bearing part: *which engine ran* is the one question about a boolean that must have a single answer.
+
+**The three refusals are exact, and the split is what makes them exact.** Both halves are computed on every
+pass — the discarded one is not waste, it is the measurement:
+
+- the discarded half comes out **empty** ⇒ the cut removes nothing, *"the chain passes it by on the side that
+  is kept, which is exactly what picking the wrong side looks like"*;
+- the kept half comes out **empty** ⇒ the cut removes the whole body, said rather than shown as nothing;
+- the chain **meets itself** ⇒ refused at the chain's own node, so everything cut with it hides with it and
+  heals together (`Chains.defect`, checked on the tessellation because the tessellation is what the boolean
+  will see — OP-15's rule one dimension down).
+
+All three are properties of **values**, so all three are node invalidity that heals, and each is asserted to
+fire by name *and* to come back when a point is dragged. Only the first two need the classification step, and
+a volume comparison is used **only to classify a refusal that has already happened**, never to decide one.
+
+**What it cost.** One `Value` (`ChainValue`) and therefore one case in each of the two deliberately
+exhaustive `when`s over values — `transformValue` (a chain mirrors like the curve it is) and the SVG writer
+(the finite run plus two rays, so the unbounded half is not dropped from an exported document). One
+`ElementKind`, one style, one `SlotKind`, one pick filter, one renderer case, one hit-test case, one preview
+case. Nothing in the 3D view, the export seam or the format needed a line: a cut is a solid, and `signs=`
+already carried scored choices.
+
+**Acceptance (`ChainCutTest`, 13 tests; `ChainCutToolTest`, 13 tests; one new SVG golden).** A half-space
+takes exactly one side off an 80 × 50 × 20 block and the two halves of the split **sum to the original**; a
+ray–corner–ray chain takes a 45° inclined face off it (2 400 mm² × 20, computed by hand); a closed chain is a
+through-cut with the bore appearing as a hole in the plate's own plan; the same operator on a vertical plane
+chamfers through the general engine; the bound grows with its target; the derived box is proved clear of
+every face; the three refusals fire and heal; and the left/right rule is asserted on the value alone, on the
+rays as well as on the run. As gestures: three clicks cut, two clicks split, a circle fills the chain slot,
+the sign survives `save → load → save` **byte-equal** and is not re-scored when the drawing moves under it, a
+cut is an ordinary operand of the next boolean, it exports through **all four** writers, it draws a plan
+footprint, it hides, and the whole gesture is one undo — as is drawing the chain. **1388 → 1414 green.**
+
+**What is deliberately not here.** The curved directrix and the rotating/translational mode (step 2 — with a
+straight directrix the two modes coincide exactly, so there is nothing to half-build). Cutting by a **face of
+another solid**, which the record names as a later consequence. A *flip this cut* command: flipping the sign
+is expressible today by cutting again on the other side or by *Split*, and a one-click flip is an editing
+affordance rather than a piece of the operator — worth having, not worth conflating with it. And a chain is
+not yet a **2D** cutting tool: it separates a plane, but nothing trims a drawn curve with it, which is the
+same operator one dimension down and is not claimed.
 
 ## A wall is an output feature (OP-21 — RESOLVED)
 
@@ -9989,10 +10147,13 @@ the span — reduces on a sampled smooth curve to `reach ≥ R·cos(θ/2)`, whic
 first: **do the sweep's refusals speak about the curve or about the mesh?** The answer wants stating once, for
 the local criterion and this one together, rather than being settled by whichever check is written second.
 
-**Also queued in session 37 — an unbounded tool as a boolean operand (OP-22's extension).** Independent of
-OP-26 and ranked above its remaining steps once the sweep has landed, and above 3D blends: a half-space, then
-an unbounded prism, then an unbounded revolve/sweep, built as **split** with cut defined as split-keeping-one-
-side. See *An unbounded tool is a legitimate operand*.
+**Queued in session 37, and its first step built in session 41 — an unbounded tool as a boolean operand
+(OP-22's extension).** Independent of OP-26 and ranked above its remaining steps once the sweep has landed,
+and above 3D blends: a half-space, then an unbounded prism, then an unbounded revolve/sweep, built as
+**split** with cut defined as split-keeping-one-side. **Step 1 is done** — the chain as a value, the straight
+cut, split, the persisted side and the eval-time bound. **What remains queued is step 2**: the directrix as a
+general `Path3`, and with it the rotating/translational mode, which is meaningless until a directrix can
+curve. See *An unbounded tool is a legitimate operand*.
 
 **Named in session 37 and not yet queued — two gaps a real structural part shows** (from a cast arm looked at
 in the round): **3D edge blends**, which is most of what the eye reads as a casting and is a dimensioned

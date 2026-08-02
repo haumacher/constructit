@@ -2,6 +2,7 @@ package constructit.svg
 
 import constructit.core.ArcValue
 import constructit.core.BezierValue
+import constructit.core.ChainValue
 import constructit.core.CircleValue
 import constructit.core.DirectionValue
 import constructit.core.EllipseValue
@@ -26,6 +27,7 @@ import constructit.core.SolidValue
 import constructit.dsl.Ref
 import constructit.dsl.valueOf
 import constructit.geom.Bezier
+import constructit.geom.Chain
 import constructit.geom.Conics
 import constructit.geom.GeomMath
 import constructit.geom.Line
@@ -141,6 +143,17 @@ object Svg {
                 is LoopValue -> {
                     sampleChain(v.loop.elements, samples)
                     prepared.add(Prepared("chain", d, v.loop.elements))
+                }
+                // A cutting chain (OP-22's extension) draws as what it is: its finite pieces, plus a ray at
+                // each end that clips to the view exactly as a drawn ray does — three prepared items, so the
+                // unbounded half is not quietly dropped from a document that shows the bounded one.
+                is ChainValue -> {
+                    sampleChain(v.chain.pieces, samples)
+                    prepared.add(Prepared("chain", d, v.chain.pieces))
+                    (v.chain as? Chain.Open)?.let {
+                        prepared.add(Prepared("ray", d, it.start))
+                        prepared.add(Prepared("ray", d, it.end))
+                    }
                 }
                 is RegionValue -> {
                     val elements = v.region.outer.elements + v.region.holes.flatMap { it.elements }

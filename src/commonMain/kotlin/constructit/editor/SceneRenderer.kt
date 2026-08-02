@@ -2,6 +2,7 @@ package constructit.editor
 
 import constructit.core.ArcValue
 import constructit.core.BezierValue
+import constructit.core.ChainValue
 import constructit.core.CircleValue
 import constructit.core.EllipseValue
 import constructit.core.EllipticArcValue
@@ -19,6 +20,7 @@ import constructit.core.SegmentValue
 import constructit.core.SolidValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
+import constructit.geom.Chain
 import constructit.geom.Conics
 import constructit.geom.Curves3
 import constructit.geom.Ellipse
@@ -222,6 +224,11 @@ object SceneRenderer {
                 is EllipticArcValue -> poly(proj, target, tessellate(v.arc), style)
                 is BezierValue -> poly(proj, target, GeomMath.tessellateBezier(v.bezier), style)
                 is LoopValue -> drawChain(v.loop.elements, proj, target, style)
+                // A **cutting chain** (OP-22's extension) is drawn as what it is: its finite run, plus a
+                // ray at each end clipped to the view exactly as a drawn ray is. The unbounded half has to
+                // be visible — the side a cut keeps is stated relative to the whole curve, so a chain drawn
+                // only where its points are would be a picture of a different question.
+                is ChainValue -> drawCuttingChain(v.chain, proj, target, view, style)
                 is RegionValue -> {
                     // A thick path's footprint is drawn by the *plan convention* (OP-21): faces broken at
                     // every interval, jamb lines across them. The region itself stays whole — an opening
@@ -492,6 +499,7 @@ object SceneRenderer {
             is EllipticArcValue -> poly(proj, target, tessellate(v.arc), style)
             is BezierValue -> poly(proj, target, GeomMath.tessellateBezier(v.bezier), style)
             is LoopValue -> drawChain(v.loop.elements, proj, target, style)
+            is ChainValue -> drawCuttingChain(v.chain, proj, target, view, style)
             is RegionValue -> {
                 drawChain(v.region.outer.elements, proj, target, style)
                 for (h in v.region.holes) drawChain(h.elements, proj, target, style)
@@ -898,6 +906,25 @@ object SceneRenderer {
         line: Line,
         r: Rect,
     ): Segment? = clipParam(line.origin, line.dir, r, Double.NEGATIVE_INFINITY)
+
+    /**
+     * A cutting chain (OP-22's extension): its finite pieces, and — when it is unbounded — the two rays,
+     * each clipped to the view by the same routine a drawn ray uses.
+     */
+    private fun drawCuttingChain(
+        chain: Chain,
+        proj: PlaneProjection,
+        target: DrawTarget,
+        view: Rect,
+        style: Style,
+    ) {
+        drawChain(chain.pieces, proj, target, style)
+        (chain as? Chain.Open)?.let {
+            for (r in listOf(it.start, it.end)) {
+                clipRay(r, view)?.let { s -> poly(proj, target, listOf(s.a, s.b), style) }
+            }
+        }
+    }
 
     private fun clipRay(
         ray: Ray,

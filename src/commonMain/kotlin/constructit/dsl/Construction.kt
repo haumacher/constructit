@@ -2,6 +2,7 @@ package constructit.dsl
 
 import constructit.core.ArcValue
 import constructit.core.BezierValue
+import constructit.core.ChainValue
 import constructit.core.CircleValue
 import constructit.core.DirectionValue
 import constructit.core.EllipseValue
@@ -37,6 +38,8 @@ import constructit.geom.Axis3
 import constructit.geom.Bezier
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
+import constructit.geom.Chain
+import constructit.geom.Chains
 import constructit.geom.Circle
 import constructit.geom.Conics
 import constructit.geom.Curve3Element
@@ -118,6 +121,9 @@ typealias BezierRef = Ref<BezierValue>
 typealias ProfileRef = Ref<ProfileValue>
 typealias LoopRef = Ref<LoopValue>
 typealias RegionRef = Ref<RegionValue>
+
+/** A curve that separates its plane into two sides — what a cut cuts with (OP-22's extension). */
+typealias ChainRef = Ref<ChainValue>
 
 /** A placed group's coordinate frame (OP-16) — origin + angle, held by one source node. */
 typealias FrameRef = Ref<FrameValue>
@@ -2377,21 +2383,28 @@ class Construction {
             // body has a name to be refused by.
             openShellOf(sa)?.let { return@op EvalResult.Invalid(it) }
             openShellOf(sb)?.let { return@op EvalResult.Invalid(it) }
-            if (Geom3.sameAxis(sa.feature, sb.feature)) {
-                val (solid, why) = Geom3.boolean(kind, sa, sb)
-                if (solid == null) {
-                    EvalResult.Invalid(why ?: "cannot combine these solids")
-                } else {
-                    EvalResult.Ok(SolidValue(solid))
-                }
-            } else {
-                val (mesh, why) = MeshBool.boolean(kind, sa.mesh, sb.mesh)
-                if (mesh == null) {
-                    EvalResult.Invalid(why ?: "cannot combine these solids")
-                } else {
-                    EvalResult.Ok(SolidValue(Solid3(Feature3.MeshBoolean(kind), mesh)))
-                }
-            }
+            val (solid, why) = booleanValue(kind, sa, sb)
+            if (solid == null) EvalResult.Invalid(why ?: "cannot combine these solids") else EvalResult.Ok(SolidValue(solid))
+        }
+
+    /**
+     * The dispatch itself, as a function of two **values** — extracted so that every operation whose removed
+     * operand is a solid takes the *same* route, and there is one place that decides which engine runs.
+     *
+     * The cut by an unbounded chain ([splitSolid]) is the second caller, and it is exactly why this is not
+     * inlined in [booleanOf]: a second dispatch would be a second thing to keep in step, and "which path did
+     * this take" is the one question about a boolean that must have a single answer.
+     */
+    private fun booleanValue(
+        kind: BoolOp,
+        a: Solid3,
+        b: Solid3,
+    ): Pair<Solid3?, String?> =
+        if (Geom3.sameAxis(a.feature, b.feature)) {
+            Geom3.boolean(kind, a, b)
+        } else {
+            val (mesh, why) = MeshBool.boolean(kind, a.mesh, b.mesh)
+            if (mesh == null) null to why else Solid3(Feature3.MeshBoolean(kind), mesh) to null
         }
 
     /**
@@ -2406,6 +2419,113 @@ class Construction {
         return "an imported open shell cannot be a boolean operand — a boolean needs watertight solids " +
             "(the body from ${f.source} is a surface that does not close)"
     }
+
+    // ---- cutting with an unbounded chain (OP-22's extension, step 1) ----
+    // A cut does not need the removed operand to be bounded: *a surface and a side* is the honest tool, and
+    // the bound is derived from the target at evaluation time. Two node kinds, and the second one is a
+    // **split** — a cut is split keeping one side, which is why there is no separate cut node.
+
+    /**
+     * The **unbounded chain** through [points]: straight spans between them, with a ray running out of each
+     * end (see [Chains.through] for how the two ray directions are stated and what that costs).
+     *
+     * **One node over the points themselves**, so a chain is live exactly as a curve in space is: click an
+     * existing point and the chain *shares its node*, drag any of them and everything cut with the chain
+     * recomputes. Nothing is copied, so there is nothing to keep in step.
+     *
+     * Invalid with a reason that heals (OP-3) when two consecutive points **coincide** — a span with no
+     * direction has no ray to continue it — and when the chain **meets itself**, which is the properness
+     * condition rather than a tidiness rule: a curve that crosses itself does not separate its plane into two
+     * sides, so "the side to keep" has no referent (see [Chain]). Both are conditions on *values*: drag the
+     * points clear and the cut comes back.
+     */
+    fun chainThrough(points: List<PointRef>): ChainRef =
+        op(*points.toTypedArray()) { args ->
+            val (chain, why) = Chains.through(args.map { (it as PointValue).p })
+            if (chain == null) return@op EvalResult.Invalid(why ?: "cannot build a chain through these points")
+            Chains.defect(chain)?.let { return@op EvalResult.Invalid(it) }
+            EvalResult.Ok(ChainValue(chain))
+        }
+
+    /**
+     * An area's boundary **as a chain**: the closed case of the same value, and hence of the same operator.
+     *
+     * A closed loop separates its plane too — a bounded inside, an unbounded outside — so a cut by one is the
+     * through-slot and the through-bore, reached with no special case anywhere. This is a coercion node like
+     * [region] is: the drawing already holds closed curves, so nothing new has to be *drawn* to make one.
+     */
+    fun closedChain(area: RegionRef): ChainRef =
+        op(area) { args ->
+            val chain = Chain.Closed((args[0] as RegionValue).region)
+            Chains.defect(chain)?.let { return@op EvalResult.Invalid(it) }
+            EvalResult.Ok(ChainValue(chain))
+        }
+
+    /**
+     * **Split** [solid] with [chain] drawn on [plane], and keep the half [side] names: `+1` the one to the
+     * left of the chain's direction of travel, `-1` the one to its right (see [Chain]).
+     *
+     * [side] is **structural** — decided once by the gesture that built this node and then persisted as a
+     * sign (OP-1/OP-18), never re-scored on replay. That is the whole reason it is an argument here rather
+     * than something computed from a click position inside `compute`: an edit that moves the geometry must
+     * not be able to change which half a drawing keeps.
+     *
+     * Everything else is value-dependent and therefore lives in here (OP-21's rule): the tool is bounded to
+     * the target's own extent plus a margin, closed strictly outside it, and handed to the ordinary boolean
+     * engine — the *same* dispatch every other boolean takes ([booleanValue]), so a chain cut on a common
+     * axis is exact (OP-22) and a cross-axis one goes to Manifold (OP-9), and neither is a new path.
+     *
+     * **Both halves are computed, and that is the point rather than a cost.** The discarded half is what
+     * makes the two refusals exact instead of a comparison against a tolerance: an empty *kept* half means
+     * the cut removes the whole body, an empty *discarded* half means it removes nothing — and that silence
+     * is precisely what picking the wrong side looks like, so it is said (OP-3: invalid with a reason,
+     * healing the moment the chain crosses the material).
+     */
+    fun splitSolid(
+        solid: SolidRef,
+        chain: ChainRef,
+        plane: PlaneRef,
+        side: Int,
+    ): SolidRef =
+        op(solid, chain, plane) {
+            val target = (it[0] as SolidValue).solid
+            openShellOf(target)?.let { why -> return@op EvalResult.Invalid(why) }
+            val (tools, whyTools) = Chains.tools((it[1] as ChainValue).chain, (it[2] as PlaneValue).plane, target.mesh)
+            if (tools == null) return@op EvalResult.Invalid(whyTools ?: "cannot bound the cutting tool to this solid")
+            val kept = if (side >= 0) tools.first else tools.second
+            val dropped = if (side >= 0) tools.second else tools.first
+            val (keptSolid, whyKept) = booleanValue(BoolOp.INTERSECT, target, kept)
+            val (droppedSolid, _) = booleanValue(BoolOp.INTERSECT, target, dropped)
+            val whole = Geom3.volume(target.mesh)
+            when {
+                keptSolid != null && droppedSolid == null && sameVolume(Geom3.volume(keptSolid.mesh), whole) ->
+                    EvalResult.Invalid(
+                        "this cut leaves the solid untouched — the chain passes it by on the side that is kept, " +
+                            "which is exactly what picking the wrong side looks like: keep the other side, or move " +
+                            "the chain across the body",
+                    )
+                keptSolid == null && droppedSolid != null && sameVolume(Geom3.volume(droppedSolid.mesh), whole) ->
+                    EvalResult.Invalid(
+                        "this cut removes the whole solid — an empty result is not a body, so it is said rather " +
+                            "than shown as nothing: keep the other side, or move the chain into the material",
+                    )
+                keptSolid == null -> EvalResult.Invalid(whyKept ?: "cannot cut this solid with this chain")
+                else -> EvalResult.Ok(SolidValue(keptSolid))
+            }
+        }
+
+    /**
+     * Whether two volumes are the same body's (mm³), relatively.
+     *
+     * Used only to **classify a refusal that has already happened** — never to decide one — which is why a
+     * relative comparison is honest here: the exact path (OP-22) agrees to the last bits and the general one
+     * (OP-9) carries float32 positions, so 1e-6 relative is far above the second and far below any cut that
+     * removes material worth speaking of.
+     */
+    private fun sameVolume(
+        a: Double,
+        b: Double,
+    ): Boolean = abs(a - b) <= 1e-6 * maxOf(1.0, abs(b))
 
     // ---- imported bodies, and the placement that is generic over every solid (the JT import, OP-9) ----
 

@@ -187,6 +187,29 @@ tangency, which has no watertight mesh at all, is **refused with a reason** and 
 moves. In the browser the engine's WASM arrives after the first paint; until it does, a general boolean is
 simply an invalid node that says so, and one repaint makes it appear.
 
+**A cut does not need the part it removes to be bounded.** Shaping a body — taking an inclined face off a
+casting, opening a slot right through a plate, splitting a housing into its two halves — is not naturally
+said with a box sized by eye. It is said with **a curve and a side**. *Chain (cutting curve)* draws that
+curve: click the points it runs through and press Enter, and the first and last become **rays**, so the chain
+runs to infinity at both ends and genuinely divides the drawing into two. Two clicks give an infinite line, a
+third bends it into a step, and the points stay live like everything else — drag one and every cut made with
+it follows. Then *Cut by chain* takes the solid, the chain and a click on **the side to keep**, and *Split by
+chain* keeps both halves as two solids. A **closed** curve you have already drawn — a circle, a traced
+outline, a rectangle, a wall footprint — fills the same slot and needs no chain at all: it separates the plane
+just as well, so a circle cuts a through-bore through the very same tool.
+
+The side you clicked is **remembered**, not re-decided: move the chain across the body afterwards and the
+same half survives, because which side to keep belongs to the gesture that said it rather than to the
+geometry as it stands. What makes this more reliable than the big box it replaces is that the tool is bounded
+to the target's **own** extent plus a margin, worked out afresh every time it is evaluated — so it closes
+strictly outside the material, a face of the tool can never land exactly on a face of the part, and a part
+that grows is cut through anyway because nothing about the bound was ever stored. Refusals speak and heal
+like every other: a chain that misses says the cut leaves the solid untouched (which is what picking the
+wrong side looks like), one that would remove everything says so rather than showing nothing, and a chain
+that **crosses itself** is refused because a curve that does not separate cleanly has no two sides to choose
+between. What comes out is a solid like any other: watertight, a legal operand of the next boolean, drawn as
+a footprint in plan, exported to every format, one undo.
+
 The seam runs **both ways**. *Extrude on face* raises an area from a solid's top face — the plan is drawn
 in the same 2D space, so an upper storey or a boss needs no datum-plane UI — and *Section* cuts a solid at a
 height back into ordinary 2D geometry, which is **exact** for a prism (the section *is* the slab there) and
