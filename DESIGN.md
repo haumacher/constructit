@@ -5775,6 +5775,139 @@ Three broad families (see OP-9 decision above):
   Note CSG/implicit representations sidestep some of this (no persistent B-rep topology to
   re-identify) but make "sketch on this face / fillet this edge" harder to express.
 
+## Curves in space, and the sweep (OP-26 — DESIGN AGREED, unimplemented)
+
+**Why this exists at all.** Everything this kernel can build is either flat or a prism of something flat.
+A cable, a tube, a conduit, a handrail, a moulding, a gutter, a duct, a ramp — every one of them is *a
+profile carried along a path in space*, and none of them is expressible today. That is a hole in the
+modeller, not a convenience for any one file. The prize is the **sweep**; the curve is what a sweep needs.
+
+### What a 3D curve *is*
+
+A **`Path3`**: a piecewise chain of analytic pieces — `Seg3`, `Arc3` (a circle in an arbitrary plane),
+`Bezier3`/`Spline3`, `Helix3` — open or closed. Deliberately the same shape `Profile` already has one
+dimension down, and deliberately **not** "everything is a NURBS".
+
+Two reasons to keep the pieces analytic. *Exactness*: a helix that stays a helix has a pitch you can
+dimension, and a bend that stays an arc has a radius a bender can actually make — collapsing to a single
+spline throws away the fact that you were parameterizing. *Consistency*: it is the rule `Feature3` already
+follows, keeping analytic features beside meshes and dispatching by predicate up front rather than
+degrading silently.
+
+**An interpolating spline is not a solver, and the distinction is worth stating** because it looks like a
+doctrine violation and is not. Fitting a cubic through *n* points is a deterministic linear system with
+exactly one answer — the same category as the fillet computation, which nobody calls solving. What OP-1
+and the no-solver stance forbid is *constraint* solving: iterative search for a configuration that
+satisfies asserted relations, with branch ambiguity and no stable answer under parameter drift. An
+interpolation has none of those properties. So splines are allowed; **3D sketch constraints are not**, and
+that is exactly the mainstream feature this design declines to copy (see *Prior art*, below).
+
+### The parenting rule, and the four things that turn on it
+
+> **A curve's *value* is world-space geometry. A curve's *construction* is always parented**, because every
+> input it can take is parented: points in spaces, plane curves in spaces, an axis in a space, a face, a
+> solid.
+
+This is the height point's own pattern (OP-25: a plane point plus a lift — parented definition, world
+value) and the solid's (sketched in a space, valued in the world), so it adds no new category to the
+system. A path built from points in one space is **planar by construction**; a helix about an axis is not.
+Both ride their parents.
+
+The question it settles was originally put as "is a curve *in* a space or free in the world", and both of
+those are wrong — "in a space" cannot represent a helix or an intersection curve, and "free in the world"
+costs the following four things:
+
+1. **A 3D manipulator becomes a prerequisite.** A mouse drag carries two screen degrees of freedom; a free
+   world point has three. Every tool that allows them solves this with an axis gizmo or by silently
+   constraining the drag to some plane. With parented inputs the existing editing surface already suffices
+   — a 2D drag in a space plus a height, which is what OP-25 ships.
+2. **Curves would follow nothing.** A curve parented to a face space rides that face: tilt the datum, move
+   the face, re-anchor the plane, and the routing follows *by construction*. With absolute coordinates
+   every point would have to be wired to something by hand to get the same effect, and the whole selling
+   point — edit a source, recompute the downstream cone — would have a dead spot in the middle of it.
+3. **Planarity would become a measurement instead of a fact.** If a path's pieces all come from one space
+   it *is* planar, structurally, with no tolerance involved — which decides the natural up-vector for a
+   sweep frame, whether a boundary can bound a face, and what a refusal is allowed to claim. Free curves
+   would turn that into a fit-with-tolerance question: measuring something that could have been known. The
+   same shape as session 34's open-shell decision — derive, never record; and never measure what you know.
+4. **Coordinates would go stale.** Space-local coordinates survive their parent moving; world coordinates
+   silently become wrong. A file states things in the frame they were authored in.
+
+**Three provenances, not two.** *Constructed* (parented inputs). *Derived* (parented through its operands —
+intersections, projections, solid edges). *Imported* — a frozen `Path3` literal in the file's own
+coordinates with a parametric placement and **no** parent space, offering no construction inputs: the
+identical contract imported meshes already have (OP-9's JT note), so it needs no new machinery and gets no
+exception.
+
+### The moving frame — parallel transport, and why not Frenet
+
+A profile carried along a path needs an orientation at every parameter, and this is where sweeps go wrong
+in practice. Three candidates, and the choice is recorded with its rejections because two of them are the
+obvious ones:
+
+- **Frenet frame** (tangent / normal / binormal) — the textbook answer and the wrong one. The normal
+  **flips through inflection points** and is **undefined on a straight piece**, so a sweep along a
+  line–arc–line path tears exactly where a real tube would be fine. Shipped as a bug by more than one
+  kernel. Rejected.
+- **Fixed up-vector** — stable until the tangent becomes parallel to it, i.e. on any vertical run.
+  Rejected as a default; it is what a *stated* start frame degenerates to on a planar path, which is fine.
+- **Rotation-minimizing (parallel-transport) frame** — carry the start frame along the curve introducing no
+  twist about the tangent. Defined everywhere including on straights, no flips, and computed by a
+  deterministic forward pass, so it is a pure function of the path and one stated initial frame. **Chosen.**
+
+**The start frame is an explicit input, plus an optional twist parameter.** The initial roll is a real
+degree of freedom, and *explicit anchors beat compensation* — state it rather than have the algorithm pick
+one and have the user discover the choice by its consequences.
+
+**A frame at a parameter *is* a sketch space**, which is the point at which this stops being a new mechanism
+and becomes the existing one: a sweep is "this profile, sketched in the space at *t*=0, carried through the
+space at every *t*". OP-17's spaces and OP-16's placement frames generalize rather than acquiring a
+parallel cousin — and *sketching on a station along a path* falls out later for free rather than being
+designed twice.
+
+### The sweep, and what it refuses
+
+Watertight or refused (OP-9) applies with a criterion that is actually checkable, not a hope:
+
+- **The profile's outer radius exceeds the path's local radius of curvature** — the sweep self-intersects,
+  and the refusal names the station: *"the tube's radius is larger than the bend at station 7"*. Computed
+  per station; far better than emitting a cracked shell for a later consumer to discover.
+- **A closed path whose frame does not close on itself** — a twist mismatch after a full loop is a real
+  condition, reported rather than quietly smeared over the last segment.
+- **Caps**: planar, normal to the tangent, on an open path.
+
+### The order of work (this is the plan; the concept above is the contract)
+
+Each step is whole on its own — a thing that works, not a layer that waits.
+
+1. **`Path3` as a value, plus both views.** The piecewise value; drawn in the 3D view; **projected into the
+   plan** the way a solid's silhouette is, so it is visible and pickable in 2D. First source: **through 3D
+   points**, because height points already exist and are already draggable — no new interaction concept.
+2. **The moving frame and the sweep.** Parallel transport with a stated start frame and twist; circular
+   profile first (a tube is what proves the frame), then an arbitrary closed profile; the refusals above.
+   Deliberately before more curve sources exist, so the frame is settled while the test surface is small.
+3. **Helix.** Closed form from axis, radius, pitch, turns. Cheap once 1–2 exist, and the first constructed
+   curve that lies in **no** plane — which is what stress-tests the frame honestly. Springs; threads with
+   the sweep.
+4. **Combine two views.** Two planar curves in two non-parallel spaces → the curve whose projections are
+   both; refuses on parallel spaces or a non-overlapping parameter range. The routing workhorse, and it
+   needs no new editing surface at all — it is how routing was done on drawing boards.
+5. **Intersection curves.** Generalized from the existing section machinery (plane ∩ solid), then surface ∩
+   surface where surfaces exist. Ordered solution set plus a persisted `Select` — OP-1's branch doctrine
+   unchanged, one dimension up.
+6. **Connect.** A derived joining piece between two curve ends, control points from the endpoint tangents
+   plus tension scalars; G1, then G2 as a mode. What makes a routed path look manufactured rather than
+   kinked — and derivation, not solving.
+7. **Projection onto a face.** A plan curve onto a face along a direction; exact for analytic faces, the
+   honest mesh answer or a named refusal for a mesh.
+8. **Imported curves.** The frozen literal plus placement described above, and a **recorded** *"make a
+   sketch from this planar wireframe"* gesture that refuses by name when a run is not planar — never a
+   silent planarity discovery. Last, consistent with the standing rule that formats go at the end.
+
+**Parked with the work, named so they are not looked for**: variable-section sweep, sketching on a station
+along a path, 3D offset curves, trim/split in space, and any general **surface** modelling layer — that
+last one is a surface kernel and a far larger commitment than curves-plus-sweep.
+
 ## Open points (to discuss one by one)
 
 - [x] **OP-1 Branch/continuity policy** — RESOLVED: deterministic, orientation-based branch
@@ -5972,6 +6105,15 @@ Three broad families (see OP-9 decision above):
       degenerate class it cannot resolve is **refused**, never leaked. Curves are tessellated first, so
       a boolean's boundary is an *approximated* curve — OP-15's rule, one dimension down. See *Exact
       prismatic booleans*.
+- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36), unimplemented. A `Path3` of
+      analytic pieces; a curve's **value** is world-space while its **construction** is always parented, so
+      curves ride their parents and planarity is known rather than measured; the moving frame is
+      **parallel transport** with a stated start frame (Frenet rejected — it flips at inflections and is
+      undefined on straights); the sweep refuses a profile whose radius exceeds the local radius of
+      curvature, by station. Interpolating splines are allowed and 3D sketch *constraints* are not — the
+      distinction is deterministic fitting versus iterative constraint search. Eight ordered steps, the
+      first being `Path3` + both views + through-3D-points and the second the frame + the sweep. See
+      *Curves in space, and the sweep*.
 
 ## Prior art to keep in mind
 
@@ -7481,6 +7623,28 @@ Three broad families (see OP-9 decision above):
   coalescing regroups identical strokes (the multiset of drawn chords with their styles is byte-identical in
   all five), and the standing rule is that a golden diff is shown and approved rather than absorbed. See
   *An orbit costs nothing the drawing did not change* under OP-17's edit-in-3D notes.
+- **Session 36 — curves in space (OP-26): the concept settled whole, before any of it is built.** The user's
+  framing, and it reframed the question twice. A JT file's wireframe prompted it, and the first answer was
+  shaped like the file — what could be done with *those* polylines. The correction is doctrine and worth
+  quoting: *"we are NEVER discussing about the import possibility of concrete files. We ONLY discuss about
+  general tool capabilities."* The capability is that everything this kernel builds is flat or a prism of
+  something flat, while cables, tubes, conduit, handrails, mouldings, gutters, ducts and ramps are all a
+  **profile carried along a path**. The second correction was about method — *"I'm not interested in
+  'slices' of work. We define the whole thing here"* — so the concept is recorded complete and the *order*
+  is mine to plan, which is the division of labour this project has actually been running on.
+  Three decisions carry the design. **The parenting rule**: a curve's value is world-space, its construction
+  is always parented, because every input it can take already is — which makes a curve ride its parents,
+  makes planarity a structural fact rather than a tolerance measurement, keeps coordinates from going stale,
+  and (the practical one) means **no 3D manipulator is needed**, since a free world point has three degrees
+  of freedom and a mouse drag has two. It is OP-25's own pattern, not a new category. **Parallel transport,
+  not Frenet**, for the sweep's moving frame, with the start roll as a stated input — Frenet flips at
+  inflections and is undefined on straights, so it tears a line–arc–line sweep exactly where a real tube is
+  fine; and a frame at a parameter *is* a sketch space, so OP-17 generalizes instead of acquiring a cousin.
+  **Interpolating splines are not solving**: fitting a cubic through *n* points is a deterministic linear
+  system with one answer, the same category as the fillet computation, whereas the 3D *sketch constraints*
+  every mainstream tool offers are exactly the iterative branch-ambiguous search OP-1 rejects. The sweep's
+  refusal is checkable rather than hoped for — profile radius against the path's local radius of curvature,
+  named by station. See *Curves in space, and the sweep*.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -8882,7 +9046,24 @@ stated with the work: a plane keeps drawing the **pre-cut** state of an ancestor
 not a **section corner**; and the generic tool path still turns an unspoken `null` from any build lambda into
 an empty status line, so a **per-route refusal audit** remains to be done.
 
-**The numbered queue is empty again.** What remains is the parked list below, each item recorded at its source.
+**Queued in session 36 — OP-26, curves in space and the sweep, in eight ordered steps.** The concept is
+settled and recorded in full under *Curves in space, and the sweep*; this is only its queue position, and
+the order is the one stated there. It is the first numbered queue since the last one emptied, and it is
+large on purpose: everything this kernel builds today is flat or a prism of something flat, so a profile
+carried along a path is the missing capability rather than a refinement of an existing one.
+
+1. `Path3` as a value + the 3D view + the plan projection + **through 3D points** as the first source.
+2. The **parallel-transport frame** and the **sweep** (circular profile, then arbitrary), with its refusals.
+3. **Helix** — the first constructed curve lying in no plane, which is what tests the frame honestly.
+4. **Combine two views** — plan route × elevation, the routing workhorse.
+5. **Intersection curves** — the section machinery generalized, with OP-1's ordered set and persisted sign.
+6. **Connect** — a derived G1/G2 joining piece from endpoint tangents plus tension.
+7. **Projection onto a face** — exact for analytic faces, honest or refused for a mesh.
+8. **Imported curves** — frozen literal + placement, plus a *recorded* planar-wireframe-to-sketch gesture.
+   Last, per the standing rule that formats go at the end of the queue.
+
+**The rest of the numbered queue is empty.** What remains is the parked list below, each item recorded at
+its source.
 
 Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
