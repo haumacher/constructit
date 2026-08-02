@@ -249,6 +249,20 @@ pyramid is 300000 mm³ and the frustum 392000 mm³, to the last digit, with plan
 section or guide is flagged **approximated**, the same bargain a Bézier or an ellipse offset makes. A loft is a solid like
 any other: cut it, fuse it, dimension its footprint, chain features onto it.
 
+**A curve that leaves the plane: routing through points in space.** Everything above is flat or a prism of
+something flat, and a cable, a tube, a handrail or a ramp is none of those — each is a path through space.
+*Curve through points* is that path: click the points it runs through, press Enter, and what you get is a
+curve of the drawing like any other — named, styled, hideable, selectable, deletable, one undo for the whole
+run. *Smooth curve through points* is the same gesture with the corners rounded off, an interpolating cubic
+that passes exactly through every point you clicked and leaves each end along the line to its neighbour;
+clicking the **first point again** finishes the run *and* closes the curve. What makes it parametric rather
+than drawn is that the points are **shared, not copied**: click a height point (or a pyramid's apex, which is
+one) and dragging that point's base in the plan, or retyping its height, moves the curve — and moves
+everything else built on that point at the same time. The 3D view draws the curve where it is, behind the
+bodies it runs behind; the 2D canvas draws its projection onto the plane you are working on, and a click
+reaches it in either view. It is the first half of the sweep — a profile carried along a path — which is what
+it is for.
+
 **A working plane's context is the part's section — and the section is an input.** Drawing on a plane that is
 not the plan needs to know where the material is, so every such plane draws **the part's section at itself**,
 in its own coordinates: a face space draws its face's true boundary (a pyramid's lateral face draws its

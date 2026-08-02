@@ -5889,20 +5889,65 @@ Each step is whole on its own — a thing that works, not a layer that waits.
 3. **Helix.** Closed form from axis, radius, pitch, turns. Cheap once 1–2 exist, and the first constructed
    curve that lies in **no** plane — which is what stress-tests the frame honestly. Springs; threads with
    the sweep.
-4. **Combine two views.** Two planar curves in two non-parallel spaces → the curve whose projections are
+4. **The station** — one stated position along a path, as a sketch space. Settled in session 37 and placed
+   here because it needs step 2's frame and is best built against one already proven on a helix. See *The
+   station — one, stated by a distance*.
+5. **Combine two views.** Two planar curves in two non-parallel spaces → the curve whose projections are
    both; refuses on parallel spaces or a non-overlapping parameter range. The routing workhorse, and it
    needs no new editing surface at all — it is how routing was done on drawing boards.
-5. **Intersection curves.** Generalized from the existing section machinery (plane ∩ solid), then surface ∩
+6. **Intersection curves.** Generalized from the existing section machinery (plane ∩ solid), then surface ∩
    surface where surfaces exist. Ordered solution set plus a persisted `Select` — OP-1's branch doctrine
    unchanged, one dimension up.
-6. **Connect.** A derived joining piece between two curve ends, control points from the endpoint tangents
+7. **Connect.** A derived joining piece between two curve ends, control points from the endpoint tangents
    plus tension scalars; G1, then G2 as a mode. What makes a routed path look manufactured rather than
    kinked — and derivation, not solving.
-7. **Projection onto a face.** A plan curve onto a face along a direction; exact for analytic faces, the
+8. **Projection onto a face.** A plan curve onto a face along a direction; exact for analytic faces, the
    honest mesh answer or a named refusal for a mesh.
-8. **Imported curves.** The frozen literal plus placement described above, and a **recorded** *"make a
+9. **Imported curves.** The frozen literal plus placement described above, and a **recorded** *"make a
    sketch from this planar wireframe"* gesture that refuses by name when a run is not planar — never a
    silent planarity discovery. Last, consistent with the standing rule that formats go at the end.
+
+### The station — one, stated by a distance (settled session 37; step 4 of the order of work)
+
+**A station is a stated position along a path together with the plane the path pierces there**, and the
+word is borrowed rather than invented: a ship's hull is defined by transverse *stations*, aircraft have
+fuselage stations, and road and rail measure position along an alignment as *chainage* (`STA 12+450`).
+
+`station(path, distance)` produces a **sketch space** — the same kind of thing a datum plane is, so nothing
+downstream learns a new concept. Origin: the point on the path. Normal: the tangent there. In-plane axes:
+the parallel-transport frame's, which is why this is step 4 and the frame is step 2.
+
+**Simplest first, and deliberately so.** One station at a time — **no family, no replication, no tilt** (the
+replication half is item 1a of the to-be-discussed list). Three of the open questions the earlier draft
+listed then dissolve rather than being deferred:
+
+- **The position is one length, measured from the path's start**, and it is an ordinary scalar. So *relative
+  to another station* costs nothing — it is `base + d` in the expression language (OP-7), and two stations
+  sharing a pitch is one parameter node feeding both. Sharing **is** equality; that is not a feature to
+  build. Normalized *t* is not offered at all in this cut, which also removes the trap of having to explain
+  that equal steps in *t* are not equal spacing on a spline.
+- **The corner question disappears**: piece lookup by **half-open intervals** — a distance in
+  `[pieceStart, pieceEnd)` belongs to that piece, and the path's far end belongs to the last piece. A total
+  function, deterministic, no bisection and no two-tangent case. The question returns only with **tilt**,
+  where a mitre wants the bisecting plane, and tilt is its own discussion.
+- **Out of range is node invalidity (OP-3), not a gesture refusal**, and this is the doctrinal point. A
+  distance past the end of the path makes the station's node invalid with a named reason, and everything
+  sketched on it hides until the number is sane again — invalidity already propagates transitively, so this
+  needs no machinery. Refusing the *gesture* would be wrong: the distance is a **live value**, and refusing
+  a gesture on a value makes replay depend on one. (That was only safe for session 34's open-shell flag
+  because it reads a **frozen literal**; a parameter is the opposite case.) Healing is required behaviour,
+  not a nicety.
+- **No wrap on a closed path**: the domain `[0, L]` covers a closed path exactly once, so there is nothing
+  to decide and nothing is offered.
+
+**What it buys, once it exists**: a fitting at a stated place along a run; a cut normal to the path (a
+mitre, a notch, a gland); a section drawn where the sweep should change; a **branch path** whose first
+point lives in a station's space, so a harness branch follows its trunk; a group placed into the station's
+frame, oriented to the run; and the sweep's own end caps stop being a special case, being stations at each
+end.
+
+**What it is not**: a station on a *surface* (that is an isoparametric curve — surface-kernel territory,
+outside OP-26 entirely), and not something scrubbed or animated — one derived space per stated position.
 
 ### To be discussed — not ready to implement
 
@@ -5916,18 +5961,38 @@ that sounds like a decision should treat it as a proposal that has not been argu
 They are listed in the order that would make each discussion easiest — the first unlocks two of the others
 — and not in an order of value or of work.
 
-**1. Sketching on a station along a path.** A *station* is a stated position along a path together with the
-plane the path pierces there; the word is the shipbuilder's and the road engineer's (hull stations,
-chainage), not an invention. The candidate claim is that a station **is a sketch space** and therefore
-needs no new drawing concept at all — its origin is the point on the path, its normal the tangent, its
-in-plane axes the parallel-transport frame's. Reuse rather than invention on three counts: the frame is
-step 2's, the space machinery is OP-17's, and *stating a position along a carrier* is already the on-curve
-rider's `t = base + d`. **Open**: whether arc length or normalized parameter is the primary way to state a
-station, and how the difference is made visible (equal steps in *t* are not equal spacing on a spline —
-a trap, not a detail); whether a station may be **tilted** off perpendicular, which a mitre wants and a
-section does not; what a station **at a corner** of a polyline path is, where there are two tangents and no
-one answer; whether arc length may wrap on a closed path; and whether a station beyond the path's length is
-refused or clamped (doctrine says refused, by name).
+**~~1. Sketching on a station along a path.~~ SETTLED in session 37 — it is now step 4 of the order of
+work above.** See *The station — one, stated by a distance* below. What is still to be discussed is the
+**station family**, i.e. the replication half, which is item 1a.
+
+**1a. A station family — the replication half.** The user's own framing of what stations are *for*: not one
+plane but *"a mechanism for outputting the same geometry, constructed on that plane, multiple times along
+the path"*. The candidate claim is that this is **not a new mechanism**: it is OP-23 with a path as the
+carrier — *a pattern is a rule later gestures ride, and any operation whose inputs touch pattern members
+fans out* — so the members are real constructions sharing parameters, and editing the clamp reaches all
+forty. **The open question is how the positions are stated**, and the doctrine test (*structure at build
+time, values at eval time*, OP-21) sorts the candidates for us:
+- *Explicit list* ("at 30, 100, 200 mm") — count structural, positions values. **Clean.**
+- *Path features* ("both ends", "every corner") — the count comes from the **path's own structure**, not
+  from any value. **Clean**, and probably the most-used.
+- *Count + pitch* ("8 of them, 300 mm apart, from 5 mm") — count structural, pitch a value. **Clean**, and
+  it is exactly the existing linear pattern's shape, which is why it is the one to build first.
+- *Count + fit* ("8 evenly spaced along whatever this becomes") — count structural, pitch derived. **Clean.**
+- *Pitch + fill* ("**every 2 cm along the whole run**") — the one anybody would actually type, and the one
+  that breaks the rule: the member count would be `length / pitch`, so **the structure of the graph would
+  depend on a value**. The proposal to argue is that the pitch is what you *state* and the count is what
+  gets **recorded** — computed once at build time, written into the step as structure — with the drawing
+  *saying* when the path outgrows it (*"the run is now 14 m; its 40 clamps cover 12 m — re-stamp?"*), since
+  re-stamping a count is already what patterns do. That keeps structure-at-build-time, recorded-never-
+  discovered and refusals-speak all intact at once.
+Also open: whether a family is one composable rule or simply several elements (leaning: several); whether
+members are individually **suppressible** (a real run skips a clamp where a bracket is in the way, and that
+is a per-member discrete choice, so it would be recorded like a branch sign); from which end positions are
+measured; what a family does on a **closed** path; and what a member landing exactly on a corner is.
+A consequence worth seeing before it is built: because the frame is parallel transport, replicated geometry
+**stays aligned to itself along the run** — forty clamps on a curving tray all point the same way instead
+of slowly rolling, and follow a bend without flipping. That is the payoff of the frame decision, and it is
+only visible once replication exists.
 
 **2. 3D offset curves.** In 2D "parallel" means the in-plane normal and is unambiguous up to a sign; in 3D
 there is a whole circle of directions perpendicular to the tangent, so an offset has to say *which way* —
@@ -5964,6 +6029,143 @@ offered.
 **Not on this list, and named so it is not looked for**: any general **surface** modelling layer. That is a
 surface kernel, and a far larger commitment than curves-plus-sweep — a different project, not a later step
 of this one.
+
+### Implementation status (as built — step 1: `Path3` is a value, and both views draw it)
+
+Step 1 of the order above, whole and nothing else: **a curve in space is a first-class value of the graph,
+built through points that already stand in space, drawn in the 3D view, projected into the plan, and
+pickable in both.** No frame, no sweep, no helix — those are steps 2 and 3, and a frame built now would be
+built against one curve source instead of the three that will stress it.
+
+**The value: `Path3` = a chain of `Curve3Element`, plus a structural `closed`** (`geom/Path3.kt`). Two cases,
+`Seg3` and `Bezier3`, and the hierarchy is `sealed` and open rather than complete: `Arc3` and `Helix3` arrive
+with the steps that produce them, because a case with no producer is a case with no test — every consumer
+(sampling, projection, drawing, picking) would have to guess at behaviour nothing exercises. `Path3Value`
+sits beside `Point3Value` in `Model.kt`, and it is a **kind of its own** for the identical reason (OP-17): a
+`Profile` in this engine means "in some plane's own coordinates", so a curve with no plane is a different
+thing and the type system keeps the two apart at every slot. It cost the same two lines outside `Model.kt` a
+height point did — the 2D affine map refuses it by name (*mirror the points it runs through*) and the SVG
+document exporter skips it, both in deliberately exhaustive `when`s. `closed` is a **field, not a
+derivation**: a chain whose last piece happens to end where the first begins is not the same object as one
+the user said should close, and a value that drifts must not silently change what the drawing *is*.
+
+**The interpolation is uniform Catmull–Rom written out as Bézier control points, and its end condition is
+the chord.** The tangent at an interior point is the central difference `m_i = (P_{i+1} − P_{i−1})/2`, and
+the span from `P_i` becomes the cubic with controls `P_i + m_i/3`, `P_{i+1} − m_{i+1}/3`. Interpolation and
+C1 are then true *by construction* rather than by assertion — the end controls are the points, and both
+spans at a knot use the same `m`. At an open end `m_0 = P_1 − P_0`. Three reasons, and the first is the one
+that decided it: it is **local**, so dragging a point changes the curve near it and nowhere else, which is
+what "edit a source, recompute the downstream cone" ought to *look* like. A **natural** spline (zero end
+curvature) is the textbook alternative, is permitted by doctrine — a tridiagonal solve is deterministic, not
+a search — and was rejected because it makes every tangent a function of every point, so moving the first
+point visibly moves the far end. It is also **stateable**: "it starts off along the line to the next point"
+is a sentence a user can predict, where "its curvature is zero at the ends" is a property nobody can see.
+And it makes a smooth curve through two points *exactly* the straight segment between them. Rejected with
+it: a **phantom** end point (reflecting `P_1` about `P_0`), which invents a point that is not in the
+drawing, and a zero end tangent, which flattens the curve into its first chord and reads as a defect. Parked
+and named: **centripetal** parameterization, the standard cure for uniform Catmull–Rom's overshoot on wildly
+uneven spans — one formula, and worth taking when a drawing asks for it rather than before.
+
+**The source is one op node over the points themselves**, which is the parenting rule paying out in the only
+way that matters: clicking an existing point **shares its node**. Drag the base of a height point, or retype
+its height, and the curve follows; a point shared with a solid moves both, in one recompute, because there
+is one node. A pick that is a plain 2D point is lifted by a **zero** height on its own space's plane — the
+identical construction a loft's apex already makes of one — so a route can be drawn in the plan with no
+height gesture at all, and it is told apart by the element's **kind**, never by casting the ref (`Ref<V>`'s
+parameter is erased). What is structural is `closed` and straight-vs-smooth; the positions are values, read
+inside `compute`, which is why a drag recomputes one node and rebuilds nothing.
+
+**The gesture states both structural choices without inventing chrome.** *Straight or smooth* is **which
+tool was used** — two `ToolDef`s, exactly as *Circle (centre, point)* and *Circle (centre, radius)* are two
+ids for one shape, and since a tool id is what the file records (OP-18) the reading persists with no
+argument of its own. *Closed* is **returning to where you started**: clicking the first pick again both
+finishes the run and states the closure, and the new `ToolDef.closesOnFirstPick` says that for this tool
+that click is a *statement* and not merely "done" — the pick is appended, so the recorded step states the
+closure by naming that point twice (`els=e3,e5,e7,e3`). No new file argument, and a replay closes for
+exactly the reason the gesture did. `crossSpace = true` for the loft's own reason: the points may have been
+lifted off different planes. One consequence is worth stating because it decides where the gesture lives: a
+height point is pickable **only in the 3D view** (OP-25 — it has no image in the plan), so routing a curve
+through height points is a 3D-view gesture, which is exactly the view they are already dragged in.
+
+**Both views, each drawing the curve where it honestly is.** The 3D view draws it from the **scene**
+(`Scene3.curves`, a `CurveItem` beside `SolidItem`), not from the editor's overlay, and that is a decision
+rather than a convenience: the overlay is painted last and over everything, which is right for a sketch on
+the working plane and wrong for a curve in space — a cable routed behind a body must go behind it. In the
+scene it is depth-sorted with the solids on the CPU path (chord by chord, for the reason the ground grid is
+emitted cell by cell) and depth-tested on the GPU one. The 2D canvas draws its **projection onto the active
+plane**, and that projection is *exact*: an orthographic projection is affine and both piece kinds are
+affine-invariant, so the image of the path is the 2D chain through the projected control points — a path
+whose points all stand over one space projects onto that space's plane as precisely the chain their bases
+describe, with no tolerance in the statement. It then goes through `SceneRenderer.drawChain` like every other
+chain, which buys the session-35 run-coalescing for free (a projected curve is one polyline, not one per
+piece) and stops a projected curve from acquiring a drawing vocabulary of its own. Picking mirrors the
+drawing exactly, which is the whole rule: in the plan, plane distance to the projected pieces; in the 3D
+view, distance from the pointer's **viewing ray** to the drawn polyline in the plane's own (u, v, lift)
+frame — millimetres either way, so the ordinary ten-pixel tolerance applies unchanged. A curve is not
+`isCurve`: the 2D curve slots all want a value stated in some plane's coordinates, and a curve in space is
+not one. It therefore lands where a solid does in the pick cycle — after every point, which is the existing
+rule (*a point cannot dodge, a curve can be clicked elsewhere*) verified rather than changed, with the curve
+one click further round.
+
+**The perf contract holds, and the upload gate grew a second half.** `Scene3Sync` now compares the curves as
+well, by the identical criterion and for the identical reason: a curve's vertices are *in* the buffer, so
+`path !== path` is the statement *this node recomputed*. `CurveItem` samples its polyline **on first read**,
+like `SolidItem.edges`, so extraction stays `O(elements)` and the "did anything change?" question stays
+affordable per event. Measured by the same counts as session 35: a hover uploads zero, an orbit uploads
+zero, a **rename** uploads zero, a curve that moved uploads once, hiding one uploads once, and a drawing
+containing curves still builds **one** view-projection matrix per frame. Selection is deliberately **not** in
+the vertex data — `Scene3` is extracted from the `Document` and a selection is the `Editor`'s, so putting it
+there would make every click an upload; the selected curve is restated on top of itself by the ordinary
+emphasis vocabulary instead, through `toScreenLifted`, the one entry point that can place a point off the
+plane.
+
+**Refusals.** Split the way OP-21 splits everything: *how many points there are* is structure and is refused
+at build time by name (a pick that is not a point; fewer than two; a closed run with fewer than three, since
+two would double back; the same point clicked twice in a row), while *where the points are* is a value and
+makes the node invalid with a reason that heals — two consecutive points in the same place have no direction
+between them, so retyping one height apart brings the curve back. Two smaller things fell out, both
+generalizations of wording the old code got away with because only curve-collecting tools repeated: a
+repeating tool's miss and its too-few-picks line now use the tool's **own** word for what it collects
+(`ToolDef.roleOf`), and the "clicked the first pick again" search now goes through the projection like every
+other pick — without which a height point could not be reached there at all, and a curve could never have
+been closed in the 3D view.
+
+Cut, and named so they are not looked for: **arc length as a measurable dimension** (it does *not* fall out
+for free — a cubic's length is a numeric integral, which is a `MEASURABLE` slot decision of its own), a 3D
+**snap** or weld target (both are 2D questions, as OP-25 already records for a height point), `Break` on a
+curve in space, and any *drawing* of a curve in the SVG document export — the exporter has no chosen plane
+to look along, which is exactly the solid's stated answer there. One asymmetry rides along with the existing
+one-canvas-one-space rule and is stated rather than special-cased: a curve's **value** is world geometry, so
+the 3D view draws every one of them whatever space it was drawn in, while picking still goes through
+`addressableIn` and therefore reaches only the active space's — a curve drawn on a datum is visible from the
+plan's working plane and not clickable there until the space is switched back. Making one element kind
+addressable across spaces would be an exception to a rule the whole canvas rests on; the honest fix, if it is
+ever wanted, is that rule changing for everything at once.
+
+Tests: `SpaceCurveTest` (23) — the polyline through three height points asserted to 1e-9 in world
+coordinates; the base dragged and the height retyped, each moving the curve; a curve through a pyramid's
+**apex** moving with the solid off one drag; the smooth mode interpolating every knot, C1 at every interior
+one, and leaving along the first and last chord, with the two-point case exactly straight; closed vs open
+structural, stated in the file by the repeated name and reloaded closed; the plan projection asserted piece
+for piece against the base points, plus an SVG golden; the curve drawn in the 3D view as exactly the chords
+of its own polyline; a click reaching it in the plan and in the 3D view, with the point it runs through still
+winning the first click; `save → load → save` byte-equal and one undo taking the whole gesture back; the
+session-35 counts with a curve in the drawing; and every refusal above, by name.
+
+**The probe review (`SpaceCurveProbeTest`, 4 tests), which takes the curve outside its own suite.** Four
+angles nothing above asks. **The parenting rule tested by moving the parent**, which is the only way to
+test it: dragging a point proves nothing a node does not already do, so the probe routes a curve through a
+point drawn on a **datum plane**, then drags the *segment the plane is hinged on* — two constructions away
+from the curve, which mentions neither — and asserts the curve's lifted corner followed while its plan
+corners did not. **Closure is structure, proved by welding rather than by coincidence**: an open curve whose
+last point is dragged onto its first becomes a chain that ends *bit-identically* where it began, and it must
+still be open, still two pieces, and still open after a reload — the file decides, not the coordinates.
+(Two coincident points cannot be made by clicking: the second click reuses the first, which is correct
+construction semantics and a wrong probe — the weld says the same thing more sharply.) **The export seam**,
+which had never been pointed at a curve: a curve is not a body, so all four writers must ignore it *without*
+reporting it as a body that failed. And **three packages in one scene** — a curve, a constructed solid and a
+session-34 imported open shell sharing one upload gate, each moved in turn, because the way a two-list gate
+goes wrong is asymmetric: a change to the kind an edit did *not* touch going unnoticed.
 
 ## Open points (to discuss one by one)
 
@@ -6172,6 +6374,12 @@ of this one.
       first being `Path3` + both views + through-3D-points and the second the frame + the sweep. Four
       further candidates (stations, 3D offsets, variable-section sweep, trim/split/join) are recorded as
       **to be discussed, one-by-one** and are explicitly *not* queued. See *Curves in space, and the sweep*.
+      **Step 1 is built** (session 37): `Path3` is a value of the graph — `Seg3` and `Bezier3` pieces, open
+      or closed — built **through 3D points** that it *shares*, drawn in the 3D view as part of the scene
+      (so a curve behind a body is occluded by it), projected exactly into the active plane in the 2D
+      canvas, and pickable in both by the same rule each view draws it with. The smooth mode is uniform
+      Catmull–Rom with a **chord** end condition, chosen for locality over a natural spline's global solve.
+      Steps 2–8 stand as written. See *Implementation status (as built — step 1)*.
 
 ## Prior art to keep in mind
 
@@ -7703,6 +7911,32 @@ of this one.
   every mainstream tool offers are exactly the iterative branch-ambiguous search OP-1 rejects. The sweep's
   refusal is checkable rather than hoped for — profile radius against the path's local radius of curvature,
   named by station. See *Curves in space, and the sweep*.
+- **Session 37 — a curve in space is a value, and it rides the points it was drawn through (OP-26 step 1).**
+  The first of the eight steps, built whole: `Path3` — a chain of `Seg3` and `Bezier3` pieces, open or
+  closed — as a value kind of its own beside `Point3Value`, produced by one op node over the **existing 3D
+  points** it runs through. The step's whole content is that nothing new was needed to make it *live*:
+  clicking a point shares its node, so dragging that point's base in the plan, retyping its height, or
+  moving a pyramid's apex the curve also passes through, each moves the curve in one recompute. That is the
+  parenting rule doing exactly what the concept said it would, and it is why no 3D manipulator appears
+  anywhere in the delivery. Three decisions are new here and are recorded with their rejections. The
+  **interpolation** is uniform Catmull–Rom expressed as Bézier controls, with a **chord** end condition —
+  chosen over the textbook natural spline (which is permitted by doctrine, being a deterministic
+  tridiagonal solve, and was rejected for being *global*: moving the first point would visibly move the far
+  end) and over a phantom reflected point (which invents a point that is not in the drawing). The
+  **gesture** states its two structural choices without inventing chrome: straight-vs-smooth is *which tool*
+  (a tool id is what the file records), and closed is *returning to the point you started at* — the pick is
+  appended, so the step states the closure by naming that point twice and needs no new file argument. And
+  the **two views each draw the curve where it honestly is**: the 3D view from the scene, so a curve behind
+  a body is occluded by it rather than painted over it as an overlay would be, and the plan as an *exact*
+  affine projection reusing `drawChain` — with picking mirroring each, so what is drawn is what is picked in
+  both. Session 35's contract is extended rather than dented (the upload gate compares curves by the same
+  argument-identity criterion; a hover, an orbit and a rename each still upload zero, and selection is kept
+  deliberately out of the vertex data). Two pieces of wording the old code got away with were generalized:
+  a repeating tool's miss now uses the tool's own word for what it collects, and the closing-click search
+  now goes through the projection — without which a height point could not be reached in the 3D view at all,
+  which is the one place a curve through height points can be drawn. **1284 → 1307 green**, one new SVG
+  golden, no version bump. Arc length is cut and named: it does *not* fall out for free. See
+  *Implementation status (as built — step 1)* under *Curves in space, and the sweep*.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

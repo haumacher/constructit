@@ -52,6 +52,13 @@ object Painter3 {
 
     private const val EDGE_PX = 1.0
 
+    /**
+     * How wide a curve in space is drawn (OP-26) — heavier than a feature edge, because it is geometry of
+     * the drawing rather than a line read off a mesh, and because it has to stay legible where it crosses a
+     * shaded face.
+     */
+    private const val CURVE_PX = 2.0
+
     /** One thing to paint, with the depth it is sorted by. */
     private class Item(val depth: Double, val draw: (DrawTarget) -> Unit)
 
@@ -85,6 +92,22 @@ object Painter3 {
             if (depth <= 0.0) continue
             val style = Style(line.color, LINE_PX)
             items.add(Item(depth) { it.polyline(listOf(a, b), style) })
+        }
+
+        // Curves in space (OP-26), **chord by chord**: the depth sort is by an item's own depth, so a curve
+        // emitted as one long polyline would have a single depth for its whole length and would paint over
+        // (or vanish behind) a body it merely passes. Per-chord items give the sort something local to work
+        // with — exactly why the ground grid is emitted one cell at a time (`Scene3.furniture`). The GPU path
+        // does not care either way: it has a real depth test.
+        for (curve in scene.curves) {
+            val style = Style(curve.color, CURVE_PX)
+            for ((p, q) in curve.points.zipWithNext()) {
+                val a = cam.projectWith(vp, p, wPx, hPx) ?: continue
+                val b = cam.projectWith(vp, q, wPx, hPx) ?: continue
+                val depth = cam.viewDepth((p + q) * 0.5)
+                if (depth <= 0.0) continue
+                items.add(Item(depth) { it.polyline(listOf(a, b), style) })
+            }
         }
 
         for (solid in scene.solids) {

@@ -10,6 +10,7 @@ import constructit.core.Evaluator
 import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
+import constructit.core.Path3Value
 import constructit.core.PlaneValue
 import constructit.core.Point3Value
 import constructit.core.PointSetValue
@@ -169,6 +170,11 @@ object Svg {
                 // …and a height point (OP-25) is a point *off* the plane: its 2D image is its base's, which
                 // this document already draws, so exporting it would draw one dot twice.
                 is Point3Value -> {}
+                // …and a curve in space (OP-26) has a 2D image only through a *chosen* plane to look along —
+                // the active sketch space's, which the canvas knows and this serializer does not. Exactly the
+                // solid's answer above, and stated rather than guessed at: projecting onto world XY would be
+                // this exporter inventing a viewing direction for a curve drawn on a tilted datum.
+                is Path3Value -> {}
                 // …and a section is a reading of a solid: it is drawn as the working plane's context by the
                 // canvas, which knows which plane it is standing on. This serializer does not.
                 is SectionValue -> {}

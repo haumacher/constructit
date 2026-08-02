@@ -75,7 +75,8 @@ class OutlineFollowTest {
         assertTrue(ed.statusHint.contains("1 picked"), "the count is on the status line: ${ed.statusHint}")
 
         ed.click(Vec2(-200.0, -200.0)) // empty space
-        assertTrue(ed.statusHint.contains("hit no curve"), "a miss must say it missed: ${ed.statusHint}")
+        // in the tool's own word for what it collects, since a repeating tool need not collect curves at all
+        assertTrue(ed.statusHint.contains("hit no boundary curve"), "a miss must say it missed: ${ed.statusHint}")
         assertTrue(ed.statusHint.contains("1 picked so far"), "and say where the operation stands: ${ed.statusHint}")
         assertEquals(1, ed.pendingCount, "a miss picks nothing")
         assertEquals(1, ed.toolPicks.size)

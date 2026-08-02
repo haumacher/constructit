@@ -3423,7 +3423,13 @@ class Editor(
                 checkpoint()
                 statusHint = doc.takeNote() ?: ""
             }
-            else -> statusHint = "${tool.label}: needs at least ${tool.minPicks} curve${if (tool.minPicks == 1) "" else "s"}"
+            // in the tool's *own* word for what it collects ([ToolDef.roleOf]), not the hardcoded "curve" this
+            // used to say: a repeating tool need not gather curves at all — a curve in space gathers points.
+            // The role goes in parentheses rather than being pluralized, because a slot name is a phrase
+            // ("point in space") and there is no rule that puts an s in the right place inside one.
+            else ->
+                statusHint =
+                    "${tool.label}: needs at least ${tool.minPicks} pick${if (tool.minPicks == 1) "" else "s"} (${tool.roleOf(0)})"
         }
         resetPicks()
         onChange()
@@ -3589,12 +3595,25 @@ class Editor(
         // (GitHub #7). Only the first: a wall clicked mid-sequence is not a carrier curve, and says so.
         if (tool.extendsResult && filledSlots == 0 && startExtension(world)) return
         // a repeating tool closes when the first pick is clicked again — the boundary is complete
+        //
+        // Through `proj()` like every other pick ([pickElement]): a height point has no image in the plan and
+        // is measured against the pointer's *viewing ray* (OP-25), so without the projection this search could
+        // not find one in the 3D view — and a curve through height points (OP-26) could never be closed there.
         if (tool.repeating && (filledSlots >= 2 || extending != null)) {
             val again =
-                HitTest.nearest(doc, ev(), world, tolWorld()) {
+                HitTest.nearest(doc, ev(), world, tolWorld(), proj()) {
                     it === pickedElements.firstOrNull() || (extending != null && it === extending?.footprint)
                 }
             if (again != null) {
+                // For a tool that *closes* on it, this click is a statement and not merely "done": the first
+                // pick is appended, so the pick list — and therefore the recorded step — ends with the element
+                // it began with. See [ToolDef.closesOnFirstPick].
+                if (tool.closesOnFirstPick) {
+                    pickedElements.add(again)
+                    pickedClicks.add(world)
+                    pickedLandings.add(null)
+                    filledSlots++
+                }
                 finishRepeatingTool()
                 return
             }
@@ -3637,6 +3656,9 @@ class Editor(
                 // a loft's slot (OP-17): a section, an apex point or a guide curve, told apart by the document
                 // (`loftRoleOf`) rather than by the click — so one repeating slot collects the whole feature
                 SlotKind.LOFT_PART -> pickElement(world) { doc.loftRoleOf(it) != null }
+                // a curve's slot (OP-26): any point of the drawing, taken as the point in space it is — a
+                // height point as it stands, a plain 2D point lifted by nothing (`Document.curveThroughPoints`)
+                SlotKind.POINT3 -> pickElement(world) { it.isPoint }
                 SlotKind.SIDE -> true // captures the click position only; creates nothing
             }
         // …and a slot the ordinary pick missed may still have landed on the working plane's **section**, whose
@@ -3652,7 +3674,9 @@ class Editor(
             statusHint =
                 when {
                     refused != null -> refused
-                    tool.repeating -> "That click hit no curve — $filledSlots picked so far. ${tool.help}"
+                    // …in the tool's own word for what it wants, so a curve in space says "hit no point in
+                    // space" rather than asking for a curve it does not collect
+                    tool.repeating -> "That click hit no ${tool.roleOf(0)} — $filledSlots picked so far. ${tool.help}"
                     else -> "That click hit nothing pickable — ${tool.help}"
                 }
             onChange()
@@ -3837,7 +3861,9 @@ class Editor(
     ): Boolean {
         val want =
             when (slot) {
-                SlotKind.EXISTING_POINT -> Document.SectionInput.CORNER
+                // …and a curve in space takes a corner as a point in space (OP-26), lifted by nothing on
+                // the plane that cut it — the same materialization, one slot further
+                SlotKind.EXISTING_POINT, SlotKind.POINT3 -> Document.SectionInput.CORNER
                 SlotKind.LINE, SlotKind.SEGMENT, SlotKind.CURVE, SlotKind.CARRIER, SlotKind.CIRCLE, SlotKind.CENTRIC,
                 SlotKind.EXTRACTABLE, SlotKind.CONIC, SlotKind.CENTERED, SlotKind.MEASURABLE,
                 -> Document.SectionInput.EDGE
@@ -3865,7 +3891,7 @@ class Editor(
                 // a geometry slot (mirror, rotate, array) takes whatever the section offers: a corner is a
                 // point and a section curve is a curve, and both are ordinary operands once materialized
                 SlotKind.GEOMETRY -> true
-                SlotKind.EXISTING_POINT -> k == ElementKind.DERIVED_POINT
+                SlotKind.EXISTING_POINT, SlotKind.POINT3 -> k == ElementKind.DERIVED_POINT
                 else -> true
             }
         if (!fits) {

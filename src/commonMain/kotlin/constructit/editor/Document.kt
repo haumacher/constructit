@@ -110,6 +110,18 @@ enum class ElementKind {
     BEZIER,
 
     /**
+     * A **curve in space** (OP-26): a `Path3` — a chain of pieces whose value is world-space geometry, built
+     * through points that are themselves parented (height points today).
+     *
+     * Its own kind rather than a member of [Element.isCurve], deliberately, and the reason is the type
+     * system's: the 2D curve kinds all carry a value stated in *some plane's* coordinates, so a slot that
+     * takes a curve (an intersection, an outline, a fillet leg) would be handed something it cannot read.
+     * What it *is* like is a solid — geometry whose home is the 3D view, drawn in the 2D canvas by a
+     * projection so that it is visible and pickable there (see [SceneRenderer] and [HitTest]).
+     */
+    SPACE_CURVE,
+
+    /**
      * A whole **ellipse** (OP-24) — a first-class conic, closed like a circle, so it bounds an area by
      * itself and can be picked wherever a curve is wanted.
      */
@@ -8313,6 +8325,80 @@ class Document {
     }
 
     /**
+     * A **curve in space through the points that were clicked** (OP-26's first source, step 1).
+     *
+     * The gesture is a repeating pick over points, and everything about *what is built* is read off the pick
+     * list rather than from a flag beside it:
+     *
+     * - **Closed is said by returning to where you started.** Clicking the first point again both finishes the
+     *   run and states the closure, so the collected picks end with the point they began with
+     *   (`ToolDef.closesOnFirstPick`) — and the recorded step therefore states it too, by naming that point
+     *   twice (`els=e3,e5,e7,e3`). No new file argument, and a replay closes for exactly the reason the
+     *   gesture did. Enter finishes an **open** run.
+     * - **Straight or smooth is said by which tool was used** — two ids, exactly as *Circle (centre, point)*
+     *   and *Circle (centre, radius)* are two ids for one shape. A tool id is what the file records (OP-18),
+     *   so the reading is persisted with no argument of its own, and neither build has to guess which one a
+     *   gesture meant.
+     *
+     * **A pick is taken as the point in space it already is.** A height point (OP-25) is used as it stands —
+     * so the curve *shares the node*, and dragging that point's base or retyping its height moves the curve,
+     * along with everything else built on it. A plain 2D point is lifted by a **zero** height on its own
+     * space's plane, which is the identical construction a loft's apex makes of one (see [loftSolid]) — so a
+     * curve can be routed through ordinary drawn points without a second gesture, and the point stays
+     * draggable where it lives. Told apart by the element's **kind**, never by casting the ref: `Ref<V>`'s
+     * parameter is erased, so `as? Point3Ref` succeeds for anything and would defer the mistake to the value.
+     *
+     * Refused **by name**, building nothing, for the three things that are about *how many points there are*
+     * — a pick that is not a point, fewer than two, a closed run with fewer than three, or the same point
+     * clicked twice in a row. Everything about *where* the points are is the node's business and is reported
+     * as the reason it is invalid, so it heals when the drawing moves (OP-3, [Construction.pathThrough]).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun curveThroughPoints(
+        picks: List<Element>,
+        smooth: Boolean,
+    ): Element? {
+        val what = if (smooth) "Smooth curve" else "Curve"
+        for (el in picks) {
+            if (!el.isPoint) {
+                note = "$what through points: ${nameOf(el)} is ${kindWord(el)}, not a point — click points in space"
+                return null
+            }
+        }
+        // the closure the gesture stated: the run came back to the point it started at
+        val closed = picks.size >= 2 && picks.first() === picks.last()
+        val through = if (closed) picks.dropLast(1) else picks
+        if (through.size < 2) {
+            note = "$what through points: click at least two points — one point is a place, not a curve"
+            return null
+        }
+        if (closed && through.size < 3) {
+            note = "$what through points: a closed curve needs at least three points — two would double back on themselves"
+            return null
+        }
+        for (i in 0 until through.size - 1) {
+            if (through[i] === through[i + 1]) {
+                note = "$what through points: ${nameOf(through[i])} was clicked twice in a row, and a piece from a point to itself has no direction"
+                return null
+            }
+        }
+        val refs =
+            through.map { el ->
+                if (el.kind == ElementKind.HEIGHT_POINT) {
+                    el.ref as Point3Ref
+                } else {
+                    cx.heightPoint(planeOfSpace(el.space), el.ref as PointRef, cx.const(0.0.mm))
+                }
+            }
+        val curve = add(cx.pathThrough(refs, closed = closed, smooth = smooth), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
+        val shape = if (smooth) "smooth" else "straight"
+        note =
+            "${nameOf(curve)}: a $shape ${if (closed) "closed " else ""}curve through ${through.size} points " +
+            "(${through.joinToString(", ") { nameOf(it) }}) — move any of them and it follows"
+        return curve
+    }
+
+    /**
      * The pyramid/cone gesture: the area [el] run to a **point** [apex] standing [height] off the sketch plane
      * (OP-17). The two-section case of [loftSolid], with the apex placed by the same kind of scalar an extrude's
      * depth is.
@@ -10573,6 +10659,17 @@ object Styles {
      * what makes the solid pickable, and therefore selectable and deletable, in the view that has picking.
      */
     val SOLID = Style(stroke = "#8fa6c4", width = 1.2)
+
+    /**
+     * A **curve in space** (OP-26). Its own colour, because it is the one drawn thing in the canvas that is
+     * not *in* the plane it is drawn on: what the 2D view shows is its projection, and a reader has to be
+     * able to tell that from a curve that really lies there. Weighted like a result curve, since a routed
+     * path is an output of the drawing and not scaffolding for one.
+     *
+     * One colour, asked by both back ends ([Scene3.colorOfCurve]), so a curve cannot come out one colour in
+     * the plan and another on the GPU.
+     */
+    val SPACE_CURVE = Style(stroke = "#8c564b", width = 2.0)
 
     /** Scaffolding, once a result exists to contrast it with — dimmed, not hidden. */
     val DIMMED = Style(stroke = "#c9c9c9", width = 1.0)

@@ -15,6 +15,7 @@ import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Node
 import constructit.core.OpNode
+import constructit.core.Path3Value
 import constructit.core.PlaneValue
 import constructit.core.Point3Value
 import constructit.core.PointSetValue
@@ -38,6 +39,7 @@ import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
 import constructit.geom.Circle
 import constructit.geom.Conics
+import constructit.geom.Curves3
 import constructit.geom.Direction
 import constructit.geom.Ellipse
 import constructit.geom.EllipticArc
@@ -51,6 +53,7 @@ import constructit.geom.LoftSection
 import constructit.geom.Loop
 import constructit.geom.Mesh3
 import constructit.geom.MeshBool
+import constructit.geom.Path3
 import constructit.geom.Plane3
 import constructit.geom.Profile
 import constructit.geom.ProfileElement
@@ -126,6 +129,9 @@ typealias SectionRef = Ref<SectionValue>
 
 /** A point in space: a plane point plus a height along that plane's normal — see [Construction.heightPoint]. */
 typealias Point3Ref = Ref<Point3Value>
+
+/** A **curve in space** (OP-26) — see [Construction.pathThrough] and [constructit.geom.Path3]. */
+typealias Path3Ref = Ref<Path3Value>
 
 /**
  * One input of a [Construction.loft] — a section of the run, or a guide that shapes it (OP-17).
@@ -2050,6 +2056,51 @@ class Construction {
         }
 
     /**
+     * A **curve in space through [points]** (OP-26's first source): the path that passes through every one of
+     * them, in order — straight from point to point, or [smooth] (an interpolating cubic), and [closed] or
+     * open.
+     *
+     * **One node over the points themselves**, which is the whole of the parenting rule paying out. Each
+     * input is an existing point in space — a height point (OP-25) today — so clicking one *shares its node*:
+     * drag the base of a point the curve runs through, or retype its height, and the curve follows, exactly as
+     * every other consumer of a shared node does. Nothing is copied, so there is nothing to keep in step.
+     *
+     * **[closed] and [smooth] are structural**, decided when the node is built and never read out of a value
+     * (OP-21's rule): they say *how many pieces there are and of what kind*, so a different answer is a
+     * different construction, re-run rather than edited. The positions are the values, read inside `compute`,
+     * which is why dragging a point recomputes this one node and rebuilds nothing.
+     *
+     * Invalid, with a reason that heals (OP-3), when two consecutive points **coincide**: a zero-length piece
+     * has no direction, so an interpolation through it has no tangent and a sweep along it would have no
+     * frame. That is a condition on *values* — drag the two points apart and the curve comes back — which is
+     * exactly why it is checked here rather than refused at build time (the gesture's own refusals, about how
+     * many points there are, live in `Document.curveThroughPoints`).
+     */
+    fun pathThrough(
+        points: List<Point3Ref>,
+        closed: Boolean = false,
+        smooth: Boolean = false,
+    ): Path3Ref =
+        op(*points.toTypedArray()) { args ->
+            val pts = args.map { (it as Point3Value).p }
+            val n = pts.size
+            val spans = if (closed) n else n - 1
+            for (i in 0 until spans) {
+                val a = pts[i]
+                val b = pts[(i + 1) % n]
+                if ((b - a).length() <= Vec3.EPS) {
+                    return@op EvalResult.Invalid(
+                        "points ${i + 1} and ${(i + 1) % n + 1} of this curve are in the same place, " +
+                            "so the piece between them has no direction — move one of them",
+                    )
+                }
+            }
+            val elements = if (smooth) Curves3.smoothThrough(pts, closed) else Curves3.straightThrough(pts, closed)
+            if (elements.isEmpty()) return@op EvalResult.Invalid("a curve needs at least two points")
+            EvalResult.Ok(Path3Value(Path3(elements, closed)))
+        }
+
+    /**
      * A **loft**: [parts] — the sections in order, plus any guides — with [seams] saying where each section's
      * boundary correspondence starts (OP-17's third feature).
      *
@@ -2676,6 +2727,9 @@ fun Evaluator.point(ref: PointRef): Vec2 = (valueOf(ref) as PointValue).p
 
 /** A point in space — the value of a height point ([Construction.heightPoint]). */
 fun Evaluator.point3(ref: Point3Ref): Vec3 = (valueOf(ref) as Point3Value).p
+
+/** A curve in space — the value of a path through points ([Construction.pathThrough], OP-26). */
+fun Evaluator.path3(ref: Path3Ref): Path3 = (valueOf(ref) as Path3Value).path
 
 fun Evaluator.frame(ref: FrameRef): FrameValue = valueOf(ref) as FrameValue
 

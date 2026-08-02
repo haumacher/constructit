@@ -1,10 +1,13 @@
 package constructit.editor
 
 import constructit.core.Evaluator
+import constructit.core.Path3Value
 import constructit.core.SolidValue
 import constructit.dsl.valueOf
+import constructit.geom.Curves3
 import constructit.geom.Geom3
 import constructit.geom.Mesh3
+import constructit.geom.Path3
 import constructit.geom.Vec3
 import kotlin.math.PI
 import kotlin.math.cos
@@ -59,6 +62,38 @@ class SolidItem(
 class Line3(val a: Vec3, val b: Vec3, val color: String)
 
 /**
+ * One **curve in space** as the 3D view sees it (OP-26): the element it belongs to, the path itself, and
+ * the colour it is drawn in.
+ *
+ * A carrier of its own beside [SolidItem] rather than a bundle of [Line3]s, for two reasons. The furniture
+ * belongs to nobody — a grid line is not part of the drawing — while a curve is an **element**, so the view
+ * has to be able to say which one a stroke belongs to, exactly as it can for a solid. And the geometry has
+ * to arrive **as the value it is**: [path] is the very `Path3` the node computed, which is what lets the
+ * upload gate ask "did it change?" by identity ([Scene3Sync]) instead of by walking points.
+ *
+ * A curve is drawn *in the scene* rather than in the editor's overlay, and that is the one decision worth
+ * stating: the overlay is painted last and over everything (see [Painter3]), which is right for a sketch on
+ * the working plane and wrong for a curve in space — a cable routed behind a body must go behind it. Here it
+ * is depth-sorted with the solids on the CPU path and depth-tested on the GPU one, so it is occluded by the
+ * material it runs behind, like every other thing that is really *there*.
+ */
+class CurveItem(
+    val elementId: String,
+    val path: Path3,
+    val color: String,
+) {
+    /**
+     * The curve as one world-space polyline, computed **on first read** — [SolidItem.edges]'s rule and its
+     * reason: extracting a scene has to stay cheap enough to do on every editor change, because that is what
+     * lets the view ask whether anything actually changed before rebuilding anything, and sampling every
+     * Bézier of every curve eagerly would make the question cost more than the answer saves.
+     *
+     * No cache that can go stale: a [CurveItem] is built per extraction from an immutable [Path3].
+     */
+    val points: List<Vec3> by lazy { Curves3.polyline(path) }
+}
+
+/**
  * A **feature edge**: an undirected mesh edge from [a] to [b] whose two triangles meet at a real crease
  * (their normals differ by more than [Scene3.CREASE_ANGLE_RAD]).
  *
@@ -102,11 +137,23 @@ class Edge3(val a: Vec3, val b: Vec3, val faceA: Vec3, val faceB: Vec3)
 class Scene3Sync {
     private var uploaded: List<SolidItem>? = null
 
+    /**
+     * The curves that were uploaded with them (OP-26). Compared by the identical criterion and for the
+     * identical reason: a curve's vertices are *in* the buffer, so a curve that recomputed is new vertex
+     * data, and the evaluator's argument-identity memo says exactly which those are — `path !== path` is the
+     * statement *this node recomputed*, never a guess about the geometry.
+     *
+     * Held separately from the solids rather than folded into one list because they are two different kinds
+     * of thing in the buffer (lit triangles, unlit lines) and the comparison must not depend on how they
+     * happen to be interleaved.
+     */
+    private var uploadedCurves: List<CurveItem>? = null
+
     /** How many times [update] has actually uploaded. Zero is the answer a hover — or an orbit — must give. */
     var uploads: Int = 0
         private set
 
-    /** True when [scene]'s solids are the ones already uploaded, so the renderer holds them already. */
+    /** True when [scene]'s solids and curves are the ones already uploaded — the renderer holds them. */
     fun holds(scene: Scene3): Boolean {
         val had = uploaded ?: return false
         if (had.size != scene.solids.size) return false
@@ -114,6 +161,13 @@ class Scene3Sync {
             val a = had[i]
             val b = scene.solids[i]
             if (a.elementId != b.elementId || a.color != b.color || a.mesh !== b.mesh) return false
+        }
+        val hadCurves = uploadedCurves ?: return false
+        if (hadCurves.size != scene.curves.size) return false
+        for (i in hadCurves.indices) {
+            val a = hadCurves[i]
+            val b = scene.curves[i]
+            if (a.elementId != b.elementId || a.color != b.color || a.path !== b.path) return false
         }
         return true
     }
@@ -126,6 +180,7 @@ class Scene3Sync {
         if (holds(scene)) return false
         upload(scene)
         uploaded = scene.solids
+        uploadedCurves = scene.curves
         uploads++
         return true
     }
@@ -133,6 +188,7 @@ class Scene3Sync {
     /** Forget what was uploaded — what a renderer whose buffers were dropped says. */
     fun invalidate() {
         uploaded = null
+        uploadedCurves = null
     }
 }
 
@@ -145,19 +201,29 @@ class Scene3Sync {
  * after an edit, and both back ends (the painter's projector of [Painter3] for tests, WebGL in the
  * browser) consume the identical scene.
  */
-class Scene3(val solids: List<SolidItem>, lines: List<Line3>? = null) {
+class Scene3(
+    val solids: List<SolidItem>,
+    lines: List<Line3>? = null,
+    /** The curves in space this view draws (OP-26) — see [CurveItem]. */
+    val curves: List<CurveItem> = emptyList(),
+) {
     /**
      * The view's furniture — the ground grid and the axes — sized to the model, and like [SolidItem.edges]
      * computed **on first read**: its spacing comes from [boundsOf], which is a pass over every vertex of
      * every solid, and an extraction that is only being asked whether anything changed must not pay for it.
      * Passing a list explicitly says what the furniture is (what a hand-built test scene does).
      */
-    val lines: List<Line3> by lazy { lines ?: furniture(gridStepFor(boundsOf(solids))) }
+    val lines: List<Line3> by lazy { lines ?: furniture(gridStepFor(boundsOf(solids, curves))) }
 
-    val isEmpty: Boolean get() = solids.isEmpty()
+    val isEmpty: Boolean get() = solids.isEmpty() && curves.isEmpty()
 
-    /** Axis-aligned bounds of the solids (the furniture does not count), or null when there are none. */
-    fun bounds(): Pair<Vec3, Vec3>? = boundsOf(solids)
+    /**
+     * Axis-aligned bounds of the drawing (the furniture does not count), or null when there is none.
+     *
+     * **Curves count**: what this sizes is the ground grid and what a double-click frames, and a drawing that
+     * is nothing but a routed path is a drawing the view must still be able to look at.
+     */
+    fun bounds(): Pair<Vec3, Vec3>? = boundsOf(solids, curves)
 
     companion object {
         /**
@@ -374,15 +440,41 @@ class Scene3(val solids: List<SolidItem>, lines: List<Line3>? = null) {
                 if (v.solid.mesh.triangles.isEmpty()) continue
                 solids.add(SolidItem(el.id, v.solid.mesh, colorOf(doc, el)))
             }
-            return Scene3(solids)
+            // ...and the curves in space (OP-26), by the same rules throughout: every visible element whose
+            // value is one, an invalid curve contributing nothing (OP-3), and no space filter — a curve's
+            // value *is* world geometry, so unlike a sketch it belongs to the world and not to one canvas.
+            val curves = ArrayList<CurveItem>()
+            for (el in doc.elements) {
+                if (!el.visible) continue
+                val v = ev.valueOf(el.ref) as? Path3Value ?: continue
+                if (v.path.isEmpty) continue
+                curves.add(CurveItem(el.id, v.path, colorOfCurve(el)))
+            }
+            return Scene3(solids, curves = curves)
         }
 
-        /** Combined bounds of [solids], or null when none of them has a mesh. */
-        fun boundsOf(solids: List<SolidItem>): Pair<Vec3, Vec3>? {
+        /**
+         * What a **curve in space** is drawn in: its own drawing style's colour ([Styles.SPACE_CURVE] unless
+         * something has restyled it).
+         *
+         * Not the solid palette, and not a material, and both omissions are deliberate. The palette exists to
+         * tell *bodies* apart in a shaded scene; a curve is a stroke, and the thing it must agree with is its
+         * own image in the plan — so the one colour both views ask for is the element's style, which is what
+         * [SceneRenderer] draws it with. A material would be worse than useless here: roughness and metalness
+         * have nothing to reflect off a line, which is the same argument [colorOf] already makes about the
+         * shaded view.
+         */
+        fun colorOfCurve(el: Element): String = el.style.stroke
+
+        /** Combined bounds of [solids] and [curves], or null when there is nothing with an extent. */
+        fun boundsOf(
+            solids: List<SolidItem>,
+            curves: List<CurveItem> = emptyList(),
+        ): Pair<Vec3, Vec3>? {
             var lo: Vec3? = null
             var hi: Vec3? = null
-            for (s in solids) {
-                val b = Geom3.bounds(s.mesh) ?: continue
+            for (s in solids.map { Geom3.bounds(it.mesh) } + curves.map { Curves3.bounds(it.path) }) {
+                val b = s ?: continue
                 val l = lo
                 val h = hi
                 lo = if (l == null) b.first else Vec3(min(l.x, b.first.x), min(l.y, b.first.y), min(l.z, b.first.z))

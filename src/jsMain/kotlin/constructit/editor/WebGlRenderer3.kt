@@ -114,6 +114,7 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
         for (solid in scene.solids) triVerts += solid.mesh.triangles.size * 3
         var lineVerts = 0
         for (solid in scene.solids) lineVerts += solid.edges.size * 2
+        for (curve in scene.curves) lineVerts += maxOf(curve.points.size - 1, 0) * 2
         lineVerts += scene.lines.size * 2
         val total = triVerts + lineVerts
         val pos = Float32Array(total * 3)
@@ -167,6 +168,16 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
             for (e in solid.edges) {
                 vertex(e.a.x, e.a.y, e.a.z, 0f, 0f, 1f, rgb)
                 vertex(e.b.x, e.b.y, e.b.z, 0f, 0f, 1f, rgb)
+            }
+        }
+        // Curves in space (OP-26) ride the same section for the same reason the feature edges do: they are
+        // unlit lines in a colour of their own. Emitted as GL_LINES pairs rather than a strip, because one
+        // buffer carries every curve and a strip would join the end of one to the start of the next.
+        for (curve in scene.curves) {
+            val rgb = rgbOf(curve.color)
+            for ((p, q) in curve.points.zipWithNext()) {
+                vertex(p.x, p.y, p.z, 0f, 0f, 1f, rgb)
+                vertex(q.x, q.y, q.z, 0f, 0f, 1f, rgb)
             }
         }
         for (line in scene.lines) {

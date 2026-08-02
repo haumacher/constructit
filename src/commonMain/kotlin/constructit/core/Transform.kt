@@ -53,6 +53,10 @@ fun transformValue(
         // ...and a height point (OP-25) is a point in space: a 2D map has nothing to say about the axis it
         // stands on. Mirror its base and its plane instead, and the point follows by construction.
         is Point3Value -> throw IllegalArgumentException("a height point cannot be transformed by a 2D map — mirror its base (OP-25)")
+        // ...and a curve in space (OP-26) is the same answer one dimension further: a 2D affine map says
+        // nothing about the axis its points stand on. Mirror the points it is built through — the curve is a
+        // pure function of them and follows by construction, which is the whole of the parenting rule.
+        is Path3Value -> throw IllegalArgumentException("a curve in space cannot be transformed by a 2D map — mirror the points it runs through (OP-26)")
         is SketchValue -> throw IllegalArgumentException("a sketch cannot be transformed by a 2D map (OP-17)")
         is SolidValue -> throw IllegalArgumentException("a solid cannot be transformed by a 2D map (OP-17)")
         // A section is a *reading* of a solid at a plane (OP-17): what it would mean to mirror one is to

@@ -9,6 +9,7 @@ import constructit.core.Evaluator
 import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
+import constructit.core.Path3Value
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.RayValue
@@ -19,10 +20,12 @@ import constructit.core.SolidValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
 import constructit.geom.Conics
+import constructit.geom.Curves3
 import constructit.geom.Ellipse
 import constructit.geom.EllipticArc
 import constructit.geom.GeomMath
 import constructit.geom.Line
+import constructit.geom.Path3
 import constructit.geom.ProfileElement
 import constructit.geom.Ray
 import constructit.geom.Segment
@@ -240,6 +243,9 @@ object SceneRenderer {
                 // the hint is what makes the solid pickable here — hence selectable and deletable in
                 // the one view that has picking.
                 is SolidValue -> drawFootprintHint(v, proj, target, style)
+                // A **curve in space** (OP-26) leaves the plan its *projection*, drawn where a curve of this
+                // space would be — see [drawProjectedPath] for why that is exact and why only here.
+                is Path3Value -> if (proj.similarity) drawProjectedPath(v.path, doc, ev, proj, target, style)
                 is PointSetValue -> v.set.points.forEach { dot(proj, target, it, style.stroke) }
                 // a dimension's value is a scalar (OP-4), so what is drawn is the graphic it prescribes
                 is ScalarValue -> el.annotation?.let { drawDimension(it, ev, proj, target, style) }
@@ -490,8 +496,77 @@ object SceneRenderer {
                 drawChain(v.region.outer.elements, proj, target, style)
                 for (h in v.region.holes) drawChain(h.elements, proj, target, style)
             }
+            // a curve in space (OP-26), in whichever view is asking — see [emphasizePath]
+            is Path3Value -> emphasizePath(v.path, doc, ev, proj, target, style)
             else -> {}
         }
+    }
+
+    /**
+     * A **curve in space** as the 2D canvas shows it (OP-26): its projection into the active space's plane,
+     * drawn through [drawChain] like any other chain of pieces.
+     *
+     * **Exact, and not a resampling.** An orthographic projection onto a plane is affine, and both piece kinds
+     * are affine-invariant, so the projection of the path *is* the 2D chain through the projected control
+     * points ([Curves3.projectedOnto]) — a path whose points all lie in one space projects onto that space's
+     * plane as exactly the chain those points describe. Going through [drawChain] then buys two things at
+     * once: the run-coalescing (a projected curve is one polyline, not one per piece — session 35), and the
+     * guarantee that a projected curve is drawn by the very code every other chain is, so it cannot
+     * accumulate a drawing vocabulary of its own.
+     *
+     * **Only under a similarity, i.e. only on the 2D canvas.** In the 3D view the curve is drawn by the scene
+     * itself ([Scene3.curves]), in space, depth-sorted with the solids — so drawing it here as well would
+     * paint a second, flattened copy of it on top of material it may legitimately run behind. This is the
+     * height point's rule (OP-25) with the sign reversed, and for the same reason: what is drawn is what is
+     * picked, in each view, and each view draws it where it honestly is.
+     */
+    private fun drawProjectedPath(
+        path: Path3,
+        doc: Document,
+        ev: Evaluator,
+        proj: PlaneProjection,
+        target: DrawTarget,
+        style: Style,
+    ) {
+        val plane = doc.activePlane3(ev) ?: return
+        drawChain(Curves3.projectedOnto(path, plane), proj, target, style)
+    }
+
+    /**
+     * A curve in space **restated on top of itself** in [style] — the emphasis vocabulary, in whichever view
+     * is asking.
+     *
+     * Unlike the drawing above this happens in *both* views, because an emphasis is deliberately on top of
+     * everything (the same choice `Painter3` makes about the whole overlay): the point of the mark is that
+     * the thing selected can be seen. In the 3D view the true world curve is drawn, through the one entry
+     * point that can place a point off the plane — [PlaneProjection.toScreenLifted], which a height point
+     * already uses — with each world point stated in the plane's own (u, v, lift) frame.
+     */
+    private fun emphasizePath(
+        path: Path3,
+        doc: Document,
+        ev: Evaluator,
+        proj: PlaneProjection,
+        target: DrawTarget,
+        style: Style,
+    ) {
+        val plane = doc.activePlane3(ev) ?: return
+        if (proj.similarity) {
+            drawChain(Curves3.projectedOnto(path, plane), proj, target, style)
+            return
+        }
+        val screen = ArrayList<Vec2>()
+        for (p in Curves3.polyline(path)) {
+            val s = proj.toScreenLifted(plane.toLocal(p), plane.distanceTo(p))
+            if (s == null) {
+                // one vertex with no image breaks the run, exactly as [drawChain] does — never bridged
+                if (screen.size >= 2) target.polyline(screen.toList(), style)
+                screen.clear()
+                continue
+            }
+            screen.add(s)
+        }
+        if (screen.size >= 2) target.polyline(screen, style)
     }
 
     /**

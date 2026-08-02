@@ -8,6 +8,7 @@ import constructit.geom.Ellipse
 import constructit.geom.EllipticArc
 import constructit.geom.Line
 import constructit.geom.Loop
+import constructit.geom.Path3
 import constructit.geom.Plane3
 import constructit.geom.PlaneSection
 import constructit.geom.PointSet
@@ -42,6 +43,20 @@ data class PointValue(val p: Vec2) : Value
  * from a node's inputs into its `compute`.
  */
 data class Point3Value(val p: Vec3) : Value
+
+/**
+ * A **curve in space** (OP-26): a piecewise chain of analytic pieces, open or closed — see [Path3].
+ *
+ * A value kind of its own for exactly the reason [Point3Value] is one (OP-17/OP-25): a `Profile` in this
+ * engine means "in some plane's own coordinates", so widening it with a third number would make every 2D
+ * consumer start asking which plane. A curve with no plane is a different thing, so it is a different type,
+ * and the type system keeps the two apart at every slot — which is also what stops a path in space from
+ * silently filling a slot that wants a drawn 2D curve.
+ *
+ * Its *value* is world-space geometry; its *construction* is always parented (OP-26's parenting rule), so
+ * planarity is a structural fact about the inputs rather than a measurement of the output.
+ */
+data class Path3Value(val path: Path3) : Value
 
 data class LineValue(val line: Line) : Value
 

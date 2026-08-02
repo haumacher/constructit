@@ -8,6 +8,7 @@ import constructit.core.EllipticArcValue
 import constructit.core.Evaluator
 import constructit.core.LineValue
 import constructit.core.LoopValue
+import constructit.core.Path3Value
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.RayValue
@@ -16,8 +17,12 @@ import constructit.core.SegmentValue
 import constructit.core.SolidValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
+import constructit.geom.Curves3
 import constructit.geom.GeomMath
+import constructit.geom.Path3
+import constructit.geom.Plane3
 import constructit.geom.ProfileElement
+import constructit.geom.Ray3
 import constructit.geom.Segment
 import constructit.geom.Vec2
 import constructit.geom.Vec3
@@ -95,13 +100,78 @@ object HitTest {
         el: Element,
         world: Vec2,
         view: PlaneProjection? = null,
+        plane: Plane3? = null,
     ): Double? {
         // An annotation's value is a scalar, so it has no geometry of its own to measure against: what is
         // pickable is the graphic it draws (OP-4). Measured to that, a dimension is picked exactly where it
         // is visible — its lines, its arc, and the number itself.
         el.annotation?.let { a -> return a.graphic(ev)?.let { distanceToGraphic(world, it) } }
         (el.handle as? HeightPointHandle)?.let { h -> return distanceToHeightPoint(h, world, view, ev) }
+        (ev.valueOf(el.ref) as? Path3Value)?.let { return distanceToPath(it.path, world, view, plane) }
         return distanceToValue(ev, el, world)
+    }
+
+    /**
+     * How near [world] is to the curve in space [path] — **each view measuring the curve where it draws it**
+     * (OP-26), which is the height point's rule (OP-25) applied to a whole chain.
+     *
+     * - **In the plan** (a similarity, or no view at all) the curve's image is its projection onto [plane],
+     *   and that projection is what the canvas draws — so the distance is the ordinary plane-space distance
+     *   to those very pieces ([distToPiece]), in millimetres, and the ordinary tolerance applies unchanged.
+     * - **In the 3D view** the curve is drawn where it really is, so the pointer's *viewing ray* is what it
+     *   is measured against — in the plane's own orthonormal (u, v, lift) frame, hence again in millimetres.
+     *   Measured against the drawn polyline, so what looks near the curve is near it, exactly as a Bézier and
+     *   an ellipse already are.
+     *
+     * Null without a [plane]: a curve in space has no image until something says which way it is being
+     * looked at, and a caller that offers none is asking a question this is no answer to.
+     */
+    private fun distanceToPath(
+        path: Path3,
+        world: Vec2,
+        view: PlaneProjection?,
+        plane: Plane3?,
+    ): Double? {
+        val pl = plane ?: return null
+        if (view == null || view.similarity) {
+            return Curves3.projectedOnto(path, pl).minOfOrNull { distToPiece(world, it) }
+        }
+        val ray = view.viewRay(world)
+        if (ray.dir.length() < Vec3.EPS) return null
+        val local = Curves3.polyline(path).map { p -> pl.toLocal(p).let { Vec3(it.x, it.y, pl.distanceTo(p)) } }
+        return local.zipWithNext().minOfOrNull { (a, b) -> distRayToSegment(ray, a, b) }
+    }
+
+    /**
+     * Closest approach between the ray [r] (`t >= 0`) and the segment `a`..`b` — the standard two-parameter
+     * clamp, with the parallel case falling back to the distance from the segment's ends.
+     *
+     * Written out here rather than reached for from `Geom3` because this is picking's own measure: the ray is
+     * a *pointer*, so it is clamped behind the eye and the segment is clamped to its own extent — a pick must
+     * never be answered by a point on the backward extension of either.
+     */
+    private fun distRayToSegment(
+        r: Ray3,
+        a: Vec3,
+        b: Vec3,
+    ): Double {
+        val d1 = r.dir
+        val d2 = b - a
+        val w = r.origin - a
+        val a11 = d1.dot(d1)
+        val a12 = d1.dot(d2)
+        val a22 = d2.dot(d2)
+        val b1 = d1.dot(w)
+        val b2 = d2.dot(w)
+        val det = a11 * a22 - a12 * a12
+        // the unclamped optimum, or the segment's own start where the two are parallel (or it is degenerate)
+        var t = if (det <= Vec3.EPS || a22 <= Vec3.EPS || a11 <= Vec3.EPS) 0.0 else (a11 * b2 - a12 * b1) / det
+        // …then one pass of clamping each parameter against the other, which is exact once one of the two
+        // bounds is active — and a pick only ever activates the ray's, at the eye
+        t = t.coerceIn(0.0, 1.0)
+        val s = (if (a11 <= Vec3.EPS) 0.0 else d1.dot(a + d2 * t - r.origin) / a11).coerceAtLeast(0.0)
+        if (a22 > Vec3.EPS) t = (d2.dot(r.origin + d1 * s - a) / a22).coerceIn(0.0, 1.0)
+        return (r.origin + d1 * s - (a + d2 * t)).length()
     }
 
     /**
@@ -202,13 +272,14 @@ object HitTest {
         world: Vec2,
         tip: Element?,
         view: PlaneProjection?,
+        plane: Plane3?,
     ): Double? {
         doc.partOutlineOf(el, ev, tip)?.let { return ringDistance(world, it) }
         // ...and *only* as that context: a part with none to measure against (an unbounded datum hinge, a solid
         // with no value) is simply not pickable here. Falling back to its own geometry would measure a
         // coordinate from another space, which is the one thing one-canvas-one-space exists to prevent.
         if (el.space != doc.activeSpace.name) return null
-        return distanceTo(ev, el, world, view)
+        return distanceTo(ev, el, world, view, plane)
     }
 
     private fun ringDistance(
@@ -235,11 +306,14 @@ object HitTest {
         // the part the active face space belongs to, as it stands (OP-17's tip rule) — resolved once per
         // search, because resolving it walks the graph and this asks it of every element
         val tip = doc.facePartTip(ev)
+        // …and the active plane, for the same reason: a curve in space (OP-26) is measured against the frame
+        // this canvas is looking along, and resolving that is a node evaluation
+        val plane = doc.activePlane3(ev)
         return doc.elements
             .asSequence()
             .withIndex()
             .filter { (_, el) -> el.visible && doc.addressableIn(el, tip) && filter(el) }
-            .mapNotNull { (i, el) -> distanceIn(doc, ev, el, world, tip, view)?.let { Triple(el, it, i) } }
+            .mapNotNull { (i, el) -> distanceIn(doc, ev, el, world, tip, view, plane)?.let { Triple(el, it, i) } }
             .filter { it.second <= tol }
             .sortedWith(compareBy({ it.second }, { -it.third }))
             .map { it.first to it.second }
@@ -273,13 +347,14 @@ object HitTest {
         val lo = Vec2(kotlin.math.min(a.x, b.x), kotlin.math.min(a.y, b.y))
         val hi = Vec2(kotlin.math.max(a.x, b.x), kotlin.math.max(a.y, b.y))
         val tip = doc.facePartTip(ev)
+        val plane = doc.activePlane3(ev)
         return doc.elements.filter { el ->
             el.visible && doc.addressableIn(el, tip) &&
                 (
                     doc.partOutlineOf(el, ev, tip)?.let { r -> ringMeets(r, lo, hi) }
                         // the same rule as [distanceIn]: the part is met as this space's reference context or not
                         // at all, never by geometry belonging to another space's coordinates
-                        ?: (el.space == doc.activeSpace.name && meetsRect(ev, el, lo, hi, view))
+                        ?: (el.space == doc.activeSpace.name && meetsRect(ev, el, lo, hi, view, plane))
                 )
         }
     }
@@ -301,7 +376,21 @@ object HitTest {
         lo: Vec2,
         hi: Vec2,
         view: PlaneProjection?,
+        plane: Plane3?,
     ): Boolean {
+        // A curve in space (OP-26) is met where the band *sees* it — its projection onto the plane in the
+        // plan, and in the 3D view its image mapped back onto the plane the band was dragged on, which is
+        // the height point's own rule for the same question.
+        (ev.valueOf(el.ref) as? Path3Value)?.let { v ->
+            val pl = plane ?: return false
+            if (view == null || view.similarity) {
+                return Curves3.projectedOnto(v.path, pl).any { pieceMeets(it, lo, hi) }
+            }
+            return Curves3.polyline(v.path).any { p ->
+                val at = view.toScreenLifted(pl.toLocal(p), pl.distanceTo(p))?.let { view.toPlane(it) }
+                at != null && inRect(at, lo, hi)
+            }
+        }
         // a height point is met where it is *seen* — its image, mapped back onto the plane the band was
         // dragged on — which is the same "only through a view that can place it" rule the pick follows
         (el.handle as? HeightPointHandle)?.let { h ->

@@ -83,6 +83,16 @@ enum class SlotKind {
      * it structurally, so a replay classifies exactly as the click did.
      */
     LOFT_PART,
+
+    /**
+     * A **point in space** (OP-26): a height point (OP-25) taken as it is, or an ordinary 2D point, which is
+     * lifted by a zero height on its own space's plane exactly as a loft's apex is (`Document.loftSolid`).
+     *
+     * Existing points only — this slot never places one. That is what makes the parenting rule visible in the
+     * gesture: a curve is *routed through things that are already in the drawing*, so clicking a point shares
+     * its node and the curve follows it, rather than dropping a copy of its coordinates that follows nothing.
+     */
+    POINT3,
 }
 
 /**
@@ -205,6 +215,19 @@ class ToolDef(
      * the user did not draw. The connectivity machinery is the same either way; only the auto-append differs.
      */
     val followsBoundary: Boolean = false,
+    /**
+     * Whether clicking a [repeating] tool's **first pick again** is a *statement* rather than merely "done":
+     * the pick is appended before the tool builds, so its pick list ends with the element it began with.
+     *
+     * Declared by the curve-through-points tools (OP-26) and by nothing else, and the reason is what the
+     * click means to each tool. To *Outline* and *Loft* it means "the run is complete" — the boundary already
+     * closes because tracing it round is the whole gesture — so appending the first pick would list one curve
+     * twice. To a curve it means *"and it comes back here"*, which is a different curve from the open one
+     * through the same points: the closure has to reach [build], and appending the pick is how it does so
+     * without a flag beside the picks. The recorded step then states the closure by naming that point twice,
+     * so replay closes for exactly the reason the gesture did (OP-18) and no new file argument exists.
+     */
+    val closesOnFirstPick: Boolean = false,
     /**
      * Whether each pick of this tool carries the **wall side** in effect when it was made (the OP-21
      * extension), collected into [Picks.signs] as one `Justification` ordinal per curve.
@@ -463,6 +486,15 @@ object Tools {
     const val BEZIER = "bezier"
 
     /**
+     * **Curves in space** (OP-26, step 1): a path through points that already stand in space. Two ids
+     * because the *pieces* differ — straight runs or an interpolating cubic — exactly as [CIRCLE] and
+     * [CIRCLE_R] are two ids for one shape, and because a tool id is what the file records (OP-18), so which
+     * of the two a curve is needs no argument of its own.
+     */
+    const val CURVE3 = "curve3"
+    const val CURVE3_SMOOTH = "curve3smooth"
+
+    /**
      * The rectangle tool: two diagonally opposite clicks, and what comes out is a **closed ortho path**
      * (GitHub issue #4). Its own id, because [RECTANGLE_V1] still has to mean what it always meant.
      */
@@ -661,6 +693,15 @@ object Tools {
             ToolDef(ELLIPSE_AB, "Ellipse (centre, axis, semi-axis)", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(len("semi-axis")), preview = Previews::ellipseAB, help = "Type the second semi-axis (or pick a parameter in the panel), then click the centre and the end of the first axis — which sets that semi-axis and the ellipse's orientation.", slotNames = listOf("centre", "axis end"), icon = Icons.ELLIPSE) { d, p, s -> d.ellipseCAB(p.points[0], p.points[1], s[0]) },
             ToolDef(ELLIPTIC_ARC, "Elliptic arc", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), scalars = listOf(len("semi-axis")), preview = Previews::ellipticArc, help = "Type the second semi-axis, then click the centre, the end of the first axis, and the two points the arc runs between — they are projected onto the ellipse, so they need not sit exactly on it. The arc sweeps counter-clockwise in the parameter from the first to the second.", slotNames = listOf("centre", "axis end", "start", "end"), icon = Icons.ELLIPTIC_ARC) { d, p, s -> d.ellipticArc(p.points[0], p.points[1], s[0], p.points[2], p.points[3]) },
             ToolDef(BEZIER, "Bezier curve", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click the start, two control points, then the end. Control points may be existing constructed points.", slotNames = listOf("start", "control", "control", "end"), icon = Icons.BEZIER) { d, p, _ -> d.bezierCurve(p.points[0], p.points[1], p.points[2], p.points[3]) },
+            // ----- curves in space (OP-26). A repeating pick over points that already stand in space, which
+            // is why it needs no new interaction concept at all: height points are draggable in the 3D view
+            // already, and clicking one *shares* it. `crossSpace`, for the loft's own reason — the points may
+            // have been lifted off different planes, and a tool that could not span them could not route a
+            // curve between two storeys. What comes out is drawn in the 3D view and projected into the plan.
+            //
+            // Two tools, one value: which pieces the curve is made of is stated by which one was used.
+            ToolDef(CURVE3, "Curve through points", ToolCategory.CURVES, listOf(SlotKind.POINT3), repeating = true, minPicks = 2, crossSpace = true, closesOnFirstPick = true, help = "Click the points in space the curve runs through — height points, or ordinary points, which lie in the plane they were drawn on. Press Enter to finish, or click the first point again to close the curve. The points are shared, so dragging one (or retyping its height) moves the curve; switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("point in space")) { d, p, _ -> d.curveThroughPoints(p.elements, smooth = false) },
+            ToolDef(CURVE3_SMOOTH, "Smooth curve through points", ToolCategory.CURVES, listOf(SlotKind.POINT3), repeating = true, minPicks = 2, crossSpace = true, closesOnFirstPick = true, help = "The same gesture as Curve through points, with the corners rounded off: an interpolating cubic that passes through every point you click and leaves each one along the line to its neighbours. At the ends it runs off along the first and last chord. Enter finishes; clicking the first point again closes it.", slotNames = listOf("point in space")) { d, p, _ -> d.curveThroughPoints(p.elements, smooth = true) },
             ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, followsBoundary = true, shortcut = 'O', help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.", slotNames = listOf("boundary curve"), icon = Icons.OUTLINE) { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
             ToolDef(THICKEN, "Thicken (wall over curves)", ToolCategory.RESULT, listOf(SlotKind.CURVE), scalars = listOf(len("thickness")), repeating = true, minPicks = 1, sidePerPick = true, replicates = false, extendsResult = true, preview = Previews::thicken, help = "Type a thickness, set Wall side, then click the curves the wall follows — segments, arcs or Béziers that meet end to end, or end part-way along one another (a T joins with no seam). The side applies to the next click, so it can change per curve. Enter (or clicking the first curve again) builds it; a disconnected pick is refused. Click an existing wall first to *extend* it instead: its thickness stays its own and its openings, dimensions and solids follow (Alt on that first click starts a new wall there instead).", slotNames = listOf("carrier curve"), icon = Icons.THICKEN) { d, p, s -> d.buildThickNetwork(p.elements, p.signs.map { Tools.sideOf(it) }, s[0]) },
             ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click a circle or arc, then click inside or outside for the concentric circle.", slotNames = listOf("circle", "side"), icon = Icons.CONCENTRIC) { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at) },
@@ -852,6 +893,7 @@ object Tools {
             SlotKind.AREA -> "area"
             SlotKind.SOLID -> "solid"
             SlotKind.LOFT_PART -> "section, apex or guide"
+            SlotKind.POINT3 -> "point in space"
         }
 
     /** The glyph a palette button shows for [id] — [SELECT]'s included, which is not a [ToolDef]. */
