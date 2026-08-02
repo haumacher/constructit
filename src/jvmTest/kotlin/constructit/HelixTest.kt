@@ -347,17 +347,26 @@ class HelixTest {
      * **The sweep's refusal fires at exactly the radius of curvature the helix states**, and heals when the
      * profile shrinks.
      *
-     * This is the closed form paying out. On a coil whose radius is large against its pitch the radius of
-     * curvature is `(r² + b²)/r` — a hair *more* than `r`, because the rise straightens the bend slightly —
-     * and the criterion is `reach ≥ 1/κ`. So a tube just under that number is a solid and one just over it is
-     * a refusal that names the station, with nothing between them but the arithmetic.
+     * This is the closed form paying out: the radius of curvature is `(r² + b²)/r` — read off the piece, not
+     * differenced from samples — and the criterion is `reach ≥ 1/κ`. So a tube just under that number is a
+     * solid and one just over it is a refusal that names the station, with nothing between them but the
+     * arithmetic.
+     *
+     * **The pitch is generous on purpose, and that is the interesting part.** The local term is only the
+     * *binding* one where the coil's turns stand further apart than the section is wide; a tube as fat as the
+     * coil's own bend needs `pitch > 2·(r² + b²)/r` of clearance before its turns stop passing through each
+     * other, which is a statement the **global** term of the same criterion makes ([Embedding], the reach's
+     * second half). This fixture used to run at `pitch = 8` on a 10 mm coil, which put a 20 mm tube through
+     * turns 8 mm apart — a body the global term now refuses, correctly and by name. Opening the pitch to 60
+     * leaves the closest non-neighbour approach 15 % clear of the section, so the local boundary can be
+     * probed from both sides with nothing else firing.
      */
     @Test
     fun aTubeFatterThanTheCoilsOwnBendIsRefusedAtTheStatedRadiusAndHeals() {
-        val h = helix(10.0, 8.0, 2.0)
+        val h = helix(10.0, 60.0, 2.0)
         val rho = 1.0 / h.curvature
-        assertClose(rho, (100.0 + (8.0 / (2.0 * PI)) * (8.0 / (2.0 * PI))) / 10.0, 1e-12, "the coil's own radius of curvature")
-        assertTrue(rho > 10.0, "the rise straightens the bend a little: $rho mm against a 10 mm coil")
+        assertClose(rho, (100.0 + (60.0 / (2.0 * PI)) * (60.0 / (2.0 * PI))) / 10.0, 1e-12, "the coil's own radius of curvature")
+        assertTrue(rho > 10.0, "the rise straightens the bend: $rho mm against a 10 mm coil")
 
         // just inside it: a solid
         val ok = sweptOrFail(pathOf(h), SweepProfile.Round(rho - 0.01))

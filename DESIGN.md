@@ -6432,6 +6432,12 @@ every neighbouring pair of stations along the run, so it needs a real statement 
 comparable, and inventing one under a step that is about a curve would be deciding a sweep question by
 accident. Named here, unresolved, and not treated as a queue item.
 
+> **Closed in session 40** — see *Implementation status (as built — the sweep's embedding criterion)* below.
+> It was a defect, not a queue item, and it jumped the queue for the reason this paragraph gives: the shell
+> was watertight and wrong, silently. The naive fix recorded above stayed rejected; so did the arc-length
+> exclusion that replaced it (a curvature-derived δ cannot survive a polyline corner). What was built is
+> Federer's own condition — a **double normal** — which needs no exclusion at all.
+
 **The ordinary obligations, and what they cost.** Two `ToolDef` rows and no controller code. The coil is drawn
 in the 3D view from the scene and projected into the plan, is clickable in both (the plan click lands on the
 round shadow it casts, the 3D click on the curve where it honestly stands), hides, renames, is a legal `PATH3`
@@ -6463,6 +6469,124 @@ both views, the tube along it as an ordinary spring solid with a plan footprint,
 byte-equal with the handedness recovered from the tool id, one undo, hiding, the gesture refusal by name, the
 node's refusal naming the cure and healing, the session-35 counts, and an SVG golden of the plan projection.
 **1348 → 1375 green**, one new golden, no version bump, no existing golden changed.
+
+### Implementation status (as built — the sweep's embedding criterion: *watertight or refused*, kept)
+
+**A defect, and it jumped the queue.** The gap named under step 3 was real and it produced the worst class of
+output this project can produce: `radius = 20, pitch = 6, wire = 5` built a spring whose every turn passed
+through the turn below, and the shell was **edge-manifold with a positive volume** — so `Watertight` was
+happy, `assertManifold` was happy, and a boolean against it, a volume from it or a 3MF written from it were
+all wrong with nothing saying so. Bugs outrank queued features; silent wrong output outranks everything.
+
+**The criterion is the spine's reach, and the second half of it is now there** (`geom/Sweep.kt`,
+`Embedding`). Federer's reach is `min(1/κ_max, ½·min{|P − Q| : (P,Q) a double normal})`, and the sweep is
+embedded when the profile's own reach stays below it. The first term is the local criterion, untouched — it
+still reads the **analytic** curvature of the piece a station came from and it still fires first, so every
+message it ever produced is byte-identical. The second term is what a station's curvature cannot see: the run
+coming back alongside itself.
+
+**Which pairs count is the whole problem, and the answer is a double normal rather than an arc length.** Two
+points of a run are always close when they are close *along* it. Step 3 recorded the naive form as rejected
+("centre distance below twice the reach" refuses every neighbouring pair); what replaced it here went through
+one more rejection before landing, and both are worth keeping because both are the obvious thing to try.
+
+- **Rejected: an arc-length exclusion δ, derived from the curvature bound.** Compare only pairs at least δ
+  apart along the spine, with δ the arc at which the tightest *allowed* bend first opens two sections out to
+  their own clearance: by Schur's theorem a curve of curvature ≤ κ spans over an arc `h ≤ πR` at least the
+  chord a circle of radius `R = 1/κ` spans, so `δ = 2R·arcsin(reach/R)` — exactly `2·reach` on a straight run,
+  exactly `πR` at the local criterion's own limit, where the two halves of the reach meet. It is a genuine
+  derivation, it has no free number in it, and it was implemented and tested. It **cannot survive a corner**:
+  a polyline route turns through a right angle at a vertex where the curvature is *zero on both sides*, so
+  every curvature-derived δ is far too small there and an ordinary mitred elbow refuses itself — two points a
+  section's width either side of the corner stand `reach·√2` apart, well inside their clearance, with nothing
+  in the arc length to explain it. Patching δ with the turning angle across the corner (`chord ≥ h·cos(Θ/2)`,
+  which is the right bound for bounded *total* turning) was tried next and abandoned in turn: that bound goes
+  vacuous at half a turn, so a serpentine — two right angles, and the very case this must catch — falls off
+  the end of it, and the sensitivity jumps discontinuously at `Θ = π`. A criterion whose behaviour has a cliff
+  in it is not a criterion.
+- **Built: the double normal.** A pair `(P, Q)` counts when the segment joining it stands **perpendicular to
+  the run at both ends** — which is exactly the stationarity condition of the distance between two points of
+  the spine, so it is not a test bolted on afterwards, it *is* what "these two parts of the run approach each
+  other" means. A neighbour pair fails it because the segment joining two nearby points runs nearly *along*
+  the curve; the far side of a hairpin passes it because the segment crosses the run square at both ends.
+  There is no δ, no tolerance and no tuning: a straight run has no double normal at any length, a mitred elbow
+  has none, a circle's only one is across it, and a spring's is between its turns.
+
+**Measured on the spans, not on the stations, and that is not an optimization.** A straight piece is sampled
+into exactly **one** span (a chord of a line *is* the line), so a station-to-station test is blind along the
+whole of it — two straight legs running side by side with their ends staggered have no two *stations* near
+each other at all, which is a test in `SweepEmbeddingTest`. So the spine is compared piece against piece as
+**segments**: the closest points of two segments in closed form, then four one-sided derivatives that say
+whether that approach is stationary along the run. The one-sidedness is what makes a **kink** come out right
+with no case for it — at a vertex the forward and backward directions differ, so the condition reads as the
+vertex's **normal cone**, which is the honest generalization of "perpendicular" and exactly what a mitred
+elbow needs. The **seam of a closed path** needs no special handling either, which is the reason to prefer
+this over an arc exclusion twice over: the pieces either side of the seam are neighbours, their approach is
+not stationary, and they are rejected for the same reason every other neighbour pair is. (An arc exclusion
+would have had to wrap, and getting that wrong refuses every closed loop ever drawn — asserted from both
+sides in the tests, since it is the trap.)
+
+**The refusal speaks, and it heals** (OP-3 — a property of *values*, so node invalidity and never a gesture
+refusal): *"the run passes within 5.993 mm of itself, between 84.088 mm and 209.63 mm along the path, while
+the tube's radius (5 mm) needs 10 mm between them — so the sweep would cut into itself; thin the section, or
+open the run out"*. Both arc positions, the approach, the clearance it needed, and the two cures. Thinning the
+wire heals it; opening the pitch heals it; the tests assert both.
+
+**The resolution is stated in millimetres, because it has one** (OP-15). The spine is a polyline within
+`TESS_TOL_MM` of the curve it samples, so a distance measured on it is within twice that of the truth, and the
+refusal fires only when the run is inside its clearance by **more than the mesh's own stated error** — about
+four hundredths of a millimetre. The boundary test asserts 0.1 mm either side of the limit rather than step
+3's 0.01 mm, and that difference is the honest one: the local criterion is a statement about an *analytic*
+curvature and can be arbitrarily sharp, while this one is measured on the body the mesh actually is.
+
+**Cost, measured rather than asserted to be fine.** A grid of cell size `2·reach` — the query radius itself —
+with every span cut into pieces no longer than a cell and registered in the cells its box covers, so two
+pieces within the query radius always land within one cell of each other and the 27-cell neighbourhood is
+exact rather than heuristic. On a **40-turn coil** (2847 stations) the grid offers **14 453** pairs where an
+all-pairs test would offer 4 051 281 — **5.08 pairs per station**, and the same 5.08 on a 100-turn coil, which
+is what "linear" means when it is asserted instead of claimed. The check itself runs in **3.0 ms** against the
+**314 ms** the whole sweep takes to build the same body's 159 428 triangles: about one per cent of a recompute.
+The count is asserted in the test (a number, not a clock); the times are reported here.
+
+**What it does not claim, said rather than left to be discovered.** The body is measured as the tube of radius
+`reach` about the spine, which contains it exactly where the path is smooth. At a **mitred kink** the outer
+corner of the join stands `reach / cos(half the turn)` from the spine — further than the tube — so the
+criterion under-states the body at a corner. The error is entirely in the permissive direction, so it never
+refuses a run that fits.
+
+**A second defect was found while probing this one, and it is *not* fixed here.** A span shorter than the two
+mitres that eat into it produces a band that folds back on itself: the route
+`(0,0,0) → (300,0,0) → (302.62,30,0) → (0,56.24,0)` with an 18 mm tube has two 85° corners 30.11 mm apart,
+each mitre trimming `18·tan 42.5° = 16.49 mm`, so the two rings cross — and the result passes `Watertight`,
+passes `assertManifold`, and reports a volume. It is the same *category* as the defect above (silent wrong
+output) and a different *mechanism* (a corner treatment, not a proximity), and it is deliberately left open
+because the obvious check collides with a decision already recorded: the exact condition "every profile
+vertex advances along the span" is `reach ≥ R·cos(θ/2)` on a sampled smooth curve, which fires 0.01 mm inside
+the *analytic* limit step 3 asserts the local criterion at. Whether the sweep's refusals speak about the
+**curve** or about the **mesh** is a real question and deserves its own answer, not a side effect of this fix.
+Queued below, with the fixture.
+
+Tests: `SweepEmbeddingTest` (12) — only a square approach counts (a straight run and a mitred elbow have no
+bottleneck at any length, a planar loop's is across it); the reported spring refused with both arc positions
+and the approach read back out of the sentence as numbers, and healing when the wire thins or the pitch opens;
+the **flat serpentine** with every station's curvature exactly zero, refused in the same words, which is what
+proves the criterion is general and not aimed at the report; an approach in the middle of a straight where
+nothing is sampled; an exact crossing refused at zero; six shapes that must keep building (straight, S-curve,
+slender spring, mitred polyline, closed planar loop, rectangular section round a bend); the limit asserted
+0.1 mm either side; the closed loop not refused at its own seam, with the seam pair asserted *closer than the
+section is wide* so the trap is exercised rather than avoided; a closed circuit that does run alongside itself,
+still refused; and the 40-turn coil's pair count. One existing test changed and it is recorded below.
+**1378 → 1390 green**, no new golden, no version bump, no existing golden changed.
+
+**The one green test that had to change, and why it is not the criterion being loosened.** `HelixTest`'s
+`aTubeFatterThanTheCoilsOwnBendIsRefusedAtTheStatedRadiusAndHeals` probed the *local* boundary on
+`helix(radius 10, pitch 8, turns 2)` with a tube of `1/κ − 0.01 = 10.152 mm` — which is a 20.3 mm tube through
+turns 8 mm apart, a body **61 % inside its own clearance** and one of the most extreme instances of the very
+defect being fixed. The fixture was an example of the bug, not a casualty of the fix. The claim it makes is
+kept exactly — the refusal fires at the radius of curvature the closed form states, from both sides, and heals
+— on `pitch = 60`, where the turns stand far enough apart that the local term is the binding one. The test now
+says so in its own words, because the interaction is worth knowing: a tube as fat as a coil's own bend needs
+`pitch > 2·(r² + b²)/r` before its turns stop passing through each other.
 
 ## Open points (to discuss one by one)
 
@@ -6667,8 +6791,8 @@ node's refusal naming the cure and healing, the session-35 counts, and an SVG go
       **construction** is always parented, so
       curves ride their parents and planarity is known rather than measured; the moving frame is
       **parallel transport** with a stated start frame (Frenet rejected — it flips at inflections and is
-      undefined on straights); the sweep refuses a profile whose radius exceeds the local radius of
-      curvature, by station. Interpolating splines are allowed and 3D sketch *constraints* are not — the
+      undefined on straights); the sweep refuses a profile that does not fit — the local radius of curvature
+      by station, **and** (session 40) the run coming back alongside itself, by double normal. Interpolating splines are allowed and 3D sketch *constraints* are not — the
       distinction is deterministic fitting versus iterative constraint search. Eight ordered steps, the
       first being `Path3` + both views + through-3D-points and the second the frame + the sweep. Four
       further candidates (stations, 3D offsets, variable-section sweep, trim/split/join) are recorded as
@@ -8294,6 +8418,39 @@ node's refusal naming the cure and healing, the session-35 counts, and an SVG go
   golden, no version bump. See *Implementation status (as built — step 3)* under *Curves in space, and the
   sweep*.
 
+- **Session 40 — a run that comes back alongside itself is refused, and the test is a double normal (OP-26,
+  the sweep's criterion completed).** A defect, and it jumped the queue: `radius = 20, pitch = 6, wire = 5`
+  built a spring whose every turn passed through the turn below, and the shell was **edge-manifold with a
+  positive volume** — `Watertight` said yes, and a boolean, a volume or a 3MF taken from it were all wrong
+  with nothing saying so. Silent wrong output is the worst thing this build can produce. The criterion is now
+  the spine's **reach** whole, `min(1/κ_max, ½·min double normal)`; the local half is untouched and still
+  speaks first. **Which pairs count went through two rejections before it landed, and both are kept.** The
+  naive centre-distance test was already recorded as rejected by step 3. The obvious replacement — an
+  arc-length exclusion `δ = 2R·arcsin(reach/R)`, derived from Schur's theorem as the arc at which the tightest
+  *allowed* bend first opens two sections out to their clearance — was implemented, tested, and then rejected
+  because it **cannot survive a corner**: a polyline turns through a right angle where the curvature is zero
+  on both sides, so an ordinary mitred elbow refuses itself. Patching δ with the turning angle failed in turn
+  (that bound goes vacuous at half a turn, so a serpentine — the very case to catch — falls off the end of it,
+  with the sensitivity jumping discontinuously at `Θ = π`; a criterion with a cliff in it is not a criterion).
+  What was built is Federer's own condition: a pair counts when the segment joining it stands **square to the
+  run at both ends**, which is the stationarity of the distance and therefore *is* what "these two parts
+  approach each other" means. No δ, no tolerance, no tuning — and the closed path's **seam** stops being a
+  trap rather than being handled, since the pieces either side of it are neighbours and fail the condition for
+  the same reason every neighbour does. It is measured **span against span** rather than station against
+  station, which is not an optimization: a straight piece is one span, so two legs running side by side with
+  staggered ends have no two stations near each other at all. The refusal names both arc positions, the
+  approach and the clearance, and heals by thinning the section or opening the run. Cost measured, not
+  claimed: **5.08 pairs per station** on a 40-turn coil and the same on a 100-turn one, 14 453 pairs against
+  an all-pairs 4 051 281, **3 ms** against the sweep's own 314 ms. One green test changed and it was **an
+  instance of the bug**: step 3's local-boundary fixture put a 20 mm tube through turns 8 mm apart, 61 %
+  inside its own clearance; the claim it makes is kept exactly, on a pitch that leaves the local term the
+  binding one. A **second defect** was found while probing and is deliberately left open with its fixture: a
+  span shorter than the two mitres eating into it folds its band back, passes `Watertight`, and reports a
+  volume — the same category, a different mechanism, and the obvious check collides with step 3's *analytic*
+  local boundary, so "do the sweep's refusals speak about the curve or about the mesh?" gets its own answer
+  rather than a side effect. **1378 → 1390 green**, no new golden, no version bump. See *Implementation status
+  (as built — the sweep's embedding criterion)* under *Curves in space, and the sweep*.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -9817,6 +9974,20 @@ carried along a path is the missing capability rather than a refinement of an ex
 7. **Projection onto a face** — exact for analytic faces, honest or refused for a mesh.
 8. **Imported curves** — frozen literal + placement, plus a *recorded* planar-wireframe-to-sketch gesture.
    Last, per the standing rule that formats go at the end of the queue.
+
+**Queued in session 40 — a mitre that eats more than the span it runs into.** Found while probing the sweep's
+embedding criterion, and a **different defect** from the one that session fixed: at a corner the mitred join
+trims `reach·tan(θ/2)` along each leg, so two corners closer together than the sum of their two trims make the
+band between them fold back on itself. The route
+`(0,0,0) → (300,0,0) → (302.62,30,0) → (0,56.24,0)` with an 18 mm tube (two 85° corners 30.11 mm apart, each
+mitre eating 16.49 mm) builds a shell that is **edge-manifold, positively-volumed and geometrically folded** —
+`Watertight` and `assertManifold` both pass it. It is the same category as the spring that passed through
+itself (silent wrong output) and it ranks with bugs rather than features. It is **not** a one-line addition,
+which is why it is queued rather than slipped in: the exact condition — every profile vertex advances along
+the span — reduces on a sampled smooth curve to `reach ≥ R·cos(θ/2)`, which fires *inside* the analytic limit
+`reach ≥ R` that step 3's local criterion is asserted at, 0.01 mm either side. So it forces a real decision
+first: **do the sweep's refusals speak about the curve or about the mesh?** The answer wants stating once, for
+the local criterion and this one together, rather than being settled by whichever check is written second.
 
 **Also queued in session 37 — an unbounded tool as a boolean operand (OP-22's extension).** Independent of
 OP-26 and ranked above its remaining steps once the sweep has landed, and above 3D blends: a half-space, then

@@ -1008,17 +1008,14 @@ object Geom3 {
         val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, reach, tolMm)
         if (frame == null) return null to (noFrame ?: "cannot build a moving frame along this curve")
 
-        // **The self-intersection criterion, per station.** A profile reaching `reach` from the path folds
-        // through itself the moment the path's radius of curvature there drops to `reach` — the inner side
-        // of the bend turns inside out. Checked before a triangle is emitted, and named by *where*, because
-        // "this sweep self-intersects" is not something anyone can act on and "at 340 mm along" is.
-        for (st in frame.stations) {
-            if (st.curvature * reach >= 1.0) {
-                return null to
-                    "${profileReach(profile, reach)} is larger than the bend ${Frames3.mm(st.s)} mm along " +
-                    "the path (radius ${Frames3.mm(1.0 / st.curvature)} mm), so the sweep would pass through itself"
-            }
-        }
+        // **The self-intersection criterion: the spine's reach**, both terms of it ([Embedding]). Locally, a
+        // profile reaching `reach` from the path folds through itself the moment the path's radius of
+        // curvature there drops to `reach` — the inner side of the bend turns inside out. Globally, the run
+        // may come back alongside itself with every station's curvature perfectly comfortable, which is the
+        // spring whose wire is thicker than half its pitch. Checked before a triangle is emitted, and named
+        // by *where*, because "this sweep self-intersects" is not something anyone can act on and "at 340 mm
+        // along" is.
+        Embedding.check(frame, reach, profileReach(profile, reach)).defect?.let { return null to it }
         // **A closed path whose frame does not close on itself** is reported rather than smeared over the
         // last band, and the report names the cure: the twist that makes the total come back to zero is an
         // ordinary parameter of this very feature, so the refusal heals by stating it (OP-3). A *planar*

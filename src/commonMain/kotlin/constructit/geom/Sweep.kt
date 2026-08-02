@@ -5,6 +5,7 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.round
@@ -472,4 +473,381 @@ object Frames3 {
 
     /** A degree figure for a refusal, from an angle in radians. */
     internal fun deg(rad: Double): String = mm(rad * 180.0 / PI)
+}
+
+/**
+ * What [Embedding.check] found: why the swept body is not embedded, what it cost, and how near the run came
+ * to itself.
+ *
+ * [closest] and [pairsExamined] are not diagnostics for their own sake — they are the two numbers the
+ * criterion's argument rests on (the approach it actually measured, and the work the grid did to find it),
+ * so a test can assert them rather than describe them.
+ */
+class EmbeddingReport(
+    /** Why the swept body would pass through itself, in the words a refusal uses — or null when it would not. */
+    val defect: String?,
+    /**
+     * The closest **bottleneck** among the pairs the grid offered, in mm — `Double.MAX_VALUE` when the run
+     * has none within reach of its own section, which is every run that is comfortably clear of itself.
+     */
+    val closest: Double,
+    /** How many pairs of spine pieces the grid offered for comparison — the cost, and the claim it is not `n²`. */
+    val pairsExamined: Int,
+)
+
+/**
+ * **Is the swept body embedded?** — the sweep's whole *watertight or refused* obligation (OP-9), checked
+ * before a triangle is emitted (OP-26, step 2's criterion, completed).
+ *
+ * **The criterion is the spine's reach** (Federer's reach, the local feature size):
+ *
+ * ```
+ * reach(path) = min( 1/κ_max , ½·min{ |P − Q| : (P, Q) a double normal } )
+ * ```
+ *
+ * and the sweep is embedded when the profile's own **reach** — its greatest distance from the path, hence
+ * the radius of the tube that contains the body — stays below it. The two terms are the two ways a swept
+ * body folds through itself, and they are genuinely different failures:
+ *
+ * - **Locally**, on a bend tighter than the profile is wide: the inner side of the section turns inside out.
+ *   That is `κ·reach ≥ 1`, and it is the criterion the sweep shipped with.
+ * - **Globally**, where the run comes back alongside itself: a spring whose wire is thicker than half its
+ *   pitch has each turn passing through the turn below, while **every station's curvature is comfortable**.
+ *   Nothing local can see it. It is not helix-specific either — a serpentine whose legs run closer than the
+ *   tube is wide does exactly the same — so this is a statement about the *sweep*, never a case per piece
+ *   kind, and it is made against the sampled spine rather than against the curve's vocabulary.
+ *
+ * **Which pairs count is the crux, and the answer is a double normal rather than an arc length.** Two points
+ * of a run are always close when they are close *along* it, so a plain "refuse when two centres are nearer
+ * than twice the reach" refuses every neighbouring pair — that naive form is recorded as rejected under
+ * OP-26's step 3, and what replaces it has to say which pairs are comparable. A **double normal** (a
+ * bottleneck) is the classical answer and is the one this uses: a pair `(P, Q)` whose connecting segment
+ * stands **perpendicular to the run at both ends**. It is exactly the stationarity condition of the distance
+ * between two points of the spine, so it is not a test bolted on afterwards — it *is* what "these two parts
+ * of the run approach each other" means. A neighbour pair fails it because the segment joining two nearby
+ * points runs nearly *along* the curve, not across it; the far side of a hairpin passes it because the
+ * segment crosses the run square at both ends.
+ *
+ * **The arc-length exclusion was derived, and then rejected, and the reason is worth keeping.** The obvious
+ * alternative is to compare only pairs at least δ apart along the spine, with δ derived from the curvature
+ * bound: a curve of curvature at most `κ` spans, over an arc `h ≤ π/κ`, at least the chord a circle of
+ * radius `R = 1/κ` spans (Schur's theorem), so `δ = 2R·arcsin(reach/R)` is exactly the arc at which the
+ * tightest *allowed* bend first opens two sections out to their own clearance — `2·reach` on a straight run,
+ * `πR` at the local criterion's own limit. That is a real derivation and it works on any smooth path. It
+ * **cannot survive a corner**: a polyline route turns through a right angle at a vertex where the curvature
+ * is *zero on both sides*, so every curvature-derived δ is far too small there and a perfectly ordinary
+ * mitred elbow refuses itself — two points a section's width either side of the corner stand `reach·√2`
+ * apart, well inside their clearance, with nothing in the arc length to explain it. Patching δ with the
+ * turning angle across the corner was tried and abandoned in turn: the turning bound (`chord ≥ h·cos(Θ/2)`)
+ * goes vacuous at half a turn, so a serpentine — two right angles, and the very case this must catch — falls
+ * off the end of it. The double normal has no such seam: it reads the geometry the pair actually has.
+ *
+ * **It is measured on the spans, not on the stations, and that is not an optimization.** A straight piece is
+ * sampled into exactly **one** span (a chord of a line *is* the line), so a station-to-station test would be
+ * blind along the whole of it: two straight legs running side by side with their ends staggered have no two
+ * *stations* near each other at all. So the spine is compared piece against piece as **segments** — the
+ * closest points of two segments in closed form, then the four one-sided derivatives that say whether that
+ * approach is stationary along the run. The one-sidedness is what makes a **kink** come out right without a
+ * case for it: at a vertex the forward and backward directions differ, so the condition is that the segment
+ * lies in the vertex's *normal cone*, which is the honest generalization of "perpendicular" and exactly what
+ * a mitred elbow needs.
+ *
+ * **The seam of a closed path needs no special handling either**, which is worth saying because an
+ * arc-length exclusion would have needed the arc distance to wrap: the pieces either side of the seam are
+ * neighbours, their approach is not stationary, and they are rejected for the same reason every other
+ * neighbour pair is. Only touching pieces are skipped outright, since a segment of zero length has no
+ * direction to be perpendicular to.
+ *
+ * **The comparison carries the tessellation's own error as slack, and that is where the honest resolution of
+ * this criterion is stated (OP-15).** The spine is a polyline within [GeomMath.TESS_TOL_MM] of the curve it
+ * samples, so a distance measured on it is within twice that of the truth; the refusal fires only when the
+ * run is inside its own clearance by **more than the mesh's stated error**. The limit is therefore resolved
+ * to about four hundredths of a millimetre, which is the resolution the body itself has, and not to the
+ * last bit.
+ *
+ * **What it does not claim.** The body is measured as the tube of radius `reach` about the spine, which
+ * contains it exactly where the path is smooth. At a **mitred kink** the outer corner of the join stands
+ * `reach / cos(half the turn)` from the spine — further than the tube — so two sharp corners aimed at each
+ * other could touch while their spines still clear. The error is entirely in the permissive direction (the
+ * criterion under-states the body, so it never refuses a run that fits), and closing it would mean a
+ * per-station reach; it is left as a stated boundary of the claim rather than a hidden one.
+ *
+ * **Cost.** A grid of cell size `2·reach` — the query radius itself — with every span cut into pieces no
+ * longer than a cell and registered in the cells its box covers, so two pieces within the query radius
+ * always land within one cell of each other and the 27-cell neighbourhood is exact rather than heuristic.
+ * The scan is O(pieces × neighbourhood occupancy), which is linear in the pieces for any run whose section
+ * is not vast against its sampling: a 40-turn coil offers a few dozen pairs per piece where an all-pairs
+ * test would offer millions. [EmbeddingReport.pairsExamined] reports the count so the claim is asserted.
+ */
+object Embedding {
+    /**
+     * How far from perpendicular a connecting segment may stand and still count as a double normal — a
+     * dimensionless cosine, and a **rounding** tolerance rather than a modelling one: the condition is an
+     * exact stationarity, and this only keeps the exactly-perpendicular case (two parallel legs, where the
+     * dot product is a difference of equal numbers) from falling the wrong side of zero.
+     */
+    private const val CONE_EPS = 1e-9
+
+    /**
+     * Whether a profile reaching [reach] from the path is embedded along [frame] — the `min` of the two
+     * terms, in that order, so the local failure keeps its own words where both would fire.
+     *
+     * [what] is how the refusal names the profile's size ("the tube's radius (5 mm)"), passed in because the
+     * profile's *kind* is the sweep's business while this is the *path's* statement.
+     */
+    fun check(
+        frame: MovingFrame,
+        reach: Double,
+        what: String,
+    ): EmbeddingReport {
+        // ---- the first term: 1/κ_max, station by station, and in station order so the message is stable
+        for (st in frame.stations) {
+            if (st.curvature * reach >= 1.0) {
+                return EmbeddingReport(
+                    "$what is larger than the bend ${Frames3.mm(st.s)} mm along " +
+                        "the path (radius ${Frames3.mm(1.0 / st.curvature)} mm), so the sweep would pass through itself",
+                    Double.MAX_VALUE,
+                    0,
+                )
+            }
+        }
+
+        // ---- the second term: the closest bottleneck of the spine
+        val clearance = 2.0 * reach
+        val pieces = piecesOf(frame, clearance)
+        if (pieces.size < 3) return EmbeddingReport(null, Double.MAX_VALUE, 0)
+        val grid = HashMap<Long, MutableList<Int>>(pieces.size * 2)
+        for (i in pieces.indices) {
+            forEachCell(pieces[i], clearance) { k -> grid.getOrPut(k) { ArrayList() }.add(i) }
+        }
+
+        var bestD = Double.MAX_VALUE
+        var bestA = 0.0
+        var bestB = 0.0
+        var examined = 0
+        val seen = IntArray(pieces.size) { -1 }
+        for (i in pieces.indices) {
+            forEachCell(pieces[i], clearance) { k ->
+                for (dx in -1..1) {
+                    for (dy in -1..1) {
+                        for (dz in -1..1) {
+                            val bucket = grid[k + (dx.toLong() shl 42) + (dy.toLong() shl 21) + dz.toLong()] ?: continue
+                            for (j in bucket) {
+                                // each pair is offered once, from its lower index, and only once per pair of
+                                // pieces however many cells the two happen to share; the pieces that touch
+                                // are the ones with no approach to speak of
+                                if (j <= i || seen[j] == i || touching(i, j, pieces.size, frame.closed)) continue
+                                seen[j] = i
+                                examined++
+                                val hit = bottleneck(pieces, i, j, frame.closed)
+                                if (hit != null && hit.d < bestD) {
+                                    bestD = hit.d
+                                    bestA = hit.s
+                                    bestB = hit.t
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (bestD < clearance - 2.0 * GeomMath.TESS_TOL_MM) {
+            return EmbeddingReport(
+                "the run passes within ${Frames3.mm(bestD)} mm of itself, between ${Frames3.mm(bestA)} mm and " +
+                    "${Frames3.mm(bestB)} mm along the path, while $what needs ${Frames3.mm(clearance)} mm " +
+                    "between them — so the sweep would cut into itself; thin the section, or open the run out",
+                bestD,
+                examined,
+            )
+        }
+        return EmbeddingReport(null, bestD, examined)
+    }
+
+    /**
+     * One piece of the sampled spine: a straight run from [a] to [b] carrying the arc position of its start,
+     * cut short enough that its box never spans more than two cells of the grid.
+     *
+     * Arc *is* length here, and that is by construction rather than by approximation: [Frame3.s] is the
+     * cumulative sum of the very chords these pieces are cut from, so a point [x] mm along a piece stands
+     * exactly `s0 + x` along the spine.
+     */
+    private class Piece(val a: Vec3, val dir: Vec3, val s0: Double, val len: Double) {
+        fun at(x: Double): Vec3 = a + dir * x
+    }
+
+    /** A bottleneck: how near the run came to itself, and where along the spine the two ends of it stand. */
+    private class Approach(val d: Double, val s: Double, val t: Double)
+
+    /** Whether the two pieces meet end to end, which is the one pair with no approach to measure. */
+    private fun touching(
+        i: Int,
+        j: Int,
+        count: Int,
+        closed: Boolean,
+    ): Boolean = j == i + 1 || (closed && i == 0 && j == count - 1)
+
+    /** The spine as pieces, each no longer than [cell] so its box covers at most two cells per axis. */
+    private fun piecesOf(
+        frame: MovingFrame,
+        cell: Double,
+    ): List<Piece> {
+        val st = frame.stations
+        val n = st.size
+        val spans = if (frame.closed) n else n - 1
+        val out = ArrayList<Piece>(spans)
+        for (k in 0 until spans) {
+            val a = st[k].at
+            val b = st[(k + 1) % n].at
+            val len = (b - a).length()
+            if (len <= Geom3.WELD_TOL || cell <= 0.0) continue
+            val dir = (b - a) * (1.0 / len)
+            val cuts = max(1, ceil(len / cell).toInt())
+            val step = len / cuts
+            for (q in 0 until cuts) {
+                out.add(Piece(a + dir * (step * q), dir, st[k].s + step * q, step))
+            }
+        }
+        return out
+    }
+
+    /** Every grid cell the piece's box touches — at most eight, since no piece is longer than a cell. */
+    private inline fun forEachCell(
+        p: Piece,
+        cell: Double,
+        body: (Long) -> Unit,
+    ) {
+        val b = p.at(p.len)
+        val x0 = cellIndex(min(p.a.x, b.x), cell)
+        val x1 = cellIndex(max(p.a.x, b.x), cell)
+        val y0 = cellIndex(min(p.a.y, b.y), cell)
+        val y1 = cellIndex(max(p.a.y, b.y), cell)
+        val z0 = cellIndex(min(p.a.z, b.z), cell)
+        val z1 = cellIndex(max(p.a.z, b.z), cell)
+        for (x in x0..x1) {
+            for (y in y0..y1) {
+                for (z in z0..z1) body(key(x, y, z))
+            }
+        }
+    }
+
+    /**
+     * The **double normal** these two pieces carry, or null when their closest approach is not one.
+     *
+     * The closest points of two segments are a closed form (the squared distance is a convex quadratic on a
+     * rectangle), and what is asked of them afterwards is the stationarity that makes the approach a
+     * bottleneck: moving either end along the run, in either direction, must not bring the two closer. Where
+     * the closest point is interior to a piece that is the ordinary perpendicularity; where it sits at a
+     * piece's end the *neighbouring* piece's direction is used instead, which is what makes the condition
+     * read as the vertex's **normal cone** at a corner and needs no case of its own. At the free end of an
+     * open run there is no direction on that side, and nothing is asked.
+     *
+     * An exact crossing — two pieces that meet at a point without being neighbours — has no direction to be
+     * perpendicular to and is reported as the approach of zero it is.
+     */
+    private fun bottleneck(
+        pieces: List<Piece>,
+        i: Int,
+        j: Int,
+        closed: Boolean,
+    ): Approach? {
+        val p = pieces[i]
+        val q = pieces[j]
+        val (x, y) = closestParams(p, q)
+        val v = q.at(y) - p.at(x)
+        val d = v.length()
+        if (d <= Geom3.WELD_TOL) return Approach(0.0, p.s0 + x, q.s0 + y)
+        val u = v * (1.0 / d)
+        val ahead = if (x < p.len) p.dir else nextDir(pieces, i, closed)
+        val behind = if (x > 0.0) p.dir else prevDir(pieces, i, closed)
+        val onward = if (y < q.len) q.dir else nextDir(pieces, j, closed)
+        val back = if (y > 0.0) q.dir else prevDir(pieces, j, closed)
+        if (ahead != null && u.dot(ahead) > CONE_EPS) return null
+        if (behind != null && u.dot(behind) < -CONE_EPS) return null
+        if (onward != null && u.dot(onward) < -CONE_EPS) return null
+        if (back != null && u.dot(back) > CONE_EPS) return null
+        return Approach(d, p.s0 + x, q.s0 + y)
+    }
+
+    private fun nextDir(
+        pieces: List<Piece>,
+        i: Int,
+        closed: Boolean,
+    ): Vec3? =
+        if (i + 1 < pieces.size) {
+            pieces[i + 1].dir
+        } else if (closed) {
+            pieces[0].dir
+        } else {
+            null
+        }
+
+    private fun prevDir(
+        pieces: List<Piece>,
+        i: Int,
+        closed: Boolean,
+    ): Vec3? =
+        if (i > 0) {
+            pieces[i - 1].dir
+        } else if (closed) {
+            pieces[pieces.size - 1].dir
+        } else {
+            null
+        }
+
+    /**
+     * How far along each piece the two are closest — the ordinary segment-to-segment closest points, written
+     * out because both directions are unit here (arc *is* length), which reduces the usual algebra to three
+     * dot products and a pair of clamps.
+     */
+    private fun closestParams(
+        p: Piece,
+        q: Piece,
+    ): Pair<Double, Double> {
+        val r = p.a - q.a
+        val b = p.dir.dot(q.dir)
+        val c = p.dir.dot(r)
+        val f = q.dir.dot(r)
+        val den = 1.0 - b * b
+        var x = if (den > 1e-12) ((b * f - c) / den).coerceIn(0.0, p.len) else 0.0
+        var y = (b * x + f).coerceIn(0.0, q.len)
+        x = (b * y - c).coerceIn(0.0, p.len)
+        y = (b * x + f).coerceIn(0.0, q.len)
+        return x to y
+    }
+
+    /**
+     * Which cell of the grid a coordinate falls in, clamped so a wild coordinate cannot overflow the index.
+     *
+     * Clamping merges far-apart cells, which costs a few extra candidates and can never cost an answer: the
+     * true approach is computed for every pair the grid offers.
+     */
+    private fun cellIndex(
+        v: Double,
+        cell: Double,
+    ): Int {
+        val f = floor(v / cell)
+        return when {
+            f < -CELL_LIMIT -> -CELL_LIMIT
+            f > CELL_LIMIT -> CELL_LIMIT
+            else -> f.toInt()
+        }
+    }
+
+    /**
+     * How far the grid indexes before it starts folding distant cells together — the clamp [cellIndex]
+     * applies, chosen so the packing below stays one-to-one with room to spare (`2·CELL_LIMIT < 2^21`).
+     */
+    private const val CELL_LIMIT = 500_000
+
+    /**
+     * Three cell indices packed into one key by **arithmetic** rather than by masking, 21 bits apiece, so
+     * that adding `(dx shl 42) + (dy shl 21) + dz` to a key names the neighbouring cell without unpacking
+     * it. One-to-one within [CELL_LIMIT], which is what that limit is for.
+     */
+    private fun key(
+        x: Int,
+        y: Int,
+        z: Int,
+    ): Long = (x.toLong() shl 42) + (y.toLong() shl 21) + z.toLong()
 }
