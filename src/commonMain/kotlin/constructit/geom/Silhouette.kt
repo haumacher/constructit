@@ -10,14 +10,22 @@ package constructit.geom
  * so it was invisible in the plan, and it answered no distance, so it could not fill a `SOLID` slot at all —
  * no boolean, no placement, no measurement by clicking.
  *
- * The answer here is the one the geometry actually supports, and no more than that: for a **closed, oriented**
- * mesh — which every solid in this engine is, by OP-9's watertight-or-refused doctrine — the boundary of the
+ * The answer here is the one the geometry actually supports, and no more than that: the boundary of the
  * projected shape is exactly the set of **silhouette edges**, and they are found without a single 2D boolean.
  * Project every vertex into the plane; call a triangle *front* when its projected signed area is positive;
- * then an edge shared by two front triangles is used in both directions and is interior, while an edge
- * between a front and a back triangle is used in one direction only — and is therefore on the outline. The
- * survivors are directed consistently by construction (counter-clockwise around the projected material), so
- * chaining them end to end yields closed loops with no orientation to guess.
+ * then an edge shared by two front triangles is used in both directions and is interior, while an edge with
+ * no front-facing partner is used in one direction only — and is therefore on the outline. The survivors are
+ * directed consistently by construction (counter-clockwise around the projected material), so chaining them
+ * end to end yields loops with no orientation to guess.
+ *
+ * **An open shell needs no special case, and the reason is worth stating** (the JT import's flagged bodies,
+ * OP-9). The kept edges are the boundary of the front-facing *chain*, and the boundary of a chain is a
+ * cycle — so a surface with a hole in it still yields **closed** loops: what changes is only *which* loops,
+ * because the shell's own rim is now part of the outline wherever it borders front-facing material. That is
+ * the honest picture and it is drawn as such. What genuinely cannot close is a mesh whose triangles are
+ * **inconsistently wound** or non-manifold, where one directed edge is claimed twice and the count no longer
+ * balances; those come out as **open chains**, drawn and picked as the chains they are. Nothing is ever
+ * mended, dropped or silently emptied — an outline that cannot close is said by being open.
  *
  * **Loops, not an area, and that is the honest word.** Each loop becomes a [Region] of its own with no holes.
  * A ring's inner loop *is* a hole of its outer one and a nesting analysis could say so — but a silhouette may
@@ -36,9 +44,9 @@ object Silhouette {
     /**
      * The outline loops of [mesh] seen along [plane]'s normal, in that plane's own 2D coordinates.
      *
-     * Deterministic: triangles are read in mesh order and each loop is walked from the lowest-numbered
-     * unused edge, so the same mesh always yields the same loops in the same order — the rule [Mesh3]
-     * itself obeys, and the one a byte-equal save depends on.
+     * Deterministic: triangles are read in mesh order and each chain is walked from the first vertex that
+     * still has an unused edge, so the same mesh always yields the same outline in the same order — the rule
+     * [Mesh3] itself obeys, and the one a byte-equal save depends on.
      *
      * Linear in the triangle count: one projection per vertex, one sign per triangle, one hash entry per
      * directed edge of a front triangle. No 2D boolean, no tolerance, no repair.
@@ -78,48 +86,81 @@ object Silhouette {
         val used = HashMap<Int, Int>(outline.size * 2)
         for ((start, _) in outline) {
             while (true) {
-                val ring = walk(start, outline, used, count) ?: break
-                if (ring.size >= 3) loops.add(regionOf(ring.map { flat[it] }))
+                val chain = walk(start, outline, used, count) ?: break
+                // a closed ring needs three corners to bound anything; an open chain is already a drawing at
+                // two, so both floors are the honest ones for what the chain *is*
+                if (chain.points.size >= (if (chain.closed) 3 else 2)) {
+                    loops.add(regionOf(chain.points.map { flat[it] }, chain.closed))
+                }
             }
         }
         return loops
     }
 
+    /** One traced run of outline edges: its vertices in order, and whether it came back to its start. */
+    private class Chain(val points: List<Int>, val closed: Boolean)
+
     /**
-     * One closed ring from [start], consuming outline edges as it goes — or null when [start] has none left.
+     * One run of outline edges from [start], consuming them as it goes — or null when [start] has none left.
      *
      * A vertex may carry several outline edges (two silhouette loops can touch at a point, and a projection
      * can bring two unrelated parts of a body onto one vertex), so the walk takes them in the order they were
-     * met. The step cap is the total number of outline edges: a closed mesh cannot produce an open chain, and
-     * a cap is what turns "cannot" into "does not hang" if one ever does.
+     * met.
+     *
+     * **A run that dead-ends is returned open, not discarded.** For any mesh whose directed edges balance —
+     * every closed or open *shell* with consistent winding — the walk always returns to its start, because
+     * the boundary of a chain is a cycle. A mesh that is inconsistently wound or non-manifold breaks that
+     * balance, and then a run genuinely ends somewhere else: the honest answer is the polyline it traced,
+     * which draws and picks as what it is. Discarding it would be the one outcome forbidden here — an
+     * outline silently missing part of a body.
+     *
+     * The step cap is the total number of outline edges, which is what turns "cannot loop forever" from an
+     * argument into a fact.
      */
     private fun walk(
         start: Int,
         outline: Map<Int, ArrayList<Int>>,
         used: HashMap<Int, Int>,
         cap: Int,
-    ): List<Int>? {
+    ): Chain? {
         val first = outline[start] ?: return null
         if ((used[start] ?: 0) >= first.size) return null
-        val ring = ArrayList<Int>()
+        val run = ArrayList<Int>()
         var at = start
         var steps = 0
         while (steps++ <= cap) {
-            val outs = outline[at] ?: return null
+            val outs = outline[at]
             val i = used[at] ?: 0
-            if (i >= outs.size) return null
+            if (outs == null || i >= outs.size) {
+                // the run ends here: keep the vertex it ended on, so the last segment is drawn
+                run.add(at)
+                return Chain(run, false)
+            }
             used[at] = i + 1
-            ring.add(at)
+            run.add(at)
             at = outs[i]
-            if (at == start) return ring
+            if (at == start) return Chain(run, true)
         }
-        return null
+        run.add(at)
+        return Chain(run, false)
     }
 
-    /** A closed ring of plane points as a [Region] — see this object's note on why it carries no holes. */
-    private fun regionOf(points: List<Vec2>): Region {
-        val merged = mergeCollinear(points)
-        val segments = merged.indices.map { ProfileElement.Seg(Segment(merged[it], merged[(it + 1) % merged.size])) }
+    /**
+     * A traced run of plane points as a [Region] — closed into a ring when it came back to its start, left
+     * **open** when it did not. See this object's note on why neither carries holes.
+     *
+     * An open chain is a `Loop` whose pieces do not meet, which is exactly what the three consumers of a
+     * plan need it to be: the renderer draws each piece, the hit test measures distance to each piece, the
+     * marquee tests each piece — none of them assumes closure, and inventing a closing segment would draw a
+     * line where the body has no edge.
+     */
+    private fun regionOf(
+        points: List<Vec2>,
+        closed: Boolean,
+    ): Region {
+        val merged = mergeCollinear(points, closed)
+        val last = if (closed) merged.size else merged.size - 1
+        val segments = (0 until last).map { ProfileElement.Seg(Segment(merged[it], merged[(it + 1) % merged.size])) }
         return Region(Loop(segments), emptyList())
     }
 
@@ -132,10 +173,19 @@ object Silhouette {
      * would move the outline off the mesh by the sagitta, and a hint that is not where the body is would be
      * worse than a long one.
      */
-    private fun mergeCollinear(points: List<Vec2>): List<Vec2> {
+    private fun mergeCollinear(
+        points: List<Vec2>,
+        closed: Boolean,
+    ): List<Vec2> {
         if (points.size < 3) return points
         val out = ArrayList<Vec2>(points.size)
         for (i in points.indices) {
+            // an **open** chain has two ends, and an end is never an interior point of a straight run — it is
+            // where the outline stops, so it is kept whatever its neighbours do
+            if (!closed && (i == 0 || i == points.size - 1)) {
+                out.add(points[i])
+                continue
+            }
             val prev = points[(i - 1 + points.size) % points.size]
             val here = points[i]
             val next = points[(i + 1) % points.size]
@@ -144,7 +194,7 @@ object Silhouette {
             if (a.cross(b) == 0.0 && a.dot(b) > 0.0) continue
             out.add(here)
         }
-        return if (out.size >= 3) out else points
+        return if (out.size >= (if (closed) 3 else 2)) out else points
     }
 
     private fun key(

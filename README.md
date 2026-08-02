@@ -356,8 +356,10 @@ with holes from traced outlines, and line styles in the render seam. Deliberatel
 because the kernel is mesh-based and holds no exact B-rep for a solid, so exact-geometry export would be either
 dishonest or a compliance project. **JT** shipped the way it was scoped: still a separate library project
 (kotlinJT), consuming this package's scene seam — the export here is a one-page adapter, not a format
-implementation. Reading JT *into* a drawing is a future extension with its own design question (what a
-non-parametric reference body is inside a construction DAG).
+implementation. **Reading JT *into* a drawing is done too**: a file's bodies arrive as frozen mesh literals
+with parametric placements (a point and an angle you can drag and type), and a body whose surface does not
+close comes in **flagged as an open shell** — it displays, arranges and re-exports, while the two print
+formats and every boolean refuse it by name.
 
 ## Documentation
 

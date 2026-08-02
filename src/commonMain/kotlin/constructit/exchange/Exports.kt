@@ -2,6 +2,7 @@ package constructit.exchange
 
 import constructit.core.Evaluator
 import constructit.editor.Document
+import constructit.geom.Watertight
 import de.haumacher.kotlinjt.write.JtWriteException
 
 /**
@@ -72,11 +73,17 @@ object Exports {
         val bytes =
             when (format) {
                 ExportFormat.GLB -> Glb.write(scene)
-                // watertight-or-refused, checked at the boundary (OP-9) and refused **by name**
+                // **The two print formats refuse an open shell, by name and with the way out** (OP-9). The
+                // check is the same one for both ([ThreeMf.check], over `Watertight`), and it refuses the
+                // *whole* export rather than skipping the body: a print file quietly missing a part is the
+                // kind of surprise that is discovered on the print bed. Every other format writes it — see
+                // [openShellNote].
                 ExportFormat.THREE_MF ->
                     ThreeMf.check(scene)?.let { return ExportResult(format, fileName, null, "not exported — $it") }
                         ?: ThreeMf.write(scene)
-                ExportFormat.STL -> Stl.write(scene)
+                ExportFormat.STL ->
+                    Stl.check(scene)?.let { return ExportResult(format, fileName, null, "not exported — $it") }
+                        ?: Stl.write(scene)
                 // The sibling library refuses, by name, any scene its own reader would hand back differently
                 // (a node with geometry *and* children, an undeclared unit, a child its collapse would splice
                 // out). The adapter is built so none of those is reachable — but a refusal that escapes as a
@@ -90,12 +97,30 @@ object Exports {
                     }
             }
         val bodies = "${scene.nodes.size} solid${if (scene.nodes.size == 1) "" else "s"}"
-        val notes = if (scene.notes.isEmpty()) "" else " (${scene.notes.joinToString("; ")})"
+        val said = scene.notes + openShellNote(scene)
+        val notes = if (said.isEmpty()) "" else " (${said.joinToString("; ")})"
         return ExportResult(
             format,
             fileName,
             bytes,
             "Exported $fileName — $bodies, ${scene.triangleCount} triangles$notes",
         )
+    }
+
+    /**
+     * What a format that **can** carry an open shell has to say about having carried one — nothing when the
+     * scene holds none.
+     *
+     * GLB and JT are viewing and interchange formats: an open shell displays, orbits, and travels to another
+     * CAD system perfectly well, so refusing it would be the wrong answer (the user's own framing —
+     * *"too restrictive, if the goal is only arranging and displaying"*). What would be wrong is writing one
+     * **silently**, since the file then claims to be a solid to a reader who cannot tell. So the result says
+     * it, by name, the way every other export note is said: silence still means every body in the file is a
+     * closed solid.
+     */
+    private fun openShellNote(scene: ExportScene): List<String> {
+        val open = scene.nodes.filter { Watertight.defect(it.mesh) != null }.map { it.name }
+        if (open.isEmpty()) return emptyList()
+        return listOf("${open.joinToString(", ")} ${if (open.size == 1) "is an open shell" else "are open shells"} — written as-is, not printable")
     }
 }

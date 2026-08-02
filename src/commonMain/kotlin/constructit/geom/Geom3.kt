@@ -250,8 +250,9 @@ sealed interface Feature3 {
      * *watertight-or-refused* buys and what *never rediscover* forbids spending.
      *
      * What it *is* is a solid like any other where that word means something measurable: it has a volume,
-     * it renders, it prints, it exports, it is a legal boolean operand (through the general engine) and it
-     * can be **placed** — a rigid move leaves it exactly this feature with its mesh somewhere else.
+     * it renders, it exports, it can be **placed** — a rigid move leaves it exactly this feature with its
+     * mesh somewhere else — and, **while it is closed**, it prints and it is a legal boolean operand. Which
+     * of those it can do is [openShell]'s to say.
      */
     data class Imported(
         val source: String,
@@ -266,6 +267,28 @@ sealed interface Feature3 {
          * without a plane is not defined.
          */
         val plan: List<Region> = emptyList(),
+        /**
+         * Why this body is an **open shell** — a surface that does not close, or does not close consistently
+         * — or null when it is a closed solid ([constructit.geom.Watertight]).
+         *
+         * **Derived, never recorded.** It is a pure function of the mesh the literal carries, computed once
+         * where that value is built (`Construction.importedSolid`), so a reload derives the same answer from
+         * the same triangles and no stored flag can drift from the geometry it describes. A rigid placement
+         * carries it through unchanged, because a motion cannot open or close a surface.
+         *
+         * Deliberately **not** called *invalid*: OP-3's invalid means a node has **no value**, and this body
+         * has one — it displays, it places, it measures, it exports to GLB and JT. What it cannot do is what
+         * needs an inside: it is refused by the two print writers and by every boolean, each in its own
+         * words. That split is the user's design (session 34), and the reason is theirs too: refusing the
+         * import outright "is necessary if the goal is printing, but useless when the goal is
+         * re-engineering an imported geometry — and too restrictive, if the goal is only arranging and
+         * displaying".
+         *
+         * **This changes nothing for constructed solids.** Everything the kernel builds is watertight by
+         * construction (OP-9), and that doctrine is untouched: this field can only ever be non-null on a body
+         * that came from outside.
+         */
+        val openShell: String? = null,
     ) : Feature3 {
         override val footprint: List<Region> get() = plan
     }

@@ -64,6 +64,7 @@ import constructit.geom.Solid3
 import constructit.geom.SolidFace
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.geom.Watertight
 import constructit.geom.Xform3
 import constructit.geom.movedBy
 import constructit.geom.thickNetwork
@@ -2163,6 +2164,15 @@ class Construction {
         op(a, b) {
             val sa = (it[0] as SolidValue).solid
             val sb = (it[1] as SolidValue).solid
+            // **An open shell is not an operand** (the JT import note under OP-9). A boolean asks what is
+            // *inside* each solid, and a surface that does not close has no inside — every answer the engine
+            // could give would be a guess dressed as a result. Refused **at eval time**, because the flag is
+            // a property of a *value*: OP-21's rule is structure at build time and values inside `compute`,
+            // so the node exists and is invalid with a reason (OP-3) rather than the graph having depended on
+            // a number. `Document.combineSolids` refuses the *gesture* on top of this, which is where the
+            // body has a name to be refused by.
+            openShellOf(sa)?.let { return@op EvalResult.Invalid(it) }
+            openShellOf(sb)?.let { return@op EvalResult.Invalid(it) }
             if (Geom3.sameAxis(sa.feature, sb.feature)) {
                 val (solid, why) = Geom3.boolean(kind, sa, sb)
                 if (solid == null) {
@@ -2179,6 +2189,19 @@ class Construction {
                 }
             }
         }
+
+    /**
+     * Why [solid] cannot be a boolean operand — an imported **open shell** — or null when it can.
+     *
+     * Reads the *feature*, not the mesh: the flag was derived once where the literal was built, so asking it
+     * here is a field read rather than a second pass over the triangles on every recompute.
+     */
+    private fun openShellOf(solid: Solid3): String? {
+        val f = solid.feature as? Feature3.Imported ?: return null
+        f.openShell ?: return null
+        return "an imported open shell cannot be a boolean operand — a boolean needs watertight solids " +
+            "(the body from ${f.source} is a surface that does not close)"
+    }
 
     // ---- imported bodies, and the placement that is generic over every solid (the JT import, OP-9) ----
 
@@ -2204,7 +2227,11 @@ class Construction {
         mesh: Mesh3,
         pose: Xform3 = Xform3.IDENTITY,
     ): SolidRef {
-        val value = SolidValue(Solid3(Feature3.Imported(source), mesh.movedBy(pose)))
+        val posed = mesh.movedBy(pose)
+        // the **open-shell flag**, derived here because here is where the literal's value is built: it is a
+        // pure function of these triangles, so a reload derives the same answer and no stored flag can drift
+        // from the geometry it describes (see [Feature3.Imported.openShell])
+        val value = SolidValue(Solid3(Feature3.Imported(source, openShell = Watertight.defect(posed)), posed))
         return op { EvalResult.Ok(value) }
     }
 
@@ -2259,7 +2286,7 @@ class Construction {
         plane: Plane3,
     ): Solid3 =
         when (val f = solid.feature) {
-            is Feature3.Imported -> Solid3(Feature3.Imported(f.source, Silhouette.of(solid.mesh, plane)), solid.mesh)
+            is Feature3.Imported -> Solid3(Feature3.Imported(f.source, Silhouette.of(solid.mesh, plane), f.openShell), solid.mesh)
             else -> solid
         }
 

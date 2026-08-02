@@ -146,7 +146,7 @@ class JtImportTest {
         val body = onlyBody(fresh)
         assertEquals("korpus", body.name, "one body, named by the naming authority (OP-18)")
         assertClose(Geom3.volume(body.mesh), volume, tol = 1.0, msg = "the same body, through float32 vertices")
-        assertNull(Imports.watertightDefect("korpus", body.mesh), "and it is a closed solid in the drawing too")
+        assertNull(Imports.openShellDefect(body.mesh), "and it is a closed solid in the drawing too")
 
         // Tier 1: the colour survives the linear/sRGB round trip, the roughness the Phong one, and
         // metalness is 0 — JT's limit, recorded on the writer and asserted here
@@ -485,6 +485,243 @@ class JtImportTest {
         assertTrue(span in 20.0..500.0, "the box is $span mm across — millimetres, unconverted")
     }
 
+    // ---- open shells: imported, flagged, and answered for by each consumer (the user's design) ----
+
+    /**
+     * A 100 × 100 × 40 plate with **one wall facet missing** — geometry that is "not ideal" rather than
+     * obviously not a solid — written to real JT bytes through the sibling's own writer.
+     */
+    private fun crackedPlateBytes(): ByteArray {
+        val ed = Editor()
+        ed.setTool(Tools.RECTANGLE)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(100.0, 100.0))
+        ed.activeScalar = ed.doc.newParameter("t", constructit.units.Quantity.mm(40.0))
+        ed.setTool(Tools.EXTRUDE)
+        ed.click(Vec2(50.0, 0.0))
+        val whole = ExportScene.extract(ed.doc, "plate").nodes.single().mesh
+        // a *side* facet: its three corners do not share one z, so the top face stays whole and the body
+        // still projects to its full square — a crack in a wall, which is what a real "not ideal" file has
+        val wall = whole.triangles.first { t -> setOf(whole.vertices[t.a].z, whole.vertices[t.b].z, whole.vertices[t.c].z).size > 1 }
+        val cracked = constructit.geom.Mesh3(whole.vertices, whole.triangles.filter { it !== wall })
+        assertNotNull(Imports.openShellDefect(cracked), "the fixture really is an open shell")
+        return constructit.exchange.Jt.write(
+            ExportScene("plate", listOf(constructit.exchange.ExportNode("rohteil", cracked, Appearance.DEFAULT))),
+        )
+    }
+
+    /**
+     * **An open shell imports.** It arrives, it is placed, it is drawn and pickable, it survives the file —
+     * and it is flagged, by name, in the one line the status bar shows. The reversal of the old
+     * watertight-or-refused gate at the import boundary, in the user's own framing: refusing it is right for
+     * printing and useless for re-engineering or arranging.
+     */
+    @Test
+    fun anOpenShellImportsPlacesDrawsAndSaysSo() {
+        val ed = Editor()
+        val result = ed.importFile(crackedPlateBytes(), "rohteil.jt")
+        assertTrue(result.ok, result.message)
+        assertEquals(listOf("rohteil"), result.bodies, "it came in like any other body")
+        assertEquals(emptyList(), result.refusals, "and it is not a refusal")
+        assertEquals(listOf("rohteil"), result.openShells, "it is flagged")
+        assertTrue(result.message.contains("rohteil is an open shell"), result.message)
+        assertTrue(result.message.contains("display and arrangement only"), result.message)
+
+        // it is a body of the drawing: visible, placed, measurable, and drawn with a plan of its own
+        val body = ExportScene.extract(ed.doc, "probe").nodes.single()
+        assertEquals("rohteil", body.name)
+        assertTrue(body.mesh.triangleCount > 0)
+        val placed = ed.doc.elements.last { it.kind == ElementKind.SOLID }
+
+        @Suppress("UNCHECKED_CAST")
+        val feature = Evaluator().solid(placed.ref as SolidRef).feature as constructit.geom.Feature3.Imported
+        assertNotNull(feature.openShell, "the flag rode the placement")
+        assertTrue(feature.plan.isNotEmpty(), "and the body has a plan, so it is drawn and pickable")
+        // the crack is in a wall, so what the body projects to is still its whole square
+        val outer = feature.plan.maxByOrNull { abs(areaOf(it)) }!!
+        assertClose(abs(areaOf(outer)), 100.0 * 100.0, 1e-6, "the plan is the square the plate occupies")
+
+        // the state is said wherever the element is named — the inspector header and the pick-cycle line
+        ed.setTool(Tools.SELECT)
+        ed.click(Vec2(50.0, 0.0))
+        assertTrue(ed.selectionLabel().contains("open shell"), "the panel says what it is: ${ed.selectionLabel()}")
+
+        // ...and it is pickable and draggable exactly like a closed one
+        val from = anchorAt(ed)
+        ed.drag(from, Vec2(from.x + 30.0, from.y + 10.0))
+        val moved = ExportScene.extract(ed.doc, "probe").nodes.single()
+        assertTrue(abs(anchorAt(ed).x - from.x) > 1.0, "the anchor moved")
+        assertClose(
+            centroid(moved.mesh).x,
+            centroid(body.mesh).x + (anchorAt(ed).x - from.x),
+            1e-6,
+            "and the body followed it",
+        )
+    }
+
+    /** The flag is **derived**, so a reload re-derives it from the same triangles — and the file is stable. */
+    @Test
+    fun theOpenShellFlagSurvivesAReloadBecauseItIsDerived() {
+        val ed = Editor()
+        assertTrue(ed.importFile(crackedPlateBytes(), "rohteil.jt").ok)
+        val text = DocumentFormat.save(ed.doc)
+        assertFalse(text.contains("shell"), "nothing about the flag is recorded — it is a function of the mesh")
+        val reloaded = DocumentFormat.load(text)
+        assertEquals(text, DocumentFormat.save(reloaded), "save → load → save is byte-equal")
+
+        @Suppress("UNCHECKED_CAST")
+        val feature =
+            Evaluator().solid(reloaded.elements.last { it.kind == ElementKind.SOLID }.ref as SolidRef)
+                .feature as constructit.geom.Feature3.Imported
+        assertNotNull(feature.openShell, "and the reloaded body says the same thing, from the same triangles")
+    }
+
+    /**
+     * **The two print formats refuse the whole export and name the body; hiding it exports the rest.**
+     * Printing is the one goal the user's own framing keeps the old rule for — a slicer needs an inside.
+     */
+    @Test
+    fun printingRefusesAnOpenShellByNameAndHidingItExportsTheRest() {
+        val ed = Editor()
+        assertTrue(ed.importFile(crackedPlateBytes(), "rohteil.jt").ok)
+        // a second, clean body beside it, so "the rest" is a real thing
+        ed.setTool(Tools.RECTANGLE)
+        ed.click(Vec2(200.0, 0.0))
+        ed.click(Vec2(240.0, 40.0))
+        ed.activeScalar = ed.doc.newParameter("d", constructit.units.Quantity.mm(10.0))
+        ed.setTool(Tools.EXTRUDE)
+        ed.click(Vec2(220.0, 0.0))
+        assertEquals(2, ExportScene.extract(ed.doc, "p").nodes.size)
+
+        for (format in listOf(ExportFormat.THREE_MF, ExportFormat.STL)) {
+            val out = Exports.export(ed.doc, "p", format)
+            assertFalse(out.ok, "${format.label} must refuse: ${out.message}")
+            assertTrue(out.message.contains("rohteil"), "by name: ${out.message}")
+            assertTrue(out.message.contains("open shell"), out.message)
+            assertTrue(out.message.contains("hide it"), "with the way out: ${out.message}")
+        }
+        // GLB and JT write it — with a note, because a file that quietly claims to be a solid is the surprise
+        for (format in listOf(ExportFormat.GLB, ExportFormat.JT)) {
+            val out = Exports.export(ed.doc, "p", format)
+            assertTrue(out.ok, "${format.label}: ${out.message}")
+            assertTrue(out.message.contains("rohteil is an open shell"), "with a note: ${out.message}")
+        }
+
+        // hide the shell, and both print formats export the rest
+        val shell = ed.doc.elements.first { ed.doc.userNameOf(it) == "rohteil" }
+        assertEquals(1, ed.doc.setElementsVisible(listOf(shell), false))
+        for (format in listOf(ExportFormat.THREE_MF, ExportFormat.STL)) {
+            val out = Exports.export(ed.doc, "p", format)
+            assertTrue(out.ok, "${format.label} after hiding: ${out.message}")
+            assertTrue(out.message.contains("1 solid"), out.message)
+            assertTrue(out.bytes!!.size > 100)
+        }
+    }
+
+    /**
+     * **A boolean refuses an open shell, by name** — a boolean asks what is *inside* each solid, and a
+     * surface that does not close has no inside. The gesture says so and builds nothing.
+     */
+    @Test
+    fun aBooleanAgainstAnOpenShellRefusesByName() {
+        val ed = Editor()
+        assertTrue(ed.importFile(crackedPlateBytes(), "rohteil.jt").ok)
+        ed.setTool(Tools.RECTANGLE)
+        ed.click(Vec2(80.0, 80.0))
+        ed.click(Vec2(140.0, 140.0))
+        ed.activeScalar = ed.doc.newParameter("d", constructit.units.Quantity.mm(10.0))
+        ed.setTool(Tools.EXTRUDE)
+        ed.click(Vec2(110.0, 80.0))
+        val before = ed.doc.elements.count { it.kind == ElementKind.SOLID }
+
+        ed.setTool(Tools.SUBTRACT)
+        ed.click(Vec2(50.0, 0.0)) // the open shell
+        ed.click(Vec2(110.0, 140.0)) // the clean block
+        assertEquals(before, ed.doc.elements.count { it.kind == ElementKind.SOLID }, "nothing was built")
+        assertTrue(ed.statusHint.contains("open shell"), "and the gesture said why: ${ed.statusHint}")
+        assertTrue(ed.statusHint.contains("rohteil"), "by name: ${ed.statusHint}")
+        assertTrue(ed.statusHint.contains("watertight"), ed.statusHint)
+
+        // the node refuses too, so a route that skips the gesture cannot build a silently wrong boolean
+        @Suppress("UNCHECKED_CAST")
+        val shell = ed.doc.elements.last { it.kind == ElementKind.SOLID && ed.doc.userNameOf(it) == "rohteil" }.ref as SolidRef
+
+        @Suppress("UNCHECKED_CAST")
+        val block = ed.doc.elements.last { it.kind == ElementKind.SOLID }.ref as SolidRef
+        val direct = ed.doc.cx.subtract(shell, block)
+        val result = Evaluator().eval(direct.node)
+        assertTrue(result is constructit.core.EvalResult.Invalid, "the node is invalid, not silently wrong")
+        assertTrue((result as constructit.core.EvalResult.Invalid).reason.contains("open shell"), result.reason)
+    }
+
+    /**
+     * **An outline that cannot close is said by being open.** The chains a silhouette walks close for every
+     * consistently-wound mesh, shell or solid — the boundary of a chain is a cycle. What breaks that is an
+     * **inconsistently wound** mesh, and there the run is drawn as the polyline it traced rather than
+     * discarded: an outline silently missing part of a body is the one outcome forbidden.
+     */
+    @Test
+    fun anInconsistentlyWoundMeshDrawsOpenChainsRatherThanNothing() {
+        val plane =
+            constructit.geom.Plane3(
+                constructit.geom.Vec3(0.0, 0.0, 0.0),
+                constructit.geom.Vec3(1.0, 0.0, 0.0),
+                constructit.geom.Vec3(0.0, 1.0, 0.0),
+            )
+        // two triangles of one square, the second wound the same way round its shared edge as the first —
+        // so that edge is claimed twice in the same direction and the outline no longer balances
+        val v =
+            listOf(
+                constructit.geom.Vec3(0.0, 0.0, 0.0),
+                constructit.geom.Vec3(10.0, 0.0, 0.0),
+                constructit.geom.Vec3(10.0, 10.0, 0.0),
+                constructit.geom.Vec3(0.0, 10.0, 0.0),
+            )
+        val mesh =
+            constructit.geom.Mesh3(
+                v,
+                listOf(constructit.geom.Tri(0, 1, 2), constructit.geom.Tri(0, 2, 3), constructit.geom.Tri(0, 2, 1)),
+            )
+        val plan = constructit.geom.Silhouette.of(mesh, plane)
+        assertTrue(plan.isNotEmpty(), "never silently empty")
+        assertTrue(plan.all { it.outer.elements.isNotEmpty() }, "and never an empty chain")
+        // an open chain has one fewer segment than it has corners; a closed ring has as many as it has
+        val pieces = plan.sumOf { it.outer.elements.size }
+        assertTrue(pieces > 0, "the outline it could trace is drawn: $pieces pieces")
+        // the whole thing is finite and deterministic — the same mesh twice is the same outline
+        assertEquals(
+            constructit.geom.Silhouette.of(mesh, plane).map { r -> r.outer.elements.size },
+            plan.map { r -> r.outer.elements.size },
+        )
+    }
+
+    /**
+     * **An open shell draws its section context like any other imported body.** A working plane's context is
+     * every ancestor solid's section (GitHub #9), and an imported body's section takes the *mesh* route — one
+     * segment per cut triangle, chained nowhere — so an open shell needs no case of its own: what it cuts to
+     * is simply the segments it has. Its inputs are refused for the reason every imported body's are.
+     */
+    @Test
+    fun anOpenShellStillDrawsItsSectionContextAndOffersNoInputs() {
+        val ed = Editor()
+        assertTrue(ed.importFile(crackedPlateBytes(), "rohteil.jt").ok)
+        // a datum plane across the body, hinged on a segment drawn beside it
+        ed.setTool(Tools.SEGMENT)
+        ed.click(Vec2(-20.0, 50.0))
+        ed.click(Vec2(120.0, 50.0))
+        ed.setTool(Tools.SKETCH_PLANE)
+        ed.type("90")
+        ed.click(Vec2(50.0, 50.0))
+        val space = ed.doc.activeSpace
+        assertTrue(space.isDatum, "a datum plane was opened")
+        val sections = ed.doc.spaceSections(space, Evaluator())
+        val ours = sections.firstOrNull { ed.doc.userNameOf(it.first) == "rohteil" }
+        assertNotNull(ours, "the open shell is an ancestor and it is cut: ${sections.size} section(s)")
+        assertTrue(ours.second.drawn.isNotEmpty(), "and it draws — the mesh route needs no closed surface")
+        assertTrue(ours.second.edges.isEmpty(), "...while offering no construction inputs, as every import does")
+        assertNotNull(ours.second.inputsRefusal, "with the reason named: ${ours.second.inputsRefusal}")
+    }
+
     // ---- the refusals, and that they speak ----
 
     /** Bytes that are not a JT file at all: refused, with what the reader had to say about them. */
@@ -543,13 +780,15 @@ class JtImportTest {
     }
 
     /**
-     * **A body that is not a closed solid is refused by name, and the rest of the file still imports** — the
-     * same watertight-or-refused gate every constructed solid passes (OP-9), applied at the boundary.
+     * **A mixed file: the closed body and the open shell both come in, and only the shell is flagged** —
+     * the reversal of the old watertight-or-refused gate at the import boundary (the user's design,
+     * session 34). Every body of a file is in the drawing; what an open one *cannot do* is the consumers'
+     * business, and each of them says so in its own words.
      */
     @Test
-    fun anOpenBodyIsRefusedByNameAndTheRestStillComesIn() {
+    fun anOpenShellComesInFlaggedBesideTheClosedBodiesOfTheSameFile() {
         val ed = Editor()
-        val open = SceneNode("lid", JtMat4.IDENTITY, listOf(openSquare()), emptyList(), null, emptyList())
+        val open = SceneNode("lid", JtMat4.IDENTITY, listOf(openBox()), emptyList(), null, emptyList())
         val closed = SceneNode("cube", JtMat4.IDENTITY, listOf(cubeMesh()), emptyList(), null, emptyList())
         val scene =
             Scene(
@@ -559,11 +798,18 @@ class JtImportTest {
             )
         val result = Imports.importScene(ed.doc, scene, "half.jt")
         assertTrue(result.ok, result.message)
-        assertEquals(listOf("cube"), result.bodies, "the closed body came in")
-        assertEquals(1, result.refusals.size, result.refusals.toString())
-        assertTrue(result.refusals.single().startsWith("lid — "), "refused **by name**: ${result.refusals.single()}")
-        assertTrue(result.refusals.single().contains("not a closed solid"), result.refusals.single())
-        assertTrue(result.message.contains("lid"), "and the status line says so: ${result.message}")
+        assertEquals(listOf("lid", "cube"), result.bodies, "both bodies came in, in file order")
+        assertEquals(emptyList(), result.refusals, "an open shell is no longer a refusal")
+        assertEquals(listOf("lid"), result.openShells, "and only the open one is flagged")
+        assertTrue(result.message.contains("lid is an open shell"), "the message names it: ${result.message}")
+        assertTrue(result.message.contains("3MF/STL"), "...and says what it cannot do: ${result.message}")
+
+        // both are in the drawing, both are drawn and pickable, and each answers for itself
+        val bodies = ExportScene.extract(ed.doc, "probe").nodes
+        assertEquals(listOf("lid", "cube"), bodies.map { it.name })
+        assertTrue(bodies.all { it.mesh.triangleCount > 0 })
+        assertNotNull(Imports.openShellDefect(bodies[0].mesh), "the lid is a shell")
+        assertNull(Imports.openShellDefect(bodies[1].mesh), "the cube is a solid")
     }
 
     /** A wireframe-only part is skipped and named — never silently dropped. */
@@ -722,7 +968,16 @@ class JtImportTest {
         return Mesh(p, emptyList(), faces.map { Mesh.Triangle(it[0], it[1], it[2], -1, -1, -1) })
     }
 
-    /** A single square: closed nowhere, so the watertight gate must refuse it. */
+    /**
+     * A 1×1×1 box with **one triangle missing** — the shape the user's case is about: geometry that is
+     * "not ideal", a real body with a hole in its surface, rather than a scrap that is obviously not a solid.
+     */
+    private fun openBox(): Mesh {
+        val whole = cubeMesh()
+        return Mesh(whole.positions, whole.normals, whole.triangles.drop(1))
+    }
+
+    /** A single square: a surface with a boundary all the way round — the simplest open shell there is. */
     private fun openSquare(): Mesh {
         val p = listOf(Vec3(0f, 0f, 0f), Vec3(1f, 0f, 0f), Vec3(1f, 1f, 0f), Vec3(0f, 1f, 0f))
         return Mesh(p, emptyList(), listOf(Mesh.Triangle(0, 1, 2, -1, -1, -1), Mesh.Triangle(0, 2, 3, -1, -1, -1)))

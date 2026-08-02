@@ -1,6 +1,5 @@
 package constructit.exchange
 
-import constructit.editor.Appearance
 import constructit.editor.Document
 import constructit.editor.Element
 import constructit.editor.Picks
@@ -8,6 +7,7 @@ import constructit.editor.Tools
 import constructit.geom.Mesh3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.geom.Watertight
 import constructit.geom.Xform3
 import constructit.units.Quantity
 import de.haumacher.kotlinjt.scene.LodPolicy
@@ -41,8 +41,16 @@ class ImportResult(
     val fileName: String,
     /** The bodies that became elements of the drawing, in file order, under the names they took. */
     val bodies: List<String>,
-    /** Bodies the drawing would not take, each with the reason — the watertight gate, above all. */
+    /** Bodies the drawing would not take, each with the reason. */
     val refusals: List<String>,
+    /**
+     * The bodies that came in as **open shells**, by name — surfaces that do not close.
+     *
+     * Not refusals: they display, they place, they measure and they export to GLB and JT. They are listed
+     * separately because what they cannot do — print, and be a boolean operand — is worth knowing *before*
+     * the tool that needs it says no.
+     */
+    val openShells: List<String> = emptyList(),
     /** Everything else worth reading: the library's own notes, wireframe parts skipped, poses baked. */
     val notes: List<String>,
     val message: String,
@@ -75,13 +83,22 @@ class ImportResult(
  * - A file with **no declared unit** — the whole file, because a length with no unit is not a length. (A
  *   "state the unit" prompt is the friendlier answer and is a recorded refinement, not a default: a
  *   *default* would be this importer inventing a scale.)
- * - A body that is **not watertight** — the same gate every constructed solid passes (OP-9's
- *   watertight-or-refused doctrine, checked through [ThreeMf]'s production twin of `assertManifold`). The
- *   rest of the file still imports, and the refusal names the body.
  * - **Bytes that are not a JT file at all**, with whatever the reader says about them.
  *
- * Nothing is repaired. A mesh this import would have to mend to accept is a mesh whose geometry it does not
- * understand, and OP-9's whole guarantee is that no such thing gets in.
+ * **And what is *flagged* rather than refused: an open shell.** A body whose surface does not close used to
+ * be refused here, by the same watertight gate every constructed solid passes. That is **reversed**, on the
+ * user's design and in the user's own words: refusing it "is necessary if the goal is printing, but it is
+ * useless when the goal is re-engineering an imported geometry — and too restrictive, if the goal is only
+ * arranging and displaying". So the body imports, places, draws and measures like any other, and carries a
+ * **flag derived from its own triangles** ([constructit.geom.Feature3.Imported.openShell]) that the
+ * consumers who need an inside answer for themselves: the two **print** writers refuse the whole export and
+ * name it, every **boolean** refuses it and names it, GLB and JT write it with a note. The flag is named in
+ * this result, per body, because "it came in but it is a shell" is the one thing a user must not have to
+ * discover from a later refusal.
+ *
+ * Nothing is repaired, and nothing is measured against a tolerance: what is not closed is said to be not
+ * closed. **The kernel's own doctrine is untouched** — everything ConstructIt *constructs* is watertight by
+ * construction (OP-9), and this is only about geometry that came from outside.
  */
 object Imports {
     /**
@@ -136,30 +153,49 @@ object Imports {
         val offered = JtImport.bodies(scene, mmPerUnit)
         val names = ArrayList<String>()
         val refusals = ArrayList<String>()
+        val shells = ArrayList<String>()
+        val literals = ArrayList<Element>()
         val notes = ArrayList<String>(offered.notes)
         for (body in offered.bodies) {
             body.note?.let { notes.add(it) }
-            val defect = watertightDefect(body.name, body.mesh)
-            if (defect != null) {
-                refusals.add("${body.name} — $defect")
-                continue
-            }
-            names.add(place(doc, fileName, body))
+            // an **open shell** is imported like any other body and flagged; the name it actually took is
+            // what the message and the panel speak, so it is read back from the placement
+            val (took, literal) = place(doc, fileName, body)
+            names.add(took)
+            literals.add(literal)
+            if (Watertight.defect(body.mesh) != null) shells.add(took)
         }
+        // **The raw literals are hidden, in one recorded step.** A literal is the file's content in the
+        // file's own coordinates — the placement riding it is the body of the drawing — so it draws nothing
+        // and is nobody's output. While its placement is visible the export seam already skips it as that
+        // placement's material; hiding it says the same thing when the placement is *not* visible, which is
+        // what makes "hide the body" actually remove the body (and, for an open shell, what makes "hide it to
+        // export the rest" true). One step for the whole import, recorded like any other visibility decision
+        // (OP-18), so it survives save and undo — and `Show` takes it back.
+        if (literals.isNotEmpty()) doc.setElementsVisible(literals, false)
         if (names.isEmpty()) {
             val why = (refusals + notes).ifEmpty { listOf("it holds no triangle geometry") }
             return refused(format, fileName, "nothing imported from $fileName: " + why.joinToString("; "))
         }
         val what = "${names.size} bod${if (names.size == 1) "y" else "ies"}"
+        // stated **first** after the count, because it changes what the body can be used for
+        val open =
+            if (shells.isEmpty()) {
+                ""
+            } else {
+                " — ${shells.joinToString(", ")} ${if (shells.size == 1) "is an open shell" else "are open shells"}: " +
+                    "display and arrangement only, excluded from 3MF/STL and from booleans"
+            }
         val bad = if (refusals.isEmpty()) "" else " (${refusals.size} refused: ${refusals.joinToString("; ")})"
         val rest = if (notes.isEmpty()) "" else " (${notes.joinToString("; ")})"
         return ImportResult(
-            format,
-            fileName,
-            names,
-            refusals,
-            notes,
-            "Imported $what from $fileName$bad$rest",
+            format = format,
+            fileName = fileName,
+            bodies = names,
+            refusals = refusals,
+            openShells = shells,
+            notes = notes,
+            message = "Imported $what from $fileName$open$bad$rest",
         )
     }
 
@@ -167,11 +203,22 @@ object Imports {
         format: ImportFormat,
         fileName: String,
         why: String,
-    ): ImportResult = ImportResult(format, fileName, emptyList(), emptyList(), emptyList(), why, why)
+    ): ImportResult =
+        ImportResult(
+            format = format,
+            fileName = fileName,
+            bodies = emptyList(),
+            refusals = emptyList(),
+            openShells = emptyList(),
+            notes = emptyList(),
+            message = why,
+            refusal = why,
+        )
 
     /**
      * One body, as the steps a person could have made: the literal, the anchor point, the angle parameter,
-     * the placement, the name and the material. Returns the name the body actually took.
+     * the placement, the name and the material. Returns the name the body actually took, and the literal
+     * element the placement rides (which the caller hides — see [importScene]).
      *
      * The placement is recorded through [Document.recordingTool] — i.e. as an ordinary `tool placesolid`
      * step — so the import needs no step kind of its own for it and a body placed by an import is
@@ -182,7 +229,7 @@ object Imports {
         doc: Document,
         fileName: String,
         body: JtImport.JtBody,
-    ): String {
+    ): Pair<String, Element> {
         val (at, angle, residual) = anchorOf(body.pose)
         val literal = doc.importBody(fileName, body.mesh, residual)
         val anchor = doc.freePoint(Quantity.mm(at.x), Quantity.mm(at.y))
@@ -191,12 +238,12 @@ object Imports {
         val placed: Element =
             doc.recordingTool(Tools.PLACE_SOLID, picks, listOf(turn)) {
                 doc.placeSolid(literal, anchor, turn.ref)
-            } ?: return body.name
+            } ?: return body.name to literal
         // the naming authority (OP-18): the file's name for the body is a *decision about the drawing*, so
         // it goes through the same route a rename does and is uniquified the same way
         val took = doc.nameElement(placed, body.name) ?: body.name
         body.material?.let { doc.setMaterial(placed, it) }
-        return took.ifEmpty { body.name }
+        return took.ifEmpty { body.name } to literal
     }
 
     /**
@@ -242,19 +289,13 @@ object Imports {
     private const val AXIS_TOL = 1e-6
 
     /**
-     * Why [mesh] is not a closed solid, or null when it is — **the same gate every constructed solid
-     * passes**, reached through its one production implementation ([ThreeMf.check], the twin of the test
-     * suite's `assertManifold`): every directed edge used exactly once with its reverse used exactly once,
-     * and a positive enclosed volume.
+     * Why [mesh] is an **open shell** — a surface that does not close, or does not close consistently — or
+     * null when it is a closed solid.
      *
-     * Asked through a one-body scene because that is the shape that check takes; its message names the body
-     * in printing terms, and the prefix is traded for import ones so a refusal reads as what it is.
+     * One question, one implementation ([constructit.geom.Watertight]), three consumers: this, the two print
+     * writers, and the literal's own derived flag. Kept as a named entry point here because *the import* is
+     * where a user meets the answer first, and because it is the pure function the flag is derived from —
+     * asking it of a mesh and asking it of a body must never be two different questions.
      */
-    fun watertightDefect(
-        name: String,
-        mesh: Mesh3,
-    ): String? {
-        val why = ThreeMf.check(ExportScene(name, listOf(ExportNode(name, mesh, Appearance.DEFAULT)))) ?: return null
-        return "not a closed solid, so it is not imported: " + why.removePrefix("$name cannot be printed: ")
-    }
+    fun openShellDefect(mesh: Mesh3): String? = Watertight.defect(mesh)
 }

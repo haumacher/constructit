@@ -5372,11 +5372,13 @@ extension, named rather than half-built.
   bytes, and that is not a shortcut: the sibling library's **writer** refuses to write a file with
   `LengthUnit.UNSPECIFIED` — the same rule from the other side — so there is no way to produce such bytes with
   this toolchain at all.)
-- **A body that is not watertight** — the same gate every constructed solid passes, reached through its one
-  production implementation (`ThreeMf.check`, the twin of the suite's `assertManifold`): every directed edge
-  used once with its reverse used once, and a positive enclosed volume. The **rest of the file still imports**,
-  and the refusal names the body. Nothing is repaired: a mesh this import would have to mend to accept is a mesh
-  whose geometry it does not understand, and OP-9's whole guarantee is that no such thing gets in.
+- ~~**A body that is not watertight**~~ — **reversed in session 34, on the user's design; see *An open shell
+  is a body, not a refusal* below.** What it said, quoted so the reversal is legible: *"the same gate every
+  constructed solid passes, reached through its one production implementation (`ThreeMf.check`, the twin of
+  the suite's `assertManifold`) … the **rest of the file still imports**, and the refusal names the body.
+  Nothing is repaired: a mesh this import would have to mend to accept is a mesh whose geometry it does not
+  understand, and OP-9's whole guarantee is that no such thing gets in."* The gate is still exactly that
+  check and nothing is repaired now either — what changed is **who** asks it, and when.
 - **Bytes that are not a JT file** (garbage, a truncation) — with whatever the reader says about them, and
   nothing left behind in the drawing.
 - **A transform that is not a placement** (a scale, a shear, a mirror) — not refused but **baked**, into that
@@ -5387,6 +5389,94 @@ extension, named rather than half-built.
   and **named**, never silently dropped, the same rule the export's notes follow.
 - The **library's own notes** ride into the result unchanged: what it could not represent faithfully is what
   this import could not either.
+
+### An open shell is a body, not a refusal (session 34 — the user's design, reversing the import gate)
+
+**The reversal, and whose it is.** The import used to apply OP-9's *watertight-or-refused* gate at the file
+boundary: a body whose surface did not close was refused by name and did not come in. The user overruled it,
+and the reason is theirs, quoted because it is the whole argument:
+
+> "Currently the JT import complains about 'not a closed solid' if something is 'not ideal' in the imported
+> geometry and imports nothing. That's necessary if the goal is printing, but it is useless, when the goal is
+> re-engineering an imported geometry — and too restrictive, if the goal is only arranging and displaying.
+> Can we instead flag an 'invalid' geometry as such and reject 3MF/STL export if such geometry is part of the
+> construction?"
+
+That is right, and the reason the first cut got it wrong is worth naming: **the gate was applied where the
+data arrives rather than where the requirement lives.** Watertightness is not a property a drawing needs; it
+is a property *printing* needs, and *booleans* need. Everything else a reference body is for — look at it,
+put it where it belongs, measure it, draw against it, hand it on to another CAD system — needs nothing of the
+kind. So the gate moves to its consumers, each of which now answers for itself.
+
+**The flag: derived, never recorded, and not called "invalid".** `Feature3.Imported` gains `openShell` — the
+reason a body's surface does not close, or null. It is computed **where the literal's value is built**
+(`Construction.importedSolid`) as a pure function of the very triangles the step carries, so a reload derives
+the same answer from the same mesh and there is nothing stored that could drift from the geometry it
+describes; the file gains no field and no version bump. A rigid placement carries it through unchanged,
+because a motion cannot open or close a surface. The word is deliberately **not** *invalid*: OP-3's invalid
+means a node has **no value**, and this body has one — it displays, places, measures and exports. *Open
+shell* says what is true.
+
+**The manifold check now has one home and three consumers.** It moved out of the 3MF writer into
+`geom/Watertight.kt`, where the mesh is: the same structural test as ever (every directed edge used exactly
+once with its reverse used exactly once — closed *and* consistently oriented in one statement — plus a
+positive enclosed volume), with no tolerance and no repair. 3MF asks it, STL asks it, and the imported
+literal asks it once to derive its flag. One question, one implementation, so the three can never disagree
+about what a solid is.
+
+**Each consumer answers for itself, and each says why.**
+- **The two print writers refuse the whole export**, naming the body *and the way out*: *"e5 is an open shell,
+  so it cannot be printed (…) — hide it to export the rest."* The whole export rather than the body, because a
+  print file quietly missing a part is discovered on the print bed. **STL gained the check it never had** —
+  it had none while every body in a drawing was watertight by construction, and printing is exactly what the
+  user names as the case that must keep the old rule.
+- **GLB and JT write it, with a note** on the result. Refusing would be the wrong answer for a viewing and an
+  interchange format; writing it *silently* would be the wrong answer too, because the file then claims to be
+  a solid to a reader who cannot tell. Silence still means every body in the file is closed.
+- **Every boolean refuses it, twice, and the two refusals do different jobs.** A boolean asks what is
+  *inside* each solid, and a surface that does not close has no inside, so any answer would be a guess dressed
+  as a result. The **node** refuses at eval time (`Construction.booleanOf` → `EvalResult.Invalid`), which is
+  where doctrine puts it: the flag is a property of a **value**, and OP-21's rule is structure at build time,
+  values inside `compute` — this is also what protects any route to a boolean that does not come through the
+  document. The **gesture** refuses eagerly (`Document.combineSolids`, and *Cut*, which is a subtract), with
+  the body's **name** in the message, so nothing dead is built for the user to find and delete. Refusing a
+  gesture on a value is normally forbidden because replay could then come back different; it is safe here for
+  a stated reason — the flag is a pure function of a **frozen literal**, so no recorded step can have been
+  written while it said yes and replayed while it says no.
+- **The plan silhouette needed nothing**, and that is a result rather than luck. `Silhouette` keeps the edges
+  of the front-facing set that no front-facing partner claims, and the boundary of a chain is a **cycle** — so
+  an open shell still yields **closed** loops, and what changes is only *which* loops, because the shell's own
+  rim joins the outline wherever it borders front-facing material. What genuinely cannot close is a mesh that
+  is **inconsistently wound** or non-manifold, where one directed edge is claimed twice and the count no
+  longer balances; a run that dead-ends is now returned as the **open chain** it traced, drawn and picked as
+  the polyline it is (the three consumers of a plan assume no closure), instead of being discarded. Nothing is
+  mended and nothing is silently emptied — an outline that cannot close is said by being open.
+- **Section context needed nothing either**, and the assessment is worth recording because it could have gone
+  the other way: a working plane's context is every ancestor solid's section (GitHub #9), and an imported
+  body's section takes the **mesh route** — one segment per cut triangle, chained nowhere, offering no inputs
+  with the reason named. That route makes no closure assumption at all, so an open shell's section is simply
+  the segments it has. It draws, it offers no inputs, and it needed no case of its own. (What it does *not*
+  do is offer construction inputs, which is every imported body's limit and not this one's.)
+
+**Where the state is said.** `Document.stateOf` is one channel, and `Editor.elementLabel` puts it into the two
+sentences a user actually reads about a selection — the inspector's header and the pick-cycle's status line —
+so a body says *"solid rohteil — open shell (display and arrangement only)"* wherever it is named. No badge,
+no new chrome: a state a user must know about before reaching for a boolean or a print export belongs in the
+sentence that names the thing. The **import's own result** says it first and per body, ahead of the
+counts, because "it came in but it is a shell" is the one thing nobody should discover from a later refusal.
+
+**One thing this fixed on the way, and it was a defect of the first cut.** An import's raw **literal** is now
+**hidden**, in one recorded step per import. The literal is the file's content in the file's own coordinates —
+the placement riding it is the body of the drawing — so it draws nothing and is nobody's output; while its
+placement was visible the export seam skipped it as that placement's material, but hiding the placement made
+the literal surface as an exported body of its own. Which meant *"hide it to export the rest"* was not true.
+It is now, and `Show` takes the decision back like any other.
+
+**What this is not: a change of kernel policy.** OP-9's *watertight-or-refused* doctrine for **constructed**
+solids stands untouched, in every word. Everything this kernel builds is watertight by construction, the suite
+still asserts it on every solid it makes, and `Feature3.Imported.openShell` can only ever be non-null on
+geometry that came from outside. The reversal is about what a *reference body* is allowed to be, not about
+what the modeller is allowed to produce.
 
 **Two adapter decisions worth stating.** *Positions are welded by exact equality* — JT indexes positions and
 normals separately, and a writer that emits one vertex per (position, normal) pair (which is what `RenderMesh`
@@ -5466,7 +5556,7 @@ behind a dynamically imported Kotlin module. It is not a complaint at 1.03 MB fo
 fetches a 541 KB WASM kernel and a 684 KB three.js chunk, and paying it is what makes *reading a CAD
 interchange file* a thing the browser build can do at all.
 
-**Acceptance (`JtImportTest`, 21 tests, plus a new SVG golden).** The loop closes both ways. A drilled,
+**Acceptance (`JtImportTest`, 27 tests, plus a new SVG golden).** The loop closes both ways. A drilled,
 renamed, copper-dressed plate exported to JT and imported into a **fresh** drawing: the same volume recomputed from the triangles that made
 the trip, the name through the naming authority, the Tier-1 colour and roughness round-tripped, and metalness
 back as **0** — the export's own recorded loss, asserted from the other side. The committed **Siemens NX
@@ -5477,11 +5567,33 @@ bit-identical after the reload. Placement: an imported body follows its dragged 
 with its volume unchanged, and a **constructed** solid places identically and keeps its analytic feature. The
 five refusals each speak. An import is one undo. An imported body goes out again through all four writers,
 including 3MF, which re-checks the mesh manifold before writing a byte. The browser E2E exports a JT and feeds
-it straight back to `#x-import-file`, so the round trip is proved in real Chrome as well. The plan: an
+it straight back to `#x-import-file`, so the round trip is proved in real Chrome as well. The **open shell**
+(session 34): a plate with one wall facet cut out, written to real JT bytes through the sibling's own writer,
+imports flagged and visible and placed, drags by its anchor, draws the full square it still projects to, says
+what it is in the inspector's own sentence, survives `save → load → save` byte-equal with the flag **derived
+again** from the same triangles (nothing about it is in the file); 3MF and STL refuse the whole export by name
+and with the way out while GLB and JT write it with a note, and hiding it exports the rest; a boolean against
+it refuses in the gesture *and* in the node; a mixed file brings both bodies in and flags only the open one; an
+**inconsistently wound** mesh comes out as open chains rather than as nothing; and a flagged body still draws
+its section context on a datum plane while offering no inputs. The plan: an
 imported plate's outline is the square it occupies in four segments with its through-bore as a second loop,
 it is **drawn** (a golden), it fills a `SOLID` slot **by clicking** — a boolean between an imported body and
 a constructed one, and a re-placement of an imported body, both driven by clicks — and its anchor point
 still outranks it in the pick cycle.
+
+**The probe review (`OpenShellProbeTest`, 3 tests), which composes the flag with what was already there.**
+Three claims of the note above that nothing else asked. A **JT round trip**: the shell goes out through the
+writer with its note and comes back into a drawing that knows nothing of the first, where the reader derives
+the same flag from the same triangle count and printing refuses it again from the far side — the flag is a
+fact about a mesh, not something the importer remembers about a file, and two independent passes have to
+agree. The **hide across a save**: the import's hide of its raw literal is what makes *"hide it to export the
+rest"* true, and the only moment it does any work is when the placement is hidden — so the recorded step,
+not the runtime state, is what is under test, and a reloaded drawing whose body is then hidden exports the
+rest with the literal staying down (and `Show` brings the body back to a refusal). And the **silhouette of a
+hole that faces the plan**: the delivery's fixture cracks a *wall*, where the projection is unchanged and the
+outline has nothing to prove, so the probe takes out half the **top** face instead — the answer is the
+triangle that still projects, one **closed** loop of exactly half the area, drawn, flagged and pickable,
+which is the "boundary of a chain is a cycle" argument paid out rather than asserted.
 
 **What stays out, stated so it is not looked for.** A **"state the unit" prompt** for a unit-less file (the
 refusal is the shipped answer). A **per-body LOD choice** — the finest tier is taken and the others are

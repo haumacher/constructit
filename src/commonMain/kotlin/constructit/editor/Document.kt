@@ -8139,6 +8139,11 @@ class Document {
     ): Element? {
         val on = activeSpace.plane ?: return null
         if (part.kind != ElementKind.SOLID) return null
+        // a *Cut* is a subtract, so the operand rule is the boolean's (see [openShellRefusal])
+        openShellRefusal(part)?.let {
+            note = it
+            return null
+        }
         val region = regionOf(el) ?: return null
         val tool = add(cx.extrude(cx.sketchBehind(on, region), depth), ElementKind.SOLID, Styles.SOLID)
         return add(cx.subtract(part.ref as SolidRef, tool.ref as SolidRef), ElementKind.SOLID, Styles.SOLID)
@@ -8524,6 +8529,14 @@ class Document {
             note = "${nameOf(a)} cannot be combined with itself — click two different solids"
             return null
         }
+        openShellRefusal(a)?.let {
+            note = it
+            return null
+        }
+        openShellRefusal(b)?.let {
+            note = it
+            return null
+        }
         val ra = a.ref as SolidRef
         val rb = b.ref as SolidRef
         val ref =
@@ -8540,6 +8553,43 @@ class Document {
             }
         return add(ref, ElementKind.SOLID, Styles.SOLID)
             .also { madeSolid(it, "${nameOf(a)} $word ${nameOf(b)}") }
+    }
+
+    /**
+     * The **state** [el] is in, in the words a status line uses — or null when there is nothing to say.
+     *
+     * One channel, so a state a user must know about is said wherever the element is named ([Editor]'s
+     * inspector header and pick-cycle line both ask this) rather than needing a badge of its own. Today it
+     * has exactly one answer: an imported body that came in as an **open shell**, which decides what that
+     * body can be used for (no boolean, no 3MF, no STL — everything else unchanged).
+     */
+    fun stateOf(
+        el: Element,
+        ev: Evaluator = Evaluator(),
+    ): String? {
+        val f = (ev.valueOf(el.ref) as? SolidValue)?.solid?.feature as? Feature3.Imported ?: return null
+        return if (f.openShell == null) null else "open shell (display and arrangement only)"
+    }
+
+    /**
+     * Why [el] cannot be a boolean operand — it is an imported **open shell** — or null when it can.
+     *
+     * The *gesture's* half of a refusal the node also makes (`Construction.booleanOf` returns invalidity for
+     * the same reason). Both exist, and each does a job the other cannot: the node's refusal is the doctrinal
+     * one — the flag is a property of a **value**, so it belongs inside `compute` (OP-21), and it is what
+     * protects any route to a boolean that does not come through here — while this one refuses the *click*,
+     * with the body's **name** in it, before a dead element is built for the user to find and delete.
+     *
+     * Refusing a gesture on a value is normally forbidden, because a step whose replay depends on a value can
+     * come back different. It is safe here for a stated reason: the flag is a pure function of a **frozen
+     * literal** ([constructit.geom.Feature3.Imported.openShell]) — the triangles the step itself carries — so
+     * no recorded step can ever have been written while this said yes and replay it while it says no.
+     */
+    private fun openShellRefusal(el: Element): String? {
+        val f = (Evaluator().valueOf(el.ref) as? SolidValue)?.solid?.feature as? Feature3.Imported ?: return null
+        f.openShell ?: return null
+        return "${nameOf(el)} is an open shell — a boolean needs watertight operands. It came in that way " +
+            "from ${f.source}; it still displays, places and exports (but not to 3MF or STL)."
     }
 
     /**

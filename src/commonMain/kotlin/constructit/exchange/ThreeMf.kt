@@ -1,7 +1,6 @@
 package constructit.exchange
 
-import constructit.geom.Geom3
-import constructit.geom.Mesh3
+import constructit.geom.Watertight
 
 /**
  * **3MF — the printing half, done honestly.** Core spec only: an OPC (ZIP) container with three parts, one
@@ -27,41 +26,24 @@ object ThreeMf {
     const val RELS_CONTENT_TYPE = "application/vnd.openxmlformats-package.relationships+xml"
 
     /**
-     * Why [scene] cannot be written as a 3MF, naming the body at fault — or null when it can.
+     * Why [scene] cannot be written as a 3MF, **naming the body at fault and the way out** — or null when it
+     * can.
      *
-     * The check is `assertManifold`'s, structurally: every directed edge used exactly once with its reverse
-     * used exactly once (closed *and* consistently oriented, in one statement) and a positive enclosed volume
-     * (so the consistent orientation is the outward one, which is the direction 3MF defines).
+     * The question is [Watertight.defect]'s, which is where it now lives: printing is no longer the only
+     * consumer that has to ask, because an imported reference body may legitimately be an **open shell**
+     * (see the JT import note under OP-9) and is then flagged rather than refused. Printing is the consumer
+     * that cannot take one — a slicer needs a solid to know what is inside — so this is where the refusal
+     * is, and the message says what to do about it rather than only what is wrong: **hide** the body and the
+     * rest of the drawing exports.
+     *
+     * The whole export is refused rather than the body skipped, deliberately: a print file quietly missing a
+     * part is the kind of surprise that is discovered on the print bed.
      */
     fun check(scene: ExportScene): String? {
         for (n in scene.nodes) {
-            val why = defect(n.mesh) ?: continue
-            return "${n.name} cannot be printed: $why"
+            val why = Watertight.defect(n.mesh) ?: continue
+            return "${n.name} is an open shell, so it cannot be printed ($why) — hide it to export the rest"
         }
-        return null
-    }
-
-    private fun defect(mesh: Mesh3): String? {
-        if (mesh.triangles.isEmpty()) return "it has no triangles"
-        val used = HashMap<Long, Int>(mesh.triangles.size * 3)
-        for (t in mesh.triangles) {
-            if (t.a == t.b || t.b == t.c || t.a == t.c) return "a triangle repeats a corner"
-            for (e in listOf(t.a to t.b, t.b to t.c, t.c to t.a)) {
-                val key = (e.first.toLong() shl 32) or (e.second.toLong() and 0xffffffffL)
-                used[key] = (used[key] ?: 0) + 1
-            }
-        }
-        // Iterate the triangles, not the map: the checks are order-free but the message must not be.
-        for (t in mesh.triangles) {
-            for (e in listOf(t.a to t.b, t.b to t.c, t.c to t.a)) {
-                val fwd = (e.first.toLong() shl 32) or (e.second.toLong() and 0xffffffffL)
-                val back = (e.second.toLong() shl 32) or (e.first.toLong() and 0xffffffffL)
-                if (used[fwd] != 1 || used[back] != 1) {
-                    return "the surface is not closed and consistently wound at the edge ${e.first}-${e.second}"
-                }
-            }
-        }
-        if (Geom3.volume(mesh) <= 0.0) return "it encloses no positive volume — the surface is inside out"
         return null
     }
 

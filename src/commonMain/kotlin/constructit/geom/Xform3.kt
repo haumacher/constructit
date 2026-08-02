@@ -155,7 +155,8 @@ fun Feature3.movedBy(x: Xform3): Feature3 =
         // stated in the coordinates of a plane this move invalidates, so carrying it over would draw the body
         // where it no longer is. Whoever moved it re-projects (see `Construction.placeSolid`), and a caller
         // that does not gets no hint rather than a wrong one.
-        is Feature3.Imported -> Feature3.Imported(source)
+        // (the **open-shell flag** rides along, because a rigid motion cannot open or close a surface)
+        is Feature3.Imported -> Feature3.Imported(source, openShell = openShell)
     }
 
 /**

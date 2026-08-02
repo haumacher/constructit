@@ -18,7 +18,23 @@ object Stl {
     /** Header, count, and 50 bytes per facet: the whole size of the file, computable in advance. */
     fun sizeOf(triangles: Int): Int = 84 + 50 * triangles
 
+    /**
+     * Why [scene] cannot be written as an STL — **3MF's gate, shared verbatim**, because the two formats are
+     * for the same thing.
+     *
+     * STL had none while every body in a drawing was watertight by construction: the kernel's guarantee was
+     * the check. Since an imported reference body may legitimately be an **open shell** (the JT import note
+     * under OP-9) that is no longer true of everything a scene can hold, and *printing is exactly what the
+     * user names when asking for one* — so the fallback format gets the same answer the recommended one
+     * gives, by the same words, rather than writing a triangle soup a slicer would quietly mis-fill.
+     *
+     * Delegated rather than copied: one manifold question, one implementation ([ThreeMf.check], over
+     * [constructit.geom.Watertight]), so the two print formats can never disagree about what a solid is.
+     */
+    fun check(scene: ExportScene): String? = ThreeMf.check(scene)
+
     fun write(scene: ExportScene): ByteArray {
+        check(scene)?.let { throw IllegalArgumentException(it) }
         val tris = scene.triangleCount
         val out = ByteSink(sizeOf(tris))
         // The 80-byte header is free-form text by convention. It names the app and the drawing, because a

@@ -1227,7 +1227,15 @@ class Editor(
         return elementLabel(selection ?: return "")
     }
 
-    /** What one element is called in a sentence — the same words for the inspector and for the pick cycle. */
+    /**
+     * What one element is called in a sentence — the same words for the inspector and for the pick cycle.
+     *
+     * A **state** the element is in rides along here rather than in chrome of its own, which is the cheapest
+     * honest place there is: the inspector's header and the pick cycle's status line are the two sentences a
+     * user reads about a selection, and both are this one. Today there is exactly one such state — an
+     * imported **open shell** (the JT import note under OP-9), which a user has to know about *before*
+     * reaching for a boolean or a print export rather than from their refusal.
+     */
     private fun elementLabel(el: Element): String {
         val kind =
             when (el.handle) {
@@ -1235,7 +1243,7 @@ class Editor(
                 is OrthoCornerHandle -> "corner"
                 else -> el.kind.name.lowercase()
             }
-        return "$kind ${doc.displayName(el)}"
+        return "$kind ${doc.displayName(el)}${doc.stateOf(el)?.let { " — $it" } ?: ""}"
     }
 
     // ---- what the selection is built from, and what is built on it (see [Dependencies]) ----
