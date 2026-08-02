@@ -83,6 +83,12 @@ object JtImport {
     ): JtBodies {
         val out = ArrayList<JtBody>()
         val notes = ArrayList<String>()
+        // How many geometry-bearing nodes have been *met*, which is what the positional stand-in name below
+        // counts. Deliberately not `out.size`: that counts the bodies actually taken, so every node this walk
+        // skipped — a wireframe-only part — read the same number and five different parts of one file all
+        // came out called `body12`. A name that cannot tell two things apart is worse than no name, and this
+        // one is read by a note whose whole job is to say *which* part was not imported.
+        var met = 0
         // the library's own honesty contract, carried through unchanged: what it could not represent
         // faithfully is what this import could not either
         for (n in scene.notes) notes.add("the file says: ${n.message}")
@@ -94,12 +100,12 @@ object JtImport {
             val here = node.transform * world
             val mesh = node.meshes.firstOrNull()
             if (mesh != null) {
-                out.add(bodyOf(nameOf(node, out.size), mesh, here, node.material, mmPerUnit))
+                out.add(bodyOf(nameOf(node, met++), mesh, here, node.material, mmPerUnit))
             } else if (node.polylines.isNotEmpty()) {
                 // Wireframe-only parts (JT carries plenty: sketches, centrelines, construction curves).
                 // Named rather than dropped, because a part that is simply *missing* from a drawing is the
                 // kind of surprise an import must not spring — the same rule the export's notes follow.
-                notes.add("${nameOf(node, out.size)} is wireframe only (no triangles) — not imported")
+                notes.add("${nameOf(node, met++)} is wireframe only (no triangles) — not imported")
             }
             for (c in node.children) walk(c, here)
         }
@@ -107,7 +113,14 @@ object JtImport {
         return JtBodies(out, notes)
     }
 
-    /** A node's name, or a positional stand-in — a file may leave a shape node unnamed. */
+    /**
+     * A node's name, or a positional stand-in — a file may leave a shape node unnamed, and this one leaves
+     * *every* one of them unnamed.
+     *
+     * [index] counts the geometry-bearing nodes this walk has met, imported or not, so the stand-in names a
+     * position in **the file** rather than a position in the result. That is what makes it unique: two parts
+     * of one file can never share it, whichever of them the import went on to take.
+     */
     private fun nameOf(
         node: JtSceneNode,
         index: Int,

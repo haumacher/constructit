@@ -835,6 +835,46 @@ class JtImportTest {
     }
 
     /**
+     * **Unnamed parts get a stand-in that tells them apart** — a position in the *file*, not in the result.
+     *
+     * A real KUKA robot file (`KR360L240-1.jt`, written by NetAllied's writer from a CATIA `.cgr`) leaves
+     * every one of its 17 shape nodes unnamed and holds five wireframe-only parts among eleven meshes. The
+     * stand-in used to count the bodies *taken*, so every skipped part read the same number and all five
+     * notes said `body12` — five different parts of one file under one name, in the very message whose job
+     * is to say which part was not imported.
+     */
+    @Test
+    fun unnamedPartsAreNumberedByPositionInTheFileSoSkippedOnesStayDistinct() {
+        fun wire(at: Float) =
+            SceneNode(
+                "",
+                JtMat4.IDENTITY,
+                emptyList(),
+                listOf(de.haumacher.kotlinjt.scene.PolylineSet(listOf(Vec3(at, 0f, 0f), Vec3(at + 1f, 0f, 0f)), listOf(listOf(0, 1)))),
+                null,
+                emptyList(),
+            )
+
+        fun body() = SceneNode("", JtMat4.IDENTITY, listOf(cubeMesh()), emptyList(), null, emptyList())
+        // meshes and wireframe interleaved, exactly as a real assembly mixes them
+        val kids = listOf(body(), wire(0f), wire(10f), body(), wire(20f))
+        val scene =
+            Scene(LengthUnit.MILLIMETERS, SceneNode("asm", JtMat4.IDENTITY, emptyList(), emptyList(), null, kids), emptyList())
+        val result = Imports.importScene(Editor().doc, scene, "robot.jt")
+        assertTrue(result.ok, result.message)
+
+        val skipped = result.notes.filter { it.contains("wireframe only") }
+        assertEquals(3, skipped.size, "all three are named, never silently dropped")
+        assertEquals(3, skipped.distinct().size, "and no two of them share a name: $skipped")
+        // the number is the node's place among the file's geometry-bearing nodes, so it interleaves
+        assertEquals(
+            listOf("body2 is wireframe only (no triangles) — not imported", "body3 is wireframe only (no triangles) — not imported", "body5 is wireframe only (no triangles) — not imported"),
+            skipped,
+        )
+        assertEquals(listOf("body1", "body4"), result.bodies, "and the bodies keep their own places")
+    }
+
+    /**
      * **A transform that is not a placement is baked into the vertices, and said so** — a scale is not a
      * rigid motion, so it cannot become one, and approximating it as one would move somebody's geometry.
      */

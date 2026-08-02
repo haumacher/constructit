@@ -5532,7 +5532,13 @@ extension, named rather than half-built.
   mirror re-winds its triangles on the way in, because a mirrored mesh that kept its winding encloses negative
   volume — a solid turned inside out — and an importer that has to bake one still has to bake it honestly.
 - **A wireframe-only part** (polylines, no triangles — JT files carry plenty: centrelines, sketches) — skipped
-  and **named**, never silently dropped, the same rule the export's notes follow.
+  and **named**, never silently dropped, the same rule the export's notes follow. *(A stand-in name numbers
+  the node's place among the file's **geometry-bearing nodes**, not among the bodies taken. Fixed in session
+  36 on a real file: a KUKA robot written from a CATIA `.cgr` leaves all seventeen of its shape nodes
+  unnamed, and since the counter had been the result's own length, all five skipped parts came out called
+  `body12` — one name for five different parts, in the very message whose job is to say which part was not
+  imported. The number now names a position in the file, which is the only thing about an unnamed node that
+  is unique.)*
 - The **library's own notes** ride into the result unchanged: what it could not represent faithfully is what
   this import could not either.
 
