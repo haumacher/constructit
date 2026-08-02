@@ -125,6 +125,25 @@ fun Plane3.movedBy(x: Xform3): Plane3 = Plane3(x.apply(origin), x.linear(u), x.l
 fun Sketch3.movedBy(x: Xform3): Sketch3 = Sketch3(plane.movedBy(x), regions)
 
 /**
+ * A **curve in space** moved by [x] — piece for piece, through the control points (OP-26).
+ *
+ * Exact, and for the reason the plan projection of a path is exact: an affine map carries a cubic Bézier to
+ * the cubic through the mapped control points, and a segment to the segment between its mapped ends. So a
+ * placed sweep's spine is the same curve somewhere else, with no resampling anywhere in the statement.
+ */
+fun Path3.movedBy(x: Xform3): Path3 =
+    Path3(
+        elements.map { el ->
+            when (el) {
+                is Curve3Element.Seg3 -> Curve3Element.Seg3(x.apply(el.start), x.apply(el.end))
+                is Curve3Element.Bezier3 ->
+                    Curve3Element.Bezier3(x.apply(el.p0), x.apply(el.p1), x.apply(el.p2), x.apply(el.p3))
+            }
+        },
+        closed,
+    )
+
+/**
  * [Feature3] moved by the **rigid** map [x] — the analytic half of a placement, and the reason a placement
  * costs nothing in exactness.
  *
@@ -150,6 +169,11 @@ fun Feature3.movedBy(x: Xform3): Feature3 =
                 seams,
                 guides.map { LoftGuide(it.plane.movedBy(x), it.pieces) },
             )
+        // A sweep is "2D data plus a frame" like the rest of them: the profile keeps its own coordinates and
+        // only the path and the direction the start reference is derived from move. Its **plan is dropped**
+        // for [Feature3.Imported]'s reason — that outline is stated in the coordinates of a plane this move
+        // invalidates — and whoever moved the body re-projects (`Construction.placeSolid`).
+        is Feature3.Sweep -> Feature3.Sweep(path.movedBy(x), profile, x.linear(up), roll, twist)
         is Feature3.MeshBoolean -> this
         // ...and an imported body keeps its provenance but **loses its plan**, deliberately: that outline is
         // stated in the coordinates of a plane this move invalidates, so carrying it over would draw the body

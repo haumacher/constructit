@@ -93,6 +93,17 @@ enum class SlotKind {
      * its node and the curve follows it, rather than dropping a copy of its coordinates that follows nothing.
      */
     POINT3,
+
+    /**
+     * A **curve in space** (OP-26) — the path a sweep rides, picked in either view exactly as it is drawn
+     * there: on its plan projection in the 2D canvas, on the curve itself in the 3D one.
+     *
+     * A slot of its own rather than [CURVE], and the reason is OP-17's: the 2D curve slots all want a value
+     * stated in some plane's coordinates, and a curve in space is not one. The type system already keeps the
+     * two apart at the value level (`Path3Value` beside the plane-curve values), and this is that same
+     * partition where a click meets it.
+     */
+    PATH3,
 }
 
 /**
@@ -382,12 +393,17 @@ class ToolDef(
     fun roleOf(i: Int): String = slotNames.getOrNull(i) ?: Tools.roleOfKind(slots.getOrNull(i))
 
     /**
-     * Whether this tool's scalars are **all defaulted**, i.e. it never waits for one (see
-     * [ScalarSlot.default]). Such a tool completes on its last click and [build] then receives *no* scalar
-     * refs unless the user typed or picked them — so gaining an optional input costs the existing gesture
-     * nothing, and the tool's own step is unchanged when nobody used it.
+     * How many of this tool's scalars it **cannot do without** — the ones with no [ScalarSlot.default].
+     *
+     * What the editor waits for, and nothing more: a tool whose slots are all defaulted completes on its last
+     * click and [build] then receives *no* scalar refs unless the user typed or picked them, so gaining an
+     * optional input costs the existing gesture nothing. A tool that **mixes** the two (a tube's radius, then
+     * its roll and its twist) waits for the radius alone.
+     *
+     * The order matters and is a rule rather than a convention: the picks fill the slots as a **prefix**, so
+     * a defaulted slot must never stand in front of one the tool is waiting for.
      */
-    val scalarsOptional: Boolean get() = scalars.isNotEmpty() && scalars.all { it.default != null }
+    val requiredScalars: Int get() = scalars.count { it.default == null }
 }
 
 object Tools {
@@ -493,6 +509,14 @@ object Tools {
      */
     const val CURVE3 = "curve3"
     const val CURVE3_SMOOTH = "curve3smooth"
+
+    /**
+     * **The sweep** (OP-26, step 2): a profile carried along a curve in space, on the rotation-minimizing
+     * moving frame. Two ids because the *profile* differs — a radius typed for a tube, an area clicked for
+     * anything else — exactly as [CIRCLE] and [CIRCLE_R] are two ids for one shape.
+     */
+    const val TUBE = "tube"
+    const val SWEEP = "sweep"
 
     /**
      * The rectangle tool: two diagonally opposite clicks, and what comes out is a **closed ortho path**
@@ -729,6 +753,19 @@ object Tools {
             // among the picks meaning "guide". Where each section is clicked scores its seam, once (OP-1).
             ToolDef(EXTRUDE_TO_POINT, "Extrude to point (pyramid, cone)", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.POINT), scalars = listOf(len("height")), preview = Previews::extrudeToPoint, help = "Type a height (or pick a parameter in the panel), click an outline, footprint or circle, then click where its apex belongs: the area runs to that point — a pyramid from a polygon, a cone from a circle. Clicking an existing point shares it; drag the apex afterwards for an oblique one, or retype the height.", slotNames = listOf("profile", "apex"), icon = Icons.EXTRUDE_TO_POINT) { d, p, s -> d.extrudeToPoint(p.elements[0], p.points[0], s[0], p.clicks.firstOrNull(), p.signs) },
             ToolDef(LOFT, "Loft (sections)", ToolCategory.SOLIDS, listOf(SlotKind.LOFT_PART), repeating = true, minPicks = 2, crossSpace = true, preview = Previews::loft, help = "Click the sections in order — an outline, a wall footprint, a circle, or a point for an apex end — then press Enter (or click the first section again). Sections may lie on different sketch planes: switch the plane between clicks and the picks are kept. An *open* curve among the picks is a guide the run follows, and it must pass through corresponding points of the sections it spans. Where you click on each section starts its boundary correspondence, so click near the corner that should meet the one you clicked before — the preview draws the rails.", slotNames = listOf("section, apex point or guide"), icon = Icons.LOFT) { d, p, _ -> d.loftSolid(p.elements, p.clicks, p.signs) },
+            // ----- the sweep (OP-26, step 2): the one solid whose *axis* is a curve. Two tools, one feature
+            // and one frame: *Tube* takes a radius, because a circular run is the everyday case and a circle
+            // needs no drawing; *Sweep* takes any closed area, drawn wherever it was convenient and read in
+            // the moving frame's own coordinates with its origin on the path — so a section drawn off the
+            // origin sweeps off the path by exactly that much, and no offset argument exists.
+            //
+            // **Roll and twist are defaulted angle slots on both**, which is why neither gesture grew a step:
+            // with nothing typed they are zero and the tool completes on its last click. The roll is a real
+            // degree of freedom of the frame and is *stated* rather than chosen for the user (OP-26); the
+            // twist is what closes a non-planar closed run, which is the one case the node refuses by name
+            // and tells you the number to type.
+            ToolDef(TUBE, "Tube along a curve", ToolCategory.SOLIDS, listOf(SlotKind.PATH3), scalars = listOf(len("radius"), ang("roll", 0.0), ang("twist", 0.0)), help = "Type a radius (or pick a parameter in the panel), then click a curve in space: a round tube follows it — a cable, a conduit, a handrail. Type a roll after the radius to turn the section about the run at its start, and a twist for the total turn from one end to the other. The curve stays live: drag a point it runs through and the tube follows.", slotNames = listOf("curve in space")) { d, p, s -> d.tubeAlongCurve(p.elements[0], s[0], s.getOrNull(1), s.getOrNull(2)) },
+            ToolDef(SWEEP, "Sweep (profile along a curve)", ToolCategory.SOLIDS, listOf(SlotKind.PATH3, SlotKind.AREA), scalars = listOf(ang("roll", 0.0), ang("twist", 0.0)), help = "Click a curve in space, then a closed area — an outline, a wall footprint, a circle, a rounded rectangle: it is carried along the curve, read in the moving frame with the area's own origin on the path, so an area drawn off the origin sweeps off the run. Type a roll first to turn the section about the run at its start, and a twist after it for the total turn from end to end. Both stay parameters.", slotNames = listOf("curve in space", "profile")) { d, p, s -> d.sweepAlongCurve(p.elements[0], p.elements[1], s.getOrNull(0), s.getOrNull(1)) },
             // ----- and back down again (OP-17's downward direction). *Extrude on face* is the
             // sketch->feature->sketch loop as one gesture: the plan is drawn in the same 2D space, and the
             // tool only says which solid's top face it is stacked on (through `facePlane`, OP-8).
@@ -894,6 +931,7 @@ object Tools {
             SlotKind.SOLID -> "solid"
             SlotKind.LOFT_PART -> "section, apex or guide"
             SlotKind.POINT3 -> "point in space"
+            SlotKind.PATH3 -> "curve in space"
         }
 
     /** The glyph a palette button shows for [id] — [SELECT]'s included, which is not a [ToolDef]. */

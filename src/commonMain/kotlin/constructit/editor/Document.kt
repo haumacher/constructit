@@ -34,6 +34,7 @@ import constructit.dsl.FrameRef
 import constructit.dsl.LineRef
 import constructit.dsl.LoftPart
 import constructit.dsl.LoopRef
+import constructit.dsl.Path3Ref
 import constructit.dsl.PlaneRef
 import constructit.dsl.Point3Ref
 import constructit.dsl.PointRef
@@ -8397,6 +8398,93 @@ class Document {
             "(${through.joinToString(", ") { nameOf(it) }}) — move any of them and it follows"
         return curve
     }
+
+    // ---- the sweep: a profile carried along a curve in space (OP-26, step 2) ----
+
+    /**
+     * A **tube** of [radius] along the curve in space [el] (OP-26's step 2) — a cable, a conduit, a
+     * handrail, a duct.
+     *
+     * The everyday half of the sweep, and one gesture: one number and one click. What it builds is an
+     * ordinary solid, with everything that implies — it draws in the 3D view, shows a plan footprint that
+     * can be clicked, unions and subtracts, exports, hides, is renamed and undone like any other.
+     *
+     * [roll] turns the section about the run at its start and [twist] is the total turn from one end to the
+     * other; both default to nothing, and both are only *visible* on a section that is not round — which is
+     * why they are offered here at all rather than only on [sweepAlongCurve]: a closed run whose frame does
+     * not come back to itself is closed by stating the twist, and that is as true of a tube as of anything
+     * else (see [constructit.geom.Geom3.sweep]).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun tubeAlongCurve(
+        el: Element,
+        radius: ScalarRef,
+        roll: ScalarRef? = null,
+        twist: ScalarRef? = null,
+    ): Element? {
+        val path = spaceCurveRef(el, "Tube") ?: return null
+        val solid =
+            add(cx.tube(path, planeOfSpace(el.space), radius, noTurn(roll), noTurn(twist)), ElementKind.SOLID, Styles.SOLID)
+        solid.space = el.space
+        madeSolid(solid, "a ${Format.num(evalMm(radius))} mm tube along ${nameOf(el)}")
+        return solid
+    }
+
+    /**
+     * The area [profile] **swept along the curve in space** [el] (OP-26's step 2) — the general form, of
+     * which [tubeAlongCurve] is the circular case.
+     *
+     * The profile is read in the moving frame's own coordinates **with its own origin on the path**, so a
+     * section drawn 20 mm off its space's origin runs 20 mm off the route — which is a construction rather
+     * than an argument, and is why there is no offset input here (*Space origin* moves a whole space's
+     * coordinates, and that is the same statement said once for everything drawn there).
+     *
+     * The solid is stamped into the **curve's** space, not the active one, for the loft's own reason: that is
+     * the space its footprint hint is drawn in and the coordinates a pick of it measures against — and here
+     * it is also the space whose normal starts the frame, so the two readings are one statement about which
+     * space this run belongs to.
+     *
+     * Refused **by name** and building nothing for the two structural things — a pick that is not a curve in
+     * space, and a profile that bounds no area. Everything geometric (the profile outgrowing a bend, a closed
+     * run whose frame will not close, a path with no length) is the node's own business and is reported as
+     * the reason it is invalid, so it heals when a number moves back (OP-3).
+     */
+    fun sweepAlongCurve(
+        el: Element,
+        profile: Element,
+        roll: ScalarRef? = null,
+        twist: ScalarRef? = null,
+    ): Element? {
+        val path = spaceCurveRef(el, "Sweep") ?: return null
+        val region =
+            regionOf(profile) ?: run {
+                note = "Sweep: ${nameOf(profile)} bounds no area, so it is no section to carry along ${nameOf(el)}"
+                return null
+            }
+        val solid =
+            add(cx.sweep(path, planeOfSpace(el.space), region, noTurn(roll), noTurn(twist)), ElementKind.SOLID, Styles.SOLID)
+        solid.space = el.space
+        madeSolid(solid, "${nameOf(profile)} swept along ${nameOf(el)}")
+        return solid
+    }
+
+    /** [el] as the curve in space it is, or null with the reason it is not one — [what] names the tool. */
+    @Suppress("UNCHECKED_CAST")
+    private fun spaceCurveRef(
+        el: Element,
+        what: String,
+    ): Path3Ref? {
+        if (el.kind != ElementKind.SPACE_CURVE) {
+            note =
+                "$what: ${nameOf(el)} is ${kindWord(el)}, not a curve in space — draw the route with " +
+                "Curve through points first, then sweep along it"
+            return null
+        }
+        return el.ref as Path3Ref
+    }
+
+    /** An angle input that was not given: a constant zero, so the node always has all five of its inputs. */
+    private fun noTurn(angle: ScalarRef?): ScalarRef = angle ?: cx.const(Quantity.deg(0.0))
 
     /**
      * The pyramid/cone gesture: the area [el] run to a **point** [apex] standing [height] off the sketch plane

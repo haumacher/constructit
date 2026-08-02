@@ -205,6 +205,11 @@ object Section3 {
             "not faces — its section draws from the mesh and offers no construction inputs; a horizontal cut " +
             "through it is exact via the Section tool"
 
+    private const val SWEEP_ONLY =
+        "this solid is a profile swept along a curve (OP-26), whose faces are the moving frame's and not a " +
+            "constructed list — its section draws from the mesh and offers no construction inputs; put a datum " +
+            "plane where you want to sketch"
+
     private const val IMPORT_ONLY =
         "this body was imported from a file, so it is triangles and nothing else (OP-9) — its section draws " +
             "from the mesh and offers no construction inputs; build what you want to anchor on beside it, " +
@@ -228,6 +233,7 @@ object Section3 {
             is Feature3.Revolution -> null to REVOLVE_ONLY
             is Feature3.MeshBoolean -> null to MESH_ONLY
             is Feature3.Imported -> null to IMPORT_ONLY
+            is Feature3.Sweep -> null to SWEEP_ONLY
         }
 
     /**
@@ -247,6 +253,7 @@ object Section3 {
             is Feature3.Revolution -> false
             is Feature3.MeshBoolean -> false
             is Feature3.Imported -> false
+            is Feature3.Sweep -> false
         }
 
     /** Why a general section of [feature] cannot name its faces, or null when it can. */
@@ -257,6 +264,7 @@ object Section3 {
             is Feature3.Revolution -> REVOLVE_ONLY
             is Feature3.MeshBoolean -> MESH_ONLY
             is Feature3.Imported -> IMPORT_ONLY
+            is Feature3.Sweep -> SWEEP_ONLY
         }
 
     private fun extrusionFaces(f: Feature3.Extrusion): List<FacePatch> {
@@ -528,6 +536,7 @@ object Section3 {
             is Feature3.Revolution -> null to REVOLVE_ONLY
             is Feature3.MeshBoolean -> null to MESH_ONLY
             is Feature3.Imported -> null to IMPORT_ONLY
+            is Feature3.Sweep -> null to SWEEP_ONLY
         }
 
     private fun extrusionEdges(f: Feature3.Extrusion): List<SolidEdge> {

@@ -65,6 +65,7 @@ import constructit.geom.Silhouette
 import constructit.geom.Sketch3
 import constructit.geom.Solid3
 import constructit.geom.SolidFace
+import constructit.geom.SweepProfile
 import constructit.geom.Vec2
 import constructit.geom.Vec3
 import constructit.geom.Watertight
@@ -2101,6 +2102,81 @@ class Construction {
         }
 
     /**
+     * A **tube along [path]**: a circle of [radius] carried along the curve in its moving frame (OP-26,
+     * step 2).
+     *
+     * The tube first, because it is what proves the frame: a circular section is the one profile whose
+     * *shape* cannot hide a frame that flips, so a tube that comes out watertight along a line–arc–line run
+     * is the frame's own test rather than the profile's. Everything else about it is [sweep]'s.
+     */
+    fun tube(
+        path: Path3Ref,
+        space: PlaneRef,
+        radius: ScalarRef,
+        roll: ScalarRef,
+        twist: ScalarRef,
+    ): SolidRef =
+        op(path, space, radius, roll, twist) {
+            val r = sc(it[2]).requireDim(Dimension.LENGTH, "tube radius").mm
+            sweptSolid(it, SweepProfile.Round(r))
+        }
+
+    /**
+     * A **sweep**: the closed area [profile] carried along [path] in its moving frame (OP-26, step 2).
+     *
+     * One node for the whole solid, exactly as [extrude] is one, and every input a node: drag a point the
+     * path runs through and the sweep follows it, retype the profile's dimensions and the section changes
+     * along the whole run, tilt the datum [space] was built on and the whole thing rolls with it — one
+     * recompute, no rebuild (OP-21).
+     *
+     * **[space] is the curve's own sketch space, and it is read twice.** Its normal is where the start
+     * reference direction comes from — *derived by construction* rather than guessed, which is what makes
+     * "which way up is the section" an answer the drawing already contains (OP-26, [Frames3.startReference])
+     * — and its plane is what the resulting body's plan is projected onto, since a sweep has no prismatic
+     * reading and therefore no sketch to show as a footprint. One input, because they are one statement:
+     * *the space this run belongs to*.
+     *
+     * [roll] turns the section about the tangent at the start, and is a **real degree of freedom stated
+     * rather than compensated** — the frame has to start somewhere, and having the algorithm pick and the
+     * user discover the choice by its consequences is exactly what OP-26 rejects. [twist] is the total
+     * rotation about the tangent from one end to the other, spread linearly in arc length.
+     *
+     * Invalid with a reason that heals (OP-3) for everything geometric — see [Geom3.sweep] for the list, of
+     * which the two that matter are the profile outgrowing the path's bend and a closed path whose frame
+     * does not come back to itself.
+     */
+    fun sweep(
+        path: Path3Ref,
+        space: PlaneRef,
+        profile: RegionRef,
+        roll: ScalarRef,
+        twist: ScalarRef,
+    ): SolidRef =
+        op(path, space, profile, roll, twist) {
+            sweptSolid(it, SweepProfile.Section((it[2] as RegionValue).region))
+        }
+
+    /** The half [tube] and [sweep] share: the frame's inputs read, and the solid or the reason it is not one. */
+    private fun sweptSolid(
+        args: List<Value>,
+        profile: SweepProfile,
+    ): EvalResult {
+        val plane = (args[1] as PlaneValue).plane
+        val roll = sc(args[3]).requireDim(Dimension.ANGLE, "sweep roll").base
+        val twist = sc(args[4]).requireDim(Dimension.ANGLE, "sweep twist").base
+        val (solid, why) =
+            Geom3.sweep(
+                (args[0] as Path3Value).path,
+                plane.normal.normalized(),
+                profile,
+                roll,
+                twist,
+                plane,
+            )
+        return if (solid == null) EvalResult.Invalid(why ?: "cannot sweep along this curve") else EvalResult.Ok(SolidValue(solid))
+    }
+
+    /**
      * A **loft**: [parts] — the sections in order, plus any guides — with [seams] saying where each section's
      * boundary correspondence starts (OP-17's third feature).
      *
@@ -2338,6 +2414,11 @@ class Construction {
     ): Solid3 =
         when (val f = solid.feature) {
             is Feature3.Imported -> Solid3(Feature3.Imported(f.source, Silhouette.of(solid.mesh, plane), f.openShell), solid.mesh)
+            // …and a **sweep**, for the identical reason (OP-26): its plan is a silhouette rather than a
+            // sketch, so it is stated in some plane's coordinates and the move dropped it. Re-projected here,
+            // in the plane the body is now being shown in, which is the only place that knows one.
+            is Feature3.Sweep ->
+                Solid3(Feature3.Sweep(f.path, f.profile, f.up, f.roll, f.twist, Silhouette.of(solid.mesh, plane)), solid.mesh)
             else -> solid
         }
 

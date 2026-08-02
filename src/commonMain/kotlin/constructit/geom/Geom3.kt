@@ -294,6 +294,38 @@ sealed interface Feature3 {
     }
 
     /**
+     * A **sweep** (OP-26, step 2): [profile] carried along [path] in the rotation-minimizing moving frame,
+     * with the start reference derived from [up] and the frame turned by [roll] and [twist].
+     *
+     * The one solid whose *axis* is a curve rather than a straight line or a circle, which is what a cable, a
+     * conduit, a handrail, a moulding, a gutter and a duct all are — and what a prism and a revolve between
+     * them cannot express. Analytic, like every other feature here: the path is a chain of exact pieces, the
+     * profile is a region with its own arcs and holes, and the four frame numbers are what a later B-rep
+     * writer would need, so nothing about the shape has to be read back out of the triangles (OP-9).
+     *
+     * [up] is a **resolved direction**, not a plane: the sweep node reads the normal of the space its path is
+     * parented to and hands the value over here, exactly as a revolve hands over its axis in the sketch's own
+     * coordinates. What that buys is that the feature is self-contained — `(path, profile, up, roll, twist)`
+     * is enough to rebuild the identical frame and hence the identical mesh — and that a rigid placement
+     * needs only to turn one more vector.
+     *
+     * [plan] is the outline this body projects to in the space it is shown in, computed once by the node that
+     * knows which plane that is ([Silhouette], the same field and the same reason [Imported] has one): a
+     * sweep has no prismatic reading, so there is no sketch to draw as a footprint, and a projection with no
+     * plane is not defined.
+     */
+    data class Sweep(
+        val path: Path3,
+        val profile: SweepProfile,
+        val up: Vec3,
+        val roll: Double,
+        val twist: Double,
+        val plan: List<Region> = emptyList(),
+    ) : Feature3 {
+        override val footprint: List<Region> get() = plan
+    }
+
+    /**
      * A **loft**: the ordered [sections] blended pairwise, optionally shaped by [guides] (OP-17).
      *
      * The one solid class a prism, a revolve and their booleans cannot make — the one whose cross-section
@@ -924,6 +956,139 @@ object Geom3 {
         }
         return Solid3(Feature3.Revolution(sketch, axisOrigin, axis, angle), mb.build()) to null
     }
+
+    // ---- the sweep: a profile carried along a curve in space, on the moving frame (OP-26's step 2) ----
+    // Everything value-dependent is here, inside one function of values (OP-21's rule) — including how many
+    // stations the spine is cut into, which is a *compute-time* decision and never the shape of the graph.
+
+    /**
+     * A **sweep**: [profile] carried along [path] in the rotation-minimizing frame ([Frames3]), rolled by
+     * [rollRad] at the start and twisted by [twistRad] over the whole run.
+     *
+     * **How the profile is carried.** Each station of the frame reads the profile's own 2D coordinates in its
+     * own (ref, bi) axes, with the profile's origin on the path (see [SweepProfile]) — so an eccentric
+     * section sweeps eccentrically, by construction rather than by an offset argument. The ring is then
+     * pushed onto the station's mitre plane, which makes a corner in the path come out as the trim two
+     * straight tubes make of each other; where the path is smooth that push is zero.
+     *
+     * **Watertight by construction** (OP-9), for the reason a prism is: consecutive bands share **one** ring,
+     * computed once per station, and the caps are the same tessellated polygons the bands run through — so
+     * every wall edge meets exactly one other edge and nothing is repaired afterwards. A closed path needs no
+     * caps, because its last band hands back to its first ring.
+     *
+     * Refused with a reason that heals (OP-3), each naming what is wrong and where: a non-positive tube
+     * radius; a profile whose outline does not close; a profile enclosing no area; a path with no pieces or
+     * no length; a path that doubles back so sharply that no mitre exists ([Frames3]); the profile's
+     * **reach** exceeding the path's local radius of curvature at some station, which is the sweep passing
+     * through itself and is named by how far along the path it happens; and a **closed** path whose frame
+     * does not come back to itself, which is named with the twist that would close it.
+     */
+    fun sweep(
+        path: Path3,
+        up: Vec3,
+        profile: SweepProfile,
+        rollRad: Double = 0.0,
+        twistRad: Double = 0.0,
+        plan: Plane3? = null,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<Solid3?, String?> {
+        if (profile is SweepProfile.Round && profile.radius <= WELD_TOL) {
+            return null to "a tube needs a positive radius — this one is ${Frames3.mm(profile.radius)} mm"
+        }
+        val region = profile.region
+        for (loop in listOf(region.outer) + region.holes) openBoundary(loop)?.let { return null to it }
+        val (tess, why) = tessellateRegion(region, tolMm)
+        if (tess == null) return null to (why ?: "cannot tessellate the profile")
+        if (tessArea(tess) <= AREA_EPS) return null to "the profile encloses no area, so there is nothing to sweep"
+        // how far the profile reaches from the path — the number the self-intersection criterion is about,
+        // and the radius the twist's own sampling refinement is measured at
+        val reach = tess.outer.maxOf { it.length() }
+        if (reach <= WELD_TOL) return null to "the profile has no size, so there is nothing to sweep"
+
+        val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, reach, tolMm)
+        if (frame == null) return null to (noFrame ?: "cannot build a moving frame along this curve")
+
+        // **The self-intersection criterion, per station.** A profile reaching `reach` from the path folds
+        // through itself the moment the path's radius of curvature there drops to `reach` — the inner side
+        // of the bend turns inside out. Checked before a triangle is emitted, and named by *where*, because
+        // "this sweep self-intersects" is not something anyone can act on and "at 340 mm along" is.
+        for (st in frame.stations) {
+            if (st.curvature * reach >= 1.0) {
+                return null to
+                    "${profileReach(profile, reach)} is larger than the bend ${Frames3.mm(st.s)} mm along " +
+                    "the path (radius ${Frames3.mm(1.0 / st.curvature)} mm), so the sweep would pass through itself"
+            }
+        }
+        // **A closed path whose frame does not close on itself** is reported rather than smeared over the
+        // last band, and the report names the cure: the twist that makes the total come back to zero is an
+        // ordinary parameter of this very feature, so the refusal heals by stating it (OP-3). A *planar*
+        // closed path has no residual at all — the reference is the rotation axis at every step, so it is
+        // carried through unchanged — which is why this fires only where the condition is real.
+        if (frame.closed && abs(frame.seam) > Frames3.SEAM_EPS) {
+            return null to
+                "the frame does not come back to itself round this closed curve — it is ${Frames3.deg(frame.seam)}° " +
+                "out at the seam, which would twist the last piece of the sweep against the first; state a twist " +
+                "of ${Frames3.deg(twistRad - frame.seam)}° (or that plus any whole number of turns) to close it"
+        }
+
+        val polys = listOf(tess.outer) + tess.holes
+        val stations = frame.stations
+        val rings = stations.map { st -> polys.map { poly -> poly.map { st.place(it) } } }
+        val mb = MeshBuilder()
+        val bands = if (frame.closed) stations.size else stations.size - 1
+        for (k in 0 until bands) {
+            val lo = rings[k]
+            val hi = rings[(k + 1) % stations.size]
+            for (pi in polys.indices) {
+                val poly = polys[pi]
+                for (i in poly.indices) {
+                    val j = (i + 1) % poly.size
+                    mb.triangle(lo[pi][i], lo[pi][j], hi[pi][j])
+                    mb.triangle(lo[pi][i], hi[pi][j], hi[pi][i])
+                }
+            }
+        }
+        if (!frame.closed) {
+            val (tris, noTris) = triangulate(tess)
+            if (tris == null) return null to (noTris ?: "cannot cap this sweep")
+            // (ref, bi, tangent) is right-handed, so a cap triangle wound counter-clockwise in the profile's
+            // own coordinates faces **along** the tangent: the end cap as it is, the start cap reversed —
+            // the extrude's own top/bottom rule, one dimension round.
+            val first = stations.first()
+            val last = stations.last()
+            for (t in tris) {
+                mb.triangle(first.place(t.a), first.place(t.c), first.place(t.b))
+                mb.triangle(last.place(t.a), last.place(t.b), last.place(t.c))
+            }
+        }
+        val mesh = mb.build()
+        val outline = if (plan == null) emptyList() else Silhouette.of(mesh, plan)
+        return Solid3(Feature3.Sweep(path, profile, up, rollRad, twistRad, outline), mesh) to null
+    }
+
+    /** Why [loop] is not a closed outline — naming the piece that leaves the gap — or null when it is one. */
+    private fun openBoundary(loop: Loop): String? {
+        val els = loop.elements
+        if (els.isEmpty()) return "the profile has an empty boundary, so it is no closed section"
+        for (i in els.indices) {
+            val j = (i + 1) % els.size
+            if ((GeomMath.endOf(els[i]) - GeomMath.startOf(els[j])).length() > WELD_TOL) {
+                return "the profile's outline does not close — piece ${i + 1} ends where piece ${j + 1} does not " +
+                    "begin, and a sweep needs a closed section"
+            }
+        }
+        return null
+    }
+
+    /** How a refusal names the size of the profile that will not fit round a bend. */
+    private fun profileReach(
+        profile: SweepProfile,
+        reach: Double,
+    ): String =
+        when (profile) {
+            is SweepProfile.Round -> "the tube's radius (${Frames3.mm(profile.radius)} mm)"
+            is SweepProfile.Section -> "the profile's reach from the path (${Frames3.mm(reach)} mm)"
+        }
 
     // ---- the loft: an ordered run of sections, optionally shaped by guides (OP-17's third feature) ----
     // The one solid whose cross-section *changes* along the sweep, and therefore the one that needs a
@@ -1646,6 +1811,8 @@ object Geom3 {
             // the degenerate case that is an extrude anyway — refused rather than approximated, like a
             // revolve, and the general engine (OP-9) takes it from here.
             is Feature3.Loft -> null to NOT_PRISMATIC
+            // A sweep's axis is a curve, so there is no one direction to stack slabs along at all (OP-26).
+            is Feature3.Sweep -> null to NOT_PRISMATIC
             is Feature3.Extrusion -> oneSlab(feature, tolMm)
         }
 
@@ -1676,6 +1843,7 @@ object Geom3 {
             is Feature3.MeshBoolean -> null
             is Feature3.Imported -> null
             is Feature3.Loft -> null
+            is Feature3.Sweep -> null
         }
 
     private fun oneSlab(
@@ -2067,6 +2235,10 @@ object Geom3 {
             // Same rule, same reason: an imported body's faces are emergent triangles, and naming one would
             // be discovery (OP-9, OP-23).
             is Feature3.Imported -> null to "an imported body is mesh-only, so it has no named faces (OP-9)"
+            // Refused for the loft's own reason, one step further: a sweep's end caps *are* planes, but their
+            // frames are the moving frame's at each end — which for a closed path do not exist at all — so
+            // naming one TOP would invent a convention. A datum plane reaches either of them.
+            is Feature3.Sweep -> null to "a swept solid has no top or bottom face — put a datum plane where you want to sketch"
         }
 
     // ---- side faces: the planar faces a boundary piece sweeps (OP-8 provenance, OP-17's frame) ----
@@ -2117,6 +2289,7 @@ object Geom3 {
             is Feature3.MeshBoolean -> null
             is Feature3.Imported -> null
             is Feature3.Loft -> null
+            is Feature3.Sweep -> null
         }
 
     /**
@@ -2270,6 +2443,10 @@ object Geom3 {
             // an analytic loft section, which is its own piece of work (DESIGN.md, the loft's note).
             is Feature3.Loft ->
                 return null to "a lofted solid has no prismatic cross-section, because its area changes along the run; sectioning one needs an analytic loft section (OP-17)"
+            // The same answer for the same reason, and a stronger one: a sweep's section is normal to its
+            // *path*, which a horizontal cut is not — the station of OP-26's step 4 is where that lives.
+            is Feature3.Sweep ->
+                return null to "a swept solid has no prismatic cross-section, because its axis is a curve; sectioning one needs an analytic sweep section (OP-26)"
             is Feature3.Extrusion -> {
                 plane = feature.sketch.plane
                 // [Slab] is borrowed here as a plain (interval, areas) carrier and never escapes this

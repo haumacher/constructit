@@ -3533,7 +3533,13 @@ class Editor(
      */
     private fun toolScalars(tool: ToolDef): List<ScalarEntry>? {
         val need = tool.scalars.size
-        if (scalarPicks.size < need && !tool.scalarsOptional) return null
+        // **A tool waits for the scalars it cannot do without, not for all of them.** A slot with a declared
+        // default is not waiting for anything (ScalarSlot.default), so a tool that mixes the two — a tube's
+        // radius, which it must have, before its roll and twist, which mean zero unless stated — completes on
+        // the number it actually needs. Before this the count was all-or-nothing, so the first such tool would
+        // have made the user type three numbers to get the one that matters.
+        val required = tool.requiredScalars
+        if (scalarPicks.size < required) return null
         // a tool whose optional scalars cannot be told apart by dimension takes only what was typed *for it*
         // (see [ToolDef.scalarsTypedOnly]) — the memory below would otherwise fill them with a stranger
         val remembered = if (tool.scalarsTypedOnly) scalarPicks.filter { e -> pendingTypedParams.any { it === e } } else scalarPicks
@@ -3546,22 +3552,28 @@ class Editor(
         // A prefix rather than all-or-nothing, which is what it used to be: with *two* defaulted slots (the
         // datum plane's angle and its offset) all-or-nothing threw away a typed angle whenever no offset
         // followed it, so the tool silently built with its default instead of with the number just typed.
-        if (!tool.scalarsOptional) return picks
+        if (required == need) return picks
         // Matched from the **most recent** pick backwards, because a panel pick made for an earlier tool may
         // still be sitting in the list: the longest suffix of the picks that fits the slots from the first one
-        // on is what was meant here, and everything past it takes its default.
-        for (k in minOf(need, picks.size) downTo 1) {
+        // on is what was meant here, and everything past it takes its default. Never shorter than the slots
+        // the tool is actually waiting for, since those have no default to fall back on.
+        for (k in minOf(need, picks.size) downTo required) {
             val tail = picks.takeLast(k)
             if (tail.indices.all { dimensionOf(tail[it].ref) == tool.scalars[it].dim }) return tail
         }
-        return emptyList()
+        // Nothing fits, and the tool still has slots it cannot do without: it gets what it was given and the
+        // dimension error lands where it belongs, in the node (OP-7) — the same answer an all-required tool
+        // has always given a pick of the wrong dimension.
+        return picks.takeLast(required)
     }
 
     /** What is still missing for [tool]'s scalar inputs, in the user's terms. */
     private fun scalarPrompt(tool: ToolDef): String {
         val have = scalarPicks.size
         val wanted = tool.scalars
-        val missing = wanted.drop(have)
+        // only the slots that have no default: a defaulted one is not what the tool is waiting for, and
+        // asking for it would read as an instruction rather than an offer
+        val missing = wanted.drop(have).filter { it.default == null }
         val had = if (have == 0 || wanted.size == 1) "" else " (${wanted.take(have).joinToString(", ") { it.name }} picked)"
         return "${tool.label}: type ${missing.joinToString(", then ") { it.name }} — or click a parameter or measurement in the panel$had"
     }
@@ -3659,6 +3671,9 @@ class Editor(
                 // a curve's slot (OP-26): any point of the drawing, taken as the point in space it is — a
                 // height point as it stands, a plain 2D point lifted by nothing (`Document.curveThroughPoints`)
                 SlotKind.POINT3 -> pickElement(world) { it.isPoint }
+                // a sweep's slot (OP-26): the curve in space itself, picked where it is drawn — its plan
+                // projection here, the curve itself in the 3D view (`Document.sweepAlongCurve`)
+                SlotKind.PATH3 -> pickElement(world) { it.kind == ElementKind.SPACE_CURVE }
                 SlotKind.SIDE -> true // captures the click position only; creates nothing
             }
         // …and a slot the ordinary pick missed may still have landed on the working plane's **section**, whose

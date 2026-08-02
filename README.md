@@ -263,6 +263,27 @@ bodies it runs behind; the 2D canvas draws its projection onto the plane you are
 reaches it in either view. It is the first half of the sweep — a profile carried along a path — which is what
 it is for.
 
+**…and the sweep that rides it: a tube, a conduit, a handrail, a moulding.** *Tube along a curve* is a radius
+and one click on the route. *Sweep* takes the route and then any closed area you have drawn — an outline, a
+wall footprint, a circle, a rounded rectangle — and carries it along. The section is read in a **moving frame**
+that turns with the run and never rolls: it is carried along the path introducing no twist about the tangent,
+which is why a run of straight–bend–straight comes out whole where the textbook frame tears it, and why a
+section stays the same way up through an S-bend instead of turning over at the inflection. Which way "up" is
+at the start comes from the sketch space the route was drawn in, so tilting that plane rolls the sweep; a
+**roll** turns the section about the run at its start, and a **twist** turns it by so much from one end to the
+other — both ordinary parameters, both zero unless you say otherwise. The area's own origin sits on the path,
+so a section drawn off to one side runs off to one side, and a section with a hole in it sweeps a **pipe**.
+Corners are **mitred**, ends are capped square to the run, and a closed route needs no caps at all.
+
+What it refuses, it refuses by name and it heals. A section too big to go round a bend would fold through
+itself, so it is refused with the place said out loud — *"the tube's radius (12 mm) is larger than the bend at
+340 mm along the path (radius 8 mm)"* — and the moment the radius comes back down the solid is there again. A
+closed route that leaves its plane will not generally bring the frame back to where it started; rather than
+hiding that twist in the last piece, the drawing says how far out it is and what twist would close it, and
+typing that number closes it. Everything else is what any solid gets: it shows in 3D, draws a footprint you can
+click in plan, unions and subtracts with the parts around it, exports to every format, and one undo takes the
+whole gesture back.
+
 **A working plane's context is the part's section — and the section is an input.** Drawing on a plane that is
 not the plan needs to know where the material is, so every such plane draws **the part's section at itself**,
 in its own coordinates: a face space draws its face's true boundary (a pyramid's lateral face draws its

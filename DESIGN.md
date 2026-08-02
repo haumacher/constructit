@@ -6003,6 +6003,17 @@ the two can never disagree about what "along" means. **Open**: whether the offse
 with *a click is a choice*; whether a planar curve's offset is required to equal the 2D answer exactly (it
 should, and that is a test, not a hope); and whether it shares the sweep's cusp refusal verbatim.
 
+**Evidence from a real part, session 37, and it settles the hard half.** A cast robot arm was measured and
+then looked at: the member runs *cylindrical joint housing → flat-sided box section → cylindrical joint
+housing*, so the section changes **kind**, not merely scale, and its centreline is a curve rather than an
+axis (slab-by-slab the cross-section centre wanders ±100 mm while the extent swings 676 → 1153 → 109 → 295
+mm; enclosed volume is 0.8–15% of the bounding box, i.e. slender and hollow). No scaling of one profile
+produces that shape — but **a handful of stated sections does**, and the existing loft already takes ordered
+sections across spaces with click-based boundary correspondence, which is exactly the round-to-polygon
+correspondence such a member needs. So the law-driven variant is not merely doctrinally awkward, it is
+**not what a real part is**: the continuous law could not express this shape at all. Stated sections win on
+both counts, and the engine change stays unbought.
+
 **3. Variable-section sweep.** The observation to test is that this may not be a feature at all: the
 **loft already exists** and already takes ordered sections across spaces with guide curves, so a
 variable-section sweep might be exactly *"sections drawn in stations, lofted along the path as spine"* —
@@ -6166,6 +6177,159 @@ which had never been pointed at a curve: a curve is not a body, so all four writ
 reporting it as a body that failed. And **three packages in one scene** — a curve, a constructed solid and a
 session-34 imported open shell sharing one upload gate, each moved in turn, because the way a two-list gate
 goes wrong is asymmetric: a change to the kind an edit did *not* touch going unnoticed.
+
+### Implementation status (as built — step 2: the moving frame, and the sweep that rides it)
+
+Step 2 of the order above, whole and nothing else: **a profile carried along a `Path3` on a
+rotation-minimizing frame, as an ordinary solid**. No helix (step 3), no station space and no station tool
+(step 4 — the frame is built as a *value*, which is what a station will read), no combine-two-views, no
+intersections, no connect, no projection onto a face, no imported curves, no variable-section sweep and no
+3D offsets.
+
+**The frame is parallel transport, and the discrete form is one rotation per chord** (`geom/Sweep.kt`,
+`Frames3.along`). The spine is the path sampled to a chord tolerance; for each consecutive pair of chord
+directions the reference is turned by *exactly* the rotation that takes one chord to the next — about their
+common perpendicular, by the angle between them, and by nothing else. That is the whole algorithm, and each
+of the three properties the sweep needs falls out of it rather than being arranged: two equal chords give a
+**zero rotation axis**, so a straight run carries the reference through unchanged instead of dividing by
+zero; the step is a rotation by the angle between consecutive chords, so **nothing in it can jump by π** —
+because nothing in it reads which way the curve bends, which is the Frenet normal's whole definition; and it
+is a **single forward pass**, hence a pure function of the path and one stated start, which is what the
+byte-equal reload actually rests on. A reference is re-orthogonalized against its new tangent after each
+step — accumulated rounding over a few thousand stations, not a wrong answer being repaired.
+
+**How the claim is verified rather than described.** The test asserts the *defining* property directly:
+between any two stations the reference direction turns by **no more than the tangent does**. That is stronger
+than "it never flips" and it subsumes it — a Frenet frame at an inflection turns its normal by π while the
+tangent barely moves, so it fails at the one station that matters. Where the tangent itself turns less than a
+right angle (everywhere on a sampled smooth curve) the consecutive references are additionally asserted to
+keep a positive dot product. The three cases OP-26 names are each a test: a **straight** run (constant frame,
+exactly zero curvature — "not nearly zero"), an **S-curve through points** (the inflection), and a
+**straight–bend–straight** run, plus the polyline whose corners are genuine kinks.
+
+**The start reference is derived by construction, and its degenerate case is stated in the code.** The sweep
+node takes the **plane of the space its path is parented to** and projects that plane's normal perpendicular
+to the first tangent. So a route drawn flat in its own space starts with its section standing exactly up out
+of that space, tilting the datum rolls the sweep with it, and nothing is stored. When the projection is
+degenerate — the run leaves along the space's own normal, a riser going straight up out of the plan — the
+fallback is the **world axis least parallel to the tangent**, tried in the fixed order X, Y, Z so a tie is
+broken identically on every machine and every reload. It can never be degenerate in turn: the least parallel
+of three orthogonal axes is at most `1/sqrt(3)` along the tangent. The consequence is worth knowing rather
+than discovering, and is said in the code: on such a path the initial roll is the world's choice and not the
+drawing's, so state the roll if it matters.
+
+**Roll and twist are inputs, not conventions.** The roll turns the section about the tangent at the start and
+is a real degree of freedom *stated* rather than compensated (OP-26's rule); the twist is the total rotation
+about the tangent from one end to the other, distributed **linearly in arc length** — the only distribution
+that is stateable as a sentence ("so many degrees per metre") and the only one that needs no second parameter
+to describe. Both default to zero, so neither costs the everyday gesture a step.
+
+**One plane input, read twice, because it is one statement.** The same space plane that starts the frame is
+what the body's **plan** is projected onto. A sweep has no prismatic reading, so it has no sketch to draw as a
+footprint; its plan is its **silhouette** — the long-parked mesh-only footprint question (OP-9/OP-17),
+answered for a *constructed* solid for the first time by the machinery session 30 built for imported bodies.
+That is what makes a swept solid clickable in 2D at all, and hence a legal `SOLID` slot filler.
+
+**The sampling rule: a chord tolerance in millimetres, refined by the twist.** A straight piece needs exactly
+one span (a chord of a straight line *is* the line); a cubic needs the count its own second derivative gives
+at `TESS_TOL_MM`, the 3D twin of `GeomMath.bezierSteps`. Deliberately *not* the renderer's fixed
+`BEZIER_STEPS`: a mesh is geometry, and OP-15 requires its error stated in the unit a made part is wrong by,
+while a drawn polyline is a presentation choice. That count is then refined by the twist through
+`chordSteps(reach, twist·share, tol)` — the revolve's own rule, a point `reach` mm off the axis turning
+through an angle needs as many chords as a circle of that radius does — **because without it a full turn along
+a single straight segment would vanish between its two ends**, the section returning to where it started with
+nothing in between. Everything here is computed inside one function of values: what OP-21 forbids is the
+*graph's shape* depending on a value, and the station count is a compute-time decision that is a pure
+function of the inputs, so a reload rebuilds the identical mesh vertex for vertex (asserted).
+
+**How the profile is carried, and why a corner needs no case.** Each station lays the profile out in the
+plane perpendicular to its arriving chord, in its own 2D coordinates, and then **pushes it along that chord
+onto the station's mitre plane** — the bisector of the arriving and leaving chords. Where the path is smooth
+the mitre plane *is* that plane and the push is zero; at a kink the push is exactly the trim two straight
+tubes make of each other, so a polyline route comes out **mitred rather than pinched** and one formula covers
+both. At either end of an open path the arriving and leaving chords are the same, so the cap plane is normal
+to the tangent by the same formula and is not a case either. The ring is computed **once per station** and
+both adjacent bands use it, which is where watertightness comes from — the prism's own argument, not a repair
+pass. A closed path needs no caps because its last band hands back to its first ring.
+
+**The profile's own origin sits on the path**, which is a statement rather than a convenience: an eccentric
+run — a handrail whose section stands to one side of its route — is then an ordinary construction (draw the
+section off its space's origin and it sweeps off the path by exactly that much), there is no offset argument
+to invent, and it is the frame the self-intersection criterion measures against. A profile is an ordinary
+`Region`, so **a pipe is a profile with a hole in it** rather than a second feature.
+
+**The refusals, each naming what is wrong and where, and all of them node invalidity (OP-3).** The
+self-intersection criterion is per station and is checked before a triangle is emitted: the profile's
+**reach** — its greatest distance from the frame origin — against the path's local **radius of curvature**,
+which is `1/κ` with `κ = |B'×B''|/|B'|³` for a cubic and **exactly zero** for a straight run (a fact, not a
+tolerance: a straight run has no bend a profile could fold through, however wide it is). The curvature is
+read from the **analytic piece** the station was sampled from and never from the chords, because a
+chord-based estimate of a straight run is rounding noise; a hand-over point takes the larger of its two
+pieces' curvatures, the answer that cannot let a fold through. The message names the station by arc length —
+*"the tube's radius (12 mm) is larger than the bend at 340 mm along the path (radius 8 mm)"* — because "this
+sweep self-intersects" is not something anybody can act on. Also refused by name: a non-positive tube radius,
+a profile whose outline does not close (naming the piece that leaves the gap), a profile enclosing no area, a
+path with no pieces, a path with no length, and a path that **doubles back** so sharply that no mitre exists
+(beyond a 170° turn the mitre plane is edge-on to the run and the trimmed section runs away to infinity). A
+*gesture* refusal sits on top of exactly two structural things — a pick that is not a curve in space, and a
+profile that bounds no area — and on nothing that is a number.
+
+**The closed-path seam is a refusal, and the argument is what the user can do about it.** After a full loop
+the transported frame generically does not come back to itself; the residual is measured as a signed angle
+about the first tangent and reported as **holonomy plus the stated twist**. A **planar** closed path has
+*exactly* zero residual, and not by tolerance: the reference direction is the rotation axis at every step of
+the transport, so it is carried through unchanged — which means the everyday closed run simply works and this
+never fires on it. Where it does fire the sweep is refused, and the refusal **names the cure and the number**:
+*"it is 37.2° out at the seam … state a twist of −37.2° (or that plus any whole number of turns) to close
+it"*. The alternative — a note, with the mismatch smeared over the last band — was rejected because it puts a
+twist in the drawing that nothing in the drawing states, which is the same objection *recorded, never
+discovered* makes everywhere else; and the alternative of exempting a rotationally symmetric profile was
+rejected because telling symmetry from near-symmetry is measuring what cannot be known, and a rule with that
+exception would be decided by a tolerance. Refusing is only defensible **because the cure is one number this
+very feature already takes**, and stating it makes the drawing contain the fact. It heals, and the test
+asserts that it does.
+
+**The ordinary obligations, and what they cost.** Two `ToolDef` rows and no controller code: *Tube along a
+curve* (a radius, one click) and *Sweep* (a curve, an area), both with defaulted roll and twist. The swept
+solid is a solid in every sense that was already built — it draws in the 3D view, shows a plan footprint and
+is picked by it, is a legal boolean operand (through the **general** engine, since a curve axis can share an
+axis with nothing — asserted in the value's `MeshBoolean` feature), exports through all four writers, hides
+and is named through OP-18, `save → load → save` is byte-equal with the mesh reloading vertex for vertex, and
+one undo takes the gesture back. It moves under a placement like any other feature, its path mapped through
+the control points (exact, since both piece kinds are affine-invariant) and its plan re-projected where the
+new plane is known — an imported body's own rule, reused rather than re-derived.
+
+**One generalization fell out, in the tool table's own terms.** A tool's scalars used to be all-or-nothing:
+either every slot was defaulted or the editor waited for every one of them. The tube needs a radius it cannot
+do without *and* a roll and a twist that mean zero unless stated, so `ToolDef.requiredScalars` now says how
+many a tool is actually waiting for, and the picks fill the slots as a prefix. Without it the first such tool
+would have made the user type three numbers to get the one that matters. The order is now a rule rather than a
+convention: a defaulted slot must never stand in front of one the tool waits for.
+
+Cut, and named so they are not looked for: **an analytic sweep section** (`sectionAt` refuses a swept solid
+by name — its section is normal to its *path*, which a horizontal cut is not, and that is step 4's business);
+**named faces** on a swept solid (`facePlane` and `Section3` refuse it in the loft's own words, pointing at a
+datum plane); a **preview** while the tool is armed (the sweep's picture is the solid, and drawing one per
+hover is the wrong kind of cheap); a **palette glyph** for either tool (a glyph nobody can read is worse than
+the label it replaced — the standing rule); and any **variable** section, offset or law along the run, all of
+which are on OP-26's own to-be-discussed list.
+
+Tests: `SweepTest` (21) — the cylinder asserted twice, exactly against the polygon the mesh is made of and
+against πr²L to within the tessellation's own bound; the constant frame and exactly-zero curvature of a
+straight run; the inflection and the straight–bend–straight run, each asserted by the transport property
+above; the mitred polyline; a full turn of twist returning the section and a half turn putting it opposite,
+read **off the mesh** at both ends and at the half-way station; the roll turning the section and changing
+neither the volume nor the triangle count; the self-intersection refusal by station, for a tube and for an
+area, each in its own words; the planar closed loop closing exactly and the non-planar one refused and then
+closed by the twist it named; the rectangle swept to an exact bar and round a bend; the pipe; every
+degenerate input by name; the start reference and its fallback, including the tie; the node refusing and
+healing as its radius moves; the path's own points driving the solid; and the identical inputs giving the
+identical triangles. `SweepToolTest` (12) — the two gestures, the eccentric profile asserted as a number, the
+plan footprint drawn and clicked, the boolean through the general engine, all four writers plus the hidden
+body's note, `save → load → save` byte-equal with the mesh compared vertex for vertex, one undo, both gesture
+refusals, the node's refusal healing back into the 3D view, the session-35 counts with a swept body in the
+scene, and an SVG golden of the footprint. **1311 → 1344 green**, one new golden, no version bump, no
+existing golden changed.
 
 ## Open points (to discuss one by one)
 
@@ -6364,7 +6528,8 @@ goes wrong is asymmetric: a change to the kind an edit did *not* touch going unn
       degenerate class it cannot resolve is **refused**, never leaked. Curves are tessellated first, so
       a boolean's boundary is an *approximated* curve — OP-15's rule, one dimension down. See *Exact
       prismatic booleans*.
-- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36), unimplemented. A `Path3` of
+- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1 and 2 built**
+      (sessions 37 and 38 — the value with both views, then the frame and the sweep), the rest queued. A `Path3` of
       analytic pieces; a curve's **value** is world-space while its **construction** is always parented, so
       curves ride their parents and planarity is known rather than measured; the moving frame is
       **parallel transport** with a stated start frame (Frenet rejected — it flips at inflections and is
@@ -7937,6 +8102,34 @@ goes wrong is asymmetric: a change to the kind an edit did *not* touch going unn
   which is the one place a curve through height points can be drawn. **1284 → 1307 green**, one new SVG
   golden, no version bump. Arc length is cut and named: it does *not* fall out for free. See
   *Implementation status (as built — step 1)* under *Curves in space, and the sweep*.
+- **Session 38 — the moving frame, and the sweep that rides it (OP-26 step 2).** The second step, and the one
+  the first existed for: a profile carried along a curve, on a frame that is **parallel transport and never
+  Frenet**. The discrete form is one rotation per chord — turn the reference by exactly the rotation that
+  takes one chord direction to the next — and every property the sweep needs falls out of that rather than
+  being arranged: a straight run gives a zero rotation axis instead of the Frenet normal's 0/0, nothing in
+  the step can jump by π because nothing in it reads which way the curve bends, and it is one forward pass,
+  hence a pure function of the path and one stated start. The claim is verified by asserting the *defining*
+  property directly — between two stations the reference turns by no more than the tangent does — which is
+  stronger than "it never flips" and fails a Frenet frame at exactly the station that matters. The **start
+  reference is derived by construction**: the normal of the space the path is parented to, projected
+  perpendicular to the first tangent, so a route drawn flat starts standing up out of its own space and
+  tilting the datum rolls the sweep; when that projection degenerates the fallback is the world axis least
+  parallel to the tangent in the fixed order X, Y, Z, and the code says so, because on such a path the
+  initial roll is the world's choice and not the drawing's. **Roll and twist are stated inputs**, the twist
+  spread linearly in arc length, and the sampling is a **chord tolerance in millimetres refined by the
+  twist** — without the refinement a full turn along one straight segment would vanish between its two ends.
+  Three things are one formula rather than three cases: a smooth station, a **mitred** corner of a polyline
+  route, and a cap normal to the tangent, all being "lay the profile out perpendicular to the arriving chord
+  and push it onto the mitre plane". The **closed-path seam is a refusal rather than a note**, and the
+  argument is what the user can do about it: a planar loop closes exactly (the reference *is* the rotation
+  axis at every step), a non-planar one is refused with the residual measured and the twist that would close
+  it named, and stating that number puts the fact in the drawing instead of smearing it over the last band.
+  The swept solid's **plan is its silhouette**, which answers the mesh-only footprint question for a
+  constructed solid for the first time, reusing what session 30 built for imported bodies. Two tool rows and
+  no controller code; one generalization fell out with them — a tool now waits for the scalars it cannot do
+  without rather than for all of them, so a required radius can stand in front of a defaulted roll and twist.
+  **1311 → 1344 green**, one new SVG golden, no version bump. See *Implementation status (as built — step 2)*
+  under *Curves in space, and the sweep*.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -7990,6 +8183,60 @@ carried for later 3D even though invisible in 2D.
 > **Superseded in part by OP-21** (below): the sketch above has the Wall macro produce *segmented
 > faces*, cutting the plan geometry at each opening. That conflates the plan drawing with the solid,
 > and it is one of the two reasons the as-built wall needs rework. See *A wall is an output feature*.
+
+## An unbounded tool is a legitimate operand (OP-22's extension — DESIGN AGREED, unimplemented)
+
+**The gap, in the user's own framing (session 37).** Subtraction today requires the *removed* operand to be
+a solid — something with a bounded volume. But *"cutting something away does not require the subtracted
+part to be bounded. E.g. a plane and a direction is the simplest example — cut away everything on the one
+side of this plane."* That is right, and it is how real parts are actually modelled: an additive body (a
+loft, a sweep, an extrusion) then **shaped** by cuts — an inclined face taken off a casting, a pocket opened
+where a pipe enters. The tool for such a cut is a *surface and a side*, not a box someone sized by eye.
+
+**The move: unbounded in the statement, bounded in the implementation.** The engine bounds the tool to the
+target's own extent plus a margin, **derived at evaluation time**. Doctrine-clean on every count. It is a
+value-time computation inside `compute`, so OP-21 is untouched — nothing about the graph's shape depends on
+how big the target happens to be, and if the target grows the bound grows with it because nothing was
+stored. *Watertight or refused* (OP-9) is untouched too, because that rule governs what the kernel
+**produces**: a bounded target cut by an unbounded tool is a bounded solid. And **which side is kept is a
+discrete choice**, so it is a persisted sign, never re-scored on replay (OP-1).
+
+**It is more robust than the workaround it replaces, which is the real argument for building it.** Today one
+subtracts a big box sized by eye. A box sized by eye eventually lands a face coplanar with a face of the
+target — precisely the degenerate class the exact prismatic path refuses and the general path resolves by
+epsilon. A derived bound can be made to *strictly* exceed the target, so that coplanarity is unreachable by
+construction. This replaces "deep enough, I think" with a computed guarantee and removes a whole family of
+silent near-tangency failures.
+
+**The ladder of tools, of which only the last needs a surface kernel.**
+1. **A half-space** — a plane and a side. Needs **no new geometry at all**: planes are already first class
+   (datum planes, face spaces, plane-at-height, plane-from-line-and-angle), so only the *operation* is
+   missing. The inclined face of a casting is exactly this.
+2. **An unbounded prism** — a closed profile extruded *through*, with no stated depth. The everyday
+   through-slot, through-bore and notch, and the same benefit: "through" is a statement, "40 mm, which I
+   hope is enough" is a guess that leaves a sliver when it is wrong.
+3. **An unbounded revolve or sweep** — a profile revolved or swept, open at one end; the pocket where a pipe
+   enters a housing.
+4. **A general trimmed surface** — the real surface-kernel case, and outside this and OP-26 both.
+
+**Cut or split, and decide it early.** A plane through a body can discard one side, or produce **both**
+halves and let the user keep either or both. Split is strictly more general, both halves are often wanted (a
+clamshell housing is one split), and it is the same mechanism as an intersection's ordered solution set with
+a persisted sign choosing the branch. The proposal is to build **split** and define cut as *split, keeping
+one side*.
+
+**What it must say.** A tool that misses the target leaves it unchanged — and that silence is exactly when
+the user picked the wrong side, so it must be said. A tool that removes everything gives an **empty** result,
+which is node invalidity with a reason (OP-3), never a body that quietly vanished. Both are properties of
+values, so both heal rather than being gesture refusals.
+
+**A consequence worth having in view**: once the cutting tool may be a **face of another solid**, one part
+can be trimmed to mate with another — and since a face space already exists and a plane's inputs are now
+every ancestor solid (GitHub #9), that composes with what is already built.
+
+**Queue position.** Not part of OP-26 and not behind it — it is independent of curves. Ranked **above** the
+remaining curve steps once the sweep has landed, and **above** 3D blends, because blends are the harder
+kernel problem while this is mostly a new operand rule over machinery that exists.
 
 ## A wall is an output feature (OP-21 — RESOLVED)
 
@@ -9344,8 +9591,12 @@ the order is the one stated there. It is the first numbered queue since the last
 large on purpose: everything this kernel builds today is flat or a prism of something flat, so a profile
 carried along a path is the missing capability rather than a refinement of an existing one.
 
-1. `Path3` as a value + the 3D view + the plan projection + **through 3D points** as the first source.
-2. The **parallel-transport frame** and the **sweep** (circular profile, then arbitrary), with its refusals.
+1. ~~`Path3` as a value + the 3D view + the plan projection + **through 3D points** as the first source.~~
+   **Built in session 37.**
+2. ~~The **parallel-transport frame** and the **sweep** (circular profile, then arbitrary), with its
+   refusals.~~ **Built in session 38.** (The list below keeps session 36's numbering; the *order of work*
+   under *Curves in space, and the sweep* is the authority, and it has since gained **the station** as its
+   step 4 — settled in session 37 — which pushes the remaining items down one.)
 3. **Helix** — the first constructed curve lying in no plane, which is what tests the frame honestly.
 4. **Combine two views** — plan route × elevation, the routing workhorse.
 5. **Intersection curves** — the section machinery generalized, with OP-1's ordered set and persisted sign.
@@ -9353,6 +9604,20 @@ carried along a path is the missing capability rather than a refinement of an ex
 7. **Projection onto a face** — exact for analytic faces, honest or refused for a mesh.
 8. **Imported curves** — frozen literal + placement, plus a *recorded* planar-wireframe-to-sketch gesture.
    Last, per the standing rule that formats go at the end of the queue.
+
+**Also queued in session 37 — an unbounded tool as a boolean operand (OP-22's extension).** Independent of
+OP-26 and ranked above its remaining steps once the sweep has landed, and above 3D blends: a half-space, then
+an unbounded prism, then an unbounded revolve/sweep, built as **split** with cut defined as split-keeping-one-
+side. See *An unbounded tool is a legitimate operand*.
+
+**Named in session 37 and not yet queued — two gaps a real structural part shows** (from a cast arm looked at
+in the round): **3D edge blends**, which is most of what the eye reads as a casting and is a dimensioned
+manufactured feature rather than decoration — nothing can break an edge between two faces of a solid today,
+and it pushes hardest on OP-9 since blending mesh faces is a different problem from blending analytic ones;
+and **shelling** to a stated wall thickness, since a real member is hollow (0.8–15% of its bounding box) and
+the only route today is subtracting a hand-built inner solid. **Draft** follows them and is meaningless
+before them. Also named: **text as geometry** (part marking, serial plates, signage) — a general capability,
+absent, and independent of everything else here.
 
 **The rest of the numbered queue is empty.** What remains is the parked list below, each item recorded at
 its source.
