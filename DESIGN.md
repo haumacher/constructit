@@ -5904,9 +5904,66 @@ Each step is whole on its own — a thing that works, not a layer that waits.
    sketch from this planar wireframe"* gesture that refuses by name when a run is not planar — never a
    silent planarity discovery. Last, consistent with the standing rule that formats go at the end.
 
-**Parked with the work, named so they are not looked for**: variable-section sweep, sketching on a station
-along a path, 3D offset curves, trim/split in space, and any general **surface** modelling layer — that
-last one is a surface kernel and a far larger commitment than curves-plus-sweep.
+### To be discussed — not ready to implement
+
+**These are not queue items and must not be treated as any.** Each one is a candidate that needs its own
+settling discussion before it is designed, let alone ordered — *"we have to make them clear one-by-one, not
+all-in-one-go"* (the user, session 36). What is written under each is a **starting point for that
+discussion**: what the thing appears to be, what it would reuse rather than invent, and the questions that
+have to be answered before it could be built. Nothing here is decided. A reader who finds a sentence below
+that sounds like a decision should treat it as a proposal that has not been argued yet.
+
+They are listed in the order that would make each discussion easiest — the first unlocks two of the others
+— and not in an order of value or of work.
+
+**1. Sketching on a station along a path.** A *station* is a stated position along a path together with the
+plane the path pierces there; the word is the shipbuilder's and the road engineer's (hull stations,
+chainage), not an invention. The candidate claim is that a station **is a sketch space** and therefore
+needs no new drawing concept at all — its origin is the point on the path, its normal the tangent, its
+in-plane axes the parallel-transport frame's. Reuse rather than invention on three counts: the frame is
+step 2's, the space machinery is OP-17's, and *stating a position along a carrier* is already the on-curve
+rider's `t = base + d`. **Open**: whether arc length or normalized parameter is the primary way to state a
+station, and how the difference is made visible (equal steps in *t* are not equal spacing on a spline —
+a trap, not a detail); whether a station may be **tilted** off perpendicular, which a mitre wants and a
+section does not; what a station **at a corner** of a polyline path is, where there are two tangents and no
+one answer; whether arc length may wrap on a closed path; and whether a station beyond the path's length is
+refused or clamped (doctrine says refused, by name).
+
+**2. 3D offset curves.** In 2D "parallel" means the in-plane normal and is unambiguous up to a sign; in 3D
+there is a whole circle of directions perpendicular to the tangent, so an offset has to say *which way* —
+which is the moving frame again. The candidate claim is therefore that **an offset curve is the path traced
+by a point in the moving frame**, i.e. the sweep's own construction with a point where the profile goes, so
+the two can never disagree about what "along" means. **Open**: whether the offset is stated as a
+(distance, angle) in the frame or as a point drawn in a station's space — the second is more in keeping
+with *a click is a choice*; whether a planar curve's offset is required to equal the 2D answer exactly (it
+should, and that is a test, not a hope); and whether it shares the sweep's cusp refusal verbatim.
+
+**3. Variable-section sweep.** The observation to test is that this may not be a feature at all: the
+**loft already exists** and already takes ordered sections across spaces with guide curves, so a
+variable-section sweep might be exactly *"sections drawn in stations, lofted along the path as spine"* —
+item 1 plus the loft plus step 2's frame, with nothing new. **Open, and this is the real question**: the
+**law-driven** variant, where a section's dimension is a function of the path parameter, has no home in this
+engine. The DAG evaluates each node **once**; there is no "re-evaluate this cone at N stations". The
+closest existing mechanism is OP-23 — a pattern is *a rule later gestures ride* — and a continuous family
+of stations would be that idea with a continuum where the count is, which may or may not generalize
+honestly. The alternative is that a law is simply the wrong thing to offer: **enough stated sections to
+interpolate**, which is what *recorded, never discovered* would prefer anyway, since five stated sections
+can be pointed at and a continuous law cannot. This is the one item in the whole set that might demand an
+engine change, and it must not be started before that is settled.
+
+**4. Trim, split and join in space.** Subtractive editing in a constructive system, which sounds like a
+doctrine problem and is not: `Break` on plain curves already splits a segment, an arc and a cubic Bézier at
+a point into pieces that are elements, so this is that rule one dimension up, including OP-1's ordered set
+and persisted sign for *which piece*. It is really four operations that do not arrive together — **split at
+a rider** (needs only item 1), **trim to** another curve or surface (needs step 5's intersections),
+**join** into a composite (endpoints must meet by **shared node**, never by tolerance — the same rule
+session 35's run-coalescing follows), and **extend** along an end tangent. **Open**: whether they are one
+tool or four, and whether joining two paths that meet only *nearly* is refused by name or is simply not
+offered.
+
+**Not on this list, and named so it is not looked for**: any general **surface** modelling layer. That is a
+surface kernel, and a far larger commitment than curves-plus-sweep — a different project, not a later step
+of this one.
 
 ## Open points (to discuss one by one)
 
@@ -6112,8 +6169,9 @@ last one is a surface kernel and a far larger commitment than curves-plus-sweep.
       undefined on straights); the sweep refuses a profile whose radius exceeds the local radius of
       curvature, by station. Interpolating splines are allowed and 3D sketch *constraints* are not — the
       distinction is deterministic fitting versus iterative constraint search. Eight ordered steps, the
-      first being `Path3` + both views + through-3D-points and the second the frame + the sweep. See
-      *Curves in space, and the sweep*.
+      first being `Path3` + both views + through-3D-points and the second the frame + the sweep. Four
+      further candidates (stations, 3D offsets, variable-section sweep, trim/split/join) are recorded as
+      **to be discussed, one-by-one** and are explicitly *not* queued. See *Curves in space, and the sweep*.
 
 ## Prior art to keep in mind
 
