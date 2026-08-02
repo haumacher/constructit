@@ -4,6 +4,7 @@ import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
+import constructit.geom.Handedness
 import constructit.geom.Justification
 import constructit.geom.Vec2
 import constructit.units.Dimension
@@ -511,6 +512,18 @@ object Tools {
     const val CURVE3_SMOOTH = "curve3smooth"
 
     /**
+     * **The helix** (OP-26, step 3): a coil about the axis standing on the sketch plane at a picked point.
+     *
+     * Two ids because the **handedness** differs, and this is the same argument [CURVE3] makes one step
+     * earlier rather than a new one: chirality is a *discrete* choice, so it is structural (OP-1) and must be
+     * persisted rather than re-derived — and a tool id is exactly what the file records (OP-18). So a
+     * right-hand spring reloads right-handed with no new file argument, and neither build has to read a sign
+     * off a number that a later edit could change.
+     */
+    const val HELIX = "helix"
+    const val HELIX_LEFT = "helixleft"
+
+    /**
      * **The sweep** (OP-26, step 2): a profile carried along a curve in space, on the rotation-minimizing
      * moving frame. Two ids because the *profile* differs — a radius typed for a tube, an area clicked for
      * anything else — exactly as [CIRCLE] and [CIRCLE_R] are two ids for one shape.
@@ -726,6 +739,12 @@ object Tools {
             // Two tools, one value: which pieces the curve is made of is stated by which one was used.
             ToolDef(CURVE3, "Curve through points", ToolCategory.CURVES, listOf(SlotKind.POINT3), repeating = true, minPicks = 2, crossSpace = true, closesOnFirstPick = true, help = "Click the points in space the curve runs through — height points, or ordinary points, which lie in the plane they were drawn on. Press Enter to finish, or click the first point again to close the curve. The points are shared, so dragging one (or retyping its height) moves the curve; switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("point in space")) { d, p, _ -> d.curveThroughPoints(p.elements, smooth = false) },
             ToolDef(CURVE3_SMOOTH, "Smooth curve through points", ToolCategory.CURVES, listOf(SlotKind.POINT3), repeating = true, minPicks = 2, crossSpace = true, closesOnFirstPick = true, help = "The same gesture as Curve through points, with the corners rounded off: an interpolating cubic that passes through every point you click and leaves each one along the line to its neighbours. At the ends it runs off along the first and last chord. Enter finishes; clicking the first point again closes it.", slotNames = listOf("point in space")) { d, p, _ -> d.curveThroughPoints(p.elements, smooth = true) },
+            // **The helix** (OP-26 step 3), and two rows are the whole cost of it. `radius` and `pitch` are
+            // waited for; `turns` is defaulted, so `requiredScalars` stops the gesture at two numbers and the
+            // third is there for the typing without ever standing in the way (the prefix rule — a defaulted
+            // slot must never come before one the tool waits for).
+            ToolDef(HELIX, "Helix (right-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "Type a radius and a pitch — the rise per turn — and, if you want more than one, a number of turns; then click the point the axis stands on. The axis is this sketch plane's own normal through that point, so the coil rises out of the plane you are drawing in and tilts with it; the curve starts beside the point along the plane's x direction. Everything stays live: drag the point, retype its height, or retype any of the three numbers. Sweep a tube along it for a spring.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.RIGHT) },
+            ToolDef(HELIX_LEFT, "Helix (left-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "The same gesture as Helix (right-hand), turning the other way as it rises — a left-hand thread, a left-hand spring. Handedness is which tool you used, so it is what the file records and it never changes by itself; a negative pitch is refused, because a coil that descends while it turns right is this one.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.LEFT) },
             ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, followsBoundary = true, shortcut = 'O', help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.", slotNames = listOf("boundary curve"), icon = Icons.OUTLINE) { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
             ToolDef(THICKEN, "Thicken (wall over curves)", ToolCategory.RESULT, listOf(SlotKind.CURVE), scalars = listOf(len("thickness")), repeating = true, minPicks = 1, sidePerPick = true, replicates = false, extendsResult = true, preview = Previews::thicken, help = "Type a thickness, set Wall side, then click the curves the wall follows — segments, arcs or Béziers that meet end to end, or end part-way along one another (a T joins with no seam). The side applies to the next click, so it can change per curve. Enter (or clicking the first curve again) builds it; a disconnected pick is refused. Click an existing wall first to *extend* it instead: its thickness stays its own and its openings, dimensions and solids follow (Alt on that first click starts a new wall there instead).", slotNames = listOf("carrier curve"), icon = Icons.THICKEN) { d, p, s -> d.buildThickNetwork(p.elements, p.signs.map { Tools.sideOf(it) }, s[0]) },
             ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click a circle or arc, then click inside or outside for the concentric circle.", slotNames = listOf("circle", "side"), icon = Icons.CONCENTRIC) { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at) },

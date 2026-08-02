@@ -130,6 +130,12 @@ fun Sketch3.movedBy(x: Xform3): Sketch3 = Sketch3(plane.movedBy(x), regions)
  * Exact, and for the reason the plan projection of a path is exact: an affine map carries a cubic Bézier to
  * the cubic through the mapped control points, and a segment to the segment between its mapped ends. So a
  * placed sweep's spine is the same curve somewhere else, with no resampling anywhere in the statement.
+ *
+ * **A helix stays a helix, with all four of its numbers untouched** — and that is a statement about [x], not
+ * about the helix: the only maps a solid is moved by are **rigid** ones ([Xform3], [Solid3.movedBy] refuses
+ * the rest by name), and a rigid map preserves lengths, so the radius and the pitch are what they were, and
+ * `det = +1`, so it preserves handedness too. A mirror would turn a right-hand spring into a left-hand one,
+ * which is precisely why a mirror is not a placement here. Only the frame moves.
  */
 fun Path3.movedBy(x: Xform3): Path3 =
     Path3(
@@ -138,6 +144,16 @@ fun Path3.movedBy(x: Xform3): Path3 =
                 is Curve3Element.Seg3 -> Curve3Element.Seg3(x.apply(el.start), x.apply(el.end))
                 is Curve3Element.Bezier3 ->
                     Curve3Element.Bezier3(x.apply(el.p0), x.apply(el.p1), x.apply(el.p2), x.apply(el.p3))
+                is Curve3Element.Helix3 ->
+                    Curve3Element.Helix3.about(
+                        x.apply(el.origin),
+                        x.linear(el.axis),
+                        x.linear(el.u),
+                        el.radius,
+                        el.pitch,
+                        el.turns,
+                        el.hand,
+                    )
             }
         },
         closed,

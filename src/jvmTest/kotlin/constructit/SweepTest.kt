@@ -247,45 +247,14 @@ class SweepTest {
     }
 
     /**
-     * **The frame introduces no rotation about the tangent, station by station** — the defining property of
-     * parallel transport, asserted directly: the reference direction turns by *exactly* as much as the
-     * tangent does between two stations and never more.
-     *
-     * That subsumes the flip test and is stronger than it. A Frenet frame at an inflection turns its normal
-     * by π while the tangent barely moves, so it fails this at the one station that matters; and where the
-     * tangent itself turns less than a right angle (which is everywhere on a sampled smooth curve) the
-     * consecutive references are additionally asserted to keep a **positive** dot product, so nothing about
-     * the section is ever turned inside out.
+     * The defining property of parallel transport, asserted station by station — [assertTransportNeverFlips],
+     * which lives in [TestSupport] because it is the claim *every* curve in space has to answer, not this
+     * suite's own (OP-26's step 3 asks it of a helix, which is the first path lying in no plane).
      */
     private fun assertNeverFlips(
         path: Path3,
         reach: Double,
-    ) {
-        val (frame, why) = Frames3.along(path, up, reach = reach)
-        val f = assertNotNull(frame, why)
-        assertTrue(f.stations.size >= 4, "the path is sampled into stations to look at: ${f.stations.size}")
-        for (i in 1 until f.stations.size) {
-            val a = f.stations[i - 1]
-            val b = f.stations[i]
-            val turnedTangent = angleBetween(a.tangent, b.tangent)
-            val turnedRef = angleBetween(a.ref, b.ref)
-            assertTrue(
-                turnedRef <= turnedTangent + 1e-9,
-                "the frame turned $turnedRef rad between stations ${i - 1} and $i while the tangent turned " +
-                    "$turnedTangent — that is a rotation about the tangent, which transport must not introduce",
-            )
-            if (turnedTangent < PI / 2.0 - 1e-9) {
-                val d = a.ref.dot(b.ref)
-                assertTrue(d > 0.0, "the frame flipped between stations ${i - 1} and $i (dot $d) — that is the Frenet defect")
-            }
-            assertClose(b.ref.dot(b.tangent), 0.0, 1e-9, "and it stays perpendicular to the tangent")
-        }
-    }
-
-    private fun angleBetween(
-        a: Vec3,
-        b: Vec3,
-    ): Double = kotlin.math.atan2(a.cross(b).length(), a.dot(b))
+    ) = assertTransportNeverFlips(path, up, reach)
 
     // ---- 4. the twist ----
 

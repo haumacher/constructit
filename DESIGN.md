@@ -6331,6 +6331,139 @@ refusals, the node's refusal healing back into the 3D view, the session-35 count
 scene, and an SVG golden of the footprint. **1311 → 1344 green**, one new golden, no version bump, no
 existing golden changed.
 
+### Implementation status (as built — step 3: the helix, the first curve that lies in no plane)
+
+Step 3 of the order above, whole and nothing else: **a helix as a third `Curve3Element`, the construction
+that makes one, and the two tool rows that state it.** No station and no station tool (step 4), no
+combine-two-views, no intersections, no connect, no projection onto a face, no imported curves, no thread
+profile and nothing thread-specific — *a helix is a curve; a thread is a use of one*.
+
+**The parameterization is what a spring is ordered by, and each number says one thing only.** `Helix3` is
+`(origin, axis, u, radius, pitch, turns, hand)`: a point on the axis, the unit direction it rises along, a
+unit **phase** perpendicular to it, the radius, the **rise per turn**, a turn count that may be fractional,
+and a handedness. `t ∈ [0,1]` runs over the whole curve and the point at `t` is
+`origin + r(cos θ·u + sin θ·(axis×u)) + axis·(pitch·turns·t)` with `θ = hand.turnSign·2π·turns·t`. The phase
+is a field rather than a convention because *where the curve starts* is geometry — `start` is
+`origin + u·radius`, which is a sentence a user can predict — and because a convention would have to be
+re-derived identically by every consumer.
+
+**The three numbers are required to be positive, and each refusal names the other way of saying the same
+thing.** This is the decision the step turns on, and it is a normal-form argument rather than defensiveness:
+a **negative pitch** *is* the other handedness (a coil descending while it turns right is, read backwards, a
+left-hand coil rising — and chirality is invariant under reversing the traversal, which the test asserts by
+the sign of the torsion read off four points forwards and backwards); a **negative turn count** is this same
+coil on the other side of its axis point, which is said by turning the axis round — an input the construction
+already has; a **zero pitch** is a circle traversed `turns` times, and a circle is drawn in a space; **zero
+turns** is a point. Two spellings of one shape is a stored model without a normal form, so all four are
+refused. They are conditions on **values**, so they are node invalidity (OP-3) inside `compute`, named and
+healing — not gesture refusals, for *The station*'s own reason: refusing a gesture on a live number makes
+replay depend on one.
+
+**Handedness is structural, and it is structural the way step 1 made "straight or smooth" structural** —
+**which tool was used**. Two `ToolDef` rows, *Helix (right-hand)* and *Helix (left-hand)*, and since a tool id
+is what the file records (OP-18) the chirality persists with no argument of its own and is never re-derived
+from the sign of anything. That is OP-1's branch doctrine one dimension up: a discrete choice is scored once,
+at creation, and stored — a sign read back out of a value could drift, and a spring that changed hand when
+somebody retyped a number would be the exact defect OP-1 exists to prevent.
+
+**The construction is parented; the value is world geometry.** `helix(plane, center, radius, pitch, turns,
+hand)` takes **the space's own normal through a point that already stands in the drawing** as its axis, and
+the space's **u direction as the phase**. That is the height point's sentence (OP-25: a plane, a point on it,
+a rise along its normal) with one degree of freedom more, so it needs no 3D manipulator and no new editing
+surface: drag the point in the plan and the coil moves, retype the point's height and it rises, tilt the datum
+and the whole spring tilts with it. The gesture is one click and two typed numbers — the turn count is a
+defaulted third, which is `ToolDef.requiredScalars` (step 2's own generalization) doing exactly the job it was
+built for. The `POINT3` slot takes a height point as it stands and **shares its node**, and lifts a plain 2D
+point by a zero height on its own space's plane, both of which are step 1's rules unchanged.
+
+**Its curvature is a closed form, and that is what the step was placed here for.** `κ = r/(r² + b²)` with
+`b = pitch/2π` — **constant**, so `Frames3.curvatureAt` returns a *fact about the curve* rather than
+`|B'×B''|/|B'|³` evaluated at a sample. The sweep's self-intersection refusal is stated against `1/κ`, so it
+now fires at a radius that is arithmetic: the test asserts a tube 0.01 mm inside `(r²+b²)/r` is a solid and one
+0.01 mm outside it is a refusal naming the station, with nothing between them. The closed form is checked
+against the geometry rather than against itself — the **Menger curvature** of three close samples, which reads
+nothing but positions. The chord sampling is the same fact used the other way round: one constant radius of
+curvature means `GeomMath.chordSteps(1/κ, sweepAngle, tol)` meets the millimetre tolerance exactly, which is
+the revolve's rule reused for the third time. A helix's **arc length** is exact too (`|Δθ|·sqrt(r²+b²)`) and is
+used for the sampling and the tests, but it is deliberately **not** offered as a measurable: that was named a
+cut in step 1 and stays one, since a `MEASURABLE` slot answering for one piece kind is worse than none.
+
+**Six exhaustive `when`s, and the one that could not answer exactly says so.** Adding the case meant answering
+for `Curves3.sample`, `Curves3.projectedOnto`, `Path3.movedBy`, and `Frames3`'s step count, point and
+curvature. Five are exact. **The plan projection is not, and OP-15 requires saying so rather than degrading
+quietly**: a helix's orthographic shadow is `x(θ) = A cos θ + B sin θ + Cθ` — a **trochoid**, and the 2D
+vocabulary has no word for one. Not a segment, not an arc, not an ellipse, not a cubic. (Looking straight down
+the axis makes `C = 0` and the image a conic; special-casing that was rejected because the plan of a helix
+would then change *kind* as a datum was tilted, which is worse than approximating uniformly.) So the plan
+shows the chords of the polyline the 3D view shows, at the identical sampling — which keeps step 1's rule that
+picking mirrors drawing exactly — and the error is stated where it is made: a circle of the helix's radius at
+24 steps per turn, `r·(1−cos(π/24))` ≈ `r/1100`, a **drawing** error that nothing measured, meshed or exported
+reads. The drawing count is *fixed per turn* rather than per piece, which is the same rule and not an
+exception to it: a cubic covers a bounded amount of curve so a fixed count per piece is a fixed density, while
+one helix piece can be twenty turns long. `movedBy` keeps all four numbers untouched and moves only the frame,
+and that is a statement about the map rather than about the helix: only **rigid** maps reach it, they preserve
+lengths, and `det = +1` preserves handedness — a mirror would turn a right-hand spring into a left-hand one,
+which is exactly why a mirror is not a placement here.
+
+**The frame survived its first honest test, and the thing to say about it is that nothing had to change.**
+Every path before this was planar, where the transported reference *is* the rotation axis at every step and is
+carried through unchanged — so parallel transport was, in effect, being asked to do nothing. On a helix it
+precesses: after one turn the tangent has come back and the reference has not (measured, and correct — that
+holonomy is what a rotation-minimizing frame *is*). The step-2 property was asserted station by station along a
+coil, a 40-turn coil, a coil about an axis aligned with nothing, and a near-vertical one where the start
+reference's projection is 0.6 % of a unit vector, and it holds in all of them; the perpendicularity drift after
+2824 stations is 1.2e-16. The transport helper moved from `SweepTest` into `TestSupport` because it is the
+claim every curve in space has to answer, not one suite's. A swept spring's volume is **exactly** the
+tessellated section's area times the sampled spine's length (Pappus — every band is a prism cut by two mitre
+planes and the profile's centroid sits on the path, so the mitres cancel), asserted to 1e-6 relative on a
+coil, on a tilted coil and on a rectangular-section one.
+
+**One gap is worth naming, and it is OP-26's stated criterion rather than a defect in step 2's code.** The
+self-intersection refusal is **local** by the concept's own words — *"the profile's outer radius exceeds the
+path's local radius of curvature"* — and a helix is the first curve on which a *global* self-intersection is
+easy to reach with no local violation at all: a spring whose wire is thicker than half its pitch has each turn
+passing through the turn below it, while every station's curvature is perfectly comfortable. It is accepted
+today, and the shell that comes out is topologically watertight (every directed edge used once with its
+reverse) while being geometrically nonsense. The condition is **not** helix-specific — a serpentine route
+whose legs run closer together than the tube is wide does the same thing — so the honest place for it is a
+general proximity criterion for the sweep, not a per-piece-kind special case. It is not built here, and the
+naive fix is worth recording as rejected: refusing on *centre distance below twice the reach* would refuse
+every neighbouring pair of stations along the run, so it needs a real statement about which pairs are
+comparable, and inventing one under a step that is about a curve would be deciding a sweep question by
+accident. Named here, unresolved, and not treated as a queue item.
+
+**The ordinary obligations, and what they cost.** Two `ToolDef` rows and no controller code. The coil is drawn
+in the 3D view from the scene and projected into the plan, is clickable in both (the plan click lands on the
+round shadow it casts, the 3D click on the curve where it honestly stands), hides, renames, is a legal `PATH3`
+operand so *Tube along a curve* turns it into a spring in one further gesture, one undo takes the gesture back,
+and `save → load → save` is byte-equal **with the handedness surviving on the tool id alone**. The session-35
+counts hold with a coil in the drawing: a hover uploads zero, an orbit uploads zero, a rename uploads zero, a
+retyped radius uploads once, and the plan builds one view-projection matrix per frame.
+
+Cut, and named so they are not looked for: a **conical or variable-radius** helix (a spiral is a different
+curve, and a radius law is on OP-26's own to-be-discussed list); a helix stated by a **height** instead of a
+turn count (`turns = height/pitch` is one expression in OP-7's language, and offering both would be two ways to
+say one thing — the same argument the negatives are refused by); a **preview** while the tool is armed and a
+**palette glyph** for either row, both for step 2's reasons; an `Arc3` case, which still has no producer; and
+**arc length as a measurable**, which stays step 1's cut.
+
+Tests: `HelixTest` (14) — every point at its exact analytic place for a right and a left coil, a fractional
+turn count and an axis aligned with nothing; the curve shown to lie in no plane by the tetrahedron four of its
+points bound; handedness as the sign of the torsion, asserted traversal-invariant and asserted to be what a
+negative pitch would say twice; the exact arc length, with a 200 000-chord polyline converging to it; the
+analytic curvature against the Menger curvature of three samples at five parameters on three coils; the
+watertight spring, its volume exactly Pappus and within a per-cent of `π·r²·L`, with the transport property
+asserted along it; the left-hand spring as the same shell the other way round; a spring about an axis aligned
+with nothing; a rectangular section coiled; the self-intersection refusal 0.01 mm either side of the stated
+radius of curvature, and healing; all four degenerate cases by name and healing; the three numbers as
+parameters driving the curve and the spring; two coils sharing one pitch node; and a placement moving the
+frame and touching none of the four numbers. `HelixToolTest` (13) — the two-number one-click gesture with the
+defaulted turn count, both tool rows, the coil following its point and its height point, drawn and picked in
+both views, the tube along it as an ordinary spring solid with a plan footprint, `save → load → save`
+byte-equal with the handedness recovered from the tool id, one undo, hiding, the gesture refusal by name, the
+node's refusal naming the cure and healing, the session-35 counts, and an SVG golden of the plan projection.
+**1348 → 1375 green**, one new golden, no version bump, no existing golden changed.
+
 ## Open points (to discuss one by one)
 
 - [x] **OP-1 Branch/continuity policy** — RESOLVED: deterministic, orientation-based branch
@@ -6528,9 +6661,10 @@ existing golden changed.
       degenerate class it cannot resolve is **refused**, never leaked. Curves are tessellated first, so
       a boolean's boundary is an *approximated* curve — OP-15's rule, one dimension down. See *Exact
       prismatic booleans*.
-- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1 and 2 built**
-      (sessions 37 and 38 — the value with both views, then the frame and the sweep), the rest queued. A `Path3` of
-      analytic pieces; a curve's **value** is world-space while its **construction** is always parented, so
+- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1, 2 and 3 built**
+      (sessions 37, 38 and 39 — the value with both views, then the frame and the sweep, then the helix),
+      the rest queued. A `Path3` of analytic pieces; a curve's **value** is world-space while its
+      **construction** is always parented, so
       curves ride their parents and planarity is known rather than measured; the moving frame is
       **parallel transport** with a stated start frame (Frenet rejected — it flips at inflections and is
       undefined on straights); the sweep refuses a profile whose radius exceeds the local radius of
@@ -8131,6 +8265,35 @@ existing golden changed.
   **1311 → 1344 green**, one new SVG golden, no version bump. See *Implementation status (as built — step 2)*
   under *Curves in space, and the sweep*.
 
+- **Session 39 — the helix, and the first curve that lies in no plane (OP-26 step 3).** The third step, and
+  the one the frame was waiting for: every path before it was planar, where parallel transport is asked to do
+  nothing, and a helix precesses. Nothing in step 2 had to change — the transport property holds station by
+  station along a coil, a forty-turn coil, a coil about an axis aligned with nothing and a near-vertical one,
+  and a swept spring's volume is *exactly* the section's area times the spine's length. The parameterization
+  is what a spring is ordered by (axis, radius, rise per turn, turns, hand), and the decision the step turns
+  on is that **all three numbers are required positive, each refusal naming the other way of saying the same
+  thing**: a negative pitch *is* the other handedness (chirality is invariant under reversing the traversal,
+  which the test asserts by the torsion's sign read forwards and backwards), a negative turn count is the same
+  coil with the axis turned round, a zero pitch is a circle, no turns is a point. Two spellings of one shape is
+  a stored model with no normal form. **Handedness is which tool was used** — step 1's own answer for straight
+  versus smooth, which is OP-1's branch doctrine one dimension up: a discrete choice scored once and recorded
+  by the tool id, never re-derived from a sign that could drift. The construction is parented the way a height
+  point is — the space's normal through a point already in the drawing, and the space's u as the phase — so a
+  coil needs no 3D manipulator and tilts with its datum. **Its curvature is a closed form**, `r/(r²+b²)`,
+  which is why the step was placed here: the sweep's self-intersection refusal now fires at a radius that is
+  arithmetic, asserted 0.01 mm either side of it, and the closed form is checked against the *geometry* (the
+  Menger curvature of three samples) rather than against itself. Six exhaustive `when`s answered; the one that
+  cannot answer exactly says so — a helix's shadow is a **trochoid**, which the 2D vocabulary has no word for,
+  so the plan draws the chords the 3D view draws and the error is stated in millimetres where it is made
+  (special-casing the down-the-axis conic was rejected: the plan of a helix would then change *kind* as a datum
+  was tilted). One gap is named and left open rather than patched: OP-26's self-intersection criterion is
+  **local** by its own words, and a spring whose wire is thicker than half its pitch passes through itself with
+  every station's curvature comfortable — a general proximity question for the sweep, not a per-piece-kind
+  special case, and the naive centre-distance test is recorded as rejected because it would refuse every
+  neighbouring pair of stations. Two tool rows and no controller code. **1348 → 1375 green**, one new SVG
+  golden, no version bump. See *Implementation status (as built — step 3)* under *Curves in space, and the
+  sweep*.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -8208,16 +8371,54 @@ epsilon. A derived bound can be made to *strictly* exceed the target, so that co
 construction. This replaces "deep enough, I think" with a computed guarantee and removes a whole family of
 silent near-tangency failures.
 
-**The ladder of tools, of which only the last needs a surface kernel.**
-1. **A half-space** — a plane and a side. Needs **no new geometry at all**: planes are already first class
-   (datum planes, face spaces, plane-at-height, plane-from-line-and-angle), so only the *operation* is
-   missing. The inclined face of a casting is exactly this.
-2. **An unbounded prism** — a closed profile extruded *through*, with no stated depth. The everyday
-   through-slot, through-bore and notch, and the same benefit: "through" is a statement, "40 mm, which I
-   hope is enough" is a guess that leaves a sliver when it is wrong.
-3. **An unbounded revolve or sweep** — a profile revolved or swept, open at one end; the pocket where a pipe
-   enters a housing.
-4. **A general trimmed surface** — the real surface-kernel case, and outside this and OP-26 both.
+**One operator, not a ladder** (the user's formulation, session 37, which replaced an earlier four-item list
+of separate features). A cut is **a 2D chain in a space × a directrix → a surface → split the target**, and
+varying the two operands gives every case the ladder had listed separately:
+
+| chain | directrix | what it is |
+|---|---|---|
+| infinite line (ray–ray) | straight | half-space |
+| ray–corner–ray | straight | quarter-space / step — an inclined face taken off a casting |
+| closed loop | straight | through-slot, through-bore |
+| any | curve | swept cut — the pocket where a pipe enters a housing |
+| any | circular | revolved cut |
+
+**Why "a ray at each end" is load-bearing rather than cosmetic.** A curve *properly embedded* in a plane —
+going to infinity at **both** ends — separates that plane into exactly two components; that is the unbounded
+Jordan curve theorem, and the ray-at-each-end condition is precisely properness. A chain that merely *stops*
+leaves a crack space flows around, and "the side to keep" then has no referent. So the rays are the
+operator's well-formedness condition, not decoration on a finite path. A **closed** loop separates the plane
+too (bounded inside, unbounded outside), which is why the closed case falls out of the same rule instead of
+needing its own. And a chain that **self-intersects** does not separate cleanly, so it is refused — not for
+being ugly, but because the question it asks has no answer.
+
+`Ray` is already a first-class value here, and session 34 already taught `Loop` to be open, so an unbounded
+chain is closer to expressible than it looks.
+
+**The two frames, decided: the most general pair, and no new concept.** The **chain** lives in an ordinary
+sketch space, which gives both its 2D coordinates and the moving frame's start reference — the identical
+rule `Document.sweepAlongCurve` already follows. The **directrix** is a general `Path3`: *not* required to
+be planar, and *not* required to be perpendicular to the chain's space. That is strictly more general than
+"a curve on a plane perpendicular to the chain's plane", and it costs nothing, because step 2's moving frame
+already carries a profile along an arbitrary path in space. When no directrix is picked it **is** the
+straight ray-line along the chain's space normal — the degenerate case of the same operator rather than a
+second one.
+
+**Rotating or translational is a stated mode** (the user's call). Frame-carried — the chain rotates with the
+directrix, which is what the sweep does today — is the default, because "the cut follows the feature" is what
+a curved cut usually means. Translational — the chain stays parallel to its own space — is the stated
+alternative. The two coincide exactly for a straight directrix and diverge immediately for a curved one,
+which is why the mode is meaningless until a directrix can curve.
+
+**What the generalization forces, which the straight case hides.** *The directrix must be unboundable too*:
+a finite one reintroduces "extrude far enough along it", the very guess being removed, so unboundedness is
+**one** concept — a chain ending in rays — used in both roles, and the same clipping serves both. And *the
+profile's reach becomes infinite*, which degenerates step 2's self-intersection refusal (reach × curvature ≥
+1). The bounding supplies the fix: the **effective** reach is the distance to the far edge of the target's
+extent, so the criterion becomes "does the surface self-intersect **within the region that matters**". Same
+formula, derived number — and, neatly, non-self-intersection over the target's extent is exactly the
+condition under which "which side" is well defined, so the refusal and the semantics turn out to be one
+statement.
 
 **Cut or split, and decide it early.** A plane through a body can discard one side, or produce **both**
 halves and let the user keep either or both. Split is strictly more general, both halves are often wanted (a
@@ -8233,6 +8434,17 @@ values, so both heal rather than being gesture refusals.
 **A consequence worth having in view**: once the cutting tool may be a **face of another solid**, one part
 can be trimmed to mate with another — and since a face space already exists and a plane's inputs are now
 every ancestor solid (GitHub #9), that composes with what is already built.
+
+**The order of work — two steps, each whole.**
+1. **The unbounded chain and the straight cut.** The unbounded 2D chain as a value (a chain beginning and
+   ending in rays) and the gesture that draws one; the operator with the **straight** directrix, which is
+   half-space, quarter-space/step and through-prism; **split**, with cut defined as split-keeping-one-side
+   and the kept side a persisted sign; eval-time bounding against the target's extent; the refusals above.
+   The rotating/translational mode is not built here and is not half-built either — the two coincide exactly
+   for a straight directrix, so there is nothing yet to distinguish.
+2. **The swept cut.** The directrix as a general `Path3`, and with it the **mode**. Reuses step 2's moving
+   frame wholesale; adds the unbounded directrix and the bounded-reach form of the self-intersection
+   criterion.
 
 **Queue position.** Not part of OP-26 and not behind it — it is independent of curves. Ranked **above** the
 remaining curve steps once the sweep has landed, and **above** 3D blends, because blends are the harder
@@ -9597,7 +9809,8 @@ carried along a path is the missing capability rather than a refinement of an ex
    refusals.~~ **Built in session 38.** (The list below keeps session 36's numbering; the *order of work*
    under *Curves in space, and the sweep* is the authority, and it has since gained **the station** as its
    step 4 — settled in session 37 — which pushes the remaining items down one.)
-3. **Helix** — the first constructed curve lying in no plane, which is what tests the frame honestly.
+3. ~~**Helix** — the first constructed curve lying in no plane, which is what tests the frame honestly.~~
+   **Built in session 39.**
 4. **Combine two views** — plan route × elevation, the routing workhorse.
 5. **Intersection curves** — the section machinery generalized, with OP-1's ordered set and persisted sign.
 6. **Connect** — a derived G1/G2 joining piece from endpoint tangents plus tension.

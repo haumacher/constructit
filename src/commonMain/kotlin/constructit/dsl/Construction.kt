@@ -39,13 +39,16 @@ import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
 import constructit.geom.Circle
 import constructit.geom.Conics
+import constructit.geom.Curve3Element
 import constructit.geom.Curves3
 import constructit.geom.Direction
 import constructit.geom.Ellipse
 import constructit.geom.EllipticArc
 import constructit.geom.Feature3
+import constructit.geom.Frames3
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
+import constructit.geom.Handedness
 import constructit.geom.Justification
 import constructit.geom.Line
 import constructit.geom.LoftGuide
@@ -2099,6 +2102,80 @@ class Construction {
             val elements = if (smooth) Curves3.smoothThrough(pts, closed) else Curves3.straightThrough(pts, closed)
             if (elements.isEmpty()) return@op EvalResult.Invalid("a curve needs at least two points")
             EvalResult.Ok(Path3Value(Path3(elements, closed)))
+        }
+
+    /**
+     * A **helix** about the axis through [center] along [plane]'s normal (OP-26, step 3) — a spring, a coil,
+     * the path a thread runs on.
+     *
+     * **The value is world geometry; the construction is parented** — OP-26's rule, and here it is the whole
+     * of the design. The axis is not three typed numbers: it is *the space's own normal through a point that
+     * already stands in the drawing*, so tilting the datum tilts the coil, moving the point moves it, and
+     * moving the plane's origin carries its phase along. That is the same statement a height point makes
+     * (OP-25: a plane, a point on it, and a rise along its normal), one dimension of freedom further on, and
+     * it is why this needs no 3D manipulator: everything it takes is already draggable where it lives.
+     *
+     * **[plane] is read twice, because it is one statement — the space this coil stands in.** Its normal is
+     * the axis, so the helix rises out of the space exactly the way a height point does; and its **u
+     * direction is the phase**, so the curve starts at [center] + `u·radius`, beside the axis point along
+     * the space's own x. Nothing about where the curve begins is a convention this file invents.
+     *
+     * [hand] is **structural** (OP-1, one dimension up): chirality is discrete, so it is decided by the
+     * construction — which in the editor means by *which tool was used*, the same way straight and smooth
+     * curves are two tool ids (OP-18) — and is never re-derived from the sign of a number that could drift.
+     *
+     * Invalid with a reason that heals (OP-3) for each of the four value conditions, and each refusal names
+     * what the other statement of the same thing would be, because every one of them is a *second way to say
+     * something the drawing can already say* (see [Curve3Element.Helix3]):
+     * - a **non-positive radius** — a helix of no radius is a straight line along the axis;
+     * - a **zero pitch** — that is a circle, and a circle is drawn in a space;
+     * - a **negative pitch** — that is the other handedness, which is the other tool;
+     * - a **non-positive turn count** — zero turns is a point, and a negative count is this same coil on the
+     *   other side of [center], which is said by pointing the axis the other way.
+     */
+    fun helix(
+        plane: PlaneRef,
+        center: Point3Ref,
+        radius: ScalarRef,
+        pitch: ScalarRef,
+        turns: ScalarRef,
+        hand: Handedness,
+    ): Path3Ref =
+        op(plane, center, radius, pitch, turns) {
+            val pl = (it[0] as PlaneValue).plane
+            val at = (it[1] as Point3Value).p
+            val r = sc(it[2]).requireDim(Dimension.LENGTH, "helix radius").mm
+            val p = sc(it[3]).requireDim(Dimension.LENGTH, "helix pitch").mm
+            val n = sc(it[4]).requireDim(Dimension.NONE, "helix turns").value
+            if (r <= Vec3.EPS) {
+                return@op EvalResult.Invalid(
+                    "a helix needs a positive radius — this one is ${Frames3.mm(r)} mm, and a coil of no " +
+                        "radius is a straight line along its own axis",
+                )
+            }
+            if (p == 0.0) {
+                return@op EvalResult.Invalid(
+                    "a helix rises: with a pitch of nothing it closes back onto itself, which is a circle — " +
+                        "draw one in this space instead, or state the rise per turn",
+                )
+            }
+            if (p < 0.0) {
+                return@op EvalResult.Invalid(
+                    "a helix's pitch is its rise per turn and cannot be negative (${Frames3.mm(p)} mm): a coil " +
+                        "that descends while it turns ${hand.word} *is* the ${
+                            (if (hand == Handedness.RIGHT) Handedness.LEFT else Handedness.RIGHT).word
+                        } coil, so state that handedness rather than a negative pitch",
+                )
+            }
+            if (n <= 0.0) {
+                return@op EvalResult.Invalid(
+                    "a helix needs a positive number of turns — no turns is a point, and a negative count is " +
+                        "this same coil on the other side of its axis point, which is said by turning the " +
+                        "axis round",
+                )
+            }
+            val helix = Curve3Element.Helix3.about(at, pl.normal, pl.u, r, p, n, hand)
+            EvalResult.Ok(Path3Value(Path3(listOf(helix))))
         }
 
     /**

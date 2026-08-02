@@ -284,6 +284,18 @@ typing that number closes it. Everything else is what any solid gets: it shows i
 click in plan, unions and subtracts with the parts around it, exports to every format, and one undo takes the
 whole gesture back.
 
+**A helix — a spring, a coil, the path a thread runs on.** *Helix (right-hand)* and *Helix (left-hand)* take a
+radius, a rise per turn and — if you want more than one — a number of turns, then one click on the point the
+axis stands on. The axis is the sketch plane's own **normal** through that point, so the coil rises out of the
+plane you are drawing in and tilts with it, and the curve starts beside the point along the plane's x
+direction. It is the first curve here that lies in **no** plane, which is exactly what it is for: sweep a tube
+along it and you have a spring, watertight, in one further gesture. Everything stays live — drag the point,
+retype its height, retype the radius, the pitch or the turn count, and the coil and everything riding it
+follow. The turn count may be fractional. Which way it turns is **which tool you used**, so it is what the file
+records and it never changes by itself; a negative pitch is refused by name, because a coil that descends
+while it turns right *is* the left-hand coil, and the drawing should have one way to say a thing rather than
+two. A pitch of nothing is refused too — that is a circle, and a circle is drawn in a space.
+
 **A working plane's context is the part's section — and the section is an input.** Drawing on a plane that is
 not the plan needs to know where the material is, so every such plane draws **the part's section at itself**,
 in its own coordinates: a face space draws its face's true boundary (a pyramid's lateral face draws its

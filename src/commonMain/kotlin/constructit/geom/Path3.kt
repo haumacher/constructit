@@ -1,5 +1,35 @@
 package constructit.geom
 
+import kotlin.math.PI
+import kotlin.math.ceil
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.sin
+import kotlin.math.sqrt
+
+/**
+ * Which way a [Curve3Element.Helix3] turns as it rises — **chirality**, and the one discrete choice a helix
+ * carries.
+ *
+ * A helix's handedness is not a number that can drift: it is the same kind of thing an intersection's branch
+ * is (OP-1), one dimension up, so it is **structural** — decided by the construction that builds the curve,
+ * persisted by the tool id that made it, and never re-derived from the sign of anything. [turnSign] is how it
+ * enters the formula and nothing reads it back to ask what handedness this is.
+ *
+ * [RIGHT] follows the right-hand rule about the axis: point a right thumb along the axis and the curve turns
+ * the way the fingers curl while it rises. That is the ordinary screw, and it is why negative *pitch* is
+ * refused rather than allowed — descending while turning right is the left-handed curve traced backwards, so
+ * it would be a second way to say what this enum says (see [Curve3Element.Helix3]).
+ */
+enum class Handedness(val turnSign: Double) {
+    RIGHT(1.0),
+    LEFT(-1.0),
+    ;
+
+    /** The word a refusal and a status line use. */
+    val word: String get() = if (this == RIGHT) "right-hand" else "left-hand"
+}
+
 /**
  * One analytic piece of a curve **in space** (OP-26) — the 3D twin of [ProfileElement], deliberately the
  * same shape one dimension up.
@@ -10,12 +40,14 @@ package constructit.geom
  * parameterized. *Consistency*: it is the rule `Feature3` already follows one layer up, keeping analytic
  * descriptions beside their meshes and dispatching by predicate rather than degrading silently.
  *
- * **Two cases today, and the hierarchy is open on purpose.** [Seg3] and [Bezier3] are what the one source
- * that exists — a path through 3D points — produces. `Arc3` (a circle in an arbitrary plane) and `Helix3`
- * arrive with the steps that need them (OP-26's order of work puts the helix at step 3), because a case with
- * no producer is a case with no test: every consumer here (`sample`, the projection, the drawing, the
- * picking) would have to guess at behaviour nothing exercises. Adding one is adding a branch to the four
- * `when`s below, all of which are exhaustive so that a new case cannot be silently dropped.
+ * **Three cases today, and the hierarchy is open on purpose.** [Seg3] and [Bezier3] are what a path through
+ * 3D points produces; [Helix3] arrived with OP-26's step 3, which is the rule this hierarchy is grown by — a
+ * case with no producer is a case with no test, because every consumer (`sample`, the projection, the
+ * drawing, the picking, the moving frame's sampling and its curvature) would have to guess at behaviour
+ * nothing exercises. `Arc3` (a circle in an arbitrary plane) is still absent for exactly that reason. Adding
+ * one is adding a branch to six exhaustive `when`s — [Curves3.sample], [Curves3.projectedOnto],
+ * [Path3.movedBy], and [Frames3]'s step count, point and curvature — so that a new case cannot be silently
+ * dropped.
  */
 sealed interface Curve3Element {
     /** Where this piece begins — the chain's hand-over point from the piece before it. */
@@ -38,6 +70,143 @@ sealed interface Curve3Element {
     data class Bezier3(val p0: Vec3, val p1: Vec3, val p2: Vec3, val p3: Vec3) : Curve3Element {
         override val start: Vec3 get() = p0
         override val end: Vec3 get() = p3
+    }
+
+    /**
+     * A **helix** about an axis (OP-26, step 3) — the first piece in this vocabulary that lies in **no**
+     * plane, and the reason the moving frame has an honest test at all.
+     *
+     * **Closed form, from what a spring is actually specified by**: an [axis] through [origin], a [radius],
+     * a [pitch] (the rise per turn), a number of [turns] that may be fractional, and a [hand]. Nothing here
+     * is sampled and nothing is fitted — which is the whole point of keeping the pieces analytic (OP-26): a
+     * helix that stays a helix has a pitch a spring-maker can order, its curvature is a closed form rather
+     * than a derivative of a polynomial, and even its **arc length** is exact ([arcLength]), which a cubic's
+     * never is.
+     *
+     * The parameter runs `t ∈ [0, 1]` over the whole curve, and at `t` the point is
+     *
+     * ```
+     * origin + radius·(cos θ · u + sin θ · bi) + axis · (pitch · turns · t),   θ = hand.turnSign · 2π · turns · t
+     * ```
+     *
+     * so [u] is where the curve *starts* — the phase, a real part of the geometry rather than a convention:
+     * `start` is `origin + u·radius`, directly "beside" the axis point in the u direction. [u] is unit and
+     * perpendicular to [axis], and [bi] = `axis × u` completes a right-handed frame, so `hand` alone decides
+     * chirality and no sign anywhere else can quietly do it instead.
+     *
+     * **Every one of the three numbers is required to be positive, and that is a decision rather than
+     * defensiveness** — each of the negatives is a *second way to say something the value already says*, and
+     * two ways to say one thing is what makes a stored model stop being a normal form:
+     * - a **negative pitch** is the other [Handedness]: descending while turning right is, read backwards,
+     *   a left-handed helix rising, and chirality is invariant under reversing the traversal;
+     * - a **negative turn count** is the same curve on the other side of [origin], which is said by pointing
+     *   the axis the other way — an input the construction already has;
+     * - a **zero pitch** is a circle traversed [turns] times, and a circle is drawn in a space;
+     * - **zero turns** is a point.
+     *
+     * They are conditions on *values*, so they are refused where values live — inside the node's `compute`
+     * ([constructit.dsl.Construction.helix]), by name and healing (OP-3) — and never by this class, which is
+     * the value they produce.
+     */
+    data class Helix3(
+        /** The point on the axis the curve starts level with — its `t = 0` height. */
+        val origin: Vec3,
+        /** Unit; the direction the curve rises along. */
+        val axis: Vec3,
+        /** Unit, perpendicular to [axis]; the phase — `start` is [origin] + [u]·[radius]. */
+        val u: Vec3,
+        val radius: Double,
+        /** The rise per whole turn. */
+        val pitch: Double,
+        /** How many turns, possibly fractional. */
+        val turns: Double,
+        val hand: Handedness,
+    ) : Curve3Element {
+        /** The frame's second in-plane axis, so (u, bi, axis) is right-handed. */
+        val bi: Vec3 get() = axis.cross(u)
+
+        /** The **reduced pitch** `p / 2π` — the rise per radian, which is what every formula below is in. */
+        val b: Double get() = pitch / (2.0 * PI)
+
+        /** The signed total turn, in radians — [Handedness] is the only thing that puts a sign on it. */
+        val sweepAngle: Double get() = hand.turnSign * 2.0 * PI * turns
+
+        /** The total rise from [start] to [end], along [axis]. */
+        val rise: Double get() = pitch * turns
+
+        /**
+         * The **curvature**, `r / (r² + b²)` — **constant** along the whole curve, and closed form.
+         *
+         * This is what makes the helix the piece OP-26 wanted here: the sweep's self-intersection criterion
+         * is stated against the path's local radius of curvature, and on every other piece that number is a
+         * derivative of a polynomial evaluated at a sample. Here it is a fact about the curve, the same at
+         * every station, and it is what [Frames3] reads (see `curvatureAt`).
+         */
+        val curvature: Double get() = radius / (radius * radius + b * b)
+
+        /**
+         * The **arc length**, exactly `|sweepAngle| · sqrt(r² + b²)` — a helix travels at constant speed, so
+         * its length is a multiplication rather than a numeric integral.
+         *
+         * Used here for the chord sampling and by the tests that check a spring's volume. It is deliberately
+         * *not* offered as a measurable dimension: that was named as a cut in step 1 and stays one, because
+         * offering it for a helix alone would mean a `MEASURABLE` slot that answers for one piece kind.
+         */
+        val arcLength: Double get() = kotlin.math.abs(sweepAngle) * sqrt(radius * radius + b * b)
+
+        /** The point at parameter [t] — the closed form above, written out. */
+        fun at(t: Double): Vec3 {
+            val theta = sweepAngle * t
+            return origin + u * (radius * cos(theta)) + bi * (radius * sin(theta)) + axis * (rise * t)
+        }
+
+        /**
+         * The derivative at [t] with respect to the parameter — the tangent direction, unnormalized.
+         *
+         * Constant in magnitude (`|sweepAngle|·sqrt(r² + b²)`, which is [arcLength]), which is the same fact
+         * as "a helix is parameterized proportionally to arc length".
+         */
+        fun tangentAt(t: Double): Vec3 {
+            val theta = sweepAngle * t
+            return u * (-radius * sin(theta) * sweepAngle) + bi * (radius * cos(theta) * sweepAngle) + axis * rise
+        }
+
+        override val start: Vec3 get() = at(0.0)
+        override val end: Vec3 get() = at(1.0)
+
+        companion object {
+            /**
+             * A helix about the axis through [origin] in direction [axisDir], phased by [phase] —
+             * orthonormalizing as it goes, so a caller may hand over any two independent directions.
+             *
+             * The same courtesy `Construction.plane` does for a plane's frame: the invariants the formulas
+             * above rest on ([axis] unit, [u] unit and perpendicular to it) are established **once**, here,
+             * rather than being re-checked at every use.
+             */
+            fun about(
+                origin: Vec3,
+                axisDir: Vec3,
+                phase: Vec3,
+                radius: Double,
+                pitch: Double,
+                turns: Double,
+                hand: Handedness,
+            ): Helix3 {
+                val a = axisDir.normalized()
+                val p = phase - a * phase.dot(a)
+                // a phase parallel to the axis says nothing about where the curve starts; the fixed X, Y, Z
+                // order is the moving frame's own tie-break (Frames3.startReference), for the same reason —
+                // a deterministic answer on every machine and every reload
+                val u =
+                    if (p.length() > Vec3.EPS) {
+                        p.normalized()
+                    } else {
+                        val axisLeast = listOf(Vec3.X, Vec3.Y, Vec3.Z).minByOrNull { kotlin.math.abs(a.dot(it)) } ?: Vec3.X
+                        (axisLeast - a * axisLeast.dot(a)).normalized()
+                    }
+                return Helix3(origin, a, u, radius, pitch, turns, hand)
+            }
+        }
     }
 }
 
@@ -178,13 +347,35 @@ object Curves3 {
      * One piece as world-space points, at the renderer's **fixed** step count — [GeomMath.BEZIER_STEPS],
      * the same number and the same reason as the 2D Bézier's: an adaptive count would make a golden depend
      * on curvature, and determinism is worth more than a few saved points.
+     *
+     * **Fixed *per turn* on a helix**, which is the same rule and not an exception to it. A cubic piece
+     * covers a bounded amount of curve, so a fixed count per piece is a fixed density; one helix piece can
+     * be twenty turns long, and twenty-four chords across twenty turns is not a drawing of anything. The
+     * count is still a pure function of the piece's own numbers ([drawSteps]) and still curvature-free, so a
+     * golden is as deterministic as before.
      */
     fun sample(el: Curve3Element): List<Vec3> =
         when (el) {
             is Curve3Element.Seg3 -> listOf(el.start, el.end)
             is Curve3Element.Bezier3 ->
                 (0..GeomMath.BEZIER_STEPS).map { bezierPointAt(el, it.toDouble() / GeomMath.BEZIER_STEPS) }
+            is Curve3Element.Helix3 -> {
+                val n = drawSteps(el)
+                (0..n).map { el.at(it.toDouble() / n) }
+            }
         }
+
+    /**
+     * How many chords the *drawing* cuts a helix into: [GeomMath.BEZIER_STEPS] per whole turn, at least
+     * one — the presentation count [sample] and [projectedOnto] share, so that what is on screen is exactly
+     * what the pointer reaches (the picking rule of OP-26's step 1).
+     *
+     * Capped, because the count is a function of a *value* a user can type: a helix of ten thousand turns is
+     * a legal number and a hundred thousand screen chords is not a drawing. The cap is a presentation limit
+     * and nothing geometric depends on it — the mesh's own sampling is [Frames3]'s, in millimetres.
+     */
+    fun drawSteps(el: Curve3Element.Helix3): Int =
+        max(1, minOf(1 shl 14, ceil(kotlin.math.abs(el.turns) * GeomMath.BEZIER_STEPS).toInt()))
 
     /**
      * The whole path as **one** world-space polyline, consecutive pieces sharing their hand-over point.
@@ -206,12 +397,23 @@ object Curves3 {
      * [ProfileElement]s, which is what makes a curve in space visible and pickable in the 2D canvas
      * without inventing anything.
      *
-     * **Exact, piece for piece, and not a resampling.** An orthographic projection onto a plane is an affine
-     * map of space, and a cubic Bézier is affine-invariant — the image of the curve is the curve through the
-     * mapped control points — which is the identical argument OP-15 already makes for transforming a 2D
-     * Bézier. A segment's image is a segment for the same reason. So a path whose points all lie in one
-     * space projects onto that space's plane as exactly the 2D chain those points describe, with no
-     * tolerance anywhere in the statement.
+     * **Exact, piece for piece, for a segment and a cubic.** An orthographic projection onto a plane is an
+     * affine map of space, and a cubic Bézier is affine-invariant — the image of the curve is the curve
+     * through the mapped control points — which is the identical argument OP-15 already makes for
+     * transforming a 2D Bézier. A segment's image is a segment for the same reason. So a path whose points
+     * all lie in one space projects onto that space's plane as exactly the 2D chain those points describe,
+     * with no tolerance anywhere in the statement.
+     *
+     * **A helix is where that claim honestly stops, and OP-15 requires saying so rather than quietly
+     * degrading.** Its image is `x(θ) = A cos θ + B sin θ + Cθ`, `y(θ)` likewise — a **trochoid**, and there
+     * is no word for one in the 2D vocabulary: not a segment, not an arc, not an ellipse, not a cubic. (Only
+     * in the one special case of looking straight down the axis, where `C = 0`, is it a conic — and
+     * special-casing that would mean the plan of a helix changed *kind* as a datum was tilted, which is a
+     * worse property than approximating uniformly.) So the plan shows the polyline the 3D view shows,
+     * projected, at exactly [drawSteps]'s count — the two views sample the identical points, which is what
+     * keeps picking a mirror of drawing. The chord error is that of a circle of the helix's radius at
+     * [GeomMath.BEZIER_STEPS] steps per turn, `r·(1 − cos(π/24))` ≈ `r/1100`, and it is a *drawing* error:
+     * nothing measured, meshed or exported reads this projection.
      *
      * The plane's frame is orthonormal (`Construction.plane` orthonormalises every one it builds), so
      * [Plane3.toLocal] is two dot products and the projection is along the plane's own normal — which is
@@ -221,14 +423,20 @@ object Curves3 {
         path: Path3,
         plane: Plane3,
     ): List<ProfileElement> =
-        path.elements.map { el ->
+        path.elements.flatMap { el ->
             when (el) {
                 is Curve3Element.Seg3 ->
-                    ProfileElement.Seg(Segment(plane.toLocal(el.start), plane.toLocal(el.end)))
+                    listOf(ProfileElement.Seg(Segment(plane.toLocal(el.start), plane.toLocal(el.end))))
                 is Curve3Element.Bezier3 ->
-                    ProfileElement.BezierE(
-                        Bezier(plane.toLocal(el.p0), plane.toLocal(el.p1), plane.toLocal(el.p2), plane.toLocal(el.p3)),
+                    listOf(
+                        ProfileElement.BezierE(
+                            Bezier(plane.toLocal(el.p0), plane.toLocal(el.p1), plane.toLocal(el.p2), plane.toLocal(el.p3)),
+                        ),
                     )
+                is Curve3Element.Helix3 -> {
+                    val pts = sample(el).map { plane.toLocal(it) }
+                    (0 until pts.size - 1).map { ProfileElement.Seg(Segment(pts[it], pts[it + 1])) }
+                }
             }
         }
 

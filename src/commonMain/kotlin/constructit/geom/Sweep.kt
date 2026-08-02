@@ -367,7 +367,14 @@ object Frames3 {
         return points to curvature
     }
 
-    /** How many spans a piece is sampled into before the twist has its say — one for a straight run. */
+    /**
+     * How many spans a piece is sampled into before the twist has its say — one for a straight run.
+     *
+     * A **helix** is the case where the chord tolerance is met exactly rather than bounded: the curve has one
+     * constant radius of curvature `1/κ`, so the chord rule a circle of that radius obeys is the chord rule
+     * *this* curve obeys, over its own total turn. That is [GeomMath.chordSteps] — the revolve's rule and the
+     * twist refinement's rule — used for the third time and still not re-derived.
+     */
     private fun baseSteps(
         el: Curve3Element,
         tolMm: Double,
@@ -375,7 +382,22 @@ object Frames3 {
         when (el) {
             is Curve3Element.Seg3 -> 1
             is Curve3Element.Bezier3 -> max(1, bezierSteps3(el, tolMm))
+            is Curve3Element.Helix3 ->
+                min(
+                    MAX_HELIX_SPANS,
+                    max(1, GeomMath.chordSteps(if (el.curvature > 0.0) 1.0 / el.curvature else 0.0, el.sweepAngle, tolMm)),
+                )
         }
+
+    /**
+     * The most chords one helix piece is cut into for a **mesh**, a cap on a count that is a function of a
+     * typed value: a hundred-turn spring at [GeomMath.TESS_TOL_MM] would otherwise ask for stations by the
+     * hundred thousand and a sweep by the million triangles. Nothing about the shape is decided here — the
+     * cap is reached only where the honest chord error would already be far below what any machine can hold
+     * — and it is stated rather than discovered, in the unit OP-15 asks for: at this count a 20 mm helix is
+     * within 0.0002 mm of its chords over ten turns.
+     */
+    private const val MAX_HELIX_SPANS = 65536
 
     /**
      * How many chords a cubic in space needs to stay within [tolMm] — the 3D twin of
@@ -399,6 +421,7 @@ object Frames3 {
         when (el) {
             is Curve3Element.Seg3 -> el.start + (el.end - el.start) * t
             is Curve3Element.Bezier3 -> Curves3.bezierPointAt(el, t)
+            is Curve3Element.Helix3 -> el.at(t)
         }
 
     /**
@@ -409,6 +432,11 @@ object Frames3 {
      * no bend a profile could fold through, however wide the profile is. This is also the number the Frenet
      * frame would have had to divide by (see this object's note), which is why a straight path is the case
      * that decides the frame.
+     *
+     * On a [Curve3Element.Helix3] it is `r / (r² + b²)` — **constant**, and read straight off the piece. That
+     * is the first time this function returns a closed form rather than a derivative sampled at a parameter,
+     * which is exactly what OP-26 said the helix would be worth here: the sweep's self-intersection refusal
+     * fires at a radius that is *stated*, not estimated (see [Curve3Element.Helix3.curvature]).
      */
     private fun curvatureAt(
         el: Curve3Element,
@@ -416,6 +444,7 @@ object Frames3 {
     ): Double =
         when (el) {
             is Curve3Element.Seg3 -> 0.0
+            is Curve3Element.Helix3 -> el.curvature
             is Curve3Element.Bezier3 -> {
                 val d1 = Curves3.bezierTangentAt(el, t)
                 val d2 = (el.p2 - el.p1 * 2.0 + el.p0) * (6.0 * (1.0 - t)) + (el.p3 - el.p2 * 2.0 + el.p1) * (6.0 * t)

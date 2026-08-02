@@ -63,6 +63,7 @@ import constructit.geom.FilletMath
 import constructit.geom.FilletVariant
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
+import constructit.geom.Handedness
 import constructit.geom.Justification
 import constructit.geom.Mesh3
 import constructit.geom.Plane3
@@ -8396,6 +8397,56 @@ class Document {
         note =
             "${nameOf(curve)}: a $shape ${if (closed) "closed " else ""}curve through ${through.size} points " +
             "(${through.joinToString(", ") { nameOf(it) }}) — move any of them and it follows"
+        return curve
+    }
+
+    /**
+     * A **helix** about the axis standing on the sketch plane at the picked point [el] (OP-26, step 3) — a
+     * spring, a coil, the route a thread runs on.
+     *
+     * One click and three numbers, and the click is the only thing that is geometry: the axis is *this
+     * space's normal through that point*, which is the same sentence a height point says (OP-25) and needs
+     * no manipulator to state. So the coil rides its parents — drag the point and it moves, retype the
+     * point's height and it rises, tilt the datum it was drawn on and the whole spring tilts with it.
+     *
+     * **A pick is taken as the point in space it already is**, exactly as a curve through points takes one: a
+     * height point is used as it stands and its node is *shared*, and a plain 2D point is lifted by a **zero**
+     * height onto its own space's plane — told apart by the element's kind, never by casting the ref.
+     *
+     * [hand] is which **tool** was used, not an argument: chirality is a discrete choice, so it is structural
+     * (OP-1), and a tool id is what the file records (OP-18) — the same way *Curve through points* and
+     * *Smooth curve through points* are two ids for one shape. There is therefore no new file argument and a
+     * replay is right-handed for exactly the reason the gesture was.
+     *
+     * Refused **by name**, building nothing, for the one structural thing — a pick that is not a point.
+     * Everything about the three numbers is the node's business and is reported as the reason it is invalid,
+     * so it heals when a number moves back (OP-3, [Construction.helix]).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun helixAbout(
+        el: Element,
+        radius: ScalarRef,
+        pitch: ScalarRef,
+        turns: ScalarRef?,
+        hand: Handedness,
+    ): Element? {
+        if (!el.isPoint) {
+            note = "Helix: ${nameOf(el)} is ${kindWord(el)}, not a point — click the point the axis stands on"
+            return null
+        }
+        val plane = planeOfSpace(el.space)
+        val center =
+            if (el.kind == ElementKind.HEIGHT_POINT) {
+                el.ref as Point3Ref
+            } else {
+                cx.heightPoint(plane, el.ref as PointRef, cx.const(0.0.mm))
+            }
+        val n = turns ?: cx.const(Quantity.number(1.0))
+        val curve = add(cx.helix(plane, center, radius, pitch, n, hand), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
+        curve.space = el.space
+        note =
+            "${nameOf(curve)}: a ${hand.word} helix about ${nameOf(el)} — ${Format.num(evalMm(radius))} mm radius, " +
+            "${Format.num(evalMm(pitch))} mm per turn, rising out of ${el.space}"
         return curve
     }
 

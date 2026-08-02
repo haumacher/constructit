@@ -506,10 +506,13 @@ object SceneRenderer {
      * A **curve in space** as the 2D canvas shows it (OP-26): its projection into the active space's plane,
      * drawn through [drawChain] like any other chain of pieces.
      *
-     * **Exact, and not a resampling.** An orthographic projection onto a plane is affine, and both piece kinds
-     * are affine-invariant, so the projection of the path *is* the 2D chain through the projected control
-     * points ([Curves3.projectedOnto]) — a path whose points all lie in one space projects onto that space's
-     * plane as exactly the chain those points describe. Going through [drawChain] then buys two things at
+     * **Exact for a segment and a cubic, and not a resampling.** An orthographic projection onto a plane is
+     * affine and both of those pieces are affine-invariant, so the projection of the path *is* the 2D chain
+     * through the projected control points ([Curves3.projectedOnto]) — a path whose points all lie in one
+     * space projects onto that space's plane as exactly the chain those points describe. A **helix** is where
+     * that stops: its shadow is a trochoid, which the 2D vocabulary has no word for, so it arrives here as
+     * the chords of the very polyline the 3D view draws — the error is stated where the projection is made,
+     * and the two views still sample the identical points. Going through [drawChain] then buys two things at
      * once: the run-coalescing (a projected curve is one polyline, not one per piece — session 35), and the
      * guarantee that a projected curve is drawn by the very code every other chain is, so it cannot
      * accumulate a drawing vocabulary of its own.
