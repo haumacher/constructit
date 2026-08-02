@@ -5,6 +5,7 @@ import org.khronos.webgl.WebGLBuffer
 import org.khronos.webgl.WebGLProgram
 import org.khronos.webgl.WebGLRenderingContext
 import org.khronos.webgl.WebGLUniformLocation
+import org.khronos.webgl.set
 import org.w3c.dom.HTMLCanvasElement
 
 /**
@@ -56,9 +57,12 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
     private var aNorm = -1
     private var aColor = -1
 
-    /** How many vertices of the buffers are triangles; the rest (to [lineCount]) are line endpoints. */
+    /** How many vertices of the buffers are triangles; the rest (to [lineVertexCount]) are line endpoints. */
     private var triVertexCount = 0
     private var lineVertexCount = 0
+
+    /** The MVP uniform's storage, allocated once — see [draw]. */
+    private val mvpBuf = Float32Array(16)
 
     private fun init(gl: WebGLRenderingContext): WebGLProgram? {
         program?.let { return it }
@@ -100,9 +104,44 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
     fun upload(scene: Scene3) {
         val gl = gl ?: return
         init(gl) ?: return
-        val pos = ArrayList<Float>()
-        val norm = ArrayList<Float>()
-        val col = ArrayList<Float>()
+        // **Counted first, then written straight into the typed arrays the GPU takes.** What was here built
+        // an `ArrayList<Float>` per attribute, converted it to a `FloatArray`, then boxed *that* into an
+        // `Array<Float>` for the `Float32Array` constructor — three copies of the mesh, one of them a
+        // million-odd boxed objects for an imported assembly, on every upload. The vertex count is known
+        // exactly from the scene (three per triangle, two per line), so one pass sizes the buffers and a
+        // second fills them, with no intermediate collection at all.
+        var triVerts = 0
+        for (solid in scene.solids) triVerts += solid.mesh.triangles.size * 3
+        var lineVerts = 0
+        for (solid in scene.solids) lineVerts += solid.edges.size * 2
+        lineVerts += scene.lines.size * 2
+        val total = triVerts + lineVerts
+        val pos = Float32Array(total * 3)
+        val norm = Float32Array(total * 3)
+        val col = Float32Array(total * 3)
+        var at = 0
+
+        fun vertex(
+            px: Double,
+            py: Double,
+            pz: Double,
+            nx: Float,
+            ny: Float,
+            nz: Float,
+            rgb: FloatArray,
+        ) {
+            val i = at * 3
+            pos[i] = px.toFloat()
+            pos[i + 1] = py.toFloat()
+            pos[i + 2] = pz.toFloat()
+            norm[i] = nx
+            norm[i + 1] = ny
+            norm[i + 2] = nz
+            col[i] = rgb[0]
+            col[i + 1] = rgb[1]
+            col[i + 2] = rgb[2]
+            at++
+        }
         for (solid in scene.solids) {
             val rgb = rgbOf(solid.color)
             val v = solid.mesh.vertices
@@ -111,48 +150,31 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
                 val b = v[t.b]
                 val c = v[t.c]
                 val n = (b - a).cross(c - a).normalized()
-                for (p in listOf(a, b, c)) {
-                    pos.add(p.x.toFloat())
-                    pos.add(p.y.toFloat())
-                    pos.add(p.z.toFloat())
-                    norm.add(n.x.toFloat())
-                    norm.add(n.y.toFloat())
-                    norm.add(n.z.toFloat())
-                    col.addAll(rgb)
-                }
+                val nx = n.x.toFloat()
+                val ny = n.y.toFloat()
+                val nz = n.z.toFloat()
+                vertex(a.x, a.y, a.z, nx, ny, nz, rgb)
+                vertex(b.x, b.y, b.z, nx, ny, nz, rgb)
+                vertex(c.x, c.y, c.z, nx, ny, nz, rgb)
             }
         }
-        triVertexCount = pos.size / 3
+        triVertexCount = at
         // Feature edges (GitHub issue #3) ride the *same* line section as the furniture: they are unlit lines
         // in a colour of their own, which is exactly what the grid already is, so one more draw call would buy
         // nothing. Their normal is never read (uLit = 0), so any unit vector will do.
         for (solid in scene.solids) {
             val rgb = rgbOf(solid.edgeColor)
             for (e in solid.edges) {
-                for (p in listOf(e.a, e.b)) {
-                    pos.add(p.x.toFloat())
-                    pos.add(p.y.toFloat())
-                    pos.add(p.z.toFloat())
-                    norm.add(0f)
-                    norm.add(0f)
-                    norm.add(1f)
-                    col.addAll(rgb)
-                }
+                vertex(e.a.x, e.a.y, e.a.z, 0f, 0f, 1f, rgb)
+                vertex(e.b.x, e.b.y, e.b.z, 0f, 0f, 1f, rgb)
             }
         }
         for (line in scene.lines) {
             val rgb = rgbOf(line.color)
-            for (p in listOf(line.a, line.b)) {
-                pos.add(p.x.toFloat())
-                pos.add(p.y.toFloat())
-                pos.add(p.z.toFloat())
-                norm.add(0f)
-                norm.add(0f)
-                norm.add(1f)
-                col.addAll(rgb)
-            }
+            vertex(line.a.x, line.a.y, line.a.z, 0f, 0f, 1f, rgb)
+            vertex(line.b.x, line.b.y, line.b.z, 0f, 0f, 1f, rgb)
         }
-        lineVertexCount = pos.size / 3 - triVertexCount
+        lineVertexCount = at - triVertexCount
         bind(gl, posBuffer, pos)
         bind(gl, normBuffer, norm)
         bind(gl, colorBuffer, col)
@@ -161,10 +183,10 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
     private fun bind(
         gl: WebGLRenderingContext,
         buffer: WebGLBuffer?,
-        data: List<Float>,
+        data: Float32Array,
     ) {
         gl.bindBuffer(WebGLRenderingContext.ARRAY_BUFFER, buffer)
-        gl.bufferData(WebGLRenderingContext.ARRAY_BUFFER, Float32Array(data.toFloatArray().toTypedArray()), WebGLRenderingContext.STATIC_DRAW)
+        gl.bufferData(WebGLRenderingContext.ARRAY_BUFFER, data, WebGLRenderingContext.STATIC_DRAW)
     }
 
     /** Draw the uploaded scene through [cam]. Depth test on — this is the real one, not painter's. */
@@ -178,8 +200,11 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
         gl.enable(WebGLRenderingContext.DEPTH_TEST)
         gl.clear(WebGLRenderingContext.COLOR_BUFFER_BIT or WebGLRenderingContext.DEPTH_BUFFER_BIT)
         gl.useProgram(p)
-        val mvp = cam.viewProjection(w.toDouble(), h.toDouble()).toFloatArray()
-        gl.uniformMatrix4fv(uMvp, false, Float32Array(mvp.toTypedArray()))
+        // straight into a typed array that is allocated once, for [upload]'s reason one frame at a time:
+        // `Float32Array(FloatArray.toTypedArray())` would box sixteen numbers on every frame of an orbit
+        val mvp = cam.viewProjection(w.toDouble(), h.toDouble()).m
+        for (i in 0..15) mvpBuf[i] = mvp[i].toFloat()
+        gl.uniformMatrix4fv(uMvp, false, mvpBuf)
         // the headlight points where the camera looks, so the lit side is always the side facing us
         val f = cam.forward()
         gl.uniform3f(uLight, f.x.toFloat(), f.y.toFloat(), f.z.toFloat())
@@ -219,9 +244,9 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
 
     private companion object {
         /** `#rrggbb` as three 0..1 floats — the same palette strings the painter's projector shades. */
-        fun rgbOf(hex: String): List<Float> {
-            if (hex.length != 7 || hex[0] != '#') return listOf(0.5f, 0.5f, 0.5f)
-            return (0..2).map { (hex.substring(1 + it * 2, 3 + it * 2).toIntOrNull(16) ?: 128) / 255.0f }
+        fun rgbOf(hex: String): FloatArray {
+            if (hex.length != 7 || hex[0] != '#') return floatArrayOf(0.5f, 0.5f, 0.5f)
+            return FloatArray(3) { (hex.substring(1 + it * 2, 3 + it * 2).toIntOrNull(16) ?: 128) / 255.0f }
         }
 
         val VERTEX_SRC = """

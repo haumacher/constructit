@@ -15,6 +15,7 @@ import constructit.editor.Icons
 import constructit.editor.PointerButton
 import constructit.editor.Preview3
 import constructit.editor.Scene3
+import constructit.editor.Scene3Sync
 import constructit.editor.Tools
 import constructit.editor.Viewport3
 import constructit.editor.WebGlRenderer3
@@ -84,18 +85,25 @@ private fun setupApp() {
     viewport.editor = editor
     val gl = WebGlRenderer3(canvas3)
     var view3d = false
-    // The document's own "version counter" is [Editor.onChange]: geometry is rebuilt exactly when the
-    // editor reports a change, and an orbit — which does not go through the editor at all — only
-    // re-issues the draw call with a new matrix.
-    var glDirty = true
+    // What the GPU is holding, and whether it is still what the document says. [Editor.onChange] is only
+    // the *prompt* to ask — it fires on every hover too, since a previewing tool refreshes its preview on
+    // each pointer move — and [Scene3Sync] gives the exact answer from mesh identity (OP-5), so plain mouse
+    // motion over the 3D canvas no longer re-creases and re-uploads half a million triangles. An orbit does
+    // not go through the editor at all and therefore does not even ask: it re-issues the draw call with a
+    // new matrix, as it always did.
+    val glSync = Scene3Sync()
+    var glCheck = true
 
     fun draw3d() {
-        if (fit(canvas3)) glDirty = true
+        // Resizing the drawing buffer deliberately does *not* invalidate the geometry: a vertex buffer has
+        // nothing to do with how many pixels it is rasterized into, and only the viewport and the matrix —
+        // both read per frame in `gl.draw` — depend on the size.
+        fit(canvas3)
         viewport.widthPx = canvas3.width.toDouble()
         viewport.heightPx = canvas3.height.toDouble()
-        if (glDirty) {
-            gl.upload(Scene3.extract(editor.doc))
-            glDirty = false
+        if (glCheck) {
+            glSync.update(Scene3.extract(editor.doc)) { gl.upload(it) }
+            glCheck = false
         }
         gl.draw(viewport.camera)
         // The working plane's sketch, over the shaded solids: the *same* renderer and the same document as
@@ -133,7 +141,7 @@ private fun setupApp() {
             editor.canvasH = canvas.height.toDouble()
         }
         if (view3d) {
-            glDirty = true
+            glCheck = true
             draw3d()
         } else {
             editor.render(target)
@@ -143,11 +151,35 @@ private fun setupApp() {
         if (previewOn && preview.ready) drawPreview()
         renderPanel(editor, view3d, viewport)
     }
-    editor.onChange = { repaint() }
-    viewport.onChange = {
-        draw3d()
-        renderPanel(editor, view3d, viewport)
+
+    /**
+     * **One paint per animation frame.** Pointer events arrive faster than the display refreshes — a fast
+     * orbit delivers several `mousemove`s between two frames — and painting each of them synchronously
+     * meant the view drew work nobody would ever see, then fell behind the cursor doing it.
+     *
+     * Deliberately in the shell and nowhere else. `requestAnimationFrame` is a platform API, so it cannot
+     * live in `commonMain` (OP-12); more to the point [Viewport3] must stay the pure controller the headless
+     * suite drives synchronously — a gesture there still means exactly one `onChange`, and it is the *shell*
+     * that decides how many of those become pixels. Everything else (`repaint`, the view switch) still
+     * paints straight through, so a state change is on screen before the next line of code runs.
+     */
+    var framePending = false
+
+    fun draw3dSoon() {
+        if (framePending) return
+        framePending = true
+        window.requestAnimationFrame {
+            framePending = false
+            draw3d()
+        }
     }
+    editor.onChange = { repaint() }
+    // **A camera move is not a document change.** An orbit writes one of the camera's four numbers and
+    // nothing else: no element, no parameter, no selection, no status line (the panel's only 3D-dependent
+    // text is `Viewport3.help`, which reads the tool and the plane, never the eye). So the side panel is
+    // left entirely alone here — rebuilding it per `mousemove` rewrote six lists and allocated an evaluator
+    // for a picture that had not changed. The document-change path above keeps owning the panel.
+    viewport.onChange = { draw3dSoon() }
 
     fun setView3d(on: Boolean) {
         view3d = on
@@ -159,7 +191,7 @@ private fun setupApp() {
         (document.getElementById("v-2d") as HTMLElement).className = if (on) "" else "active"
         (document.getElementById("v-3d") as HTMLElement).className = if (on) "active" else ""
         if (on) {
-            glDirty = true
+            glCheck = true
             // frame the solids the first time there is something to look at, so switching over does not
             // land on an empty view with the part behind the camera
             viewport.widthPx = canvas3.width.toDouble()

@@ -160,7 +160,47 @@ class PlanePerspective(
 ) : PlaneProjection {
     override val similarity: Boolean get() = false
 
-    override fun toScreen(p: Vec2): Vec2? = camera.project(plane.toWorld(p), widthPx, heightPx)
+    /**
+     * The world→clip matrix, built **once per projection instead of once per vertex** — the whole of the
+     * orbit's cost, and the one place it could be paid.
+     *
+     * [Camera3.project] rebuilds `perspective()` and `lookAt()` (three normalized cross products, a tangent,
+     * four sines and cosines) and multiplies two 4x4s for *every* point handed to it. A view of an imported
+     * assembly projects a few hundred thousand points per frame, so an orbit was spending ~53 ms of a frame
+     * building the same sixteen numbers over and over; with the matrix cached the same points cost ~2 ms.
+     * The arithmetic is unchanged — [Camera3.projectWith] is the very function `project` delegates to, and
+     * the one [Painter3] and the GPU already share (OP-12: one projection pipeline, three consumers).
+     *
+     * **What makes the cache safe is that this object is a value, not state.** The class note above states
+     * the discipline it is built on: a `PlanePerspective` is constructed per event and per repaint from the
+     * camera and the plane and never stored, and all four of its inputs are `val`s over immutable data
+     * ([Camera3] is a data class whose gestures return copies). So there is no write that could invalidate
+     * this, and no invalidation to get wrong. That is also why the cache lives here and **not** in
+     * [Camera3]: the camera *is* mutable state in [Viewport3] (a field reassigned by every orbit step), and a
+     * matrix cached beside it would need exactly the invalidation this arrangement does not have.
+     */
+    private var vpCache: Mat4? = null
+
+    /**
+     * How many times [vp] actually built the matrix over this projection's life — 0 before anything is
+     * drawn, 1 afterwards however many points went through it.
+     *
+     * `internal`, and it exists for the performance regression alone (`ProjectionCostTest`): the property
+     * being asserted is a *count of work*, which nothing observable from outside the module can report.
+     * Cheaper than the alternative of a spy over [Camera3], which is a data class with no seam to subclass.
+     */
+    internal var matrixBuilds: Int = 0
+        private set
+
+    private fun vp(): Mat4 {
+        vpCache?.let { return it }
+        val m = camera.viewProjection(widthPx, heightPx)
+        vpCache = m
+        matrixBuilds++
+        return m
+    }
+
+    override fun toScreen(p: Vec2): Vec2? = camera.projectWith(vp(), plane.toWorld(p), widthPx, heightPx)
 
     override fun toPlane(s: Vec2): Vec2? {
         val ray = camera.unproject(s, widthPx, heightPx)
@@ -171,7 +211,7 @@ class PlanePerspective(
     override fun toScreenLifted(
         p: Vec2,
         lift: Double,
-    ): Vec2? = camera.project(plane.toWorld(p) + plane.normal.normalized() * lift, widthPx, heightPx)
+    ): Vec2? = camera.projectWith(vp(), plane.toWorld(p) + plane.normal.normalized() * lift, widthPx, heightPx)
 
     /**
      * The eye, and the direction from it through the point on the plane — the same line the pointer's ray

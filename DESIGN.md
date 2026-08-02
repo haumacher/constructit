@@ -4627,6 +4627,152 @@ probe's was passing while half its pockets missed the plate, which the tighter f
 two embedded `.cit` fixtures `FaceExtrudeOutwardTest.ISSUE1` and `CreaseEdgeTest.POCKET`, whose face-space
 coordinates were rewritten into the new frame so the boss and the pocket stayed where the issues put them.
 
+### An orbit costs nothing the drawing did not change (session 35 — the 3D view at assembly scale)
+
+**The report.** A 36-body JT assembly loaded; the realistic three.js preview orbited smoothly, and the 3D
+*construction* view — the one the modelling happens in — was unusable to drag. That asymmetry is the whole
+diagnosis: the preview and the construction view draw the same bodies through the same camera, so the
+difference could not be the geometry. It was six separate pieces of work being done because the **eye** moved
+or the **pointer** moved, none of which is a change to the model. OP-5's whole stance one layer out: a value
+that no input changed must not be recomputed, and that has to be as true of a projected vertex and a draw call
+as it is of a node.
+
+Measured on the reported fixture (`nist-mtc-crada-assembly.jt`, 36 solids, 269 304 triangles), one overlay
+frame through a counting `DrawTarget` on the JVM:
+
+| | before | after |
+|---|---|---|
+| overlay frame (no-op target) | 36.2 ms | **8.2 ms** |
+| `polyline` calls per frame | 110 652 | **3 202** |
+| chords drawn (the ink) | 110 652 | 110 652 — *unchanged* |
+| view-projection matrices built per frame | 221 304 | **1** |
+| per hover: scene extract + "did it change?" | full extract + crease pass + GL upload (**423 ms** of creases alone) | **0.12 ms**, zero uploads |
+
+**(a) The matrix is a property of the projection, not of a point.** `PlanePerspective.toScreen` called
+`Camera3.project`, which rebuilds `perspective()` *and* `lookAt()` — three normalized cross products, a
+tangent, four sines and cosines — and multiplies two 4×4s, **per vertex**. `projectWith(vp, …)` already
+existed and `Painter3` already used it; the fix is to compute the matrix once inside `PlanePerspective` and
+project through it. What makes the cache safe is stated where it lives and is not a promise anybody has to
+keep: a `PlanePerspective` is *built per event and per repaint and never stored* (the discipline `Scene3`
+follows), and all four of its fields are `val`s over immutable data, so there is no write that could
+invalidate it. Deliberately **not** cached in `Camera3`: the camera is mutable state in `Viewport3` — a field
+reassigned by every orbit step — and a matrix beside it would need exactly the invalidation this arrangement
+does not have. On the JVM this is essentially the entire frame-time win (36.2 → 7.8 ms with nothing else
+changed).
+
+**(b) A chain that meets end to end is one polyline.** `SceneRenderer.drawChain` emitted one
+`DrawTarget.polyline` per `ProfileElement`; a rectangle was four draw calls and an imported body's silhouette
+was a hundred thousand. Consecutive pieces whose ends coincide now grow one run, flushed as a single
+polyline — the same ink, since a polyline *is* its chords. On the JVM this is nearly free (a no-op target
+makes a call cost nothing, 37.1 ms with the coalescing alone); in the browser each call is a full Canvas2D
+`beginPath`/`moveTo`/`lineTo`/`stroke`, which is what made the count the thing worth fixing and the count the
+thing worth asserting.
+
+**The constraint that shaped it is session 34's**, and it is the one way this could have been wrong: a `Loop`
+is no longer always closed. An inconsistently wound or non-manifold mesh unbalances `Silhouette`'s directed
+edges, the walk dead-ends, and the outline is *drawn as the open chain it is* rather than mended or dropped.
+So the join is conditional on the two endpoints being the **same point**, compared exactly — consecutive
+pieces of a chain carry the identical `Vec2` by construction, never a tolerance-derived near-miss — and any
+mismatch flushes and starts a new run. **No segment is ever drawn that is not in the chain**, which
+`RenderCostTest.anOpenSilhouetteChainDrawsInPiecesAndInventsNoJoiningSegment` asserts against the model's own
+footprint rather than against a number. A whole `CircleE`/`EllipseE` is a closed boundary in its own right and
+stays its own primitive. Per-piece semantics are otherwise untouched: a piece with a vertex that has no image
+under perspective still draws nothing, and now breaks the run, so a loop straddling the eye plane still loses
+only the pieces that cross it.
+
+**(c) A camera drag is not a document change.** `Viewport3.onChange` rebuilt the whole side panel — six lists,
+an `O(scalars²)` loop and a fresh `Evaluator` — on every `mousemove` of an orbit. An orbit writes one of the
+camera's four numbers and nothing else: no element, no parameter, no selection, and not even a status line
+(the panel's only 3D-dependent text is `Viewport3.help`, which reads the tool and the plane, never the eye).
+The panel is left entirely to the document-change path.
+
+**(d) Redraws coalesce to one per animation frame.** Pointer events arrive faster than the display refreshes,
+so a fast orbit painted several frames nobody would ever see and then fell behind the cursor. The camera path
+now goes through `requestAnimationFrame`. Kept **in the browser shell**, and that is a boundary and not an
+accident: `requestAnimationFrame` is a platform API (OP-12), and `Viewport3` must stay the pure controller the
+headless suite drives synchronously — a gesture there still means exactly one `onChange`, and it is the shell
+that decides how many of those become pixels. Everything else (`repaint`, the view switch) still paints
+straight through.
+
+**(e) A hover moves no vertex.** The worst of the six, and the one the user would have hit first: `repaint()`
+set the GL dirty flag unconditionally, and `Editor.pointerMove` fires `onChange` on every hover while a
+point-placing or previewing tool is armed — so plain mouse motion across the 3D canvas re-ran
+`Scene3.creaseEdges` over a quarter of a million triangles (**423 ms**) and re-uploaded a few million floats.
+The criterion is now the one the realistic preview already runs on (`SceneSync`, OP-5): **mesh identity**. The
+evaluator's argument-identity memo hands an unchanged node back the very object it computed last time, so
+`mesh === mesh` is not a guess about geometry — it is the statement *this node did not recompute*, and it
+cannot miss a real change, because a node that recomputed produces a new object. `Scene3Sync` compares the
+solids in order by element id, colour (which is *in* the vertex data, so a material assignment must
+re-upload) and mesh identity; the furniture is not compared because it is a pure function of those meshes'
+bounds. It is conservative in the safe direction only: a node that recomputes to an *equal* mesh buys one
+upload it did not need, which is the price of not walking every vertex per event.
+
+Reusing the existing memo rather than inventing a revision counter was the choice, and the reason is that a
+counter is a second thing to keep true. There is no `Document` version to hang one on, adding one would mean
+every mutation site remembering to bump it, and a missed bump is *wrong geometry on screen* — where a missed
+`===` is at worst a redundant upload. Mesh identity is already load-bearing for the preview and already
+asserted (`PreviewSyncTest`), so this adds a consumer rather than a mechanism.
+
+**What (e) forced, and it is an improvement in its own right: `Scene3` became lazy in its expensive parts.**
+Asking "did the solids change?" on every editor change is only affordable if extracting a scene is cheap, and
+it was not — `SolidItem.edges` ran the crease pass on construction and `Scene3.lines` sized the grid from a
+pass over every vertex. Both are now computed on first read. Extraction is `O(elements)`, the creases are
+computed when something is actually going to draw them, and the value-not-state discipline is untouched: a
+`SolidItem` is built per extraction from an immutable `Mesh3`, so the memoized value can only ever be that
+mesh's own.
+
+**(f) The GL upload allocated three copies of the mesh, one of them boxed.**
+`Float32Array(data.toFloatArray().toTypedArray())` built an `Array<Float>` of ~2.4 million boxed objects
+before the typed array, on top of an `ArrayList<Float>` per attribute and a `listOf(a, b, c)` per triangle.
+The vertex count is known exactly from the scene (three per triangle, two per line), so one pass sizes the
+typed arrays and a second fills them, with no intermediate collection at all. The MVP uniform's 16-element
+array is likewise allocated once instead of boxed per frame.
+
+**One defect this work found in itself, worth recording because a test caught it and no golden would have.**
+The first cut of the coalescing handed `DrawTarget.polyline` the run buffer and then cleared it for the next
+run. `SvgDrawTarget` serializes immediately and never noticed; a *recording* target — which is what a count
+assertion needs — got 3 202 empty lists. `polyline` takes its points as a value the backend may keep, so each
+run now gets a fresh list. This is the general hazard of turning a per-call allocation into a reused buffer,
+and it is why the acceptance tests record rather than merely count.
+
+**Assertions are counts and structure, never a wall clock** (`RenderCostTest`, 7 tests): a closed rectangle is
+one polyline of five points whose last is its first; a loop of segments *and* tessellated arcs is one; the
+open silhouette chain is more than one and contains no chord that is not in the model; a scene of N projected
+points builds **one** matrix; the real fixture emits 3 202 polylines carrying the same 110 652 chords; forty
+hovers routed through `Viewport3` with a tool armed upload nothing while a parameter edit uploads once, and a
+colour assignment uploads too. `PlanePerspective.matrixBuilds` is `internal` and exists for that one
+assertion — what is being asserted is a *count of work*, which nothing outside the module reports, and the
+alternative (spying on `Camera3`) has no seam at all, since it is a data class.
+
+**Five SVG goldens change, and were approved rather than absorbed.** The coalescing regroups the same
+strokes, so `edit3d-pyramid-with-its-plan-sketch`, `editor_outline_spline`, `editor_outline_spline_dimmed`,
+`editor_thick_path_ring` and `imported_body_plan` differ. The standing rule is that a golden diff is shown
+and approved, never regenerated on the way past, so the delivery left all five *failing* and the check was
+made independently on the committed bytes: for each file the multiset of drawn chords **with its style** —
+including a `<polygon>`'s implicit closing chord — is equal before and after (0 lost, 0 added), every
+non-polyline line of the markup is identical, and exactly those five of the 28 goldens differ at all
+(`imported_body_plan`: 65 polylines → 2, over the same 65 chords). That is the whole of the difference: the
+same ink, in fewer strokes.
+
+**The probe review (`OrbitCostProbeTest`, 5 tests), which asks the criterion of what was already here.** An
+identity-keyed cache fails in two directions, and the delivery's own tests exercise one. So: **undo**, which
+does not edit a document but replays it into a new one — every element, node and mesh a different object —
+must upload, and must then *settle*, so that re-extracting the replayed document is free again. A **rename**
+(OP-18's naming authority) and a **selection** must upload nothing, because neither reaches the vertex data,
+while **hiding** a body must, because it leaves the scene. An import's **hidden raw literal** (session 34)
+must be invisible to the gate — it is its placement's material either way — while hiding the placement is a
+real change: the two most recent packages meeting. The projection cache is asked through
+`toScreenLifted`, the entry point a **height point** (OP-25) uses and the only second way into the camera.
+And the coalescing's ink-preservation is asked on a *pattern* of many independent loops rather than on the
+five pictures the goldens pin.
+
+**Still open, and named because the next person will look for it.** The *editor*-change path in the 3D view
+still repaints and rebuilds the panel synchronously per hover (`repaint()`), which is legitimate — a hover can
+change a preview, a snap marker and a status line — but it is not coalesced through `requestAnimationFrame`
+the way the camera path now is, and `renderPanel`'s `O(scalars²)` parameter loop is a genuine cost on a large
+drawing. That is a different defect from the six above, and it is a *policy* question (which parts of a panel
+a hover may touch) rather than a mechanical one.
+
 ### The height point — one degree of freedom out of the plane (OP-25 — RESOLVED)
 
 **Decision (the user's design, session 28, delivered whole):**
@@ -7303,6 +7449,32 @@ Three broad families (see OP-9 decision above):
   **8 new tests** (`PlaneAncestorTest`, the sweep's findings folded into them), **1245 → 1253 green**,
   no golden changed, no version bump, and the palette gained a `PLANES` group for free because it renders from
   the enum.
+- **Session 35 — an orbit changes no model value, so it may cost nothing.** A user-reported defect with an
+  unusually informative shape: a 36-body JT assembly orbited smoothly in the *realistic preview* and was
+  unusable to drag in the *construction* view. Two views, the same bodies, the same camera — so the cause
+  could not be the geometry, and it was not one cause but six pieces of work being done because the eye or the
+  pointer moved. The view-projection matrix was rebuilt **per vertex** (221 304 times a frame, and the whole
+  of the frame time on the JVM: 36.2 → 7.8 ms once it was cached in the per-repaint `PlanePerspective`, which
+  is a value and therefore has no invalidation to get wrong); a chain of segments was emitted as one draw call
+  per segment (110 652 → 3 202 polylines over the *same* 110 652 chords — nearly free on the JVM, decisive in
+  a browser where each call is a `beginPath`/`stroke`); a camera drag rebuilt the entire side panel per
+  `mousemove`; paints were not coalesced to the animation frame; a plain **hover** re-creased a quarter of a
+  million triangles (423 ms) and re-uploaded them, because the dirty flag was set unconditionally; and the GL
+  upload boxed 2.4 million floats. Overlay frame 36.2 → **8.2 ms**, hover cost → **0.12 ms with zero uploads**.
+  The design content is in two places. First, **the upload gate reuses OP-5's argument-identity memo rather
+  than inventing a revision counter** — `mesh === mesh` is not a guess about geometry but the statement *this
+  node did not recompute*, it cannot miss a real change, it is already load-bearing for the preview, and a
+  counter would be a second thing every mutation site has to remember (a missed bump is wrong geometry; a
+  missed `===` is a redundant upload). Second, **session 34's open shells are a hard constraint on the
+  coalescing**: a `Loop` may legitimately not close, so the join is conditional on an exact shared endpoint
+  and a mismatch breaks the run — never a bridging segment that exists nowhere in the model, asserted against
+  the model's own footprint. Making the gate affordable forced `Scene3` to compute its creases and its grid
+  lazily, which is a better shape anyway. Assertions are counts and structure, never a clock
+  (`RenderCostTest`, 7 tests; `PlanePerspective.matrixBuilds` is `internal` for the one that counts work).
+  **1271 → 1278 green**, no version bump — and **five SVG goldens are left failing on purpose**: the
+  coalescing regroups identical strokes (the multiset of drawn chords with their styles is byte-identical in
+  all five), and the standing rule is that a golden diff is shown and approved rather than absorbed. See
+  *An orbit costs nothing the drawing did not change* under OP-17's edit-in-3D notes.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

@@ -625,9 +625,28 @@ object SceneRenderer {
     ): List<Vec2> = Conics.renderSampleWhole(e, ccw)
 
     /**
-     * Draw a boundary chain (a `Loop`, or a `Region`'s outer/hole loop) piece by piece. Each piece
-     * becomes a polyline in screen space; the piece dispatch itself stays in `GeomMath`, except for
-     * this one — emitting backend primitives is a rendering question, not a geometric one.
+     * Draw a boundary chain (a `Loop`, or a `Region`'s outer/hole loop) — **as few polylines as the chain
+     * really is**, which for a closed loop is exactly one.
+     *
+     * Each piece still becomes plane-space points the same way it always did (the dispatch below; the maths
+     * itself stays in `GeomMath`, and the arc's step count stays the projection's — see [PlaneProjection.arcPoints]).
+     * What changed is what is *emitted*: consecutive pieces whose ends meet are appended to one growing run
+     * and flushed as a single [DrawTarget.polyline], instead of one draw call per piece. A rectangle is one
+     * polyline of five points rather than four of two; an imported body's silhouette is a few hundred rather
+     * than a hundred thousand. That is the same drawing — a polyline *is* its chords — and it is what makes
+     * the browser's Canvas2D path (a `beginPath`/`stroke` per call) affordable at assembly scale, as well as
+     * closing the gap between what this renderer says and what a stroke really costs.
+     *
+     * **The run is broken, never bridged.** Since session 34 a `Loop` may legitimately be *open*: an
+     * inconsistently wound or non-manifold mesh gives [Silhouette] a run that dead-ends, and it is drawn as
+     * the open chain it is rather than mended or dropped. So the join is conditional on the endpoints being
+     * the *same point* — compared exactly, because consecutive pieces of a chain carry the identical `Vec2`
+     * by construction, never a tolerance-derived near-miss — and any mismatch flushes and starts a new run.
+     * No segment is ever drawn that is not in the chain, which is the whole correctness condition here.
+     *
+     * A whole [ProfileElement.CircleE] or [ProfileElement.EllipseE] is a closed boundary in its own right,
+     * so it stays its own primitive (a circle is the one shape the *projection* decides the drawing of) and
+     * interrupts the run rather than joining it.
      */
     private fun drawChain(
         elements: List<ProfileElement>,
@@ -635,14 +654,60 @@ object SceneRenderer {
         target: DrawTarget,
         style: Style,
     ) {
-        for (el in elements) when (el) {
-            is ProfileElement.Seg -> poly(proj, target, listOf(el.segment.a, el.segment.b), style)
-            is ProfileElement.ArcE -> poly(proj, target, proj.arcPoints(el.arc), style)
-            is ProfileElement.BezierE -> poly(proj, target, GeomMath.tessellateBezier(el.bezier), style)
-            is ProfileElement.CircleE -> proj.drawCircle(target, el.circle, style)
-            is ProfileElement.EllipticArcE -> poly(proj, target, tessellate(el.arc), style)
-            is ProfileElement.EllipseE -> poly(proj, target, tessellate(el.ellipse, el.ccw), style)
+        // the run so far, in screen pixels, and the plane-space point it currently ends at (null: empty)
+        var screen = ArrayList<Vec2>()
+        var end: Vec2? = null
+
+        // A **fresh** list per run, never a cleared and refilled one: [DrawTarget.polyline] takes the
+        // points as a value the backend may keep (a recording target does, and the browser's canvas path
+        // could), so handing over a buffer that is about to be emptied would draw the last run everywhere.
+        fun flush() {
+            if (screen.size >= 2) {
+                target.polyline(screen, style)
+                screen = ArrayList()
+            } else {
+                screen.clear()
+            }
+            end = null
         }
+
+        /**
+         * Append one piece's plane-space points, projecting as we go. A piece with a vertex that has no
+         * image draws nothing and breaks the run — [poly]'s rule per piece, unchanged, and the reason the
+         * projection happens here rather than over the finished run: a loop straddling the eye plane must
+         * still lose only the pieces that cross it.
+         */
+        fun add(points: List<Vec2>) {
+            if (points.size < 2) return
+            val joins = end?.let { it.x == points.first().x && it.y == points.first().y } == true
+            val projected = ArrayList<Vec2>(points.size)
+            for (p in points) {
+                val s = proj.toScreen(p)
+                if (s == null) {
+                    flush()
+                    return
+                }
+                projected.add(s)
+            }
+            if (!joins) flush()
+            for (i in (if (joins) 1 else 0) until projected.size) screen.add(projected[i])
+            end = points.last()
+        }
+        for (el in elements) when (el) {
+            is ProfileElement.Seg -> add(listOf(el.segment.a, el.segment.b))
+            is ProfileElement.ArcE -> add(proj.arcPoints(el.arc))
+            is ProfileElement.BezierE -> add(GeomMath.tessellateBezier(el.bezier))
+            is ProfileElement.CircleE -> {
+                flush()
+                proj.drawCircle(target, el.circle, style)
+            }
+            is ProfileElement.EllipticArcE -> add(tessellate(el.arc))
+            is ProfileElement.EllipseE -> {
+                flush()
+                poly(proj, target, tessellate(el.ellipse, el.ccw), style)
+            }
+        }
+        flush()
     }
 
     private val gridStyle = Style("#eeeeee", 1.0)

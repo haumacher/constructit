@@ -30,8 +30,23 @@ class SolidItem(
     val elementId: String,
     val mesh: Mesh3,
     val color: String,
-    val edges: List<Edge3> = Scene3.creaseEdges(mesh),
 ) {
+    /**
+     * The creases, computed **on first read** rather than on construction.
+     *
+     * [Scene3.creaseEdges] walks every triangle and every directed edge, so it is the one genuinely
+     * expensive thing in a scene — half a million triangles' worth for an imported assembly. Extracting a
+     * scene has to stay cheap enough to do on *every* editor change, because that is what lets the view ask
+     * "did the solids actually change?" before rebuilding anything ([Scene3Sync]); an eager crease pass
+     * would have made the question cost more than the answer saves. Lazily is also *when* the number is
+     * really needed: the two consumers that read edges (the GL upload and [Painter3]) are exactly the two
+     * that were going to draw them anyway.
+     *
+     * Still no cache that can go stale: a [SolidItem] is built per extraction from an immutable [Mesh3], so
+     * the value memoized here can only ever be this mesh's own.
+     */
+    val edges: List<Edge3> by lazy { Scene3.creaseEdges(mesh) }
+
     /**
      * The colour of this solid's feature edges: its own colour, darkened. Same hue, so a line still reads
      * as belonging to *this* part, and one authority both back ends ask, so an edge cannot come out a
@@ -61,6 +76,67 @@ class Line3(val a: Vec3, val b: Vec3, val color: String)
 class Edge3(val a: Vec3, val b: Vec3, val faceA: Vec3, val faceB: Vec3)
 
 /**
+ * **What the 3D view's renderer is holding, and the exact question "is it still what the document says?"**
+ *
+ * The 3D view's geometry is one big vertex buffer, rebuilt from a whole [Scene3]. Rebuilding it is the most
+ * expensive thing the view does — the creases of every solid, then a few million floats into the GPU — and
+ * it was being done on **every [Editor.onChange]**, which includes every *hover*: a point-placing or
+ * previewing tool refreshes its preview on each pointer move, so plain mouse motion across the 3D canvas
+ * re-creased half a million triangles and re-uploaded them. Nothing about the solids had changed.
+ *
+ * The criterion here is the one the realistic preview already runs on (see [SceneSync] and OP-5): **mesh
+ * identity**. The evaluator's argument-identity memo hands an unchanged node back the very object it
+ * computed last time, so `mesh === mesh` is not a heuristic about the geometry — it is the statement *this
+ * node did not recompute*. It cannot miss a real change: a node that recomputed produces a new object, and
+ * an object that is the same one was produced by a computation that did not run.
+ *
+ * What is compared is therefore everything the buffer is built out of, and nothing else: the solids in
+ * order, each one's element id, its colour (which is *in* the vertex data, so a material assignment must
+ * re-upload) and its mesh's identity. The furniture is not compared because it is a pure function of those
+ * meshes' bounds ([Scene3.gridStepFor]) — same solids, same grid.
+ *
+ * Conservative in the safe direction, deliberately: a node that recomputes to an *equal* mesh hands out a
+ * new object and buys one upload it did not need. Comparing the geometry itself to avoid that would cost a
+ * pass over every vertex on every hover, which is the thing being removed.
+ */
+class Scene3Sync {
+    private var uploaded: List<SolidItem>? = null
+
+    /** How many times [update] has actually uploaded. Zero is the answer a hover — or an orbit — must give. */
+    var uploads: Int = 0
+        private set
+
+    /** True when [scene]'s solids are the ones already uploaded, so the renderer holds them already. */
+    fun holds(scene: Scene3): Boolean {
+        val had = uploaded ?: return false
+        if (had.size != scene.solids.size) return false
+        for (i in had.indices) {
+            val a = had[i]
+            val b = scene.solids[i]
+            if (a.elementId != b.elementId || a.color != b.color || a.mesh !== b.mesh) return false
+        }
+        return true
+    }
+
+    /** Hand [scene] to [upload] exactly when it is not what was uploaded last. Returns whether it did. */
+    fun update(
+        scene: Scene3,
+        upload: (Scene3) -> Unit,
+    ): Boolean {
+        if (holds(scene)) return false
+        upload(scene)
+        uploaded = scene.solids
+        uploads++
+        return true
+    }
+
+    /** Forget what was uploaded — what a renderer whose buffers were dropped says. */
+    fun invalidate() {
+        uploaded = null
+    }
+}
+
+/**
  * Everything the 3D view draws, extracted from a [Document] in one pass: the visible solids, plus the
  * grid and axes that give them a place to stand.
  *
@@ -69,7 +145,15 @@ class Edge3(val a: Vec3, val b: Vec3, val faceA: Vec3, val faceB: Vec3)
  * after an edit, and both back ends (the painter's projector of [Painter3] for tests, WebGL in the
  * browser) consume the identical scene.
  */
-class Scene3(val solids: List<SolidItem>, val lines: List<Line3>) {
+class Scene3(val solids: List<SolidItem>, lines: List<Line3>? = null) {
+    /**
+     * The view's furniture — the ground grid and the axes — sized to the model, and like [SolidItem.edges]
+     * computed **on first read**: its spacing comes from [boundsOf], which is a pass over every vertex of
+     * every solid, and an extraction that is only being asked whether anything changed must not pay for it.
+     * Passing a list explicitly says what the furniture is (what a hand-built test scene does).
+     */
+    val lines: List<Line3> by lazy { lines ?: furniture(gridStepFor(boundsOf(solids))) }
+
     val isEmpty: Boolean get() = solids.isEmpty()
 
     /** Axis-aligned bounds of the solids (the furniture does not count), or null when there are none. */
@@ -290,7 +374,7 @@ class Scene3(val solids: List<SolidItem>, val lines: List<Line3>) {
                 if (v.solid.mesh.triangles.isEmpty()) continue
                 solids.add(SolidItem(el.id, v.solid.mesh, colorOf(doc, el)))
             }
-            return Scene3(solids, furniture(gridStepFor(boundsOf(solids))))
+            return Scene3(solids)
         }
 
         /** Combined bounds of [solids], or null when none of them has a mesh. */
