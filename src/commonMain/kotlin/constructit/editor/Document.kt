@@ -14,6 +14,7 @@ import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Node
 import constructit.core.ParameterNode
+import constructit.core.Path3Value
 import constructit.core.PlaneValue
 import constructit.core.PointSetValue
 import constructit.core.PointValue
@@ -61,6 +62,7 @@ import constructit.geom.CarrierCurve
 import constructit.geom.CarryMode
 import constructit.geom.Chains
 import constructit.geom.Conics
+import constructit.geom.Curves3
 import constructit.geom.Feature3
 import constructit.geom.FilletLeg
 import constructit.geom.FilletMath
@@ -76,6 +78,7 @@ import constructit.geom.ProfileElement
 import constructit.geom.Section3
 import constructit.geom.Segment
 import constructit.geom.SolidFace
+import constructit.geom.Stations3
 import constructit.geom.ThickBody
 import constructit.geom.Vec2
 import constructit.geom.Vec3
@@ -246,6 +249,26 @@ class SketchSpace(
      * of every solid that existed before it, and that needs no pick at all.
      */
     val parallel: Boolean = false,
+    /**
+     * STATION only (OP-26, step 4): the **curve in space** this plane stands across — the run it is a station
+     * of. Null for every other space.
+     *
+     * A station is *one stated position along a path together with the plane the path pierces there*, so it
+     * has exactly the shape a datum has one construction over: a piece of geometry and a live number. What it
+     * has instead of a hinge and an angle is this curve and [along], and everything else about it — the
+     * origin control, the sections it cuts, which way *Extrude* and *Cut* build — is the datum's, unchanged.
+     */
+    val station: Element? = null,
+    /**
+     * STATION only: the live **distance from the start of [station]'s run**, in the plane's own parameter.
+     *
+     * One length and nothing else, which is the whole of OP-26's settled design for this: a relative station
+     * is `base + d` in the expression language (OP-7), two stations sharing a pitch is one parameter node
+     * feeding both, and normalized *t* is deliberately not offered. Retype it and the plane slides along the
+     * curve, taking everything drawn on it; type a number past the end of the run and the plane is *invalid*
+     * with a reason, which heals (OP-3).
+     */
+    val along: ScalarEntry? = null,
 ) {
     /**
      * Which corner of this space's own section the origin is anchored on, or null while it sits at the
@@ -275,11 +298,22 @@ class SketchSpace(
     /** The plan is exactly the space with no plane node of its own: the world XY plane, by construction. */
     val isPlan: Boolean get() = plane == null
 
-    /** A datum plane (a line and an angle, or a bare height), as opposed to a solid's face or the plan. */
-    val isDatum: Boolean get() = hinge != null || parallel
+    /** A **station** across a curve in space (OP-26, step 4) — see [station]. */
+    val isStation: Boolean get() = station != null
+
+    /**
+     * A datum plane — a line and an angle, a bare height, or a station along a curve — as opposed to a
+     * solid's face or the plan.
+     *
+     * A station belongs here rather than beside it: what this predicate is asked for is *"a plane that is not
+     * a face of anything"*, and the two things that turn on it are which way a feature builds (a plane with no
+     * material side states it on its own normal) and how the view introduces itself. Both hold for a station
+     * word for word, which is the point of a station being a sketch space at all.
+     */
+    val isDatum: Boolean get() = hinge != null || parallel || isStation
 
     /** A space on a solid's planar side face (OP-8's `sideFacePlane`). */
-    val isFace: Boolean get() = plane != null && hinge == null && !parallel
+    val isFace: Boolean get() = plane != null && hinge == null && !parallel && !isStation
 }
 
 /** A retained, displayable/selectable graph output with style + kind. */
@@ -1172,6 +1206,7 @@ class Document {
 
     private var spaceCounter = 0
     private var datumCounter = 0
+    private var stationCounter = 0
 
     fun spaceNamed(name: String): SketchSpace? = spaces.firstOrNull { it.name == name }
 
@@ -1986,6 +2021,8 @@ class Document {
                 dx,
                 dy,
                 proto.parallel,
+                proto.station,
+                proto.along,
             )
         // where "created before" is decided (GitHub #9): every element already born is this plane's ancestor,
         // and nothing born after it ever becomes one — see [spaceAncestors]
@@ -2007,6 +2044,14 @@ class Document {
         while (spaceNamed("plane$i") != null) i++
         datumCounter = i
         return "plane$i"
+    }
+
+    /** A station's own series (OP-26, step 4) — `station1`, `station2`: what it is, said in its name. */
+    private fun nextStationName(): String {
+        var i = stationCounter + 1
+        while (spaceNamed("station$i") != null) i++
+        stationCounter = i
+        return "station$i"
     }
 
     /**
@@ -2121,6 +2166,97 @@ class Document {
     }
 
     /**
+     * Create a **station** across the curve in space [curve], [distance] along it, and make it active
+     * (OP-26's step 4 — *"a station is a stated position along a path together with the plane the path
+     * pierces there"*).
+     *
+     * The third kind of plane that is a face of nothing, and it is the general form of the one thing the
+     * other two cannot say: *where along a run*. Origin on the path, normal along the tangent, in-plane axes
+     * the moving frame's ([Construction.stationPlane]). What comes out is a **sketch space** and nothing more
+     * exotic than that, which is the whole design: draw in it, dimension in it, extrude a fitting off it, cut
+     * a mitre with it, place a group into it — every one of those already works on a datum plane and works
+     * here for the same reason and through the same code.
+     *
+     * **The position is one length measured from the start of the run**, an ordinary parameter. So a station
+     * *relative* to another costs nothing — `base + d` in the expression language (OP-7) — and two stations
+     * sharing a pitch is one parameter node feeding both. Normalized *t* is deliberately not offered.
+     *
+     * **Out of range is invalidity, not a refusal**, and this is OP-26's own doctrinal point: the distance is
+     * a live value, so a station past the end of the run makes the plane's node invalid with a named reason,
+     * everything sketched on it hides while it is, and retyping the number brings it all back. What *is*
+     * refused here, by name and building nothing, is the one structural thing — a pick that is not a curve in
+     * space.
+     *
+     * [part] is the solid a *Cut* here subtracts from, resolved once at creation as the newest visible solid
+     * this plane passes through and then **recorded in the step** (OP-18), which is the parallel plane's rule
+     * unchanged: a choice is persisted at creation and never re-scored on replay.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun createStationSpace(
+        curve: Element,
+        distance: ScalarRef,
+        named: String? = null,
+        part: Element? = null,
+    ): SketchSpace? {
+        if (curve.kind != ElementKind.SPACE_CURVE) {
+            note =
+                "Station: ${nameOf(curve)} is ${kindWord(curve)}, not a curve in space — draw the route with " +
+                "Curve through points first, then stand a plane across it"
+            return null
+        }
+        val name = named ?: nextStationName()
+        if (spaceNamed(name) != null) return null
+        val base = activeSpace
+        val entry = scalarEntryFor(distance)
+        val cuts = part ?: if (replayingVersion != null) null else stationPartAt(curve, evalMm(distance))
+        // the journal must name the base space *before* this step, exactly as a datum's does
+        // ([noteSpaceSwitch]) — by the time the step is appended the station is already the active space
+        noteSpaceSwitch()
+        return recording(
+            "sketchspace",
+            Arg.Label(name),
+            Arg.Keyed("path", Arg.El(curve)),
+            Arg.Keyed("at", Arg.Sc(entry)),
+            *(if (cuts == null) emptyArray() else arrayOf(Arg.Keyed("part", Arg.El(cuts)))),
+        ) {
+            val intrinsic = cx.stationPlane(curve.ref as Path3Ref, planeOfSpace(curve.space), entry.ref)
+            addSpace(SketchSpace(name, null, cuts, from = base.name, station = curve, along = entry), intrinsic)
+        }
+    }
+
+    /**
+     * The solid a *Cut* on a station of [curve] at [mm] subtracts from — [parallelPartAt]'s question, asked
+     * about a plane that stands across a run instead of over a space.
+     *
+     * Computed from **values** rather than through a node, for [parallelPartAt]'s own reason: the station's
+     * plane node does not exist yet at this point, and a throwaway one would put the live graph and the
+     * replayed graph out of step. Which means the space's plane has to be read without building one either —
+     * the plan *is* the world XY frame by construction, exactly as [activePlane3] says.
+     */
+    private fun stationPartAt(
+        curve: Element,
+        mm: Double,
+        ev: Evaluator = Evaluator(),
+    ): Element? {
+        val path = (ev.valueOf(curve.ref) as? Path3Value)?.path ?: return null
+        val up = planeValueOfSpace(curve.space, ev) ?: return null
+        val station = Stations3.at(path, up.normal.normalized(), mm).first ?: return null
+        return partCutBy(station.plane, ev)
+    }
+
+    /**
+     * The frame of the space named [name], as a value and **without building a node** — the world XY plane
+     * for the plan, which is what it is by construction, and null when a stored plane does not evaluate.
+     */
+    private fun planeValueOfSpace(
+        name: String,
+        ev: Evaluator,
+    ): Plane3? {
+        val ref = spaceNamed(name)?.plane ?: return Plane3(Vec3.ZERO, Vec3.X, Vec3.Y)
+        return ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? PlaneValue)?.plane
+    }
+
+    /**
      * The solid a *Cut* on a plane [mm] over the active space subtracts from: the **newest visible solid the
      * plane actually cuts**, or null (GitHub #9).
      *
@@ -2135,12 +2271,22 @@ class Document {
         ev: Evaluator = Evaluator(),
     ): Element? {
         val base = activePlane3(ev) ?: return null
-        val plane = base.translated(mm)
-        return elements.lastOrNull { el ->
+        return partCutBy(base.translated(mm), ev)
+    }
+
+    /**
+     * The newest visible solid the frame [plane] passes through, or null — the shared half of the question
+     * [parallelPartAt] and [stationPartAt] both ask, and they ask it identically because a plane that is a
+     * face of nothing names its part by the same fact either way: which body it cuts.
+     */
+    private fun partCutBy(
+        plane: Plane3,
+        ev: Evaluator,
+    ): Element? =
+        elements.lastOrNull { el ->
             el.kind == ElementKind.SOLID && el.visible &&
                 (ev.valueOf(el.ref) as? SolidValue)?.let { !Section3.sectionOf(it.solid, plane).isEmpty } == true
         }
-    }
 
     /**
      * The solid a datum's features cut into: the **newest visible solid the line [line] is part of the
@@ -2186,6 +2332,9 @@ class Document {
     fun spaceLabel(space: SketchSpace): String =
         when {
             space.isPlan -> "plan"
+            // a station (OP-26, step 4): the one number it is, and the run it is measured along
+            space.isStation ->
+                "${space.name} (${Format.num(spaceAlongMm(space))} mm along ${space.station?.let { nameOf(it) }})"
             // the hinge-less parallel case (GitHub #9): a height, and the space it is a height above
             space.parallel -> "${space.name} (${Format.num(spaceOffsetMm(space))} mm from ${space.from})"
             space.isDatum ->
@@ -2197,6 +2346,21 @@ class Document {
 
     /** A datum space's offset along its own normal in mm, as it stands (0 when it has none). */
     fun spaceOffsetMm(space: SketchSpace): Double = space.offset?.let { evalMm(it.ref) } ?: 0.0
+
+    /** A station's distance along its run in mm, as it stands (0 for any other space) — OP-26, step 4. */
+    fun spaceAlongMm(space: SketchSpace): Double = space.along?.let { evalMm(it.ref) } ?: 0.0
+
+    /**
+     * How long a station's run is, in mm — what a station's note measures its distance against, and what its
+     * refusal names when the number walks off the end. Zero when the curve does not evaluate.
+     */
+    fun stationRunMm(
+        space: SketchSpace,
+        ev: Evaluator = Evaluator(),
+    ): Double {
+        val curve = space.station ?: return 0.0
+        return (ev.valueOf(curve.ref) as? Path3Value)?.let { Curves3.length(it.path) } ?: 0.0
+    }
 
     /** A datum space's angle in degrees, as it stands (0 for any other space). */
     fun spaceAngleDeg(space: SketchSpace): Double =

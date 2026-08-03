@@ -319,6 +319,20 @@ records and it never changes by itself; a negative pitch is refused by name, bec
 while it turns right *is* the left-hand coil, and the drawing should have one way to say a thing rather than
 two. A pitch of nothing is refused too — that is a circle, and a circle is drawn in a space.
 
+**A station — a sketch plane standing across a run, a stated distance along it.** *Station (plane across a
+curve)* takes a distance and one click on a curve in space, and what you get is an ordinary sketch plane: the
+origin sits on the curve, the normal runs along it, and the in-plane axes are the moving frame's, so what you
+draw there stays aligned to itself all the way along a bend instead of slowly rolling. Draw in it, dimension
+in it, extrude a fitting off it, cut a mitre or a gland with it, place a group into it — a station is the same
+kind of thing a datum plane is, so nothing you already know changes. The distance is measured from the start of
+the run and is an ordinary parameter: retype it and the plane slides along the curve with everything drawn on
+it, and wiring two stations to one parameter moves both. Because the plane is built *from* the curve, moving a
+point the run passes through carries the station and everything on it along. The distance is measured along the
+curve itself — exactly on a straight run and on a helix, and by a numeric integral on a spline, good to a few
+billionths of a millimetre — so a station at 340 mm is 340 mm of travel and not 340 mm of chords.
+A distance past the end of the run does not refuse the gesture: the plane simply has no value, everything drawn
+on it hides and says why, and bringing the number back brings all of it back.
+
 **A working plane's context is the part's section — and the section is an input.** Drawing on a plane that is
 not the plan needs to know where the material is, so every such plane draws **the part's section at itself**,
 in its own coordinates: a face space draws its face's true boundary (a pyramid's lateral face draws its

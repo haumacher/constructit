@@ -598,6 +598,16 @@ object Tools {
     const val PLANE_AT_HEIGHT = "planeheight"
 
     /**
+     * A **station**: a sketch space standing across a curve in space, a stated distance along it (OP-26,
+     * step 4) — a fitting at a place along a run, a mitre normal to the route, a section drawn where the
+     * sweep should change, a branch path whose first point lives in the trunk's own frame.
+     *
+     * One row and not a family: *one* station at a time is the settled cut, and replication along a path is
+     * OP-26's own to-be-discussed item. It lands with the plane tools because that is what it makes.
+     */
+    const val STATION = "station"
+
+    /**
      * **Where a sketch space's origin sits** (OP-17, session 32): anchor it on a corner of the part's
      * section here, plus an in-plane (dx, dy). Generic over spaces that have a plane — a face's and a
      * datum's origin are moved by the same gesture and the same node.
@@ -884,6 +894,13 @@ object Tools {
             // It records its own `sketchspace` step, like the face tool, and does not replicate: a sketch
             // space is organisation, not geometry an orbit could fan (OP-23).
             ToolDef(SKETCH_PLANE, "Sketch plane (line + angle)", ToolCategory.PLANES, listOf(SlotKind.LINE), scalars = listOf(ang("angle", 90.0), len("offset", 0.0)), recordsSteps = true, replicates = false, help = "Type an angle (90° if you type none) — and, if you want the plane moved off the line, an offset after it — then click a line, segment or wall leg: the 2D view switches to a new sketch plane through that line, tilted by that angle out of the space you are in and shifted along its own normal by the offset. So 0° with an offset is a plane *parallel* to the one you are in, which is what a stack of loft sections wants. u runs along the line, v rises out of the old plane; Extrude builds along the new plane's normal and Cut goes the other way, so a negative angle swaps them. Both numbers stay parameters — retype either and the plane moves, with everything drawn on it.", slotNames = listOf("hinge line")) { d, p, s -> d.createDatumSpace(p.elements[0], s.firstOrNull(), offset = s.getOrNull(1)) },
+            // ----- ...and the third plane that is a face of nothing: a **station** across a curve in space
+            // (OP-26, step 4). One PATH3 pick plus one length the tool waits for, because the distance *is*
+            // the feature — "one, stated by a distance" — and a defaulted slot would take a length left in
+            // the panel by the last gesture and put the plane somewhere nobody said. It records its own
+            // `sketchspace` step like every other plane tool and does not replicate; a station **family** is
+            // OP-26's own to-be-discussed item and is deliberately not this row.
+            ToolDef(STATION, "Station (plane across a curve)", ToolCategory.PLANES, listOf(SlotKind.PATH3), scalars = listOf(len("distance")), recordsSteps = true, replicates = false, help = "Type a distance (or pick a parameter in the panel), then click a curve in space: the 2D view switches to a new sketch plane standing square across the run that far along it, measured from the curve's start. The origin is on the curve, the normal is the direction the curve is going, and the axes are the moving frame's — so what you draw there rides the run and stays aligned to itself along it. Extrude builds along the plane's normal, Cut goes the other way. The distance stays a parameter: retype it and the plane slides along the curve with everything drawn on it, and a distance past the end of the run makes the plane invalid until you bring it back.", slotNames = listOf("curve in space")) { d, p, s -> d.createStationSpace(p.elements[0], s[0]) },
             // ----- sketch on a *side* face (OP-17). One click, on a solid's footprint edge: a side face
             // projects to exactly that edge, so the edge names the face and the solid at once. Like the
             // path and opening tools this one records a step of its own (`sketchspace`, naming the

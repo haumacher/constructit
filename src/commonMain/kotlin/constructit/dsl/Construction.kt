@@ -72,6 +72,7 @@ import constructit.geom.Silhouette
 import constructit.geom.Sketch3
 import constructit.geom.Solid3
 import constructit.geom.SolidFace
+import constructit.geom.Stations3
 import constructit.geom.SweepProfile
 import constructit.geom.Vec2
 import constructit.geom.Vec3
@@ -1910,6 +1911,43 @@ class Construction {
             val a = sc(it[2]).requireDim(Dimension.ANGLE, "sketch plane angle").base
             val (p, why) = Geom3.datumPlane((it[0] as PlaneValue).plane, ln(it[1]), a)
             if (p == null) EvalResult.Invalid(why ?: "cannot place that sketch plane") else EvalResult.Ok(PlaneValue(p))
+        }
+
+    /**
+     * A **station plane**: the plane [path] pierces [distance] millimetres along itself, with its in-plane
+     * axes the moving frame's there (OP-26, step 4).
+     *
+     * The same kind of node [datumPlane] is, and deliberately so — a station *is* a sketch space, so nothing
+     * downstream learns a new concept. Origin: the point on the path at that arc length. Normal: the tangent
+     * there. Axes: the parallel-transport frame's, which is why this arrives after the frame (step 2) and
+     * after the helix (step 3), the first curve that made the frame work for its living.
+     *
+     * **Every input is a node**, which is the whole feature: the path is the drawn curve, so dragging a point
+     * it runs through carries the station and everything sketched on it along; [space] is the curve's own
+     * sketch space, whose normal starts the frame exactly as it does for a sweep ([Frames3.startReference]);
+     * and [distance] is an ordinary length parameter. So *relative to another station* costs nothing — it is
+     * `base + d` in the expression language (OP-7) — and two stations sharing a pitch is one parameter node
+     * feeding both. Sharing **is** equality; there is nothing here to build for it.
+     *
+     * **Out of range is invalidity, not a refusal** (OP-3, and OP-26 makes the point doctrinally): the
+     * distance is a live value, so a station past the end of the run — or before its start — makes this node
+     * invalid with a named reason, everything sketched on it hides while it is, and retyping the number
+     * brings all of it back. Refusing the *gesture* would make replay depend on a value.
+     */
+    fun stationPlane(
+        path: Path3Ref,
+        space: PlaneRef,
+        distance: ScalarRef,
+    ): PlaneRef =
+        op(path, space, distance) {
+            val pl = (it[1] as PlaneValue).plane
+            val s = sc(it[2]).requireDim(Dimension.LENGTH, "station distance").mm
+            val (station, why) = Stations3.at((it[0] as Path3Value).path, pl.normal.normalized(), s)
+            if (station == null) {
+                EvalResult.Invalid(why ?: "cannot stand a plane across this curve there")
+            } else {
+                EvalResult.Ok(PlaneValue(station.plane))
+            }
         }
 
     /** [plane] with its normal reversed (and its in-plane frame mirrored, as it must be). */

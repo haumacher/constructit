@@ -465,6 +465,165 @@ object Curves3 {
             }
         }
 
+    // ---- arc length: the parameterization a station is stated in (OP-26, step 4) ----
+
+    /**
+     * How many subintervals a cubic's length integral is cut into before the Gauss rule is applied, and how
+     * many nodes that rule has.
+     *
+     * **A composite 8-point Gauss–Legendre quadrature, over 16 fixed subintervals.** A cubic's speed
+     * `|B'(t)|` is the square root of a quartic — smooth wherever the derivative does not vanish — so a rule
+     * exact for polynomials of degree 15 on each of sixteen pieces is far past the accuracy anything here
+     * reads. Measured on a 248 mm drawing-scale cubic: it agrees with a **200 000-chord polyline to 2e-9 mm**
+     * (which is what [constructit.StationTest] asserts) and with a twenty-million-chord one to **5e-12 mm** —
+     * so the residual at the tested count is the *polyline's* own truncation, a chord always undercutting its
+     * arc, rather than anything this integral does. The counts are **fixed rather than adaptive** for the
+     * reason the renderer's step count is fixed (OP-15): an adaptive count is a function of curvature, and a
+     * station's position must be the same bit on every machine and every reload.
+     */
+    private const val QUAD_SPANS = 16
+
+    private val GAUSS_X =
+        doubleArrayOf(
+            -0.9602898564975363,
+            -0.7966664774136267,
+            -0.5255324099163290,
+            -0.1834346424956498,
+            0.1834346424956498,
+            0.5255324099163290,
+            0.7966664774136267,
+            0.9602898564975363,
+        )
+
+    private val GAUSS_W =
+        doubleArrayOf(
+            0.1012285362903763,
+            0.2223810344533745,
+            0.3137066458778873,
+            0.3626837833783620,
+            0.3626837833783620,
+            0.3137066458778873,
+            0.2223810344533745,
+            0.1012285362903763,
+        )
+
+    /** How close to the wanted arc length the inversion below is driven, in millimetres. */
+    private const val LENGTH_TOL_MM = 1e-9
+
+    /**
+     * The **arc length of one piece**, in millimetres — exact where the piece has a closed form, and a
+     * deterministic numeric integral where it does not.
+     *
+     * Three cases and three different honesties, which is the whole reason the pieces are kept analytic
+     * (OP-26): a [Curve3Element.Seg3] is a subtraction, a [Curve3Element.Helix3] travels at **constant
+     * speed** so its length is a multiplication ([Curve3Element.Helix3.arcLength]), and only a
+     * [Curve3Element.Bezier3] needs an integral — `∫|B'(t)|dt`, which has no elementary antiderivative for a
+     * cubic. See [QUAD_SPANS] for what that integral is and what it costs.
+     */
+    fun arcLength(el: Curve3Element): Double = lengthTo(el, 1.0)
+
+    /**
+     * The arc length of [el] from its start up to parameter [t] — [arcLength] is this at `t = 1`, so the two
+     * agree at the ends by construction rather than by tolerance.
+     */
+    fun lengthTo(
+        el: Curve3Element,
+        t: Double,
+    ): Double {
+        val u = t.coerceIn(0.0, 1.0)
+        return when (el) {
+            is Curve3Element.Seg3 -> (el.end - el.start).length() * u
+            is Curve3Element.Helix3 -> el.arcLength * u
+            is Curve3Element.Bezier3 -> {
+                var sum = 0.0
+                val h = u / QUAD_SPANS
+                for (k in 0 until QUAD_SPANS) {
+                    val mid = h * (k + 0.5)
+                    for (i in GAUSS_X.indices) {
+                        sum += GAUSS_W[i] * bezierTangentAt(el, mid + 0.5 * h * GAUSS_X[i]).length()
+                    }
+                }
+                sum * 0.5 * h
+            }
+        }
+    }
+
+    /**
+     * The parameter at which [el] has run [s] millimetres — the inverse of [lengthTo], clamped to the piece.
+     *
+     * **Exact for the two constant-speed pieces**: a segment and a helix are both parameterized
+     * proportionally to arc length, so this is a division and nothing is iterated. A cubic is not, and its
+     * inversion is a **bisection-safeguarded Newton** on [lengthTo] — monotone by construction (the speed is
+     * non-negative), so the bracket can never be lost, and driven to [LENGTH_TOL_MM] or sixty-four steps,
+     * whichever comes first. Both bounds are fixed, so the answer is a pure function of the inputs and a
+     * reload lands on the same bit.
+     */
+    fun paramAtLength(
+        el: Curve3Element,
+        s: Double,
+    ): Double {
+        val total = arcLength(el)
+        if (total <= 0.0) return 0.0
+        val target = s.coerceIn(0.0, total)
+        if (el is Curve3Element.Seg3 || el is Curve3Element.Helix3) return target / total
+        var lo = 0.0
+        var hi = 1.0
+        var t = target / total
+        repeat(64) {
+            val f = lengthTo(el, t) - target
+            if (kotlin.math.abs(f) <= LENGTH_TOL_MM) return t
+            if (f > 0.0) hi = t else lo = t
+            val speed = bezierSpeedAt(el, t)
+            val newton = if (speed > Vec3.EPS) t - f / speed else Double.NaN
+            t = if (newton.isNaN() || newton <= lo || newton >= hi) 0.5 * (lo + hi) else newton
+        }
+        return t
+    }
+
+    /** `|B'(t)|` — Newton's derivative of [lengthTo], which is the fundamental theorem written out. */
+    private fun bezierSpeedAt(
+        el: Curve3Element,
+        t: Double,
+    ): Double = if (el is Curve3Element.Bezier3) bezierTangentAt(el, t).length() else 0.0
+
+    /**
+     * The **total arc length of [path]**, the sum of its pieces' — the domain `[0, L]` a station's distance
+     * is stated in (OP-26, step 4).
+     *
+     * A closed path is covered exactly **once**: the closing piece is one of the elements, and there is no
+     * wrap, so the far end is the same place as the start and is reached by stating `L`.
+     */
+    fun length(path: Path3): Double = path.elements.sumOf { arcLength(it) }
+
+    /**
+     * Which piece of [path] the distance [s] belongs to, and at what parameter — or null when [s] is off
+     * the run.
+     *
+     * **Half-open intervals, and that is the whole of the corner question** (OP-26, step 4): a distance in
+     * `[pieceStart, pieceEnd)` belongs to that piece, and the path's far end belongs to the **last** piece.
+     * A total function on `[0, L]` — no bisection, no two-tangent case at a vertex, and no tolerance
+     * anywhere in the statement. A zero-length piece has an empty interval and is therefore never selected,
+     * which is the same rule and not an exception to it.
+     */
+    fun pieceAtLength(
+        path: Path3,
+        s: Double,
+    ): Pair<Int, Double>? {
+        if (path.elements.isEmpty()) return null
+        val lengths = path.elements.map { arcLength(it) }
+        val total = lengths.sum()
+        if (s < 0.0 || s > total) return null
+        var start = 0.0
+        for (i in path.elements.indices) {
+            val end = start + lengths[i]
+            if (s < end) return i to paramAtLength(path.elements[i], s - start)
+            start = end
+        }
+        // s is the far end of the run: the last piece owns it, which is the half-open rule's one closure
+        val last = path.elements.size - 1
+        return last to 1.0
+    }
+
     /**
      * Axis-aligned bounds of [path]'s drawn polyline, or null when it has no pieces.
      *

@@ -727,6 +727,10 @@ object DocumentFormat {
      *   the step was made in, that far along its normal, with no hinge and no face (GitHub #9). Told apart by
      *   having neither `line=` nor `el=`, which no earlier `sketchspace` step could be: both variants that
      *   existed before it always carried one or the other. No version bump, for the same reason.
+     * - a **station**: `sketchspace "name" path=e3 at="distance" part=e5` — the curve in space this plane
+     *   stands across, the parameter holding how far along it, and the solid a *Cut* there subtracts from
+     *   (OP-26, step 4). Told apart by `path=`, a **new** argument, so no stored literal changes meaning and
+     *   no version bump goes with it (OP-18's doctrine, and the third time it has held).
      *
      * Either way the step carries the *description* of the frame and never the frame itself, so the plane is
      * re-derived on load and a part edited since comes back with its faces where they now are. The piece
@@ -749,6 +753,8 @@ object DocumentFormat {
         var part: Element? = null
         var angle: ScalarEntry? = null
         var offset: ScalarEntry? = null
+        var path: Element? = null
+        var along: ScalarEntry? = null
         for (w in words.drop(2)) {
             val v = w.substringAfter('=', "")
             when (w.substringBefore('=')) {
@@ -757,11 +763,21 @@ object DocumentFormat {
                 "line" -> line = byName[v] ?: throw LoadError("unknown element '$v'")
                 "part" -> part = byName[v] ?: throw LoadError("unknown element '$v'")
                 "angle" -> angle = namedScalar(doc, v)
+                // a station across a curve in space (OP-26, step 4) — two new arguments, so nothing already
+                // written down changes meaning and no version bump goes with them
+                "path" -> path = byName[v] ?: throw LoadError("unknown element '$v'")
+                "at" -> along = namedScalar(doc, v)
                 // the parallel case (a datum moved along its own normal) — a *new* argument, so no stored
                 // literal changes meaning and no version bump goes with it (OP-18's doctrine)
                 "offset" -> offset = namedScalar(doc, v)
                 else -> throw LoadError("unknown sketchspace argument '${w.substringBefore('=')}'")
             }
+        }
+        if (path != null) {
+            val d = along ?: throw LoadError("a station sketch plane is missing 'at='")
+            doc.createStationSpace(path, d.ref, named = name, part = part)
+                ?: throw LoadError("'${doc.nameOf(path)}' is no curve in space to stand a station across")
+            return
         }
         if (line != null) {
             val a = angle ?: throw LoadError("a datum sketch plane is missing 'angle='")

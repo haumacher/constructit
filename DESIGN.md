@@ -5889,9 +5889,10 @@ Each step is whole on its own — a thing that works, not a layer that waits.
 3. **Helix.** Closed form from axis, radius, pitch, turns. Cheap once 1–2 exist, and the first constructed
    curve that lies in **no** plane — which is what stress-tests the frame honestly. Springs; threads with
    the sweep.
-4. **The station** — one stated position along a path, as a sketch space. Settled in session 37 and placed
+4. ~~**The station** — one stated position along a path, as a sketch space. Settled in session 37 and placed
    here because it needs step 2's frame and is best built against one already proven on a helix. See *The
-   station — one, stated by a distance*.
+   station — one, stated by a distance*.~~ **Built in session 43** — see *Implementation status (as built —
+   step 4: the station, a plane stated by a distance along a run)*.
 5. **Combine two views.** Two planar curves in two non-parallel spaces → the curve whose projections are
    both; refuses on parallel spaces or a non-overlapping parameter range. The routing workhorse, and it
    needs no new editing surface at all — it is how routing was done on drawing boards.
@@ -6595,6 +6596,127 @@ kept exactly — the refusal fires at the radius of curvature the closed form st
 says so in its own words, because the interaction is worth knowing: a tube as fat as a coil's own bend needs
 `pitch > 2·(r² + b²)/r` before its turns stop passing through each other.
 
+### Implementation status (as built — step 4: the station, a plane stated by a distance along a run)
+
+Step 4 of the order above, whole and nothing else: **`station(path, distance)` is a sketch space**, and the
+measure of the step is how little it added. No station **family** and no replication (item 1a of the
+to-be-discussed list, deliberately untouched), no tilt, no normalized *t*, no wrap on a closed path, no
+combine-two-views, no intersections, no connect, no projection onto a face, no imported curves.
+
+**The whole feature is one node kind and one tool row, because a station *is* a datum plane with a different
+description.** `Construction.stationPlane(path, space, distance)` produces a `PlaneRef` exactly as
+`datumPlane` and `planeOffset` do, and `Document.createStationSpace` registers it through the same
+`addSpace` every non-plan space goes through — so it inherits the origin control, the section context, the
+ancestor rule, the camera framing, *Extrude* along the normal and *Cut* the other way, without a line of code
+per feature. **Drawing in it needed nothing at all**, which was the claim worth testing rather than
+assuming: the 2D canvas shows one space at a time and the 3D view edits on `activePlane3`, and both of those
+ask the *space*, not what kind of space it is. What a circle drawn there extrudes into is a boss standing on
+the run and pointing along it, asserted through *Circle* and *Extrude* and through nothing else.
+
+**Arc length is the parameterization, and where it is exact is stated rather than left to be found**
+(OP-15's rule, in the unit a made part is wrong by):
+
+- **`Seg3` and `Helix3` are exact and are inverted by a division**, because both travel at constant speed —
+  which is the second time the helix's closed form has paid for keeping the pieces analytic (the first was
+  its curvature, step 3).
+- **`Bezier3` is a numeric integral**: `∫|B'(t)|dt` has no elementary antiderivative, so it is a **composite
+  8-point Gauss–Legendre quadrature over 16 fixed subintervals**, and its inverse is a
+  **bisection-safeguarded Newton** on that integral (monotone by construction, so the bracket cannot be
+  lost), driven to `1e-9` mm or 64 steps. Both counts are **fixed rather than adaptive**, for the renderer's
+  own reason: an adaptive count is a function of curvature, and a station's position has to be the same bit
+  on every machine and every reload.
+- **The stated error is 2e-9 mm**, and it is asserted against a measurement that knows no formula: a
+  **200 000-chord polyline** summed from positions alone, on a 248 mm cubic and on a coil. That residual is
+  the *polyline's* truncation rather than the quadrature's — a chord always undercuts its arc — and at twenty
+  million chords the two agree to **5e-12 mm**, which is the integral's honest accuracy and is more than the
+  test can see. The test also asserts the
+  distance the hard way round: the polyline from the curve's start to the station's own parameter is summed
+  independently and **is** the stated distance, which is exactly the assertion the tempting shortcut would
+  fail (see below).
+- **The tempting shortcut, rejected and named**: measuring arc length on the **sampled spine** the sweep
+  already builds. It is free, it is deterministic, and the sweep's own stations are named that way — but a
+  chord under-measures a bend by about `e/3R` in relative length, so at `TESS_TOL_MM` a station most of a
+  tenth of a millimetre from where the number says is reachable on an ordinary run. A station is what a
+  fitting is placed at; it reads the curve, not the mesh.
+
+**Piece lookup is by half-open interval, and the corner question dissolves rather than being deferred.** A
+distance in `[pieceStart, pieceEnd)` belongs to that piece and the run's far end belongs to the last one — a
+total function on `[0, L]`, no bisection, no tolerance, and **no two-tangent case at a vertex**: a station
+exactly at a polyline's corner belongs to the piece that *starts* there and faces along it, which is asserted
+at exactly the boundary distance because that is the only place the rule can fail. A zero-length piece has an
+empty interval and is never selected, which is the same rule rather than an exception to it. A **closed**
+path is covered exactly once and does not wrap: `L` is the start again because the curve comes back there.
+
+**The frame is the sweep's frame, and the two are separate calls on purpose.** `Stations3` reaches
+`Frames3.startReference`, `Frames3.transport` and `Frames3.baseSteps` rather than re-deriving any of them —
+two frames on one curve that disagreed about which way is up would be two different curves as far as anything
+drawn on them is concerned — but it does not reuse `Frames3.along`'s *station list*, and the reason is what
+the two are asking. A sweep takes a frame wherever its chord tolerance happened to put a station and names it
+by the **polyline's** arc length; a station stands where a number says and finds it by the **curve's**. So
+the station walks its own chords — the pieces before it at `baseSteps`, the piece it is on up to its own
+parameter, with a final partial chord landing exactly on it — and then carries the reference one last step
+onto the piece's **analytic** tangent, which is what makes the plane's normal the curve's direction rather
+than a chord's. That last step is also where the two frames part company, by an angle bounded by one chord's
+own turn: the test asserts exactly that bound, **derived** (`2·acos(1 − tol·κ)` = 87 mrad on the fixture)
+rather than picked, and measures 2.7 mrad inside it. What the walk buys beyond agreement is **continuity in
+the stated distance** — as the station crosses a sample point the last chord shrinks to nothing and a new
+zero-length one appears, and transport across a zero rotation is the identity — which matters because that
+distance is a number a user drags a spinner through. Asserted at 0.01 mm steps along a whole cubic.
+
+**Out of range is node invalidity that heals, and it is the step's doctrinal point.** A distance past the end
+of the run makes the plane's node invalid with a message naming the run's length and the range it could have
+been in; a negative one gets a different sentence, because it is a different mistake. Everything sketched on
+the plane hides while it is invalid — invalidity propagates transitively (OP-3), so this needed no machinery
+at all — and retyping the number brings the plane, the sketch and the solid built from it back. Refusing the
+*gesture* would have been wrong for the reason the record gives: the distance is a live value, and refusing a
+gesture on a value makes replay depend on one. The one thing that **is** a gesture refusal is the single
+structural thing, a pick that is not a curve in space, which is exactly where the sweep draws the same line.
+
+**The file gained two arguments and no version bump.** `sketchspace "station1" path=e3 at="distance"` — told
+apart from the other three variants by `path=`, and both arguments are *new*, so nothing already written down
+changes meaning (OP-18's doctrine, holding for the third time). The distance is a **named parameter** whose
+own `param` step restates its value, exactly as a datum's angle is, so `save → load → save` is byte-equal and
+a reload re-derives the plane rather than storing it — which means a run edited since comes back with its
+stations where the curve now is. Deleting the run takes the station and everything drawn on it, through the
+ordinary dependency rule, because the step names the curve.
+
+**Two stations from one parameter cost nothing, which is the point of not building a family.** Wiring one
+station's distance to another's makes both move when either is retyped, and `base + d` — a station a stated
+distance along from another — is the same thing one node further on: asserted at the graph level, since
+OP-7's *textual* expressions are not built and the graph is where an expression currently lives. Sharing
+**is** equality; there was nothing to build for it.
+
+Cut, and named so they are not looked for: a **roll** input on a station (the sweep has one because a section
+carried along a run has to start somewhere; a station's axes are the transported frame's, full stop, and what
+is drawn there states its own orientation) — if a station ever needs one it should be the same input the
+sweep's is, not a second convention; **normalized *t***, which the record declines outright; **tilt**, and
+with it the mitre-plane question at a corner, which is its own discussion; the station **family**, which is
+OP-26's own to-be-discussed item 1a and is deliberately not approached — one row, one station; a **preview**
+while the tool is armed and a **palette glyph**, both for step 2's reasons; and **arc length as a measurable
+dimension**, which stays step 1's cut even though the integral that would answer it now exists — a
+`MEASURABLE` slot is a decision about the slot, not about whether the number is computable.
+
+Tests: `StationTest` (23) — the station on a straight run, at exactly a polyline's corner (the half-open rule
+from both sides, plus the far end), on the second leg measured from the start of the *run*, on a Bézier and on
+a helix with the position and the tangent read off the analytic piece; the arc length against a 200 000-chord
+polyline on both, the station's own distance re-measured by chords alone at four places on a cubic and three
+on a coil, and the integral and its inverse asserted to be inverse; the same inputs giving the same station
+bit for bit; the frame constant along a straight run, introducing no rotation about the tangent along a coil
+and a cubic (200 stations each), agreeing with the sweep's inside the derived chord angle, and continuous at
+0.01 mm steps; a closed square covered exactly once and refusing to wrap; both ends of the domain in it; every
+refusal by name; and the node going invalid and healing, plus `base + d` moving both stations from one
+parameter. `StationToolTest` (16) — the one-number-one-click gesture and what it makes (origin, normal, axes,
+label, note), the tool waiting for its distance, the non-curve refusal; a circle drawn on the station
+extruded into a boss standing on the run and asserted manifold and positioned; a **cut** normal to the run
+taking material out of the part the station passes through, with the part resolved and recorded at creation;
+the run's far point dragged round through 90° and the station, its sketch and its solid all following; the
+distance retyped and sliding all of it; two stations wired to one parameter; the plane past the end hiding
+its solid and healing, in both directions; `save → load → save` byte-equal with the boss reloading in place;
+one undo taking the whole gesture back; the station as the working plane in the 3D view with a click there
+landing on the run's cross-section; the 2D canvas drawing the section it cuts, as an SVG golden; a station on
+a **helix**; and deleting the run taking the station with it. **1445 → 1484 green**, one new golden, no
+version bump, no existing golden changed.
+
 ## Open points (to discuss one by one)
 
 - [x] **OP-1 Branch/continuity policy** — RESOLVED: deterministic, orientation-based branch
@@ -6792,9 +6914,9 @@ says so in its own words, because the interaction is worth knowing: a tube as fa
       degenerate class it cannot resolve is **refused**, never leaked. Curves are tessellated first, so
       a boolean's boundary is an *approximated* curve — OP-15's rule, one dimension down. See *Exact
       prismatic booleans*.
-- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1, 2 and 3 built**
-      (sessions 37, 38 and 39 — the value with both views, then the frame and the sweep, then the helix),
-      the rest queued. A `Path3` of analytic pieces; a curve's **value** is world-space while its
+- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1, 2, 3 and 4 built**
+      (sessions 37, 38, 39 and 43 — the value with both views, then the frame and the sweep, then the helix,
+      then the station), the rest queued. A `Path3` of analytic pieces; a curve's **value** is world-space while its
       **construction** is always parented, so
       curves ride their parents and planarity is known rather than measured; the moving frame is
       **parallel transport** with a stated start frame (Frenet rejected — it flips at inflections and is
@@ -8519,6 +8641,35 @@ says so in its own words, because the interaction is worth knowing: a tube as fa
   defaulted message arguments, four tool rows; nothing in the value types, the evaluator, the format, the
   export seam or the views. **1414 → 1435 green**, no new golden, no version bump. See *Implementation status
   (as built — the swept cut, and the two ways to carry a section)*.
+
+- **Session 43 — the station: a sketch space stated by a distance along a run (OP-26, step 4).** Settled in
+  session 37, built here, and the measure of it is how little it added — one plane-valued node kind, one tool
+  row, two file arguments. A station is *the same kind of thing a datum plane is*, so it goes through the same
+  `addSpace` and inherits the origin control, the section context, the ancestor rule, the camera framing,
+  *Extrude* along the normal and *Cut* the other way; **drawing in it needed nothing at all**, which was the
+  claim worth testing rather than assuming, because the canvas and the 3D view both ask the *space* and not
+  what kind of space it is. The one real implementation question was **arc length**, and the answer splits
+  three ways with the split stated: a segment and a helix are exact and are inverted by a division (constant
+  speed — the second time the helix's closed form has paid for keeping the pieces analytic), while a cubic
+  needs `∫|B'|dt`, done as a fixed composite 8-point Gauss–Legendre over 16 subintervals and inverted by a
+  bisection-safeguarded Newton to `1e-9` mm. Fixed counts rather than adaptive ones, for the renderer's own
+  reason: an adaptive count reads curvature, and a station's position must be the same bit on every reload.
+  The error is asserted against a measurement that knows no formula — a 200 000-chord polyline, and the
+  station's own distance re-summed by chords alone — at **2e-9 mm**, where even that residual is the
+  polyline's truncation rather than the quadrature's (at twenty million chords they agree to 5e-12 mm). The
+  shortcut of measuring on the sweep's **sampled
+  spine** was rejected and is named: it is free and deterministic and it puts a station a tenth of a
+  millimetre from where the number says, and a station is what a fitting is placed at. **The corner question
+  dissolved** exactly as the record predicted — half-open intervals, asserted at the boundary distance itself
+  — and **out of range heals** rather than refusing a gesture, because the distance is a live value. The frame
+  is the sweep's rule reached rather than re-derived, but the sweep's *station list* deliberately not reused:
+  one is sampled and named by polyline length, the other is stated and found by curve length, and the angle
+  between the two frames is asserted against a **derived** bound (one chord's own turn, 87 mrad on the
+  fixture; measured 2.7 mrad) rather than a picked one. Two stations from one parameter cost nothing, which is
+  the argument for not building a family: sharing *is* equality, and `base + d` is one node further on. Cut
+  and named: a roll input, normalized *t*, tilt, and the station **family**, which stays OP-26's own
+  to-be-discussed item. **1445 → 1484 green**, one new golden, no version bump, no existing golden changed.
+  See *Implementation status (as built — step 4: the station, a plane stated by a distance along a run)*.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -10316,6 +10467,8 @@ carried along a path is the missing capability rather than a refinement of an ex
    step 4 — settled in session 37 — which pushes the remaining items down one.)
 3. ~~**Helix** — the first constructed curve lying in no plane, which is what tests the frame honestly.~~
    **Built in session 39.**
+3a. ~~**The station** — one stated position along a path, as a sketch space (the *order of work*'s step 4,
+   settled in session 37 and absent from session 36's numbering).~~ **Built in session 43.**
 4. **Combine two views** — plan route × elevation, the routing workhorse.
 5. **Intersection curves** — the section machinery generalized, with OP-1's ordered set and persisted sign.
 6. **Connect** — a derived G1/G2 joining piece from endpoint tangents plus tension.

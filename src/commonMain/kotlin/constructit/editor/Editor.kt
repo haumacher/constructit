@@ -1026,6 +1026,16 @@ class Editor(
     private fun spaceNote(space: SketchSpace): String =
         when {
             space.isPlan -> "Plan view — the drawing's own space (world XY)."
+            // a station (OP-26, step 4): the run, how far along it, and the one number that moves it
+            space.isStation ->
+                "Sketching on ${space.name}, a station across ${space.station?.let { doc.nameOf(it) }} " +
+                    "${Format.num(doc.spaceAlongMm(space))} mm along it (the run is " +
+                    "${Format.num(doc.stationRunMm(space, ev()))} mm long): the origin is on the curve, the normal " +
+                    "runs along it, and the axes are the moving frame's. Extrude builds along this plane's " +
+                    "normal, Cut the other way. Retype the distance to slide the station along the run with " +
+                    "everything on it." +
+                    (if (space.anchor == null) " Nothing here to cut into: this plane passes through no solid." else "") +
+                    sectionNote(space)
             // a plane at a height (GitHub #9): no hinge to name, so what it says is the height and what it cuts
             space.parallel ->
                 "Sketching on ${space.name}, a plane parallel to ${space.from}, " +
@@ -3587,8 +3597,9 @@ class Editor(
         // here rather than at completion, so the reason is the one the user reads
         if (tool.facePartOperand && doc.facePartTip() == null) {
             statusHint =
-                if (doc.activeSpace.parallel) {
-                    // a plane at a height that passes through nothing (GitHub #9) — the same sentence, without a line
+                if (doc.activeSpace.parallel || doc.activeSpace.isStation) {
+                    // a plane that passes through nothing (GitHub #9, and a station the same way, OP-26): the
+                    // same sentence, without a line to name
                     "${tool.label} needs a part to cut into, and ${doc.activeSpace.name} passed through no solid " +
                         "when it was made — Extrude builds a solid on this plane instead, or Subtract one from a part"
                 } else if (doc.activeSpace.isDatum) {

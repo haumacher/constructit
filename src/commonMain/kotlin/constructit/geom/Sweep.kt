@@ -316,8 +316,12 @@ object Frames3 {
      * Re-orthogonalized against [to] afterwards, so the reference cannot drift off perpendicular over a few
      * thousand stations of accumulated rounding — a correction of the same kind the frame's own construction
      * makes, not a repair of a wrong answer.
+     *
+     * `internal` rather than private because **the station reads it** (OP-26, step 4, [Stations3]): a station
+     * is a frame at a *stated* arc length rather than at a sampled one, so it walks its own chords — but it
+     * must walk them by the same rule, or two frames on one curve would disagree about which way is up.
      */
-    private fun transport(
+    internal fun transport(
         r: Vec3,
         from: Vec3,
         to: Vec3,
@@ -401,8 +405,11 @@ object Frames3 {
      * constant radius of curvature `1/κ`, so the chord rule a circle of that radius obeys is the chord rule
      * *this* curve obeys, over its own total turn. That is [GeomMath.chordSteps] — the revolve's rule and the
      * twist refinement's rule — used for the third time and still not re-derived.
+     *
+     * `internal` for [Stations3]'s sake — see [transport]: one sampling rule, so the station's transport walks
+     * the chords the sweep's frame walks.
      */
-    private fun baseSteps(
+    internal fun baseSteps(
         el: Curve3Element,
         tolMm: Double,
     ): Int =
@@ -441,7 +448,8 @@ object Frames3 {
         return max(1, min(1024, ceil(sqrt(second / (8.0 * tolMm))).toInt()))
     }
 
-    private fun pointAt(
+    /** A point on one piece at parameter [t] — `internal` for [Stations3], like [baseSteps] and [transport]. */
+    internal fun pointAt(
         el: Curve3Element,
         t: Double,
     ): Vec3 =
