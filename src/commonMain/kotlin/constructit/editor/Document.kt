@@ -62,6 +62,8 @@ import constructit.geom.CarrierCurve
 import constructit.geom.CarryMode
 import constructit.geom.Chains
 import constructit.geom.Conics
+import constructit.geom.Continuity
+import constructit.geom.CurveEnd
 import constructit.geom.Curves3
 import constructit.geom.Feature3
 import constructit.geom.FilletLeg
@@ -8692,6 +8694,109 @@ class Document {
             "${nameOf(curve)}: the run whose projection into ${plan.space} is ${nameOf(plan)} and into " +
             "${elevation.space} is ${nameOf(elevation)} — move either drawing, or either space, and it follows"
         return curve
+    }
+
+    // ---- connect: the joining piece between two curve ends (OP-26, step 7) ----
+
+    /**
+     * The **joining piece between one end of [first] and one end of [second]** (OP-26, step 7) — the bend that
+     * turns two runs that stop near each other into one route.
+     *
+     * **Two clicks, and each of them says two things**: which curve, and — by where it lands along it — which
+     * of that curve's two ends is being joined. That is *a click is a choice* read exactly as OP-1 reads it
+     * for an intersection's branch: scored **once**, here, from the click's own proximity to the two ends as
+     * they are drawn in the space the click was made in, and then written into the step's `signs=` and taken
+     * verbatim by every replay ([signs]). A reload that re-scored would swap the connection to a run's other
+     * end as soon as an edit moved the geometry past the remembered click — the fillets-came-back-inverted
+     * defect, and the reason session 41's kept side and session 45's chosen curve are stored rather than
+     * re-derived.
+     *
+     * The piece **rides both curves**: they are its only geometric inputs, so moving either — or anything
+     * either was built on — moves the connection and it stays smooth, with nothing rebuilt (OP-21). It belongs
+     * to the **first** pick's space, exactly as a loft belongs to its first section's and a combined run to its
+     * plan's: that is where its projection is drawn, the coordinates a pick of it measures against, and the
+     * space whose normal starts a sweep's frame.
+     *
+     * Refused **by name**, building nothing, only for the two structural things — a pick that is not a curve
+     * in space, and the **same end of the same curve** clicked twice, which states no gap and cannot heal
+     * because both halves of it are structure. Everything about *where* the two runs are — ends that coincide,
+     * a closed run with no end to join, a tension of nothing — is the node's business and comes back as the
+     * reason it is invalid, so it heals when the drawing moves (OP-3, [Construction.connect]).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun connectCurves(
+        first: Element,
+        second: Element,
+        tensionA: ScalarRef?,
+        tensionB: ScalarRef?,
+        clicks: List<Vec2>,
+        signs: List<Int>,
+        mode: Continuity,
+    ): Element? {
+        val what = "Connect${if (mode == Continuity.G2) " (curvature)" else ""}"
+        for (el in listOf(first, second)) {
+            if (el.kind != ElementKind.SPACE_CURVE) {
+                note =
+                    "$what: ${nameOf(el)} is ${kindWord(el)}, not a curve in space — click near the end of one " +
+                    "run, then near the end of the other"
+                return null
+            }
+        }
+        val ends =
+            if (signs.size == 2) {
+                signs.map { if (it == CurveEnd.START.ordinal) CurveEnd.START else CurveEnd.END }
+            } else {
+                val ev = Evaluator()
+                listOf(
+                    endNear(first, clicks.getOrNull(0), CurveEnd.END, ev),
+                    endNear(second, clicks.getOrNull(1), CurveEnd.START, ev),
+                )
+            }
+        if (first === second && ends[0] == ends[1]) {
+            note =
+                "$what: the ${ends[0].word} of ${nameOf(first)} was clicked twice, and a join needs two ends — " +
+                "click near the other end of it to close the run, or pick a second curve"
+            return null
+        }
+        val one = cx.const(Quantity.number(1.0))
+        val curve =
+            add(
+                cx.connect(first.ref as Path3Ref, ends[0], second.ref as Path3Ref, ends[1], tensionA ?: one, tensionB ?: one, mode),
+                ElementKind.SPACE_CURVE,
+                Styles.SPACE_CURVE,
+            )
+        curve.space = first.space
+        registerSigns(curve, ends.map { it.ordinal })
+        note =
+            "${nameOf(curve)}: a ${mode.word} join from the ${ends[0].word} of ${nameOf(first)} to the " +
+            "${ends[1].word} of ${nameOf(second)} — exact, and it follows both of them"
+        return curve
+    }
+
+    /**
+     * Which end of the curve [el] a click at [at] names — **nearer wins**, measured in **[el]'s own space**.
+     *
+     * That is the right frame and not merely a convenient one: a curve in space is addressable only in the
+     * space it belongs to ([addressableIn]), so the click that reached it was necessarily made in that space's
+     * own coordinates — which is what makes the score independent of which space happens to be active when the
+     * second pick lands, and therefore correct for a cross-space gesture.
+     *
+     * [fallback] is what a build with no click means (a macro's replay, a call from a test): the **end** of the
+     * first run into the **start** of the second, which is the reading "carry on from where this one stops".
+     * A tie goes to [CurveEnd.START], deterministically, so that the same drawing scores the same way twice.
+     */
+    private fun endNear(
+        el: Element,
+        at: Vec2?,
+        fallback: CurveEnd,
+        ev: Evaluator,
+    ): CurveEnd {
+        val here = at ?: return fallback
+        val path = (ev.valueOf(el.ref) as? Path3Value)?.path ?: return fallback
+        val start = path.start ?: return fallback
+        val end = path.end ?: return fallback
+        val plane = (ev.valueOf(planeOfSpace(el.space)) as? PlaneValue)?.plane ?: return fallback
+        return if ((plane.toLocal(end) - here).length() < (plane.toLocal(start) - here).length()) CurveEnd.END else CurveEnd.START
     }
 
     // ---- intersection curves: where a working plane meets a solid (OP-26, step 6) ----

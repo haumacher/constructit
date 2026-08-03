@@ -5,6 +5,7 @@ import constructit.dsl.ScalarRef
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
 import constructit.geom.CarryMode
+import constructit.geom.Continuity
 import constructit.geom.Handedness
 import constructit.geom.Justification
 import constructit.geom.Vec2
@@ -570,6 +571,21 @@ object Tools {
     const val INTERSECTION_CURVE = "intersectioncurve"
 
     /**
+     * **Connect** (OP-26, step 7): the joining piece between the end of one curve in space and the end of
+     * another, derived from the two endpoint tangents plus two tensions.
+     *
+     * Two ids because the **continuity** differs — tangent-continuous or curvature-continuous — and that is a
+     * discrete structural choice, so it is stated by which tool was used and recorded by recording the tool
+     * (OP-1/OP-18). The same argument the helix's two handednesses and the smooth curve's second id make, and
+     * the reason neither build has to read a mode out of a number that an edit could change.
+     *
+     * Which **end** of each curve is joined is the other discrete choice, and it cannot be a tool id — it is
+     * per pick — so it rides the step's existing `signs=`, scored once from where each click landed.
+     */
+    const val CONNECT = "connect"
+    const val CONNECT_G2 = "connectg2"
+
+    /**
      * **The sweep** (OP-26, step 2): a profile carried along a curve in space, on the rotation-minimizing
      * moving frame. Two ids because the *profile* differs — a radius typed for a tube, an area clicked for
      * anything else — exactly as [CIRCLE] and [CIRCLE_R] are two ids for one shape.
@@ -844,6 +860,17 @@ object Tools {
             // branch is scored once and rides the step's existing `signs=` (OP-1/OP-18), so a reload never
             // scores again. No scalar, no second pick, no new file argument.
             ToolDef(INTERSECTION_CURVE, "Intersection curve", ToolCategory.CURVES, listOf(SlotKind.SECTION_CURVE), help = "On a working plane, click the section of the body you want: the curve in space where that plane meets that solid becomes a curve like any other — sweep a tube along it, stand a station on it, carry a cut along it. A plane cuts a body in several curves in general (a bent bar is cut twice, a tube gives two loops); the one you click is the one you get, and that choice is remembered, so moving the plane afterwards never swaps to another curve. Move the body or the plane and the curve follows. The plan draws no section — open a working plane first.", slotNames = listOf("section of a solid")) { d, p, _ -> d.intersectionCurve(p.elements[0], p.at, p.signs.firstOrNull()) },
+            // **Connect** (OP-26 step 7). Two PATH3 picks and two **defaulted dimensionless** tensions, so the
+            // everyday gesture is two clicks and typing numbers first tightens or slackens the bend. Each
+            // click says two things — which curve, and which of its two ends — and the second half is scored
+            // once from where the click landed and then rides the step's `signs=` (OP-1/OP-18), never scored
+            // again. `scalarsTypedOnly`, because two dimensionless slots cannot be told apart from a stray
+            // number left in the panel by an earlier gesture, and a tension adopted by accident would silently
+            // change the shape of the join. `crossSpace` for the loft's own reason, and here it is structural:
+            // a curve in space is addressable only in the space it belongs to, so a helix on a datum and a run
+            // in the plan could not otherwise be joined at all — switch the sketch plane between the clicks.
+            ToolDef(CONNECT, "Connect two curves", ToolCategory.CURVES, listOf(SlotKind.PATH3, SlotKind.PATH3), crossSpace = true, scalars = listOf(num("tension", 1.0), num("far tension", 1.0)), scalarsTypedOnly = true, help = "Click near the end of one curve in space, then near the end of another: a bend joins them, leaving each run along the way it was already going, so the route reads as one manufactured piece rather than two runs and a kink. Which end you click is which end it joins — that choice is remembered, so moving the curves afterwards never swaps ends. Type a tension first to pull the bend out along the first curve's direction (1, the default, makes it the straight segment when the two ends face each other), and a second number for the other end. Both stay parameters, and the join follows both curves through every edit.", slotNames = listOf("first curve", "second curve")) { d, p, s -> d.connectCurves(p.elements[0], p.elements[1], s.getOrNull(0), s.getOrNull(1), p.clicks, p.signs, Continuity.G1) },
+            ToolDef(CONNECT_G2, "Connect two curves (curvature)", ToolCategory.CURVES, listOf(SlotKind.PATH3, SlotKind.PATH3), crossSpace = true, scalars = listOf(num("tension", 1.0), num("far tension", 1.0)), scalarsTypedOnly = true, help = "The same gesture as Connect two curves, matching each run's curvature as well as its direction: the bend does not merely leave along the run, it leaves bending as hard as the run was bending, so a tube along the whole route has no visible break in it at all. It is three cubic pieces instead of one, and it is exact — nothing is fitted. Which continuity a join has is which tool you used, so it is what the file records and never changes by itself.", slotNames = listOf("first curve", "second curve")) { d, p, s -> d.connectCurves(p.elements[0], p.elements[1], s.getOrNull(0), s.getOrNull(1), p.clicks, p.signs, Continuity.G2) },
             ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, followsBoundary = true, shortcut = 'O', help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.", slotNames = listOf("boundary curve"), icon = Icons.OUTLINE) { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
             ToolDef(THICKEN, "Thicken (wall over curves)", ToolCategory.RESULT, listOf(SlotKind.CURVE), scalars = listOf(len("thickness")), repeating = true, minPicks = 1, sidePerPick = true, replicates = false, extendsResult = true, preview = Previews::thicken, help = "Type a thickness, set Wall side, then click the curves the wall follows — segments, arcs or Béziers that meet end to end, or end part-way along one another (a T joins with no seam). The side applies to the next click, so it can change per curve. Enter (or clicking the first curve again) builds it; a disconnected pick is refused. Click an existing wall first to *extend* it instead: its thickness stays its own and its openings, dimensions and solids follow (Alt on that first click starts a new wall there instead).", slotNames = listOf("carrier curve"), icon = Icons.THICKEN) { d, p, s -> d.buildThickNetwork(p.elements, p.signs.map { Tools.sideOf(it) }, s[0]) },
             ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click a circle or arc, then click inside or outside for the concentric circle.", slotNames = listOf("circle", "side"), icon = Icons.CONCENTRIC) { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at) },

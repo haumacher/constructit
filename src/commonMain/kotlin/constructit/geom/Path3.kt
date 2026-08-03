@@ -45,9 +45,9 @@ enum class Handedness(val turnSign: Double) {
  * case with no producer is a case with no test, because every consumer (`sample`, the projection, the
  * drawing, the picking, the moving frame's sampling and its curvature) would have to guess at behaviour
  * nothing exercises. `Arc3` (a circle in an arbitrary plane) is still absent for exactly that reason. Adding
- * one is adding a branch to seven exhaustive `when`s — [Curves3.sample], [Curves3.projectedOnto],
- * [Curves3.tangentAt], [Path3.movedBy], and [Frames3]'s step count, point and curvature — so that a new case
- * cannot be silently dropped.
+ * one is adding a branch to eight exhaustive `when`s — [Curves3.sample], [Curves3.projectedOnto],
+ * [Curves3.derivativeAt], [Curves3.secondDerivativeAt], [Path3.movedBy], and [Frames3]'s step count, point
+ * and curvature — so that a new case cannot be silently dropped.
  */
 sealed interface Curve3Element {
     /** Where this piece begins — the chain's hand-over point from the piece before it. */
@@ -338,16 +338,81 @@ object Curves3 {
         el: Curve3Element,
         t: Double,
     ): Vec3? {
-        val d =
-            when (el) {
-                is Curve3Element.Seg3 -> el.end - el.start
-                is Curve3Element.Bezier3 -> {
-                    val v = bezierTangentAt(el, t)
-                    if (v.length() > Vec3.EPS) v else el.p3 - el.p0
-                }
-                is Curve3Element.Helix3 -> el.tangentAt(t)
-            }
+        val v = derivativeAt(el, t)
+        val d = if (v.length() > Vec3.EPS || el !is Curve3Element.Bezier3) v else el.p3 - el.p0
         return if (d.length() > Vec3.EPS) d.normalized() else null
+    }
+
+    /**
+     * The **first derivative** of one piece at [t], with respect to that piece's own parameter — unnormalized,
+     * and zero where the piece genuinely stands still.
+     *
+     * Split out of [tangentAt] because the two consumers want different things from it: a *direction* wants
+     * the fallback [tangentAt] applies when a cubic's derivative vanishes at an end, while a **curvature**
+     * ([curvatureVectorAt]) needs the derivative itself — it divides by its square, and substituting a chord
+     * there would hand back a number that is not this curve's curvature at all.
+     */
+    fun derivativeAt(
+        el: Curve3Element,
+        t: Double,
+    ): Vec3 =
+        when (el) {
+            is Curve3Element.Seg3 -> el.end - el.start
+            is Curve3Element.Bezier3 -> bezierTangentAt(el, t)
+            is Curve3Element.Helix3 -> el.tangentAt(t)
+        }
+
+    /**
+     * The **second derivative** of one piece at [t], with respect to that piece's own parameter — closed form
+     * for each of the three kinds, and what a curvature is read from (OP-26, step 7's G2 mode).
+     *
+     * A segment has none: its derivative is constant, so a straight run's curvature is exactly zero rather
+     * than a small number. A cubic's is the linear interpolation of its two second differences, which is the
+     * derivative of [bezierTangentAt] written out. A helix's is `−ω²r` times the radial direction — the
+     * centripetal term of a curve travelling at constant speed, whose length divided by the squared speed is
+     * exactly the constant [Curve3Element.Helix3.curvature] the sweep's refusal is stated against, so the two
+     * cannot disagree.
+     */
+    fun secondDerivativeAt(
+        el: Curve3Element,
+        t: Double,
+    ): Vec3 =
+        when (el) {
+            is Curve3Element.Seg3 -> Vec3.ZERO
+            is Curve3Element.Bezier3 -> {
+                val u = 1.0 - t
+                (el.p2 - el.p1 * 2.0 + el.p0) * (6.0 * u) + (el.p3 - el.p2 * 2.0 + el.p1) * (6.0 * t)
+            }
+            is Curve3Element.Helix3 -> {
+                val theta = el.sweepAngle * t
+                val w = el.sweepAngle
+                el.u * (-el.radius * cos(theta) * w * w) + el.bi * (-el.radius * sin(theta) * w * w)
+            }
+        }
+
+    /**
+     * The **curvature vector** `κ·N` of one piece at [t] — magnitude the curvature, direction the way the
+     * curve is bending — or null where the piece has no well-defined one.
+     *
+     * `(r″ − (r″·û)û) / |r′|²`, which is the definition with the parameterization divided out: the component
+     * of the acceleration that is not a change of speed, per unit squared speed. Two properties make it the
+     * right thing for a **connect** to match (OP-26, step 7): it is independent of how the piece happens to be
+     * parameterized, and it is independent of the **direction of travel** — reversing a curve leaves `κ·N`
+     * alone — so joining at a curve's *start* needs no sign here, and only the tangent does.
+     *
+     * Null when the derivative vanishes: there the curve has no direction, so it has no normal either, and a
+     * zero (or a chord's) answer would be a claim about a curvature nobody can read off the geometry.
+     */
+    fun curvatureVectorAt(
+        el: Curve3Element,
+        t: Double,
+    ): Vec3? {
+        val d1 = derivativeAt(el, t)
+        val speed = d1.length()
+        if (speed <= Vec3.EPS) return null
+        val u = d1 * (1.0 / speed)
+        val d2 = secondDerivativeAt(el, t)
+        return (d2 - u * d2.dot(u)) * (1.0 / (speed * speed))
     }
 
     /** A point on a cubic Bézier in space at parameter [t] — de Casteljau's weights, written out. */

@@ -5904,9 +5904,12 @@ Each step is whole on its own — a thing that works, not a layer that waits.
    note of *To be discussed*). **Solid ∩ solid** and **plane ∩ plane** are cut with their arguments, as is an
    `Arc3` case — see *Implementation status (as built — step 6: intersection curves, the section promoted into
    space)*.
-7. **Connect.** A derived joining piece between two curve ends, control points from the endpoint tangents
+7. ~~**Connect.** A derived joining piece between two curve ends, control points from the endpoint tangents
    plus tension scalars; G1, then G2 as a mode. What makes a routed path look manufactured rather than
-   kinked — and derivation, not solving.
+   kinked — and derivation, not solving.~~ **Built in session 46**, and **G2 is exact rather than fitted**: a
+   cubic cannot carry curvature at both ends, but a chain of three of them can, and the system that says so is
+   square and linear — see *Implementation status (as built — step 7: connect, the joining piece derived from
+   two tangents)*.
 8. **Projection onto a face.** A plan curve onto a face along a direction; exact for analytic faces, the
    honest mesh answer or a named refusal for a mesh.
 9. **Imported curves.** The frozen literal plus placement described above, and a **recorded** *"make a
@@ -7023,6 +7026,151 @@ acyclicity said where a click could otherwise break it); and the mesh route thro
 of slabs, which still yields its two rings and still says they are chords. **1521 → 1553 green**, no new
 golden, no version bump, no existing golden changed.
 
+### Implementation status (as built — step 7: connect, the joining piece derived from two tangents)
+
+Step 7 of the order above, whole and nothing else: **the bend between the end of one curve in space and the
+end of another, derived from the two endpoint tangents plus two tensions — G1, and G2 as a mode.** No
+projection onto a face, no imported curves (steps 8–9), no joining several `Path3`s into one (that is OP-26's
+own to-be-discussed item 4), no trim or split, no station family, and nothing from the unbounded-tool record.
+
+**It is a formula, and that is the whole reason it belongs here.** The joining piece is the cubic Bézier whose
+two outer control points *are* the two curve ends and whose two inner ones stand **along the endpoint
+tangents**, at distances the tensions state. A Bézier leaves its first control point along `b1 − b0` and
+arrives at its last along `b3 − b2`, so meeting both runs tangentially is **true by construction** rather than
+asserted afterwards — the same category of fact as an interpolating spline passing through its points, and the
+same category the fillet's tangency already is. Given the two ends, the two tangents and the two numbers there
+is exactly one answer and it is written out; nothing is iterated, nothing is searched for, and there is no
+configuration that could have been found instead. That is what makes *"a routed run that looks manufactured
+rather than kinked"* a derivation rather than the constraint problem the same words describe in a solver-based
+kernel.
+
+**The end is a click, and it is stored like every other click that is a choice.** Each of the two picks says
+two things — which curve, and by where it lands *which of that curve's two ends* — which is OP-1's own creation
+UX (*"clicking near one intersection sets the `Select` sign to that side"*) said about a run's ends. It is
+scored **once**, from the click's proximity to the two ends, and written into the step's existing `signs=`
+(OP-18), so no replay ever scores again: the regression guarded against is the fillet's own, moved one feature
+along — choose a run's far end, then drag that end 200 mm away so the recorded click is nearest the *start*,
+and the reload still hands back the end the user chose, with the re-scoring checked to differ so the probe
+means something. **The score is measured in the curve's own space**, and that is a fact rather than a
+convenience: an element is addressable only in the space it belongs to (`Document.addressableIn`), so the click
+that reached a curve in space was necessarily made in that space's own coordinates. The same fact is why the
+gesture is `crossSpace` — a helix on a datum and a run in the plan could not otherwise both be picked — and the
+switch between the two clicks is the loft's and the combine's, with nothing new.
+
+**The tangent's direction is one sign, and it is stated so that the wrong one is unrepresentable.** The join
+leaves each end along the direction that points **away from that curve**: its own tangent at the curve's end,
+the **reversed** tangent at the curve's start, because joining a start means running against the parameter
+direction. A wrong sign here doubles the piece back over the very run it joins, so the rule is carried by the
+one place that knows which end is meant (`CurveEnd.outSign`) rather than by each formula that uses it — and it
+is asserted as a *direction*, at zero tolerance, on every pairing of the three piece kinds at either end. The
+curvature the G2 mode matches needs no such sign at all: `κ·N` is invariant under reversing a curve, so only
+the tangent has a direction to get right.
+
+**The tensions are dimensionless, they default to 1, and 1 is the value at which the join is the obvious
+answer.** What a tension scales is stated once for both modes: read over its own parameter `[0, 1]`, the
+joining run leaves each end at speed `tension × gap`, where the gap is the straight-line distance between the
+two ends. So a tension is a **fraction of the gap** — which is why it is a plain number rather than a length:
+the join scales with the drawing, and a tension shared between two bends keeps meaning the same thing after the
+runs have moved apart. At tension 1, with the two ends facing each other across the gap, the inner controls
+land at exactly a third and two thirds of the way and the join **is** the straight segment between them,
+uniformly parameterized — in *both* modes, which is what makes the two comparable. It is also, and not by
+coincidence, the constant this kernel's own interpolating spline already uses (`Curves3.smoothThrough` places
+its controls at `m/3`, with the chord for `m` at an open end), so a join at tension 1 between two ends a chord
+apart is the curve *Smooth curve through points* would have drawn. Raising a tension pulls the piece towards
+that run's tangent, which is asserted by measuring — 40 mm along the join's own run, so that two curves are
+compared at the same physical distance from the end rather than at the same parameter.
+
+**G2 is exact, and it cost three cubics rather than a new case in the vocabulary.** A single cubic cannot carry
+curvature at both ends: with two positions and two tangent directions spent, the two tensions are all that is
+left and a curvature vector is two more conditions at each end. The textbook answer is a **quintic**, and
+`Curve3Element`'s only free-form case is a cubic — a case is added with the producer that needs *it*, which is
+this hierarchy's own rule. It did not need one, because a **chain** of cubics carries what one cubic cannot,
+and the count is decided by counting rather than by taste: each end fixes three control points of its own span
+(the position, the tangent-and-tension point, the curvature point), the two interior joins are C1 **and** C2,
+and that is ten control points against ten vector conditions. **Two** spans would be over-determined by one
+once both tensions are stated; **four** would be under-determined and so would need a choice nobody made. Three
+is where the system is square — and being square *and linear*, the answer is a substitution rather than a
+solve. So the G2 mode is exact at **zero tolerance**: it is neither a fitted chain with a stated error (step
+5's other answer) nor a cut, and the fitting machinery steps 5 and 6 needed is not used here at all. The piece
+is C2 with **itself** as well as with both runs, which is worth stating because a join that was curvature-
+continuous at its ends and kinked in curvature in its own middle would be a worse object than the G1 one it
+replaced. One number in it is a choice and is named as such: the component of the end acceleration *along* the
+tangent is set to **zero** — nothing states it, and zero is the value that says nothing (the run leaves at
+constant speed to second order), which is also what keeps the straight case exactly straight and the two modes
+agreeing there. The mode itself is **which tool was used** (OP-18), the helix's own argument for its two
+handednesses, so the file records it by recording the tool and no replay works it out from the geometry.
+
+**Every failure is a property of values, so every one is invalidity that heals** (OP-3, and *The station*'s
+rule that a gesture refused on a value makes replay depend on one): the two ends standing in the same place; a
+**closed** run, which has no end to join — and closure is genuinely a value here, because a *derived* curve's
+closure is read off its operands, so the loop a plane cuts a body in can become an open run when the plane
+moves; a curve with no direction at the end asked for; a curvature the G2 mode cannot read there, which names
+G1 as what does work; and a **tension of zero or less**, by which side it is on. Exactly **two** things are
+gesture refusals and both are structural: a pick that is not a curve in space, and the **same end of the same
+curve** twice — which states no gap and cannot heal, because both halves of it are structure. Its *other* end
+is an ordinary join, and that is how a run is closed into a loop.
+
+**Parenting: the join rides both runs**, and through them everything either was built on. The two curves are
+its only geometric inputs, so dragging a point one of them passes through, retyping a helix's pitch or tilting
+the datum a combined view was drawn in moves the connection and it stays smooth — asserted by re-reading the
+tangents off the two *joined* curves as they now stand rather than by a coordinate. It belongs to the **first**
+pick's space, exactly as a loft belongs to its first section's and a combined run to its plan's.
+
+**What it cost outside its own file.** One new file (`geom/Connect3.kt`), two small enums beside it, one
+`Construction` op, one `Document` method plus one scoring helper, and two `ToolDef` rows — and **no** new value
+kind, no new slot kind, no controller code, no file-format argument and **no version bump**: the step is an
+ordinary `tool connect els=… clicks=… signs=…` line, so `save → load → save` is byte-equal and a reload
+re-derives the bend from the two runs as they now stand. `Curves3` gained the two derivative readers the
+curvature needs (`derivativeAt`, `secondDerivativeAt`, `curvatureVectorAt`), which made `tangentAt` one line
+shorter and took `Curve3Element`'s exhaustive-`when` count from seven to eight — stated there, so that a future
+`Arc3` cannot be silently dropped from one of them.
+
+**It is usable without composite paths, and this is what that means.** Joining several `Path3`s into one value
+is item 4 of OP-26's own to-be-discussed list and is deliberately not here, so a routed run of *curve, connect,
+curve* is three curves. Everything downstream still works on each of them — a tube along the join is watertight
+like any other — and the three tubes **union into one watertight body**, which is asserted, so the route is a
+single solid at the end of it. What is not available yet is a *single* sweep along the whole route: one frame
+carried from one end to the other, one station distance measured along the run, one cap at each end. Three
+tubes meet tangentially, so the union has no visible break, but the parallel-transport frames of the three
+sweeps are not each other's continuation and a section that is not round would show it. That is exactly the gap
+item 4 names, and this step is the thing that makes it worth closing rather than a reason to close it now.
+
+**Cut, each with its argument, and named so they are not looked for:**
+
+- **Trimming the two runs back to the join.** A connection that starts part-way along a curve rather than at
+  its end is a *split* plus a join, and split is the other half of to-be-discussed item 4 — the same list, and
+  the same discussion, as the composite path. Nothing here anticipates it.
+- **More than two ends at once** (a tee, a Y-branch). It is not this construction repeated: three runs meeting
+  need a common junction point nobody has stated, and stating it is a design question rather than an argument
+  of this op.
+- **A G3 mode.** It would need a seventh degree of freedom at each end, hence more spans, and — unlike
+  curvature — there is no producer that can *say* what its end value should be: no piece kind in this
+  vocabulary reports a curvature derivative, so the mode would have nothing to match.
+- **A preview** while the tool is armed, and a **palette glyph** — both for step 2's reasons.
+
+Tests: `ConnectTest` (19) — both ends met exactly, at zero tolerance, because they are the control points; the
+direction asserted as a direction at zero tolerance, and over **every** pairing of the three piece kinds at
+either end (which is what makes `tangentAt`'s three cases the load-bearing part); the start case running
+*against* its curve and leaving it behind; tension 1 giving the straight segment exactly, in both modes, with
+the G2 mode's ten control points evenly spaced; a higher tension hugging the tangent, measured 40 mm along the
+join, and moving continuously with the number; every value refusal by name — zero and negative tension by side,
+coincident ends, a closed run from either side, an empty run, and a stalled piece the G2 mode cannot read a
+curvature from; the G2 join's curvature matched at both ends against the helix's own closed-form constant, and
+the G1 join's *not* matched, so the mode is not a second spelling; the G2 join C2 at its own two joins; a
+straight run met at exactly zero curvature; the curvature reader itself against the helix's axis and against a
+difference quotient of a cubic's unit tangent; an **open intersection run** (step 6's derived provenance)
+joined like any other; and determinism bit for bit. `ConnectToolTest` (17) — the two-click gesture and the join
+it makes; the other two ends giving a different piece; `signs=1;0` in the file and a byte-equal
+`save → load → save`; the **stored end surviving a move that would re-score differently**; the join riding both
+runs and staying smooth, asserted against the runs' own new values; ends dragged together going invalid by name
+and healing on undo (dropping a point onto another **welds** it, so undo is what takes the drawing back); a
+typed tension as a panel row, retyped, and refused at nothing; a tube along the join watertight and the
+**three tubes of the route fused into one body**; drawn and picked in both views; one undo; both gesture
+refusals by name; the G2 tool as its own id, matching curvature and reloading byte-equal; and the three
+provenances joined — a segment run to a **helix**, a **combined run** (step 5) to a helix, and a closed
+**intersection curve** (step 6), which has no end and says so in the node rather than in the gesture.
+**1555 → 1591 green**, no new golden, no version bump, no existing golden changed.
+
 ## Open points (to discuss one by one)
 
 - [x] **OP-1 Branch/continuity policy** — RESOLVED: deterministic, orientation-based branch
@@ -7220,10 +7368,10 @@ golden, no version bump, no existing golden changed.
       degenerate class it cannot resolve is **refused**, never leaked. Curves are tessellated first, so
       a boolean's boundary is an *approximated* curve — OP-15's rule, one dimension down. See *Exact
       prismatic booleans*.
-- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1, 2, 3, 4, 5 and 6
-      built** (sessions 37, 38, 39, 43, 44 and 45 — the value with both views, then the frame and the sweep,
-      then the helix, then the station, then combining two views, then the curve where a plane meets a solid),
-      the rest queued. A `Path3` of analytic pieces; a curve's **value** is world-space while its
+- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1, 2, 3, 4, 5, 6 and 7
+      built** (sessions 37, 38, 39, 43, 44, 45 and 46 — the value with both views, then the frame and the
+      sweep, then the helix, then the station, then combining two views, then the curve where a plane meets a
+      solid, then the connect that joins two runs G1 or G2), the rest queued. A `Path3` of analytic pieces; a curve's **value** is world-space while its
       **construction** is always parented, so
       curves ride their parents and planarity is known rather than measured; the moving frame is
       **parallel transport** with a stated start frame (Frenet rejected — it flips at inflections and is
@@ -9047,6 +9195,38 @@ golden, no version bump, no existing golden changed.
   no version bump, no existing golden changed. See *Implementation status (as built — step 6: intersection
   curves, the section promoted into space)*.
 
+- **Session 46 — the bend that makes two runs one route, and a G2 that is a formula (OP-26, step 7).** The
+  seventh step, and the one where the interesting decision was **how much of "G2 as a mode" is honest inside a
+  vocabulary whose only free-form piece is a cubic**. The G1 half was never in doubt: the joining piece is the
+  cubic whose outer control points are the two curve ends and whose inner ones stand along the endpoint
+  tangents, so tangency is *by construction*, in closed form, with nothing iterated — the classical Connect
+  Curve, and exactly why it belongs in a kernel with no solver. The G2 half looked like the place where the
+  step would either add a **quintic** case to `Curve3Element` or fall back on step 5's fit-with-a-stated-error.
+  It needed neither: a **chain of three cubics**, C2 with each other, carries position, tangent and curvature
+  at both ends **exactly**, and the count is decided by counting rather than by taste — two spans are
+  over-determined by one once both tensions are stated, four are under-determined, three make the system square
+  and, being linear, a substitution. So there is one fitting tolerance in OP-26 and this step does not use it.
+  **Three smaller decisions carried their own arguments.** *Which end* is a click, and a click is a **choice**:
+  scored once and persisted in the step's `signs=`, guarded by the fillet's own regression moved one feature
+  along — drag the chosen end 200 mm away until the recorded click is nearest the *other* end, and the reload
+  still gives the one that was clicked. It is scored in the **curve's own space**, which is not a convenience:
+  an element is addressable only where it is drawn, so the click that reached a run was necessarily made there
+  — the same fact that made the gesture `crossSpace`, since a helix on a datum and a run in the plan could not
+  otherwise be joined. *The tangent's direction* is one sign, stated as **away from the curve** so that a piece
+  doubling back over the run it joins is unrepresentable rather than merely unlikely. *The tensions* are
+  **dimensionless fractions of the gap** defaulting to 1, and 1 was chosen because it is the value at which the
+  join *is* the straight segment when the ends face each other — in both modes — and because it is the same
+  `m/3` the interpolating spline of step 1 already uses at an open end: one constant, one reading, stated twice
+  rather than invented twice. Every failure is a **value**, so every one heals: coincident ends, a closed run
+  (closure is genuinely a value for a *derived* curve), a tension of nothing. Only two things are gesture
+  refusals and both are structure: a pick that is not a curve in space, and the same end of the same curve
+  twice — whose *other* end is an ordinary join, which is how a run is closed into a loop. **What the step
+  cannot do yet is named rather than worked around**: a routed run is three curves, not one, because joining
+  `Path3`s is OP-26's own to-be-discussed item 4 — so the route sweeps as three tubes that meet tangentially
+  and **union into one watertight body**, which is asserted, while a *single* frame carried end to end waits
+  for that item. **1555 → 1591 green**, no new golden, no version bump, no existing golden changed. See
+  *Implementation status (as built — step 7: connect, the joining piece derived from two tangents)*.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -10854,7 +11034,15 @@ carried along a path is the missing capability rather than a refinement of an ex
    the producer that needs an arc *as an arc*. Everything else the entry asked for is there: an ordered set
    with a stated, continuous ordering rule, a persisted index that is never re-scored, and invalidity that
    heals when a chosen curve stops existing.
-6. **Connect** — a derived G1/G2 joining piece from endpoint tangents plus tension.
+6. ~~**Connect** — a derived G1/G2 joining piece from endpoint tangents plus tension.~~ **Built in session
+   46**: one cubic for G1 and three C2 cubics for G2, both closed form and both exact — the quintic the
+   textbook uses would have been a new case in the vocabulary, and a chain of cubics carries the same
+   conditions with the count decided by counting. The end of each run is a persisted click (`signs=`), the
+   tangent's direction is one sign stated so the wrong one is unrepresentable, and the tensions are
+   dimensionless fractions of the gap defaulting to 1 — the value at which the join *is* the straight segment.
+   Cut with their arguments: trimming the runs back to the join and joining several runs into one path (both
+   to-be-discussed item 4), more than two ends at once, a G3 mode (no piece kind can state what it would
+   match), a preview and a palette glyph.
 7. **Projection onto a face** — exact for analytic faces, honest or refused for a mesh.
 8. **Imported curves** — frozen literal + placement, plus a *recorded* planar-wireframe-to-sketch gesture.
    Last, per the standing rule that formats go at the end of the queue.

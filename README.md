@@ -364,6 +364,23 @@ curve in space, so it is fitted and the error is **said**: a tenth of a micron a
 analytic pedigree at all — an imported mesh, a stack of slabs from the exact boolean — still gives you the
 curve, in the chords its section already draws, and says that is what it is.
 
+**Connect — the bend that turns two runs into one route.** Two runs that stop near each other meet at a kink;
+*Connect two curves* puts the bend between them, and the bend is not something you draw — it is *derived* from
+where the two runs end and which way they are pointing when they get there. Click near the end of one curve in
+space, then near the end of another (switch the sketch plane between the clicks if they live on different
+planes): the join leaves each run along the way that run was already going, so the whole route reads as one
+manufactured piece. **Which end you clicked is which end it joins**, and that choice is remembered, so moving
+the curves afterwards never swaps ends on you. Two **tensions** shape it — plain numbers, defaulting to 1,
+each a fraction of the gap: raise one and the bend runs on further along that curve's own direction before it
+turns, and at 1 with the two ends facing each other the join *is* the straight segment between them. Both stay
+parameters, so a whole set of bends can share one. *Connect two curves (curvature)* is the same gesture
+matching each run's **curvature** as well as its direction — three cubic pieces instead of one, and still
+exact, nothing fitted — which is what makes a tube along the finished route show no break at all. The join
+rides both curves: drag a point either of them passes through, retype a helix's pitch, tilt the datum a
+combined view was drawn on, and the bend follows and stays smooth. Ends that come to rest in the same place, a
+closed run with no end to join, or a tension of nothing all say so and heal the moment the drawing moves.
+
+
 **A working plane's context is the part's section — and the section is an input.** Drawing on a plane that is
 not the plan needs to know where the material is, so every such plane draws **the part's section at itself**,
 in its own coordinates: a face space draws its face's true boundary (a pyramid's lateral face draws its

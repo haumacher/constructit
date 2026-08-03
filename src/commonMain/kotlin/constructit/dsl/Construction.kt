@@ -45,7 +45,10 @@ import constructit.geom.Chains
 import constructit.geom.Circle
 import constructit.geom.Combine3
 import constructit.geom.Conics
+import constructit.geom.Connect3
+import constructit.geom.Continuity
 import constructit.geom.Curve3Element
+import constructit.geom.CurveEnd
 import constructit.geom.Curves3
 import constructit.geom.Direction
 import constructit.geom.Ellipse
@@ -2270,6 +2273,46 @@ class Construction {
                 Combine3.combined((args[0] as PlaneValue).plane, a, (args[2] as PlaneValue).plane, b)
             if (path == null) {
                 EvalResult.Invalid(why ?: "these two views cannot be combined into one run")
+            } else {
+                EvalResult.Ok(Path3Value(path))
+            }
+        }
+
+    /**
+     * The **joining piece** between [endA] of [a] and [endB] of [b] (OP-26, step 7) — a *connect*, derived
+     * from the two endpoint tangents plus the two tensions, and never solved for.
+     *
+     * **Both curves are nodes, so the connection rides both of them** — and, through them, everything either
+     * was built on: drag a point one run passes through, retype a helix's pitch, tilt the datum a combined
+     * view was drawn in, and the joining piece follows by recompute, still meeting both runs smoothly. That
+     * is the parenting rule paying out at one remove, which is the only interesting thing about a *derived*
+     * curve's provenance (OP-26's second kind).
+     *
+     * [endA], [endB] and [mode] are **structural**: which end of a curve is joined is a discrete choice
+     * scored once from the click and then persisted in the step's `signs=` (OP-1/OP-18), and G1-or-G2 is
+     * stated by which tool was used, exactly as a helix's handedness is. The tensions are ordinary scalars,
+     * so they dimension, take expressions, and can be shared — one parameter node feeding both ends of a
+     * bend, or every bend of a run, is what "sharing is equality" means here.
+     *
+     * Everything it can refuse is a condition on values, so each is invalidity with a reason that heals
+     * (OP-3) — see [Connect3] for the list and for why the answer is exact in both modes.
+     */
+    fun connect(
+        a: Path3Ref,
+        endA: CurveEnd,
+        b: Path3Ref,
+        endB: CurveEnd,
+        tensionA: ScalarRef,
+        tensionB: ScalarRef,
+        mode: Continuity,
+    ): Path3Ref =
+        op(a, b, tensionA, tensionB) {
+            val ta = sc(it[2]).requireDim(Dimension.NONE, "connect tension").value
+            val tb = sc(it[3]).requireDim(Dimension.NONE, "connect tension").value
+            val (path, why) =
+                Connect3.connected((it[0] as Path3Value).path, endA, ta, (it[1] as Path3Value).path, endB, tb, mode)
+            if (path == null) {
+                EvalResult.Invalid(why ?: "these two ends cannot be joined")
             } else {
                 EvalResult.Ok(Path3Value(path))
             }
