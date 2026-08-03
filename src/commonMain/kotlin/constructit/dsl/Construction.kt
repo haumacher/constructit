@@ -42,6 +42,7 @@ import constructit.geom.CarryMode
 import constructit.geom.Chain
 import constructit.geom.Chains
 import constructit.geom.Circle
+import constructit.geom.Combine3
 import constructit.geom.Conics
 import constructit.geom.Curve3Element
 import constructit.geom.Curves3
@@ -2221,6 +2222,51 @@ class Construction {
             }
             val helix = Curve3Element.Helix3.about(at, pl.normal, pl.u, r, p, n, hand)
             EvalResult.Ok(Path3Value(Path3(listOf(helix))))
+        }
+
+    /**
+     * **Two views combined** (OP-26, step 5): the run in space whose projection onto [planeA] is the curve
+     * [viewA] drawn there and onto [planeB] is [viewB] — the drawing board's own construction, made
+     * parametric.
+     *
+     * A route drawn twice, in a plan and in an elevation, *is* a route in space, and it has been read off
+     * two drawings that way for as long as there have been drawings. So this needs no editing surface of its
+     * own: both inputs are ordinary sketch curves picked in ordinary spaces, and what the operation adds is
+     * the arithmetic that says where their projection lines cross ([Combine3]).
+     *
+     * **Four inputs, and the run rides all four** — which is the parenting rule paying out twice over
+     * (OP-26). Drag a point of the plan and the run follows; drag the elevation and it follows; tilt or
+     * re-anchor either *space* and it follows that too, because a space is a node like anything else. There
+     * is nothing copied anywhere, so there is nothing to keep in step.
+     *
+     * The views are taken as **untyped refs** for the reason a loft's guide is: what a view has to be is any
+     * drawn curve, and the 2D curve values are six different types with one thing in common. A pick that is
+     * not one of them is refused here, by name, where the value is.
+     *
+     * Everything else it can refuse — parallel spaces, a view that doubles back along the common direction,
+     * two views whose ranges do not overlap — is a condition on *values*, so each is node invalidity with a
+     * reason that heals (OP-3). See [Combine3] for what each one means and for where the answer is exact.
+     */
+    fun combinedViews(
+        planeA: PlaneRef,
+        viewA: Ref<*>,
+        planeB: PlaneRef,
+        viewB: Ref<*>,
+    ): Path3Ref =
+        op(planeA, viewA, planeB, viewB) { args ->
+            val a =
+                guidePieces(args[1])
+                    ?: return@op EvalResult.Invalid("the first view must be a curve — a segment, an arc, a Bézier or a conic")
+            val b =
+                guidePieces(args[3])
+                    ?: return@op EvalResult.Invalid("the second view must be a curve — a segment, an arc, a Bézier or a conic")
+            val (path, why) =
+                Combine3.combined((args[0] as PlaneValue).plane, a, (args[2] as PlaneValue).plane, b)
+            if (path == null) {
+                EvalResult.Invalid(why ?: "these two views cannot be combined into one run")
+            } else {
+                EvalResult.Ok(Path3Value(path))
+            }
         }
 
     /**

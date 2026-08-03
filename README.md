@@ -333,6 +333,22 @@ billionths of a millimetre — so a station at 340 mm is 340 mm of travel and no
 A distance past the end of the run does not refuse the gesture: the plane simply has no value, everything drawn
 on it hides and says why, and bringing the number back brings all of it back.
 
+**Combine two views — the route drawn twice, in plan and in elevation.** This is how a route was laid out on a
+drawing board long before there were kernels, and *Combine two views* is that construction made parametric:
+draw the run in one space, switch the sketch plane and draw it in another, click the two, and you get the curve
+in space whose shadow in each of them is the curve you drew there. There is nothing new to learn — both picks
+are ordinary sketch curves in ordinary spaces — and everything that already makes a drawing live makes the run
+live: drag a point of either view, tilt the space one of them is drawn in, or move the line that space hinges
+on, and the run follows. Where a straight view meets a straight one the answer is the exact straight run, and a
+spline plan against a straight elevation is an exact cubic; where both views curve there is no such thing to be
+exact about, so the run is fitted and the error is **said**: a tenth of a micron, two hundred times finer than
+the tolerance any solid swept along it is meshed at. What it refuses, it refuses by name and it heals. Two
+parallel spaces have no common direction, so there is nothing to combine. A view that **doubles back** along
+that direction would let one place in the other view answer to two places on it — break it where it turns and
+combine each part. And two views that do not cover the same stretch are not describing one run, with both
+ranges said out loud; only the stretch they share becomes a run, and it goes the way the first view you picked
+goes.
+
 **A working plane's context is the part's section — and the section is an input.** Drawing on a plane that is
 not the plan needs to know where the material is, so every such plane draws **the part's section at itself**,
 in its own coordinates: a face space draws its face's true boundary (a pyramid's lateral face draws its

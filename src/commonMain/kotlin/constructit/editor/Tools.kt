@@ -536,6 +536,16 @@ object Tools {
     const val HELIX_LEFT = "helixleft"
 
     /**
+     * **Combine two views** (OP-26, step 5): a plan and an elevation, and the run in space whose projection
+     * into each of them is the curve drawn there.
+     *
+     * One id, one gesture and **no new editing surface**: both picks are ordinary sketch curves in ordinary
+     * spaces, which is the whole claim of the step — routing was done this way on drawing boards, and the
+     * two drawings are what a user already knows how to make.
+     */
+    const val COMBINE_VIEWS = "combineviews"
+
+    /**
      * **The sweep** (OP-26, step 2): a profile carried along a curve in space, on the rotation-minimizing
      * moving frame. Two ids because the *profile* differs — a radius typed for a tube, an area clicked for
      * anything else — exactly as [CIRCLE] and [CIRCLE_R] are two ids for one shape.
@@ -799,6 +809,12 @@ object Tools {
             // slot must never come before one the tool waits for).
             ToolDef(HELIX, "Helix (right-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "Type a radius and a pitch — the rise per turn — and, if you want more than one, a number of turns; then click the point the axis stands on. The axis is this sketch plane's own normal through that point, so the coil rises out of the plane you are drawing in and tilts with it; the curve starts beside the point along the plane's x direction. Everything stays live: drag the point, retype its height, or retype any of the three numbers. Sweep a tube along it for a spring.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.RIGHT) },
             ToolDef(HELIX_LEFT, "Helix (left-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "The same gesture as Helix (right-hand), turning the other way as it rises — a left-hand thread, a left-hand spring. Handedness is which tool you used, so it is what the file records and it never changes by itself; a negative pitch is refused, because a coil that descends while it turns right is this one.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.LEFT) },
+            // **Combine two views** (OP-26 step 5). Two ordinary curve picks and nothing else — no scalar, no
+            // discrete choice, no new slot kind: the correspondence between the two drawings is the common
+            // direction of their two spaces, which the drawing already contains. `crossSpace` for the loft's
+            // own reason, and here it is the whole gesture: the second view *has* to be in another space, so
+            // switching the sketch plane between the two clicks is the point rather than a convenience.
+            ToolDef(COMBINE_VIEWS, "Combine two views", ToolCategory.CURVES, listOf(SlotKind.CURVE, SlotKind.CURVE), crossSpace = true, help = "Click the route drawn in one space — the plan — then switch the sketch plane and click the route drawn in the other — the elevation: the curve in space whose shadow in each of them is the curve you drew there. This is how a route was laid out on a drawing board, and both views stay ordinary drawings: drag a point of either, or tilt either space, and the run follows. The two spaces must meet (parallel ones have no common direction), each view must run one way along that common direction, and only the stretch both views cover becomes a run.", slotNames = listOf("first view", "second view")) { d, p, _ -> d.combineViews(p.elements[0], p.elements[1]) },
             ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, followsBoundary = true, shortcut = 'O', help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.", slotNames = listOf("boundary curve"), icon = Icons.OUTLINE) { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
             ToolDef(THICKEN, "Thicken (wall over curves)", ToolCategory.RESULT, listOf(SlotKind.CURVE), scalars = listOf(len("thickness")), repeating = true, minPicks = 1, sidePerPick = true, replicates = false, extendsResult = true, preview = Previews::thicken, help = "Type a thickness, set Wall side, then click the curves the wall follows — segments, arcs or Béziers that meet end to end, or end part-way along one another (a T joins with no seam). The side applies to the next click, so it can change per curve. Enter (or clicking the first curve again) builds it; a disconnected pick is refused. Click an existing wall first to *extend* it instead: its thickness stays its own and its openings, dimensions and solids follow (Alt on that first click starts a new wall there instead).", slotNames = listOf("carrier curve"), icon = Icons.THICKEN) { d, p, s -> d.buildThickNetwork(p.elements, p.signs.map { Tools.sideOf(it) }, s[0]) },
             ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click a circle or arc, then click inside or outside for the concentric circle.", slotNames = listOf("circle", "side"), icon = Icons.CONCENTRIC) { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at) },

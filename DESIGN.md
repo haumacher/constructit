@@ -5893,9 +5893,10 @@ Each step is whole on its own — a thing that works, not a layer that waits.
    here because it needs step 2's frame and is best built against one already proven on a helix. See *The
    station — one, stated by a distance*.~~ **Built in session 43** — see *Implementation status (as built —
    step 4: the station, a plane stated by a distance along a run)*.
-5. **Combine two views.** Two planar curves in two non-parallel spaces → the curve whose projections are
+5. ~~**Combine two views.** Two planar curves in two non-parallel spaces → the curve whose projections are
    both; refuses on parallel spaces or a non-overlapping parameter range. The routing workhorse, and it
-   needs no new editing surface at all — it is how routing was done on drawing boards.
+   needs no new editing surface at all — it is how routing was done on drawing boards.~~ **Built in session
+   44** — see *Implementation status (as built — step 5: combine two views, the routing workhorse)*.
 6. **Intersection curves.** Generalized from the existing section machinery (plane ∩ solid), then surface ∩
    surface where surfaces exist. Ordered solution set plus a persisted `Select` — OP-1's branch doctrine
    unchanged, one dimension up.
@@ -6717,6 +6718,136 @@ landing on the run's cross-section; the 2D canvas drawing the section it cuts, a
 a **helix**; and deleting the run taking the station with it. **1445 → 1484 green**, one new golden, no
 version bump, no existing golden changed.
 
+### Implementation status (as built — step 5: combine two views, the routing workhorse)
+
+Step 5 of the order above, whole and nothing else: **two planar curves drawn in two non-parallel spaces, and
+the curve in space whose projection into each of them is the one drawn there.** No intersection curves, no
+connect, no projection onto a face, no imported curves (steps 6–9), no station family, no tilt, and nothing
+from the unbounded-tool record.
+
+**It needed no editing surface at all, which was the claim to test rather than to assume.** One `ToolDef` row
+taking two ordinary `CURVE` picks, `crossSpace = true` like the loft's — pick the plan, switch the sketch
+plane, pick the elevation — and no scalar, no discrete choice and no new slot kind. That is the whole gesture,
+and it is the one a drawing board has always used: draw the route twice, carry each point across with
+dividers, and where the two projection lines cross is the point. The arithmetic says exactly that (`meet`
+in `geom/Combine3.kt`): a point of the run is where the line through the plan point along the plan's normal
+meets the line through the elevation point along the elevation's normal. Everything below is about *which*
+plan point belongs to which elevation point, because that is the only question the two drawings do not
+answer by themselves.
+
+**The correspondence is the common direction, and it is a fact rather than a choice.** `d = n_A × n_B` is the
+direction of the line where the two spaces meet — the drawing board's **folding line** — and a point's
+coordinate along it, `w = X·d`, survives *both* projections, because `d` is perpendicular to both normals.
+That is precisely why a draughtsman can carry a distance from one view to the other. Two consequences fall
+out with no input of their own, and they are what makes this step need no correspondence gesture: `d` lies
+**in** both planes, so seen in each plane's own 2D coordinates it is a **unit** direction `g` and the whole
+matching is one dot product (`w = origin·d + p·g`); and the two views are put in correspondence by `w` alone.
+
+**A view that doubles back is refused by name, and the argument is about counting rather than about taste.**
+OP-1's other answer — a persisted sign choosing between ordered solutions — does not apply here, and the
+reason is that the solution set has **no fixed size**: a plan that turns back once has one, two or three
+partners for a given `w` depending on *where* along the run you ask, so "branch 2" names nothing at the
+places where there is only one, and a sign that indexes a set whose cardinality is a value would be exactly
+the drift OP-1 exists to prevent. The refusal names the cure, and it is a construction the drawing can
+already state: break the view where it turns and combine each part. That is also what the board does — the
+classical construction fails there too, because the projection lines stop crossing the curve once.
+
+**The turning points are found from each piece kind's closed form, never by sampling**, and that is the one
+place this could have gone quietly wrong. A cubic's advance along `d` is a **quadratic** in its parameter, so
+its roots are the formula; a circular piece stops advancing where its radius is parallel to `d`, two angles
+half a turn apart; an elliptic one is the same statement read in the ellipse's own frame. A reversal narrow
+enough to fall between two samples would otherwise have come out as a wrong curve with nothing saying so, and
+that is the failure class this project ranks above every queued feature (session 40's own lesson). A **closed**
+view — a circle, an ellipse — is refused by this rule rather than by a case of its own, since a closed curve
+always turns twice.
+
+**Where the answer is exact is a fact about the vocabulary, not a convenience.** The meeting point is
+**linear** in the pair of view points; what is not linear is the matching, which inverts a cubic or a
+trigonometric function to find one view's parameter at the `w` the other has reached. But when one of the two
+pieces is a **straight segment**, that inversion is a division — the straight view's point is an affine
+function of `w`, hence of the other view's point — so the whole map from one piece to the run is **affine**,
+and an affine map carries control points to control points. Therefore:
+
+- **segment × segment → an exact `Seg3`**, asserted with **no tolerance at all** (a straight plan and a
+  constant grade, which is the everyday case);
+- **cubic × segment → an exact `Bezier3`**, the four control points mapped one for one — so a spline plan
+  against a straight elevation is *exact*, which is more than the step needed to claim;
+- **everything else is fitted**, and it is fitted because the result has no name here: two curved views meet
+  in a curve of no standard kind, and even an arc against a straight elevation combines into an **elliptic
+  arc in space**, for which `Curve3Element` has no case. Calling that a cubic would be the silent degrading
+  OP-15 forbids; adding an `Arc3` for it would be a case with one producer and the wrong shape at that.
+
+**The fit's error is stated in millimetres, and the statement transfers to the property that matters.** Each
+fitted span is the cubic **Hermite** through the exact positions and exact tangents at its ends, halved until
+its own midpoint stands within `FIT_TOL_MM` = **1e-4 mm** of the exact run — the standard flatness test,
+driven by a deterministic bisection. What makes that number worth stating is a one-line argument rather than
+a hope: an orthogonal projection is **1-Lipschitz**, so a run within 1e-4 mm of the exact combined curve
+projects within 1e-4 mm of each view it was drawn from. The defining property therefore holds to a tenth of a
+micron — two hundred times finer than `GeomMath.TESS_TOL_MM`, so the fit is never what a made part is wrong
+by — and it is asserted *as such*, by sampling the run and measuring the distance from each projection to the
+drawn curve with arithmetic that knows nothing about how the run was built. It is not tighter still only
+because the piece count is what pays: the count grows as the fourth root of the tolerance, so a decade costs
+about 1.8× the pieces, and a right-angle bend against a straight elevation is met in eight.
+
+**The span is halved along whichever view runs closest to square with the common direction**, and that choice
+is the difference between a feature and one that refuses ordinary drawings. A view about to turn square
+advances slowly in `w`, so *its* own parameter is the well-behaved one and the other view's partner parameter
+is a smooth function of it; halving in `w` instead — or always in the first view's parameter — would need
+unboundedly many pieces at a **quarter bend**, which is the most ordinary route shape there is. Where *both*
+views turn square at the same `w` the run genuinely comes to a **cusp**, no chain of cubics passes through
+it, and that is the one thing the halving limit reports — by name, with the tolerance it could not reach.
+
+**Parenting is the rule paying out twice over.** Four inputs, all nodes: both planes and both curves. Drag a
+point of the plan and the run follows; drag the elevation and it follows; tilt the datum the elevation is
+drawn on, or drag the **line that datum is hinged on**, and it follows that too — asserted not by a
+coordinate but by the defining property, which still holds after the space has moved. The run belongs to the
+**first** view's space, exactly as a loft belongs to its first section's: that is where its plan projection is
+drawn, the coordinates a pick of it measures against, and the space whose normal starts a sweep's frame. It
+also **runs the way the first view runs**, which is the one reading a user can predict and is what a station's
+distance and a sweep's start frame are measured from.
+
+**The refusals, all of them node invalidity that heals** (OP-3, and *The station*'s reason: a gesture refused
+on a value makes replay depend on one) — parallel spaces, by name, with two curves in *one* space being the
+same refusal; a view that doubles back, or that runs square to the common direction, by name and with the
+place said; two views whose runs **do not overlap**, with both ranges stated; and the cusp. Only three things
+are gesture refusals, and each is structural: a pick that is not a curve, a pick that runs on for ever (a
+line or a ray states no length of run), and one drawing clicked twice.
+
+**What it cost outside its own file.** One `ToolDef` row, one `Construction` op node, one `Document` method,
+and no controller code, no new value kind, no new slot kind, no file-format argument and **no version bump** —
+the step is an ordinary `tool combineviews els=…` line, so `save → load → save` is byte-equal and a reload
+re-derives the run from the two drawings as they now stand. The views are read through the loft guide's own
+coercion (`Construction.guidePieces`), so every 2D curve kind is a legal view with nothing restated.
+
+Cut, and named so they are not looked for: a view made of **several pieces** — one pick is one drawn curve,
+which is the granularity the whole 2D vocabulary has (there is no multi-span 2D spline element), so a route
+that needs a polyline in one view is combined piece by piece and *joining* those runs is item 4 of OP-26's own
+to-be-discussed list rather than this step's business; an **unbounded** view (a line or a ray), which belongs
+with the unbounded-tool record; a **preview** while the tool is armed and a **palette glyph**, both for step
+2's reasons; combining **more than two** views (a third view is either redundant or contradictory, and which
+it is is a measurement — the two-view construction is what a drawing board states); and an `Arc3`/elliptic
+case for the one family that would be exact if it existed, which stays the rule that a case needs a producer.
+
+Tests: `CombineViewsTest` (18) — the defining property asserted directly on a quarter bend, on two curved
+views and on a second space that is **not** an elevation, by projecting dense samples into each parent and
+measuring the distance to the drawn curve with an independent formula; the two exact cases asserted as exact
+(a segment to the last bit, a cubic to a picometre); the run's direction taken from the first view; only the
+overlap becoming a run; the same views giving the same run bit for bit; every refusal by name — parallel
+spaces (twice over), non-overlapping ranges with both stated, a view doubling back (as either view), a view
+square to the common direction, a closed view by the same rule, a **narrow** reversal inside one piece, and
+the cusp — plus a refused pair healing as soon as the drawing moves, and the stated error asserted at the
+constant itself over 2000 samples. `CombineViewsToolTest` (14) — the two-click cross-space gesture and the
+exact run it makes; the run riding the plan drawing, the elevation drawing, the elevation's **space** (tilted)
+and the **hinge that space stands on**, the last two asserted by the defining property rather than by a
+coordinate; a tube along it watertight with a plan footprint; a station standing on it at its midpoint facing
+the way it goes; drawn and picked in both views (in the plan it is bound to coincide with the drawing it
+projects onto, so it is reached by the ordinary pick cycle); `save → load → save` byte-equal with the run
+reloading piece for piece; one undo taking the gesture back and leaving both drawings; two views in one space
+refused by the node as parallel and drawing nothing; the elevation dragged out of range hiding the tube and
+coming back; the two gesture refusals by name; and an SVG golden of the plan, in which the run's projection
+**is** the drawn curve, twice over the same polyline. **1487 → 1519 green**, one new golden, no version bump,
+no existing golden changed.
+
 ## Open points (to discuss one by one)
 
 - [x] **OP-1 Branch/continuity policy** — RESOLVED: deterministic, orientation-based branch
@@ -6914,9 +7045,9 @@ version bump, no existing golden changed.
       degenerate class it cannot resolve is **refused**, never leaked. Curves are tessellated first, so
       a boolean's boundary is an *approximated* curve — OP-15's rule, one dimension down. See *Exact
       prismatic booleans*.
-- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1, 2, 3 and 4 built**
-      (sessions 37, 38, 39 and 43 — the value with both views, then the frame and the sweep, then the helix,
-      then the station), the rest queued. A `Path3` of analytic pieces; a curve's **value** is world-space while its
+- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1, 2, 3, 4 and 5 built**
+      (sessions 37, 38, 39, 43 and 44 — the value with both views, then the frame and the sweep, then the
+      helix, then the station, then combining two views), the rest queued. A `Path3` of analytic pieces; a curve's **value** is world-space while its
       **construction** is always parented, so
       curves ride their parents and planarity is known rather than measured; the moving frame is
       **parallel transport** with a stated start frame (Frenet rejected — it flips at inflections and is
@@ -8670,6 +8801,42 @@ version bump, no existing golden changed.
   and named: a roll input, normalized *t*, tilt, and the station **family**, which stays OP-26's own
   to-be-discussed item. **1445 → 1484 green**, one new golden, no version bump, no existing golden changed.
   See *Implementation status (as built — step 4: the station, a plane stated by a distance along a run)*.
+
+- **Session 44 — combine two views: the drawing board's own construction, made parametric (OP-26, step 5).**
+  The routing workhorse, and the record's claim about it — *it needs no new editing surface at all* — held
+  exactly: one tool row taking two ordinary curve picks across two spaces, one op node, one document method,
+  no controller code, no new value kind, no file argument and no version bump. The arithmetic *is* the board's:
+  a point of the run is where the plan's projection line crosses the elevation's. **The whole of the design
+  was the correspondence**, and the answer was already in the drawing — the direction `d = n_A × n_B` where the
+  two spaces meet is the folding line, and a point's coordinate along it survives both projections, which is
+  why a draughtsman can carry a distance across with dividers. Because `d` lies *in* both planes, it is a unit
+  direction in each plane's own 2D coordinates and the matching is one dot product. A view that **doubles
+  back** is refused by name rather than resolved by a persisted sign, and the argument is about counting: the
+  solution set has no fixed size (one, two or three partners depending where along the run you ask), so there
+  is no ordered set for a sign to index — which is OP-1's own rule read carefully rather than an exception to
+  it. The turning points are found from each piece kind's **closed form** (a cubic's advance is a quadratic; a
+  circular piece turns where its radius is parallel to `d`), never by sampling, because a reversal narrow
+  enough to fall between two samples is exactly the silently-wrong output session 40 ranked above every queued
+  feature. **Exactness was decided by the vocabulary rather than by taste**: the meeting point is linear in the
+  pair of view points, so wherever *one* view's piece is a straight segment the whole map is affine, and
+  segment × segment gives an exact `Seg3` and cubic × segment an exact `Bezier3` with the four control points
+  mapped one for one. Everything else is fitted, and it is fitted because it has no name here — an arc against
+  a straight elevation is an **elliptic arc in space**, which `Curve3Element` has no case for, and calling it a
+  cubic would be the degrading OP-15 forbids. The fit is cubic Hermites halved to **1e-4 mm**, and that number
+  is worth stating because of a one-line argument: an orthogonal projection is 1-Lipschitz, so the run's
+  projection into each view is within the same 1e-4 mm of the curve drawn there — the defining property, with
+  the tolerance carried onto it rather than hoped about. The one non-obvious implementation decision is
+  **which parameter the halving runs in**: whichever view runs closest to square with the common direction,
+  because that view's own parameter is the well-conditioned one — halving in the common direction instead
+  would need unboundedly many pieces at a **quarter bend**, the most ordinary route shape there is. Where both
+  views turn square at the same place the run has a real **cusp**, and that is the one thing the halving limit
+  reports. Parenting is the rule paying out twice over: four nodes in, and the run follows the plan, the
+  elevation, the space either is drawn in, and the line that space is hinged on — asserted by the defining
+  property after the move rather than by a coordinate. Cut and named: a view made of **several** drawn pieces
+  (one pick is one curve, which is the granularity the whole 2D vocabulary has; joining the resulting runs is
+  OP-26's own to-be-discussed item 4), unbounded views, more than two views, and an `Arc3` case for the one
+  family that would then be exact. **1487 → 1519 green**, one new golden, no version bump, no existing golden
+  changed. See *Implementation status (as built — step 5: combine two views, the routing workhorse)*.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -10469,7 +10636,7 @@ carried along a path is the missing capability rather than a refinement of an ex
    **Built in session 39.**
 3a. ~~**The station** — one stated position along a path, as a sketch space (the *order of work*'s step 4,
    settled in session 37 and absent from session 36's numbering).~~ **Built in session 43.**
-4. **Combine two views** — plan route × elevation, the routing workhorse.
+4. ~~**Combine two views** — plan route × elevation, the routing workhorse.~~ **Built in session 44.**
 5. **Intersection curves** — the section machinery generalized, with OP-1's ordered set and persisted sign.
 6. **Connect** — a derived G1/G2 joining piece from endpoint tangents plus tension.
 7. **Projection onto a face** — exact for analytic faces, honest or refused for a mesh.

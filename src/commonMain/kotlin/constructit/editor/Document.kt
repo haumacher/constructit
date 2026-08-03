@@ -8632,6 +8632,67 @@ class Document {
         return curve
     }
 
+    /**
+     * **Two views combined into one run** (OP-26, step 5): [plan] drawn in one space, [elevation] drawn in
+     * another that meets it, and the curve in space whose projection into each is the drawing made there.
+     *
+     * The routing workhorse, and it is how routing was done on drawing boards long before there were
+     * kernels: draw the route twice, carry each point across with dividers, and the run in space is what the
+     * two drawings jointly say. **It needs no new editing surface at all** — both picks are ordinary sketch
+     * curves in ordinary spaces, so everything that already makes a drawing live (dragging a point, retyping
+     * a radius, tilting the space it stands on) makes the run live with it. The two names are the everyday
+     * reading rather than a requirement: any two curves in any two non-parallel spaces will do.
+     *
+     * The run belongs to the **first** view's space, exactly as a loft belongs to its first section's: that
+     * is the space its plan projection is drawn in, the coordinates a pick of it measures against, and the
+     * space whose normal starts a sweep's frame — one statement about which space this run belongs to. It is
+     * also the view whose direction the run takes, so the far end of a *Station*'s distance is the end of the
+     * curve the user drew first.
+     *
+     * Refused **by name**, building nothing, only for the structural things — a pick that is not a curve, a
+     * pick that runs on for ever (a line or a ray states no run), and one curve clicked twice. Everything
+     * about *where* the two drawings are is the node's business and comes back as the reason it is invalid,
+     * so it heals when the drawing moves (OP-3): parallel spaces, a view that doubles back along the common
+     * direction, and two views whose runs do not overlap are all values, and a gesture refused on a value
+     * would make replay depend on one.
+     */
+    fun combineViews(
+        plan: Element,
+        elevation: Element,
+    ): Element? {
+        for (el in listOf(plan, elevation)) {
+            if (!el.isCurve) {
+                note =
+                    "Combine two views: ${nameOf(el)} is ${kindWord(el)}, not a curve — draw each view as one " +
+                    "curve and click them in turn"
+                return null
+            }
+            if (el.kind == ElementKind.LINE || el.kind == ElementKind.RAY) {
+                note =
+                    "Combine two views: ${nameOf(el)} runs on for ever, so it states no length of run to " +
+                    "match — a view is a bounded curve"
+                return null
+            }
+        }
+        if (plan === elevation) {
+            note =
+                "Combine two views: ${nameOf(plan)} was clicked twice, and one drawing is one view — the " +
+                "second view is drawn in another space, so switch the sketch plane between the two clicks"
+            return null
+        }
+        val curve =
+            add(
+                cx.combinedViews(planeOfSpace(plan.space), plan.ref, planeOfSpace(elevation.space), elevation.ref),
+                ElementKind.SPACE_CURVE,
+                Styles.SPACE_CURVE,
+            )
+        curve.space = plan.space
+        note =
+            "${nameOf(curve)}: the run whose projection into ${plan.space} is ${nameOf(plan)} and into " +
+            "${elevation.space} is ${nameOf(elevation)} — move either drawing, or either space, and it follows"
+        return curve
+    }
+
     // ---- the sweep: a profile carried along a curve in space (OP-26, step 2) ----
 
     /**
