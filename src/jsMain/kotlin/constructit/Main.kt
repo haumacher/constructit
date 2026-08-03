@@ -794,7 +794,14 @@ private fun setupApp() {
      * it has. Without the API — or with the prompt refused — this is the download flow, unchanged.
      */
     fun saveDrawing(askForFile: Boolean) {
-        val text = DocumentFormat.save(editor.doc)
+        // OP-27's backstop: a document holding an element no step created is refused by name rather than
+        // written without it — the refusal is the format's, said here and nowhere else
+        val outcome = DocumentFormat.saveFile(editor.doc)
+        val text =
+            outcome.text ?: run {
+                note(outcome.refusal ?: "Not saved", error = true)
+                return
+            }
         val handle = fileHandle
         if (!fsApi) {
             downloadScript(text)
@@ -893,7 +900,12 @@ private fun setupApp() {
         repaint()
     })
     (document.getElementById("f-copy") as HTMLElement).addEventListener("click", {
-        val text = DocumentFormat.save(editor.doc)
+        val copied = DocumentFormat.saveFile(editor.doc)
+        val text = copied.text
+        if (text == null) {
+            note(copied.refusal ?: "Not copied", error = true)
+            return@addEventListener
+        }
         window.navigator.clipboard.writeText(text).then(
             { note("Copied ${text.lines().size - 1} step(s) to the clipboard") },
             { note("Clipboard refused; use Save instead", error = true) },

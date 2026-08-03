@@ -221,6 +221,53 @@ class Editor(
         lastCommitted = now
     }
 
+    /**
+     * Run a tool's build as **one transaction** (OP-27): what comes out of a gesture is what its step
+     * created, or the document is exactly what it was before the gesture — never something in between.
+     *
+     * The invariant this enforces is [Document.steplessElements]'s: *every element was created by exactly
+     * one journal step.* Two things can break it, and both are handled here by the same restore, because
+     * both leave the same wreckage:
+     *
+     * - **a build that throws.** [Document.recording] can only write its step after the body has run, so a
+     *   throw part-way through leaves whatever was already added with nothing to own it. That is not
+     *   hypothetical: a user picked a dimensionless parameter for a tube's radius and the tool's own status
+     *   message — a `Quantity.mm` read (OP-7) — threw *after* the solid had been added. The tube appeared,
+     *   could not be deleted, was in no saved file, and drew nothing;
+     * - **a build that adds without recording.** Nothing in the shipped shell does this today, but the only
+     *   thing that stopped it was every author of a `ToolDef` remembering to build through the recording
+     *   path. Now the runner checks instead of trusting, so a new row cannot reintroduce it.
+     *
+     * The restore is the **undo substrate** (OP-18), which is the complete answer and already proven: the
+     * saved script of the last checkpoint, replayed into a fresh document. So the refused gesture also takes
+     * back the points its earlier clicks placed, which is what "the gesture is refused as a whole" means.
+     *
+     * Returns the refusal to show, or null when the gesture stands.
+     */
+    private fun transacted(
+        what: String,
+        body: () -> Unit,
+    ): String? {
+        val before = doc.elements.toHashSet()
+        val failure =
+            try {
+                body()
+                // OP-27's check, in the invariant's own terms and only over what *this* gesture made: a
+                // document may hold older stepless elements (nothing in the shell makes one, but a direct
+                // `Document` call in a test does), and this gesture is not the place to answer for them.
+                doc.elements.filter { it !in before && doc.creatingStep(it) == null }
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { orphans ->
+                        "built ${orphans.joinToString(", ") { doc.nameOf(it) }} without recording a step, " +
+                            "which no file could keep — so it was taken back"
+                    }
+            } catch (t: Throwable) {
+                "could not be built: ${t.message ?: t.toString()}"
+            } ?: return null
+        adopt(DocumentFormat.load(lastCommitted))
+        return "$what $failure"
+    }
+
     fun undo(): Boolean {
         if (undoStack.isEmpty()) return false
         if (DocumentFormat.save(doc) != lastCommitted) {
@@ -3429,7 +3476,17 @@ class Editor(
         when {
             scalars == null -> statusHint = scalarPrompt(tool)
             filledSlots >= tool.minPicks -> {
-                doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+                // one transaction, exactly as the single-shot runner's build is (OP-27) — a repeating tool
+                // has collected more clicks, so it has more to take back, not less
+                val refusal =
+                    transacted(tool.label) {
+                        doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+                    }
+                if (refusal != null) {
+                    statusHint = refusal
+                    onChange()
+                    return true
+                }
                 checkpoint()
                 statusHint = doc.takeNote() ?: ""
             }
@@ -3818,20 +3875,30 @@ class Editor(
         // to follow it here, exactly as [faceClick] does for Sketch on face, because switching the canvas is
         // the editor's half of a space (one camera each, selection dropped)
         val spaceBefore = doc.activeSpace
-        // a tool that records its own steps is *not* wrapped in a `tool` step (OP-18): what it builds has
-        // degrees of freedom of its own that the steps it emits restate — see [ToolDef.recordsSteps]
-        if (tool.recordsSteps) {
-            tool.build(doc, picks, scalars.map { it.ref })
-        } else if (plan?.gesture != null && !snapEnabled) {
-            // Alt has always meant *leave the model as I put it*, and declining the orbit is the same
-            // sentence one level up: this feature is a one-off (a keyway, a single flat).
-            orbitNote = "not replicated: Alt keeps it a one-off on pattern ${plan.pattern.name}"
-            doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
-        } else if (plan?.gesture != null && doc.buildOrbit(plan, tool, scalars) != null) {
-            replicated = true
-            orbitNote = "${tool.label}: ${plan.copies} copies round pattern ${plan.pattern.name}"
-        } else {
-            doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+        // …and the whole of it runs as one transaction (OP-27): every route below either leaves a step that
+        // owns what it made, or leaves the document as it was — see [transacted]
+        val refusal =
+            transacted(tool.label) {
+                // a tool that records its own steps is *not* wrapped in a `tool` step (OP-18): what it builds has
+                // degrees of freedom of its own that the steps it emits restate — see [ToolDef.recordsSteps]
+                if (tool.recordsSteps) {
+                    tool.build(doc, picks, scalars.map { it.ref })
+                } else if (plan?.gesture != null && !snapEnabled) {
+                    // Alt has always meant *leave the model as I put it*, and declining the orbit is the same
+                    // sentence one level up: this feature is a one-off (a keyway, a single flat).
+                    orbitNote = "not replicated: Alt keeps it a one-off on pattern ${plan.pattern.name}"
+                    doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+                } else if (plan?.gesture != null && doc.buildOrbit(plan, tool, scalars) != null) {
+                    replicated = true
+                    orbitNote = "${tool.label}: ${plan.copies} copies round pattern ${plan.pattern.name}"
+                } else {
+                    doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+                }
+            }
+        if (refusal != null) {
+            statusHint = refusal
+            onChange()
+            return true
         }
         checkpoint() // the tool application — earlier slot clicks were only halves of it
         resetPicks()

@@ -1131,6 +1131,13 @@ class Document {
      * Run [body] as one journal step. Nested calls are absorbed into the outermost one, so a tool that
      * calls several document operations is recorded as the single tool application the user performed —
      * which is also the only granularity that replays correctly.
+     *
+     * **A step and the elements it creates are one thing** (OP-27). The step can only be written *after*
+     * the body has run — it has to know what was created — so a body that leaves by any route other than
+     * returning would leave its creations behind with no step to own them: unsaveable, undeletable,
+     * invisible to undo. So the one non-returning route there is, a throw, takes them with it: what the
+     * body created is removed and nothing is recorded, and the failure goes on up. That is the invariant
+     * made structural at the seam that owns it rather than a rule every builder has to remember.
      */
     private fun <T> recording(
         kind: String,
@@ -1171,6 +1178,15 @@ class Document {
             for (id in pendingReparams) reparamSteps[id] = step
             pendingReparams.clear()
             return result
+        } catch (t: Throwable) {
+            // the half-built gesture leaves with the throw — see the invariant above. Elements and scalars
+            // are exactly what a [Step] owns, hence exactly what an unwritten step must not leave behind;
+            // whatever else the failed body touched is the caller's to restore ([Editor.transacted] reloads
+            // the whole document from the last checkpoint, which is the complete answer).
+            elements.retainAll(before)
+            while (scalars.size > scalarsBefore) scalars.removeAt(scalars.size - 1)
+            pendingReparams.clear()
+            throw t
         } finally {
             recordDepth--
             pendingBefore = null
@@ -2646,6 +2662,18 @@ class Document {
 
     /** The journal step that created [el], if any — what a delete of [el] removes. */
     fun creatingStep(el: Element): Step? = journal.firstOrNull { s -> s.creates.any { it === el } }
+
+    /**
+     * **The elements no step created** — the breach of OP-27's invariant, and normally empty.
+     *
+     * The invariant is that every element a document holds was created by exactly one journal step, because
+     * the journal *is* the model (see *Why the format records operations* in DESIGN.md): an element with no
+     * step is written to no file, reached by no delete, and lost by the next undo — it exists on screen and
+     * nowhere else. This is the query the enforcement is stated in: [Editor.transacted] refuses any gesture
+     * that would produce one, and [DocumentFormat.saveFile] refuses to write a document that already has
+     * one rather than dropping it silently.
+     */
+    fun steplessElements(): List<Element> = elements.filter { creatingStep(it) == null }
 
     /** Elements a step's arguments reference, keyed wrappers included. */
     internal fun referencedElements(step: Step): List<Element> {
@@ -8305,7 +8333,7 @@ class Document {
         val region = regionOf(el) ?: return null
         val plane = activeSpace.plane ?: activePlane()
         return add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
-            .also { madeSolid(it, "${nameOf(el)} extruded ${Format.num(evalMm(depth))} mm") }
+            .also { madeSolid(it, "${nameOf(el)} extruded ${lengthWord(depth)}") }
     }
 
     /**
@@ -8321,7 +8349,17 @@ class Document {
         solid: Element,
         what: String,
     ) {
-        note = "${nameOf(solid)} is $what — a solid, shown in the 3D view"
+        // ...and when the result is *invalid* it says so with the node's own reason (OP-3, OP-27): the
+        // empty 3D view is exactly what a silent success and a bad input look like alike, and the reason
+        // — "tube radius requires L but got 1" — is what connects it to the parameter that was picked. An
+        // invalid solid is a state, not a failure: the step is recorded and it heals when the number does.
+        val why = (Evaluator().eval(solid.ref.node) as? EvalResult.Invalid)?.reason
+        note =
+            if (why == null) {
+                "${nameOf(solid)} is $what — a solid, shown in the 3D view"
+            } else {
+                "${nameOf(solid)} is $what, but nothing is drawn for it yet: $why"
+            }
     }
 
     /**
@@ -8369,7 +8407,7 @@ class Document {
         val tool = add(cx.extrude(cx.sketchBehind(on, region), depth), ElementKind.SOLID, Styles.SOLID)
         return add(cx.subtract(part.ref as SolidRef, tool.ref as SolidRef), ElementKind.SOLID, Styles.SOLID)
             .also {
-                madeSolid(it, "${nameOf(el)} cut ${Format.num(evalMm(depth))} mm into ${nameOf(part)} on ${activeSpace.name}")
+                madeSolid(it, "${nameOf(el)} cut ${lengthWord(depth)} into ${nameOf(part)} on ${activeSpace.name}")
             }
     }
 
@@ -8637,8 +8675,8 @@ class Document {
         val curve = add(cx.helix(plane, pointInSpace(el), radius, pitch, n, hand), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
         curve.space = el.space
         note =
-            "${nameOf(curve)}: a ${hand.word} helix about ${nameOf(el)} — ${Format.num(evalMm(radius))} mm radius, " +
-            "${Format.num(evalMm(pitch))} mm per turn, rising out of ${el.space}"
+            "${nameOf(curve)}: a ${hand.word} helix about ${nameOf(el)} — ${lengthWord(radius)} radius, " +
+            "${lengthWord(pitch)} per turn, rising out of ${el.space}"
         return curve
     }
 
@@ -8696,7 +8734,7 @@ class Document {
         note =
             "${nameOf(curve)}: a ${hand.word} helix about ${nameOf(center)}, starting at ${nameOf(start)} — " +
             (r?.let { "${Format.num(it)} mm radius, " } ?: "") +
-            "${Format.num(evalMm(pitch))} mm per turn, rising out of ${center.space}"
+            "${lengthWord(pitch)} per turn, rising out of ${center.space}"
         return curve
     }
 
@@ -9132,7 +9170,7 @@ class Document {
         val solid =
             add(cx.tube(path, planeOfSpace(el.space), radius, noTurn(roll), noTurn(twist)), ElementKind.SOLID, Styles.SOLID)
         solid.space = el.space
-        madeSolid(solid, "a ${Format.num(evalMm(radius))} mm tube along ${nameOf(el)}")
+        madeSolid(solid, "a ${lengthWord(radius)} tube along ${nameOf(el)}")
         return solid
     }
 
@@ -9324,7 +9362,7 @@ class Document {
         val plane = cx.facePlane(base.ref as SolidRef, SolidFace.TOP)
         return add(cx.extrude(cx.sketchOn(plane, region), depth), ElementKind.SOLID, Styles.SOLID)
             .also {
-                madeSolid(it, "${nameOf(el)} raised ${Format.num(evalMm(depth))} mm off ${nameOf(base)}'s top face")
+                madeSolid(it, "${nameOf(el)} raised ${lengthWord(depth)} off ${nameOf(base)}'s top face")
             }
     }
 
@@ -9352,7 +9390,7 @@ class Document {
         val area = add(cx.sectionAt(el.ref as SolidRef, height), ElementKind.AREA, Styles.RESULT)
         val where = if (activeSpace.isPlan) "the plan" else activeSpace.name
         note =
-            "${nameOf(area)} is the cross-section of ${nameOf(el)} at ${Format.num(evalMm(height))} mm — a 2D area " +
+            "${nameOf(area)} is the cross-section of ${nameOf(el)} at ${lengthWord(height)} — a 2D area " +
             "drawn in $where, so a prism's lands exactly on its own footprint and nothing looks new. " +
             "Dimension it, or extrude it again."
         return area
@@ -9947,8 +9985,34 @@ class Document {
         scalars.firstOrNull { it.ref.node === ref.node }
             ?: newParameter("v", (Evaluator().eval(ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q } ?: 0.0.mm)
 
-    private fun evalMm(ref: ScalarRef): Double =
-        (Evaluator().eval(ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q?.mm } ?: 0.0
+    /** [ref]'s value right now, or null when its construction is invalid — the one read every helper below shares. */
+    private fun evalQuantity(ref: ScalarRef): Quantity? =
+        (Evaluator().eval(ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q }
+
+    /**
+     * [ref] read as millimetres, and **0 for anything that is not a length right now** — an invalid
+     * construction as before, and now a value of the wrong dimension too.
+     *
+     * The second half is not a nicety (OP-27). `Quantity.mm` *throws* on a dimension mismatch (OP-7), and a
+     * builder that reads a picked scalar this way throws with it — after the element it was describing has
+     * already been added, and before the step that would have owned it was written. That is exactly how a
+     * user's tube came to exist with no construction step behind it: the number they picked in the panel was
+     * dimensionless, and the tool's own *status message* was what blew up. A tool's inputs are checked where
+     * OP-7 says they are, in the node, which reports a reason and heals; nothing on the way to that may
+     * throw.
+     */
+    private fun evalMm(ref: ScalarRef): Double = evalQuantity(ref)?.takeIf { it.dim == Dimension.LENGTH }?.mm ?: 0.0
+
+    /**
+     * [ref] **in the words the panel would use** — "12 mm" for the length these notes expect, and the value
+     * as it actually stands ("5", "90°") when what was picked is something else.
+     *
+     * The honest half matters as much as the pretty one: a scalar of the wrong dimension makes the node
+     * invalid (OP-7), so the 3D view stays empty, and a note that said "0 mm" would leave the user with no
+     * way to connect that empty view to the parameter they picked. What is *wrong* with it is said by
+     * [madeSolid], which reads the result rather than guessing from an input.
+     */
+    private fun lengthWord(ref: ScalarRef): String = Format.quantity(evalQuantity(ref) ?: 0.0.mm)
 
     /** The thick path [el] is the footprint of, if any. */
     fun thickNetworkOf(el: Element): ThickNetwork? = thickNetworks.firstOrNull { it.footprint === el }
@@ -10286,10 +10350,17 @@ class Document {
         return true
     }
 
+    /**
+     * [ref] in millimetres for a *geometric* read, 0 for anything that is not a length right now —
+     * [evalMm]'s twin, dimension-safe for the same reason (OP-27): this one is asked at **draw** time, so
+     * a wall whose thickness parameter is dimensionless would otherwise throw out of the renderer rather
+     * than simply drawing nothing.
+     */
     private fun scalarMm(
         ref: ScalarRef,
         ev: Evaluator,
-    ): Double = ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm ?: 0.0
+    ): Double =
+        ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.takeIf { it.dim == Dimension.LENGTH }?.mm ?: 0.0
 
     /**
      * Add an interval feature to leg [legIndex] of [tp] (the UI's door/window opening) at [position]

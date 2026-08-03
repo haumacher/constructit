@@ -106,6 +106,42 @@ object DocumentFormat {
 
     // ---- writing ----
 
+    /**
+     * What a **file** save produced: the script, or the reason there is none (OP-27's backstop).
+     *
+     * The shape [constructit.exchange.Exports] already uses for the same reason — a route that can decline
+     * has to say so in the user's terms, and the decision belongs in `commonMain` where the tests can reach
+     * it, not in whichever shell asked.
+     */
+    class SaveOutcome(val text: String?, val refusal: String?)
+
+    /**
+     * Save for a **file** (or a clipboard, which is a file by another route) — [save], with OP-27's invariant
+     * checked first: a document holding an element no step created is **refused by name** rather than written
+     * without it.
+     *
+     * The backstop, and deliberately the last of three rather than the only one: an unrecorded element is
+     * refused at the gesture that would make it ([Editor.transacted]), and the tool table is asserted against
+     * it as a whole. This is what stands between a breach that got past both and a file that silently lost
+     * the user's work — which is what the defect this comes from actually cost: the tubes were on screen, and
+     * the saved script did not mention them.
+     *
+     * [save] itself does **not** check, and must not: it is also the undo substrate (OP-18), and a snapshot
+     * that could refuse would make an editing session fail instead of an editing *step*.
+     */
+    fun saveFile(doc: Document): SaveOutcome {
+        val stepless = doc.steplessElements()
+        if (stepless.isEmpty()) return SaveOutcome(save(doc), null)
+        val named = stepless.take(4).joinToString(", ") { doc.nameOf(it) }
+        val more = if (stepless.size > 4) " (and ${stepless.size - 4} more)" else ""
+        return SaveOutcome(
+            null,
+            "Not saved: ${if (stepless.size == 1) "$named was" else "$named$more were"} built without a construction " +
+                "step, so the file would not contain ${if (stepless.size == 1) "it" else "them"}. Undo back past " +
+                "${if (stepless.size == 1) "it" else "them"} and build again.",
+        )
+    }
+
     fun save(doc: Document): String {
         val ev = Evaluator()
         val present = doc.elements.toHashSet()

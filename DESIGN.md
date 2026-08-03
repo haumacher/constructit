@@ -1365,6 +1365,98 @@ name". The API is also switched off over `file:`, where a page has no origin to 
 refuses the picker anyway; that keeps the browser E2E on the fallback path, where it asserts the download's
 name rather than hanging on a native dialog.
 
+### Why the format records operations, and the invariant that carries (OP-27 — RESOLVED)
+
+The user asked it directly, after a defect: *"It would be better that such an error cannot occur by design.
+Why does the file format record operations instead of model elements and their linkage?"* The rationale was
+never written down — OP-18 records *what* the format is and what that buys, never *why an operation is the
+unit*. It is this, and it is not an implementation convenience:
+
+- **A construction system's sequence *is* its model.** The whole premise (OP-5) is that geometry is a pure
+  function of its inputs and that sharing a node *is* equality. A file of elements and their linkage would be
+  a dump of that function's *result*, and the function is the thing the user owns: it is what recomputes, what
+  undo replays, and what a parameter change moves. Recording elements would mean re-deriving the sequence on
+  load, which is the same class of mistake as re-scoring a branch (OP-1) — the model would stop being a pure
+  function of what is stored.
+- **A step preserves intent; a linkage preserves only outcome.** Which intersection branch (OP-1), which side
+  of a wall (OP-21), which end a chain runs to, which face a cut goes into — these are *choices*, and a step
+  keeps them verbatim while an element graph would have to reconstruct them from geometry that has since
+  moved. "Recorded, never discovered" is one rule with many instances, and this is where it lives.
+- **Migration is at the level of steps, not of internal graph shape.** A stored literal's meaning is frozen
+  the moment a build that writes it ships (OP-18's *Versioning & migration*). Steps are a small, named,
+  human-readable vocabulary; the node graph behind one is free to change completely — and has, repeatedly —
+  without any file ever noticing. An element-and-linkage format would have frozen the graph itself.
+- **Patterns replay as rules, not as copies** (OP-23). One `orbit` step says *this gesture, round that
+  pattern*; a linkage format would have to store every copy and could no longer answer what happens when the
+  count changes. The same argument covers macros (OP-6) and thickened networks (OP-21).
+- It is also **the undo substrate** (OP-18) and **the naming authority**: one representation, so a saved file,
+  an undo snapshot and the name in the panel cannot drift apart.
+
+So the format is not the fault. **The fault is that an element could exist without a step.**
+
+#### The invariant
+
+> **Every element a document holds was created by exactly one journal step.**
+
+An element with no step is written to no file, reached by no delete, and dropped by the next undo — it exists
+on screen and nowhere else. `Document.steplessElements()` is the invariant stated as a query, and it is what
+the enforcement below is written in terms of.
+
+The defect that produced one: a user picked a **dimensionless** parameter in the panel for a tube's radius.
+The tool built the solid, added it to the document — and then its own *status message* read that quantity as
+millimetres, which throws on a dimension mismatch (OP-7). The throw escaped before `Document.recording` could
+write the step, so the tube stood in the drawing owned by nothing. It could not be deleted ("e20 has no
+construction step to remove"), it was in no saved file, and it drew nothing. What *should* have happened is
+OP-3's ordinary answer: the solid is invalid with the dimension named, and heals the moment the parameter is
+given a unit. That is what happens now.
+
+#### Could element creation be made private to the recording path?
+
+Partly, and the honest answer is worth recording because it bounds what "by design" can mean here.
+
+`Document.add` is already **the one place an element is born**, and it is private: nothing outside `Document`
+can make one. What is *not* private is the ~90 public builders the tool table calls (`tubeAlongCurve`,
+`extrudeSolid`, `segment`, …). Making an unrecorded call a **compile** error means giving those builders a
+receiver only a recording scope can produce — `fun Recording.tubeAlongCurve(...)` — which Kotlin can express,
+but only by threading that receiver through every one of them and through the `ToolDef.build` lambda's
+signature. Ninety-odd declarations, every test that exercises a builder directly, and no way to do half of it:
+a partially threaded receiver is strictly worse than none, because it reads as a guarantee that is not there.
+It was judged not worth the risk against a 1600-test suite, and it is recorded here as the option that was
+weighed rather than the one that was missed. Kotlin offers no lighter form — there is no way to demand *"you
+are inside this function"* without a receiver to prove it.
+
+So the rule is the weaker one, and it is stated rather than assumed: **public element creation is always
+recorded; the direct builder call is the internal path, and it is named.** What that closes is everything the
+UI can reach, which is what the defect was about; what it leaves open is a `Document` builder called from a
+test, which is where every one of them is called from today.
+
+#### How it is enforced — three layers, earliest first
+
+1. **The gesture is a transaction** (`Editor.transacted`). Every tool build — single-shot and repeating —
+   either leaves a step that owns what it made, or leaves the document exactly as it was. Two things can break
+   the pairing and both get the same answer: a build that **throws** (the step is written last, so a non-local
+   exit would strand the creations), and a build that **adds without recording** (nothing in the shell does
+   this, but only every `ToolDef` author remembering kept it that way). The restore is the undo substrate
+   itself — the saved script of the last checkpoint, replayed — so it is complete, and the refused gesture also
+   takes back the points its earlier clicks placed. The refusal speaks, naming the tool and the reason.
+   Underneath it, `Document.recording` makes the narrow guarantee it can make on its own: a body that throws
+   takes its elements and scalars with it, which are exactly what a `Step` owns.
+2. **The tool table is asserted as a whole** (`RecordedElementTest`): every row of `Tools.all` is driven
+   through the real gesture runner over a fixture holding something of every slot kind, and none may leave a
+   stepless element. A row that builds nothing proves nothing, so the number of rows that *did* act is
+   asserted too — the audit cannot go vacuous by the fixture drifting. This is what makes the fix general
+   rather than shaped like the bug report, and what stops a future tool from reintroducing it.
+3. **A file save refuses, by name** (`DocumentFormat.saveFile`). A document holding an element no step created
+   is not written without it: the save declines and says which elements and why. `DocumentFormat.save` itself
+   does **not** check and must not — it is also the undo substrate, and a snapshot that could refuse would
+   break an editing session rather than an editing step.
+
+The related lesson, cheap and worth stating: **nothing on the way to a result may throw.** A dimension
+mismatch is a *value* being wrong, which OP-7 says the node reports and OP-3 says heals; a status note that
+formats one must therefore be dimension-safe, and `Document.evalMm`/`scalarMm` now are. The second of those is
+read at *draw* time, where the same fault would have thrown out of the renderer — which is what the user's own
+file, whose wall thickness is a dimensionless parameter, would eventually have done.
+
 ### Junctions own the freedom at a meeting point (OP-20 — RESOLVED)
 
 Repeated reports of asymmetry — a leg draggable on one side of a junction but not the other, then a
@@ -7808,6 +7900,21 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
       canvas, and pickable in both by the same rule each view draws it with. The smooth mode is uniform
       Catmull–Rom with a **chord** end condition, chosen for locality over a natural spline's global solve.
       Steps 2–8 stand as written. See *Implementation status (as built — step 1)*.
+- [x] **OP-27 Why the format records operations, and the invariant that carries** — RESOLVED (the user's
+      question, session 49): the format is not the fault. An **operation** is the unit because a construction
+      system's sequence *is* its model (OP-5), because a step preserves the *choices* an element graph would
+      have to re-derive (OP-1's rule, one level up), because migration then works at the level of a small
+      named vocabulary rather than of internal graph shape (OP-18), and because patterns and macros replay as
+      **rules** rather than as copies (OP-23, OP-6). The fault was that an element could exist with **no**
+      step — unsaveable, undeletable, invisible to undo. The invariant is now stated (*every element was
+      created by exactly one journal step*, `Document.steplessElements`) and enforced in three layers: a tool
+      gesture is a **transaction** that either leaves a step owning what it built or leaves the document
+      untouched; the **whole tool table** is audited by test so no future row can reintroduce it; and a file
+      save **refuses by name** rather than writing a document without it. Compile-time privacy — element
+      creation reachable only from a recording scope — was weighed and **rejected on cost**, and the reason is
+      recorded: it needs a receiver threaded through ~90 builders and the `ToolDef.build` signature, and a
+      half-threaded one is worse than none. See *Why the format records operations, and the invariant that
+      carries*.
 
 ## Prior art to keep in mind
 
@@ -9750,6 +9857,29 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   existing argument, and a literal script written by the old tool is now a permanent load test proving it.
   **1646 → 1663 green**, no new golden, no existing golden changed. See *Implementation status (as built —
   step 3: the helix…)*, which records the second spelling in place.
+- **Session 50 — an element with no step, and the question that turned a bug into a doctrine (OP-27).** The
+  report was concrete: tubes built on a helix appeared, but could not be deleted (*"e20 has no construction
+  step to remove"*), were absent from the saved script, and drew nothing in the 3D view — and the script the
+  user sent carried the tell, `param "r2" = 5` sitting at the end with nothing consuming it. Reproduced
+  headlessly on their own file: the radius they had picked in the panel was **dimensionless**, and the tube
+  tool's own *status message* read it as millimetres, which throws (OP-7) — after the solid had been added and
+  before `Document.recording` could write the step that would have owned it. A cosmetic note destroying the
+  construction it described. Their second message is what the session is actually about: *"It would be better
+  that such an error cannot occur by design. Why does the file format record operations instead of model
+  elements and their linkage?"* The answer owed them was a rationale that had never been written down — a
+  construction system's sequence *is* its model, a step preserves the choices an element graph would have to
+  re-derive, migration then works on a named vocabulary rather than on internal graph shape, and patterns and
+  macros replay as *rules* — so the format is not the fault; **an element being able to exist without a step**
+  is, and that is now an invariant with a name and three enforcement layers (transactional gesture, table-wide
+  audit, save that refuses by name). The compile-time version of "cannot occur by design" was weighed and
+  rejected with its cost stated rather than quietly skipped: it wants a recording receiver threaded through
+  ~90 builders and the `ToolDef.build` signature, and half of it would be worse than none. The audit found the
+  fault was **not** one row's: the same throwing read sat in eight tool status messages and in the
+  wall-thickness read taken at *draw* time — the user's own file, whose wall thickness is the dimensionless
+  `cnt`, was one repaint away from throwing out of the renderer. What happens now is OP-3's ordinary answer:
+  the tube is built, recorded, **invalid with the dimension named**, and heals the moment the parameter is
+  given a unit. **1663 → 1671 green**, no new golden, no existing golden changed. See *Why the format records
+  operations, and the invariant that carries*.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
