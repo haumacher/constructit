@@ -3688,6 +3688,11 @@ class Editor(
                 // a sweep's slot (OP-26): the curve in space itself, picked where it is drawn — its plan
                 // projection here, the curve itself in the 3D view (`Document.sweepAlongCurve`)
                 SlotKind.PATH3 -> pickElement(world) { it.kind == ElementKind.SPACE_CURVE }
+                // an intersection curve's slot (OP-26, step 6): a click on what the working plane *draws* —
+                // the section of an ancestor solid (GitHub #9's one enumeration, read a fourth time). The
+                // element it yields is the solid; where the click landed is the branch, and the tool scores
+                // that once (`Document.intersectionCurve`)
+                SlotKind.SECTION_CURVE -> pickSectionSolid(world)
                 SlotKind.SIDE -> true // captures the click position only; creates nothing
             }
         // …and a slot the ordinary pick missed may still have landed on the working plane's **section**, whose
@@ -3870,6 +3875,17 @@ class Editor(
         filter: (Element) -> Boolean,
     ): Boolean {
         val el = HitTest.nearest(doc, ev(), world, tolWorld(), proj(), filter) ?: return false
+        pickedElements.add(el)
+        return true
+    }
+
+    /**
+     * A pick that lands on a working plane's **section**, taken as the *solid* it is the section of (OP-26,
+     * step 6) — nothing is materialized, because what the tool builds is the whole curve rather than one
+     * named member of the section.
+     */
+    private fun pickSectionSolid(world: Vec2): Boolean {
+        val el = doc.sectionSolidNear(doc.activeSpace, world, tolWorld(), ev()) ?: return false
         pickedElements.add(el)
         return true
     }

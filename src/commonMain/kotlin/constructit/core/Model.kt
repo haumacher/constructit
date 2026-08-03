@@ -10,6 +10,7 @@ import constructit.geom.EllipticArc
 import constructit.geom.Line
 import constructit.geom.Loop
 import constructit.geom.Path3
+import constructit.geom.Path3Set
 import constructit.geom.Plane3
 import constructit.geom.PlaneSection
 import constructit.geom.PointSet
@@ -82,6 +83,18 @@ data class EllipseValue(val ellipse: Ellipse) : Value
 data class EllipticArcValue(val arc: EllipticArc) : Value
 
 data class PointSetValue(val set: PointSet) : Value
+
+/**
+ * An **ordered set of curves in space** (OP-26, step 6): OP-1's [PointSetValue] one dimension up — see
+ * [Path3Set].
+ *
+ * A compound value with a `Select` beside it rather than one node per curve, for the reason [SectionValue]
+ * is one: *how many* curves an intersection has is a function of the operands' values (a plane sliding along
+ * a bent bar cuts it once, then twice, then once again), so a set of nodes sized by it would have to be
+ * regenerated on every edit. The index is structural and taken verbatim on replay; an index the geometry no
+ * longer has is invalid with a reason and heals (OP-3).
+ */
+data class Path3SetValue(val set: Path3Set) : Value
 
 data class DirectionValue(val dir: Direction) : Value
 

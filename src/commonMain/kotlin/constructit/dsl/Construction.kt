@@ -16,6 +16,7 @@ import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Node
 import constructit.core.OpNode
+import constructit.core.Path3SetValue
 import constructit.core.Path3Value
 import constructit.core.PlaneValue
 import constructit.core.Point3Value
@@ -54,6 +55,8 @@ import constructit.geom.Frames3
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Handedness
+import constructit.geom.Intersect3
+import constructit.geom.IntersectionCurve
 import constructit.geom.Justification
 import constructit.geom.Line
 import constructit.geom.LoftGuide
@@ -145,6 +148,9 @@ typealias Point3Ref = Ref<Point3Value>
 
 /** A **curve in space** (OP-26) — see [Construction.pathThrough] and [constructit.geom.Path3]. */
 typealias Path3Ref = Ref<Path3Value>
+
+/** An **ordered set of curves in space** (OP-26, step 6) — OP-1's solution set one dimension up. */
+typealias Path3SetRef = Ref<Path3SetValue>
 
 /**
  * One input of a [Construction.loft] — a section of the run, or a guide that shapes it (OP-17).
@@ -2844,6 +2850,70 @@ class Construction {
         op(solid, plane) {
             EvalResult.Ok(SectionValue(Section3.sectionOf((it[0] as SolidValue).solid, (it[1] as PlaneValue).plane)))
         }
+
+    /**
+     * The **curves in space where [plane] meets the solid [section] is the section of** (OP-26, step 6) — an
+     * ordered solution set, OP-1's own shape one dimension up.
+     *
+     * **The existing section machinery, promoted rather than paralleled.** [section] is the very node a
+     * working plane's context is drawn from, so the pieces this chains and lifts are the pieces on screen —
+     * there is one answer to "where does this plane cut this solid", read twice. What is added is chaining
+     * (the cut of one body's boundary joins where its faces meet) and lifting (through the plane's own
+     * orthonormal frame, an isometry). See [constructit.geom.Intersect3] for the ordering rule, for why it is
+     * stable, and for where the answer is exact.
+     *
+     * Both inputs are nodes, so the set is a pure function of the solid and the plane: move either and every
+     * curve follows by recompute, with nothing rebuilt (OP-21).
+     */
+    fun intersectionCurves(
+        section: SectionRef,
+        plane: PlaneRef,
+    ): Path3SetRef =
+        op(section, plane) {
+            EvalResult.Ok(
+                Path3SetValue(Intersect3.curvesOf((it[0] as SectionValue).section, (it[1] as PlaneValue).plane)),
+            )
+        }
+
+    /**
+     * Curve [index] of an intersection's ordered set (OP-26, step 6) — the `Select` beside the set, and OP-1's
+     * doctrine unchanged one dimension up.
+     *
+     * The index is **structural** and taken verbatim on replay; the *ordering* is a stated function of the
+     * operands' values ([constructit.geom.Intersect3]). So a branch never silently becomes another branch —
+     * but an edit that re-sorts the set does move which curve index 1 names, which is what an ordered solution
+     * set means and is recorded as such.
+     *
+     * When the geometry no longer has that many curves — a plane slid off the second leg of a bent bar — this
+     * is invalid **with a reason** and heals the moment the curve comes back (OP-3), which is the identical
+     * answer [selectAt] gives a quartic that has dropped to two solutions.
+     */
+    fun selectCurve(
+        set: Path3SetRef,
+        index: Int,
+    ): Path3Ref =
+        op(set) {
+            val curves = (it[0] as Path3SetValue).set.curves
+            when {
+                curves.isEmpty() -> EvalResult.Invalid("the plane does not cut that solid, so there is no curve where they meet")
+                index < 0 || index >= curves.size ->
+                    EvalResult.Invalid(
+                        "the plane now cuts that solid in ${curves.size} curve(s), so curve ${index + 1} is gone — " +
+                            "move the plane back until it exists, or take the intersection again",
+                    )
+                else -> EvalResult.Ok(Path3Value(curves[index].path))
+            }
+        }
+
+    /**
+     * The curves [set] currently holds — what a click scores its branch against, exactly as [solutionCount]
+     * is what a four-branch intersection asks before it selects.
+     */
+    fun solutionCurves(
+        set: Path3SetRef,
+        ev: Evaluator,
+    ): List<IntersectionCurve> =
+        ((ev.eval(set.node) as? EvalResult.Ok)?.value as? Path3SetValue)?.set?.curves ?: emptyList()
 
     /**
      * Curve [index] of [section] as a **segment** — a construction input in the plane's own coordinates.

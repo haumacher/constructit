@@ -11,6 +11,7 @@ import constructit.core.Evaluator
 import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
+import constructit.core.Path3SetValue
 import constructit.core.Path3Value
 import constructit.core.PlaneValue
 import constructit.core.Point3Value
@@ -191,6 +192,8 @@ object Svg {
                 // …and a section is a reading of a solid: it is drawn as the working plane's context by the
                 // canvas, which knows which plane it is standing on. This serializer does not.
                 is SectionValue -> {}
+                // …and an intersection's curves are that same reading, one dimension up (OP-26, step 6).
+                is Path3SetValue -> {}
                 null -> {}
             }
         }

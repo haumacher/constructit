@@ -5897,9 +5897,13 @@ Each step is whole on its own — a thing that works, not a layer that waits.
    both; refuses on parallel spaces or a non-overlapping parameter range. The routing workhorse, and it
    needs no new editing surface at all — it is how routing was done on drawing boards.~~ **Built in session
    44** — see *Implementation status (as built — step 5: combine two views, the routing workhorse)*.
-6. **Intersection curves.** Generalized from the existing section machinery (plane ∩ solid), then surface ∩
+6. ~~**Intersection curves.** Generalized from the existing section machinery (plane ∩ solid), then surface ∩
    surface where surfaces exist. Ordered solution set plus a persisted `Select` — OP-1's branch doctrine
-   unchanged, one dimension up.
+   unchanged, one dimension up.~~ **Built in session 45**, and smaller than this sentence: **plane ∩ solid**
+   only, because there is no surface layer to intersect (that is deliberately outside OP-26 — see the closing
+   note of *To be discussed*). **Solid ∩ solid** and **plane ∩ plane** are cut with their arguments, as is an
+   `Arc3` case — see *Implementation status (as built — step 6: intersection curves, the section promoted into
+   space)*.
 7. **Connect.** A derived joining piece between two curve ends, control points from the endpoint tangents
    plus tension scalars; G1, then G2 as a mode. What makes a routed path look manufactured rather than
    kinked — and derivation, not solving.
@@ -6848,6 +6852,177 @@ coming back; the two gesture refusals by name; and an SVG golden of the plan, in
 **is** the drawn curve, twice over the same polyline. **1487 → 1519 green**, one new golden, no version bump,
 no existing golden changed.
 
+### Implementation status (as built — step 6: intersection curves, the section promoted into space)
+
+Step 6 of the order above, and it is deliberately **smaller than the entry's own sentence**. The entry reads
+*"generalized from the existing section machinery (plane ∩ solid), then surface ∩ surface where surfaces
+exist"* — and surfaces do not exist, so what is built is **plane ∩ solid as a first-class `Path3`**, an
+ordered set of them, and a persisted `Select`. The two other operand pairs the entry could be read to promise
+are **cut**, each with its argument, below. No connect, no projection onto a face, no imported curves (steps
+7–9), no surface layer, and nothing from the unbounded-tool record.
+
+**It is the existing machinery promoted, not a second answer to one question.** `Section3.sectionOf` already
+computes plane ∩ solid — exactly where the drawing has a name for the cut, in chords where it does not — and
+the node that holds it is the one a working plane's context is drawn from (`Document.spaceSectionNodeOf`, one
+per (space, solid) since GitHub #9). Step 6 hangs on **that very node**, so what the curve follows is what the
+canvas shows, piece for piece; there is no parallel derivation that could disagree, and every improvement to
+the section's exactness reaches the curve for free (as the conics package's already has). What is added is the
+only two things that turn *a drawing in a plane* into *a curve in space* — chaining and lifting — and they
+live in one new file, `geom/Intersect3.kt`.
+
+**The chaining is a fact about the solid rather than a guess.** The pieces of a section are the cut of one
+body's boundary, so two of them share an endpoint exactly when the faces they came from share an edge the
+plane crosses; the two faces compute that crossing independently and agree to floating-point noise. The match
+is made within `GeomMath.JOIN_TOL`, the tolerance the section's own ring assembly already uses, and where
+three or more pieces meet the continuation with the **lowest index in the section's own structural piece
+order** is taken — deterministic, and stated rather than left to whatever order a set iterates in. That is
+also the reason this is not the *joining* the to-be-discussed item 4 forbids by tolerance: nothing is being
+joined that the user drew separately; one cut is being read as the one curve it is.
+
+**The ordering rule, and the argument that it is stable.** The curves come back ordered by their **lowest
+point in the cutting plane's own coordinates** — smallest `v`, then smallest `u`, and the section's own piece
+order as a final tie-break. Three things recommend it over ordering by which structural face each run touches,
+which was the other candidate:
+
+- it is a property of the **geometry** alone, so the **mesh route** — where there is no structure to order by
+  at all — is ordered by the same rule as the analytic one. One question keeps one answer, which is worth more
+  here than the extra stability a structural order would have bought on the half of the cases that have one;
+- it is **continuous** in the parameters. Each run's lowest point moves continuously as the drawing moves, so
+  the order can change only where two runs have the *same* lowest point — a genuine tie, and precisely the
+  class of degeneracy OP-1's own rules (the side of the directed centre line; the ascending parametric angle)
+  are continuous everywhere except at. It is asserted as such: a bar's two arms keep their order through five
+  cutting heights and through four different spacings, right down to where they nearly touch;
+- it is stated in the **plane's** frame, which is where this set is parented anyway — the curves are drawn in
+  those coordinates and picked in them — so the rule turns with the construction and never with the viewport.
+
+The extremes are computed **exactly per piece kind**: a segment's endpoints, an arc's lowest point where the
+arc contains it, an ellipse's stationary parameter in closed form, a cubic's from the roots of its derivative.
+Never from a tessellation, so the order does not depend on how finely anything is drawn — the same rule step 5
+follows for its turning points, and for the same reason.
+
+**Each run is canonical in itself**, so the same geometry gives the same curve bit for bit whichever face the
+section happened to list first: a closed run is oriented counter-clockwise in the plane's coordinates (OP-14's
+normalisation) and rotated to begin at its lowest corner (the translation-invariant rule `Section3`'s own face
+sections already use, so moving a space's origin cannot renumber what it cuts); an open run is traversed from
+whichever end is lower.
+
+**Closure is read off the operands here, and that is not a breach of `Path3`'s structural rule.** For a
+*constructed* curve `closed` is a claim the user made and must not drift. For a **derived** one — OP-26's
+second provenance — whether the cut comes back to itself is a fact about the solid and the plane, read off the
+very same geometry that decides *how many* curves there are. The two are told apart by provenance, which the
+design already distinguishes, and not by a flag.
+
+**The branch doctrine, unchanged one dimension up.** `Path3SetValue` sits beside `PointSetValue`, `selectCurve`
+beside `select`/`selectAt`, and the index is **structural**: scored once from the click that made it, written
+into the step's existing `signs=` (so no new file argument and no version bump), and taken verbatim on every
+replay. The regression it is guarded against is the fillet's own — a bar is cut in two arms, the far one is
+chosen by a click, the bar's inner legs are then dragged until that click is nearest the *other* arm while the
+order is unchanged, and the reload still hands back the arm the user chose. **A selection that no longer
+exists is invalidity that heals** (OP-3), by name: slide the datum to where the notch has closed and the cut
+is one loop, and the node says *"the plane now cuts that solid in 1 curve(s), so curve 2 is gone"*, everything
+built on it hides, and sliding back brings all of it straight back.
+
+**Exactness follows step 5's rule, and the statement is stronger here.** The map from the cutting plane's
+(u, v) into the world is an **isometry** — the frame is orthonormal — so exactness and error carry across it
+untouched, with no Lipschitz argument and no factor anywhere:
+
+- a **segment** of the section becomes an exact `Seg3`, and a **cubic** an exact `Bezier3` (affine invariance,
+  the identical argument `Curves3.projectedOnto` makes in the other direction). A prismatic body's cut, a
+  pyramid's, a face's own boundary: **exact, at zero tolerance** — a plate cut at 15 mm gives the four corners
+  to the last bit, and a pyramid cut at half height gives its exact 50 × 50 square standing in space;
+- a **conic** — the circle a plane cuts across a round bar, the ellipse an inclined plane cuts — has **no case**
+  in `Curve3Element`, so it is **fitted**, to a stated `Intersect3.FIT_TOL_MM` = **1e-4 mm**, deliberately the
+  same number `Combine3.FIT_TOL_MM` states so that OP-26 has one fitting tolerance rather than two. The
+  construction is the classical one: on a span of parametric width `Δ` the cubic leaves each end along the
+  ellipse's own derivative scaled by `(4/3)·tan(Δ/4)`, which carries from the circle to the ellipse with no
+  change at all because an ellipse *is* an affine image of a circle in that parameter and a Bézier is
+  affine-invariant. The span count is found by halving until the error, **measured** at eight fixed interior
+  parameters per span, is under the tolerance — deterministic, so a reload lands on the same bit, and measured
+  at *matched* parameters, which overstates the geometric distance and therefore makes the number an upper
+  bound rather than a hope. A tenth of a micron is two hundred times finer than `GeomMath.TESS_TOL_MM`, so the
+  fit is never what a made part is wrong by; it is asserted against the bar's analytic radius and against the
+  ellipse's own equation, never against the mesh;
+- a piece that is already **chords** where the section itself draws chords — a ruled face's cut, a mesh body's
+  — stays chords, and the curve **says so**: its class is `GeomMath.TESS_TOL_MM`, the section's own drawing
+  tolerance, which is not this step's to claim or to improve. The class is carried **per curve** rather than
+  per answer, because a section genuinely mixes the two, and it is carried by the section machinery itself
+  (`DrawnPiece`, a flag beside each drawn piece) rather than re-derived here — the one place that knows is the
+  one place that says.
+
+**The mesh route is in, and it is what an imported body has.** A section with no faces to name still draws,
+and it still chains and lifts, so *"where does this plane cut this reference body"* has an answer — which is
+the JT note's own reading of an imported mesh: it is a body, and what it can do is said rather than refused
+wholesale. What it cannot claim is exactness, and it does not.
+
+**The gesture is one click, and it does both halves of a branch choice at once.** `SlotKind.SECTION_CURVE` is
+a pick resolved against what the working plane *draws* (`Document.sectionSolidNear`, the fourth reader of
+GitHub #9's one enumeration) — so the click names the body, and *where it lands* names which of the cut's
+curves is meant. That is OP-1's own creation UX (*"clicking near one intersection sets the `Select` sign to
+that side"*) one dimension up, with no scalar, no second pick and no new geometry to prepare first.
+
+**Parenting: the curve rides both operands**, which is the whole of the rule paying out. Retype the plane's
+height and the curve rises; tilt the datum and it turns with it; drag the body's outline and it grows — each
+asserted by the defining property (every sample on the plane, and on the solid's own triangles) rather than by
+a coordinate. It belongs to the **plane's** space, which is where its drawing is, the coordinates a pick of it
+measures against, and the space whose normal starts a sweep's frame.
+
+**What it cost outside its own file.** One value kind, two `Construction` ops plus one accessor, one `Document`
+method plus one pick helper, one `SlotKind`, one `Editor` line and one `ToolDef` row — and no controller code,
+no file-format argument and **no version bump**: the step is an ordinary `tool intersectioncurve els=… clicks=…
+signs=…` line, so `save → load → save` is byte-equal and a reload re-derives the curve from the body and the
+plane as they now stand. `PlaneSection` gained `DrawnPiece` beside its pieces; `drawn` is now a derived
+accessor over them, so nothing that only wanted the geometry changed at all.
+
+**Cut, each with its argument, and named so they are not looked for:**
+
+- **solid ∩ solid**, which the brief left to this step to judge. It is **not honestly computable with what
+  exists**, and approximating it would be the silent degrading this project ranks above every queued feature.
+  Two routes were considered. The **exact prismatic** algebra (OP-22) represents a body as a stack of slabs;
+  the curve where two such bodies' *surfaces* meet is not among the things that algebra names, and recovering
+  it would be a new derivation for the one special case of two prisms sharing an axis — a narrow answer
+  wearing a general name. The **Manifold** route yields the boundary of the intersection *body*, whose new
+  edges are triangle-soup polylines with no analytic pedigree at all: they would have no ordering rule that is
+  a property of the operands (the triangulation is not), and OP-9's sink rule is exactly that a mesh never
+  lifts back. So it is refused rather than shipped, and what does work is said instead: put a plane where the
+  two bodies meet and take the curve there, or subtract one from the other and take the section of the result.
+- **plane ∩ plane**, which "would be worth having only if it falls out" — and it does not: two planes meet in a
+  **line**, a line is unbounded, and a `Path3` states a run of a stated length. Step 5 refuses an unbounded
+  *view* for the identical reason, and bounding this one would need an input nobody has stated. It belongs
+  with the unbounded-tool record, not here.
+- **an `Arc3` case**, which would make the circle a plane cuts across a round bar exact instead of fitted. It
+  is the same cut step 5 recorded, kept for the same reason: a case is added with the producer that needs *it*,
+  and adding one here would still leave the **elliptic** half fitted — so the fitting machinery has to exist
+  either way, and what the case would buy is one family moving from a stated tenth of a micron to zero. Worth
+  doing when a producer wants an arc *as an arc* (a bend with a radius a bender can make), which is a different
+  demand from this one.
+- **a preview** while the tool is armed, and a **palette glyph** — both for step 2's reasons.
+- **a curve of a section that no index names** as anything other than part of its chain: the promotion reads
+  the *drawing*, so a face the plane cuts twice contributes both of its pieces to whatever runs they belong to,
+  and there is deliberately no accessor here that addresses a section's structural edge as a space curve. That
+  is `sectionSegment`'s job one dimension down and it already exists.
+
+Tests: `IntersectionCurveTest` (16) — the defining property asserted directly, by sampling the curve densely
+and measuring every point against the cutting plane (to 1e-12) and against the solid's own triangles with an
+independent point-triangle formula; the fitted circle and the fitted ellipse asserted at the stated tolerance
+against their analytic definitions, and asserted to be a genuine fit rather than an accident; the exact cases
+exact at **zero** tolerance; the mesh route naming its own class; two curves ordered by the stated rule, and
+the order holding through five cutting heights and four spacings; the canonical form (counter-clockwise, lowest
+corner first, an open run from its lower end); the piece extremes in closed form against hand-worked
+arithmetic; the chain walked **both ways** from a seed in the middle of an open run, which is the one thing a
+walk that lost its place going backwards would silently truncate; determinism bit for bit; and the count
+changing as a plane slides off and healing when it comes back. `IntersectionCurveToolTest` (16) — the one-click gesture and the exact loop it makes; two arms, the click
+choosing either, and the note naming which of the set and its exactness class; `signs=` in the file and a
+byte-equal `save → load → save` with the curve reloading piece for piece; the **stored branch surviving a move
+that would re-score differently**, with the re-scoring checked to differ so the probe means something; a
+selection that no longer exists going invalid by name and healing; the curve riding the plane's height, the
+datum's tilt and the body's own outline, each by the defining property; a **tube** swept along one, watertight;
+a **station** standing on one, at a hand-computable quarter of the way round the loop; drawn in the 3D view and
+picked in both; one undo taking the gesture back and leaving the body; the three gesture refusals by name (the
+plan, which draws no section; a click on nothing; a solid built *after* the plane, which is GitHub #9's
+acyclicity said where a click could otherwise break it); and the mesh route through the exact boolean's stack
+of slabs, which still yields its two rings and still says they are chords. **1521 → 1553 green**, no new
+golden, no version bump, no existing golden changed.
+
 ## Open points (to discuss one by one)
 
 - [x] **OP-1 Branch/continuity policy** — RESOLVED: deterministic, orientation-based branch
@@ -7045,9 +7220,10 @@ no existing golden changed.
       degenerate class it cannot resolve is **refused**, never leaked. Curves are tessellated first, so
       a boolean's boundary is an *approximated* curve — OP-15's rule, one dimension down. See *Exact
       prismatic booleans*.
-- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1, 2, 3, 4 and 5 built**
-      (sessions 37, 38, 39, 43 and 44 — the value with both views, then the frame and the sweep, then the
-      helix, then the station, then combining two views), the rest queued. A `Path3` of analytic pieces; a curve's **value** is world-space while its
+- [ ] **OP-26 Curves in space, and the sweep** — DESIGN AGREED (session 36); **steps 1, 2, 3, 4, 5 and 6
+      built** (sessions 37, 38, 39, 43, 44 and 45 — the value with both views, then the frame and the sweep,
+      then the helix, then the station, then combining two views, then the curve where a plane meets a solid),
+      the rest queued. A `Path3` of analytic pieces; a curve's **value** is world-space while its
       **construction** is always parented, so
       curves ride their parents and planarity is known rather than measured; the moving frame is
       **parallel transport** with a stated start frame (Frenet rejected — it flips at inflections and is
@@ -8837,6 +9013,39 @@ no existing golden changed.
   OP-26's own to-be-discussed item 4), unbounded views, more than two views, and an `Arc3` case for the one
   family that would then be exact. **1487 → 1519 green**, one new golden, no version bump, no existing golden
   changed. See *Implementation status (as built — step 5: combine two views, the routing workhorse)*.
+
+- **Session 45 — the curve where a plane meets a solid, and the branch doctrine one dimension up (OP-26, step
+  6).** The sixth step, and the first thing settled about it was **how much of its own entry is honest**. The
+  entry promised *"plane ∩ solid, then surface ∩ surface where surfaces exist"* — and surfaces do not exist,
+  so what shipped is plane ∩ solid; **solid ∩ solid** was examined and **refused** rather than approximated,
+  because neither route yields a curve this project may call one (the exact prismatic algebra does not name
+  the surfaces of a slab stack, and the mesh kernel's new edges are triangle soup with no analytic pedigree
+  and therefore no ordering rule that is a property of the operands — OP-9's sink rule, exactly); and
+  **plane ∩ plane** is a line, hence unbounded, hence the unbounded-tool record's business and not a step's.
+  What made the step small also made it clean: **nothing was re-derived.** The curve hangs on the very
+  `section(solid, plane)` node a working plane's context is drawn from, so what is on screen is what is
+  promoted, and every future improvement to the section's exactness reaches the curve for nothing — as the
+  conics package's already has. **The whole of the design was the ordering.** OP-1 says an ordered set plus a
+  persisted sign, and a set of *curves* needs a rule that is a pure function of the geometry and continuous
+  under drift: the answer is the **lowest point in the cutting plane's own coordinates** (`v`, then `u`),
+  computed exactly per piece kind rather than off a tessellation. It was chosen over ordering by structural
+  face because the **mesh route has no structure at all**, and one question deserves one answer more than the
+  analytic half deserves a second one; it is continuous, so it can only change at a genuine tie, which is the
+  same class of degeneracy the circle–circle and quartic rules live with. The persisted index is guarded by
+  the fillet's own regression, moved up a dimension: choose the far arm of a bent bar by clicking it, then
+  drag the bar's inner legs until that click is nearest the *other* arm with the order unchanged, and the
+  reload still gives the arm the user chose. A chosen curve that stops existing is **invalidity that heals**,
+  by name and with the count said. **Exactness is the vocabulary's fact again**, and the statement is stronger
+  than step 5's: the plane→world map is an **isometry**, so a prismatic cut is exact at zero tolerance and a
+  conic — which `Curve3Element` has no case for — is fitted to the same **1e-4 mm** step 5 states, measured
+  rather than assumed, with the error carried into space unchanged and no Lipschitz argument needed. Chords
+  stay chords and say so, per curve, because the section itself now carries the class beside each piece it
+  draws. The gesture is **one click** on what the plane already draws: it names the body and, by where it
+  lands, the branch — OP-1's own creation UX, and the fourth reader of GitHub #9's one enumeration. Cut and
+  named: solid ∩ solid, plane ∩ plane, an `Arc3` case (which would still leave the elliptic half fitted, so
+  the fitting has to exist either way), a preview and a palette glyph. **1521 → 1553 green**, no new golden,
+  no version bump, no existing golden changed. See *Implementation status (as built — step 6: intersection
+  curves, the section promoted into space)*.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -10637,7 +10846,14 @@ carried along a path is the missing capability rather than a refinement of an ex
 3a. ~~**The station** — one stated position along a path, as a sketch space (the *order of work*'s step 4,
    settled in session 37 and absent from session 36's numbering).~~ **Built in session 43.**
 4. ~~**Combine two views** — plan route × elevation, the routing workhorse.~~ **Built in session 44.**
-5. **Intersection curves** — the section machinery generalized, with OP-1's ordered set and persisted sign.
+5. ~~**Intersection curves** — the section machinery generalized, with OP-1's ordered set and persisted sign.~~
+   **Built in session 45**, as **plane ∩ solid** and nothing else: there is no surface layer, so *surface ∩
+   surface* has no operands; **solid ∩ solid** is refused rather than approximated (neither the exact prismatic
+   algebra nor the mesh kernel yields a curve with an analytic pedigree or an ordering rule that is a property
+   of the operands), **plane ∩ plane** is a line and so is unbounded, and an **`Arc3`** case is still kept for
+   the producer that needs an arc *as an arc*. Everything else the entry asked for is there: an ordered set
+   with a stated, continuous ordering rule, a persisted index that is never re-scored, and invalidity that
+   heals when a chosen curve stops existing.
 6. **Connect** — a derived G1/G2 joining piece from endpoint tangents plus tension.
 7. **Projection onto a face** — exact for analytic faces, honest or refused for a mesh.
 8. **Imported curves** — frozen literal + placement, plus a *recorded* planar-wireframe-to-sketch gesture.

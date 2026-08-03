@@ -117,6 +117,19 @@ enum class SlotKind {
      * partition where a click meets it.
      */
     PATH3,
+
+    /**
+     * A **curve of the working plane's section** (OP-26, step 6): the pick names the solid the section
+     * belongs to, and *where it lands* is the branch choice — one click doing both, which is exactly OP-1's
+     * creation UX ("clicking near one intersection sets the `Select` sign to that side") one dimension up.
+     *
+     * A slot of its own rather than [SOLID], and the reason is GitHub #9's: a working plane draws the section
+     * of every solid built before it, and that drawing is the only place those bodies are visible in these
+     * coordinates — a solid's own footprint hint belongs to the space it was sketched in. So the pick is
+     * resolved against what the plane draws (`Document.sectionSolidNear`), which keeps the standing rule that
+     * what is visible is what is pickable.
+     */
+    SECTION_CURVE,
 }
 
 /**
@@ -546,6 +559,17 @@ object Tools {
     const val COMBINE_VIEWS = "combineviews"
 
     /**
+     * **Intersection curve** (OP-26, step 6): the curve in space where the working plane you are drawing on
+     * meets a solid, as a first-class `Path3`.
+     *
+     * One click, and it does the two things a branch choice needs at once — it names the body (the section it
+     * lands on) and it picks *which* of the curves that cut has, which is OP-1's own creation UX ("clicking
+     * near one intersection sets the `Select` sign to that side") one dimension up. The index is then
+     * persisted in the step's `signs=` and never scored again.
+     */
+    const val INTERSECTION_CURVE = "intersectioncurve"
+
+    /**
      * **The sweep** (OP-26, step 2): a profile carried along a curve in space, on the rotation-minimizing
      * moving frame. Two ids because the *profile* differs — a radius typed for a tube, an area clicked for
      * anything else — exactly as [CIRCLE] and [CIRCLE_R] are two ids for one shape.
@@ -815,6 +839,11 @@ object Tools {
             // own reason, and here it is the whole gesture: the second view *has* to be in another space, so
             // switching the sketch plane between the two clicks is the point rather than a convenience.
             ToolDef(COMBINE_VIEWS, "Combine two views", ToolCategory.CURVES, listOf(SlotKind.CURVE, SlotKind.CURVE), crossSpace = true, help = "Click the route drawn in one space — the plan — then switch the sketch plane and click the route drawn in the other — the elevation: the curve in space whose shadow in each of them is the curve you drew there. This is how a route was laid out on a drawing board, and both views stay ordinary drawings: drag a point of either, or tilt either space, and the run follows. The two spaces must meet (parallel ones have no common direction), each view must run one way along that common direction, and only the stretch both views cover becomes a run.", slotNames = listOf("first view", "second view")) { d, p, _ -> d.combineViews(p.elements[0], p.elements[1]) },
+            // **Intersection curves** (OP-26 step 6), and one row is the whole cost. One click, on the drawn
+            // section: it names the body and, by where it lands, which of the cut's curves is meant — the
+            // branch is scored once and rides the step's existing `signs=` (OP-1/OP-18), so a reload never
+            // scores again. No scalar, no second pick, no new file argument.
+            ToolDef(INTERSECTION_CURVE, "Intersection curve", ToolCategory.CURVES, listOf(SlotKind.SECTION_CURVE), help = "On a working plane, click the section of the body you want: the curve in space where that plane meets that solid becomes a curve like any other — sweep a tube along it, stand a station on it, carry a cut along it. A plane cuts a body in several curves in general (a bent bar is cut twice, a tube gives two loops); the one you click is the one you get, and that choice is remembered, so moving the plane afterwards never swaps to another curve. Move the body or the plane and the curve follows. The plan draws no section — open a working plane first.", slotNames = listOf("section of a solid")) { d, p, _ -> d.intersectionCurve(p.elements[0], p.at, p.signs.firstOrNull()) },
             ToolDef(OUTLINE, "Outline", ToolCategory.RESULT, listOf(SlotKind.CURVE), repeating = true, followsBoundary = true, shortcut = 'O', help = "Click the curves round the boundary in order, then click the first again (or press Enter) to close it.", slotNames = listOf("boundary curve"), icon = Icons.OUTLINE) { d, p, _ -> d.buildOutline(p.elements, p.clicks) },
             ToolDef(THICKEN, "Thicken (wall over curves)", ToolCategory.RESULT, listOf(SlotKind.CURVE), scalars = listOf(len("thickness")), repeating = true, minPicks = 1, sidePerPick = true, replicates = false, extendsResult = true, preview = Previews::thicken, help = "Type a thickness, set Wall side, then click the curves the wall follows — segments, arcs or Béziers that meet end to end, or end part-way along one another (a T joins with no seam). The side applies to the next click, so it can change per curve. Enter (or clicking the first curve again) builds it; a disconnected pick is refused. Click an existing wall first to *extend* it instead: its thickness stays its own and its openings, dimensions and solids follow (Alt on that first click starts a new wall there instead).", slotNames = listOf("carrier curve"), icon = Icons.THICKEN) { d, p, s -> d.buildThickNetwork(p.elements, p.signs.map { Tools.sideOf(it) }, s[0]) },
             ToolDef(CONCENTRIC, "Concentric circle", ToolCategory.CURVES, listOf(SlotKind.CIRCLE, SlotKind.SIDE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click a circle or arc, then click inside or outside for the concentric circle.", slotNames = listOf("circle", "side"), icon = Icons.CONCENTRIC) { d, p, s -> d.concentricCircle(p.elements[0], s[0], p.at) },
@@ -1044,6 +1073,7 @@ object Tools {
             SlotKind.LOFT_PART -> "section, apex or guide"
             SlotKind.POINT3 -> "point in space"
             SlotKind.PATH3 -> "curve in space"
+            SlotKind.SECTION_CURVE -> "section of a solid"
         }
 
     /** The glyph a palette button shows for [id] — [SELECT]'s included, which is not a [ToolDef]. */

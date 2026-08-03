@@ -349,6 +349,21 @@ combine each part. And two views that do not cover the same stretch are not desc
 ranges said out loud; only the stretch they share becomes a run, and it goes the way the first view you picked
 goes.
 
+**Intersection curve — where a working plane meets a body, as a curve you can build on.** Every plane that is
+not the plan already draws the section of every solid built before it; *Intersection curve* turns that drawing
+into a **curve in space**, so you can sweep a tube along the edge of a cut, stand a station on it, or carry a
+cut along it. One click does the whole gesture: click the section of the body you want, and where you click
+says which curve you mean — because a plane cuts a body in **several** curves in general (a bent bar is cut in
+two places, a tube gives two loops). They come in a stated order — lowest first, in the plane's own
+coordinates — and the one you clicked is **remembered**, so moving the plane afterwards never quietly swaps you
+onto another curve. If the curve you chose stops existing, the drawing says so in those words and everything
+built on it hides until it comes back. The curve rides **both** things it was cut from: retype the plane's
+height, tilt the datum, or drag the body's outline, and it follows. Where the cut is straight it is exact to
+the last bit — a plate's, a pyramid's; where it is a circle or an ellipse the vocabulary has no name for that
+curve in space, so it is fitted and the error is **said**: a tenth of a micron again. And a body with no
+analytic pedigree at all — an imported mesh, a stack of slabs from the exact boolean — still gives you the
+curve, in the chords its section already draws, and says that is what it is.
+
 **A working plane's context is the part's section — and the section is an input.** Drawing on a plane that is
 not the plan needs to know where the material is, so every such plane draws **the part's section at itself**,
 in its own coordinates: a face space draws its face's true boundary (a pyramid's lateral face draws its

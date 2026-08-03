@@ -70,6 +70,7 @@ import constructit.geom.FilletVariant
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Handedness
+import constructit.geom.IntersectionCurve
 import constructit.geom.Justification
 import constructit.geom.Mesh3
 import constructit.geom.Plane3
@@ -8692,6 +8693,128 @@ class Document {
             "${elevation.space} is ${nameOf(elevation)} — move either drawing, or either space, and it follows"
         return curve
     }
+
+    // ---- intersection curves: where a working plane meets a solid (OP-26, step 6) ----
+
+    /**
+     * The ancestor solid whose section at [space]'s plane runs nearest [at], within [tol] — what a click on
+     * the drawn section names.
+     *
+     * The **fourth reader of one enumeration** (GitHub #9: *"a plane should use all intersections with
+     * ancestor solids as input geometry"*), beside what the canvas draws, what a section input can take and
+     * what an origin can be anchored on. So the rule stays *what is visible is what is pickable*: the click
+     * reaches whichever section it lands on, and nothing that is not drawn can be picked.
+     */
+    fun sectionSolidNear(
+        space: SketchSpace,
+        at: Vec2,
+        tol: Double,
+        ev: Evaluator,
+    ): Element? {
+        var best: Element? = null
+        var bestDist = Double.MAX_VALUE
+        for ((solid, section) in spaceSections(space, ev)) {
+            for (piece in section.drawn) {
+                val d = HitTest.distanceToPiece(at, piece)
+                if (d <= tol && d < bestDist) {
+                    bestDist = d
+                    best = solid
+                }
+            }
+        }
+        return best
+    }
+
+    /**
+     * The **curve in space where the active working plane meets [solid]** (OP-26, step 6) — one of the
+     * ordered set, chosen by where the click landed and then persisted.
+     *
+     * A plane cuts a body in general in *several* curves — a plane through a bent bar cuts it twice, one
+     * through a tube gives two loops — so this is OP-1's territory one dimension up: an **ordered solution
+     * set** whose ordering is a stated function of the geometry, plus a separate `Select` holding the index.
+     * [index] is what a replay hands back and is taken **verbatim**; only a live click scores, and it scores
+     * once. Which curve is nearest a fixed position is exactly the sort of answer an edit elsewhere changes,
+     * which is why a re-scoring reload would be a re-deciding one (OP-18, the fillets that came back
+     * inverted).
+     *
+     * **It is the section machinery, promoted.** The node this hangs on is the *same* `section(solid, plane)`
+     * node the plane's context is drawn from ([spaceSectionNodeOf]) — one node per (space, solid), shared with
+     * every section input already taken there — so what the curve follows is exactly what the canvas shows,
+     * and there is no second derivation that could disagree. The curve rides **both** operands: move the
+     * solid, retype the plane's offset or tilt the datum, and it follows by recompute.
+     *
+     * Refused **by name**, building nothing, only for the structural things — a pick that is not a solid, a
+     * plan space (which draws no section at all, GitHub #9's own rule), and a solid that is not an ancestor of
+     * this plane, whose section node would point forward in creation order and is what keeps the graph acyclic.
+     * Everything about *where* the plane is — that it misses the body, that the curve the user chose is no
+     * longer there — is the node's business and comes back as the reason it is invalid, so it heals when the
+     * drawing moves (OP-3).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun intersectionCurve(
+        solid: Element,
+        near: Vec2,
+        index: Int? = null,
+    ): Element? {
+        val space = activeSpace
+        if (solid.kind != ElementKind.SOLID) {
+            note = "Intersection curve: ${nameOf(solid)} is ${kindWord(solid)}, not a solid — click the section of the body you want the curve of"
+            return null
+        }
+        if (space.plane == null) {
+            note =
+                "Intersection curve: the plan is not a working plane, so it draws no section — open one " +
+                "(Plane at height, Sketch plane, Sketch on face) and click the body's section there"
+            return null
+        }
+        val ev = Evaluator()
+        if (spaceAncestors(space, ev).none { it === solid }) {
+            note =
+                "Intersection curve: ${nameOf(solid)} was built after ${space.name}, and a plane's inputs are " +
+                "the solids that came before it — draw the plane after the body, or pick one that is already its context"
+            return null
+        }
+        val sectionNode =
+            spaceSectionNodeOf(space, solid) ?: run {
+                note = "Intersection curve: ${space.name} has no section of ${nameOf(solid)} to take a curve from"
+                return null
+            }
+        val planeRef = planeOfSpace(space.name)
+        val set = cx.intersectionCurves(sectionNode, planeRef)
+        val plane = (ev.valueOf(planeRef) as? PlaneValue)?.plane
+        val curves = cx.solutionCurves(set, ev)
+        val chosen =
+            index ?: run {
+                if (plane == null) {
+                    note = "Intersection curve: ${space.name} has no value right now, so there is nothing to cut with"
+                    return null
+                }
+                if (curves.isEmpty()) {
+                    note =
+                        "Intersection curve: ${space.name} does not cut ${nameOf(solid)} anywhere, so there is " +
+                        "no curve where they meet"
+                    return null
+                }
+                curves.indices.minByOrNull { i -> nearestOnCurve(curves[i], plane, near) } ?: 0
+            }
+        val curve = add(cx.selectCurve(set, chosen), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
+        curve.space = space.name
+        registerSigns(curve, listOf(chosen))
+        val what = curves.getOrNull(chosen)
+        note =
+            "${nameOf(curve)}: curve ${chosen + 1} of ${curves.size} where ${space.name} meets ${nameOf(solid)}" +
+            (what?.let { " — ${if (it.path.closed) "closed, " else ""}${it.exactnessWord}" } ?: "") +
+            " — move either and it follows"
+        return curve
+    }
+
+    /** How far [near] (in the plane's own coordinates) stands from [curve]'s projection there. */
+    private fun nearestOnCurve(
+        curve: IntersectionCurve,
+        plane: Plane3,
+        near: Vec2,
+    ): Double =
+        Curves3.projectedOnto(curve.path, plane).minOfOrNull { HitTest.distanceToPiece(near, it) } ?: Double.MAX_VALUE
 
     // ---- the sweep: a profile carried along a curve in space (OP-26, step 2) ----
 

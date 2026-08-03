@@ -66,4 +66,7 @@ fun transformValue(
         // A section is a *reading* of a solid at a plane (OP-17): what it would mean to mirror one is to
         // mirror the plane, which is the case above. Take the input first, then transform that.
         is SectionValue -> throw IllegalArgumentException("a section cannot be transformed by a 2D map — mirror its inputs instead (OP-17)")
+        // …and an intersection's ordered set of curves in space (OP-26, step 6) is a reading of a solid at a
+        // plane exactly as a section is, with the curve's own answer above on top of it.
+        is Path3SetValue -> throw IllegalArgumentException("intersection curves cannot be transformed by a 2D map — mirror the solid and the plane instead (OP-26)")
     }

@@ -132,6 +132,19 @@ data class SectionCorner(
 )
 
 /**
+ * One piece of what a section **draws**, together with OP-15's class of it: [approximated] is true exactly
+ * when the piece is a **chord** of a curve rather than the curve itself — a ruled face's cut, a mesh
+ * triangle's crossing — and false when it is the cut stated in the drawing's own vocabulary.
+ *
+ * A flag beside the piece rather than a parallel list, because the two must not be able to drift apart: the
+ * only consumer that needs it (OP-26's step 6, which promotes a section into a curve in space) has to say
+ * *per curve* whether it is exact, and a section can mix the two — a bored plate cut across its bore is four
+ * exact arcs beside a twisted band's chords. [PlaneSection.drawn] is still the plain list of pieces, so
+ * nothing that only wants the geometry had to learn about this.
+ */
+data class DrawnPiece(val piece: ProfileElement, val approximated: Boolean)
+
+/**
  * The **section of a solid at a plane**, in the plane's own (u, v) — the context of a working plane, and the
  * inputs it offers (OP-17, the section-inputs package).
  *
@@ -158,19 +171,25 @@ data class PlaneSection(
      * there is no face to name, so there is nothing an index could address.
      */
     val inputsRefusal: String?,
-    /** Everything the section draws, in the cutting plane's (u, v) — including pieces no index names. */
-    val drawn: List<ProfileElement>,
+    /**
+     * Everything the section draws, in the cutting plane's (u, v) — including pieces no index names — each
+     * with OP-15's class of it ([DrawnPiece]).
+     */
+    val pieces: List<DrawnPiece>,
     /** OP-15: true when anything drawn here is chords rather than the curve itself. */
     val approximated: Boolean,
 ) {
+    /** Everything the section draws, in the cutting plane's (u, v) — the geometry alone. */
+    val drawn: List<ProfileElement> get() = pieces.map { it.piece }
+
     /** Nothing at all: the plane misses the part (or lies outside it). */
-    val isEmpty: Boolean get() = drawn.isEmpty()
+    val isEmpty: Boolean get() = pieces.isEmpty()
 
     /** The section's corner positions as they stand, in order, skipping the ones the plane misses. */
     val cornerPoints: List<Vec2> get() = corners.mapNotNull { it.at }
 
     companion object {
-        val EMPTY = PlaneSection(emptyList(), emptyList(), null, null, emptyList(), false)
+        val EMPTY = PlaneSection(emptyList(), emptyList(), null, null, emptyList<DrawnPiece>(), false)
     }
 }
 
@@ -709,7 +728,9 @@ object Section3 {
             corners,
             patch.name,
             null,
-            pieces,
+            // a face's own boundary is the face, whatever kind its pieces are — a Bézier edge is exact
+            // geometry and only its *input* reading is sampled, which is what `approximated` says here
+            pieces.map { DrawnPiece(it, false) },
             pieces.any { it is ProfileElement.BezierE },
         )
     }
@@ -739,13 +760,13 @@ object Section3 {
         fs: List<FacePatch>,
         cut: Plane3,
     ): PlaneSection {
-        val drawn = ArrayList<ProfileElement>()
+        val drawn = ArrayList<DrawnPiece>()
         val edges = ArrayList<SectionEdge>()
         for (patch in fs) {
             val (edge, extra) = cutFace(feature, patch, cut)
             edges.add(edge)
-            edge.curve?.let { drawn.add(it) }
-            edge.sampled?.let { drawn.addAll(polylinePieces(it)) }
+            edge.curve?.let { drawn.add(DrawnPiece(it, false)) }
+            edge.sampled?.let { pts -> drawn.addAll(polylinePieces(pts).map { DrawnPiece(it, true) }) }
             drawn.addAll(extra)
         }
         val (es, whyEdges) = edges(feature)
@@ -780,7 +801,7 @@ object Section3 {
         feature: Feature3,
         patch: FacePatch,
         cut: Plane3,
-    ): Pair<SectionEdge, List<ProfileElement>> {
+    ): Pair<SectionEdge, List<DrawnPiece>> {
         val label = patch.name.label
         if (patch.plane != null) {
             val pieces = cutPlanarFace(patch.plane, patch.outline, cut)
@@ -794,7 +815,8 @@ object Section3 {
                         null,
                         "the plane cuts $label into ${pieces.size} separate pieces, and one input is one curve — " +
                             "move the plane to where that face is crossed once",
-                    ) to pieces
+                        // a planar face's cut is exact whether or not one index can name it
+                    ) to pieces.map { DrawnPiece(it, false) }
             }
         }
         // the exact case first, and it is the one a mechanical drawing lives on: a cylinder cut **perpendicular
@@ -1106,7 +1128,7 @@ object Section3 {
         label: String,
         strip: RuledStrip,
         cut: Plane3,
-    ): Pair<SectionEdge, List<ProfileElement>> {
+    ): Pair<SectionEdge, List<DrawnPiece>> {
         val runs = ArrayList<ArrayList<Vec2>>()
         var cur: ArrayList<Vec2>? = null
         val n = strip.steps
@@ -1135,7 +1157,8 @@ object Section3 {
                 null,
                 "the plane cuts $label into ${runs.size} separate pieces, and one input is one curve — " +
                     "move the plane to where that face is crossed once",
-            ) to runs.flatMap { polylinePieces(it) }
+                // a ruled face's cut is chords between exact rulings, named or not (OP-15)
+            ) to runs.flatMap { r -> polylinePieces(r).map { DrawnPiece(it, true) } }
         }
         val pts = runs[0]
         if (pts.size < 2) return SectionEdge(label, null, null, "the plane only touches $label") to emptyList()
@@ -1219,7 +1242,7 @@ object Section3 {
         plane: Plane3,
         reason: String,
     ): PlaneSection {
-        val out = ArrayList<ProfileElement>()
+        val out = ArrayList<DrawnPiece>()
         for (t in mesh.triangles) {
             val vs = listOf(mesh.vertices[t.a], mesh.vertices[t.b], mesh.vertices[t.c])
             val ds = vs.map { plane.distanceTo(it) }
@@ -1234,7 +1257,8 @@ object Section3 {
                 }
             }
             val uniq = dedupe(hits)
-            if (uniq.size == 2) out.add(ProfileElement.Seg(Segment(uniq[0], uniq[1])))
+            // a triangle's crossing is a chord of the tessellation and nothing more (OP-9's sink rule)
+            if (uniq.size == 2) out.add(DrawnPiece(ProfileElement.Seg(Segment(uniq[0], uniq[1])), true))
         }
         return PlaneSection(emptyList(), emptyList(), null, reason, out, true)
     }
