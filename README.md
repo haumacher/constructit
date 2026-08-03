@@ -381,6 +381,22 @@ combined view was drawn on, and the bend follows and stays smooth. Ends that com
 closed run with no end to join, or a tension of nothing all say so and heal the moment the drawing moves.
 
 
+**Project onto a face — the engraved line, the groove, the route that has to follow the part.** Draw the curve
+where you are looking at the body — in the plan, or on any sketch plane — click it, click the body, and the
+drawing lands on the body's face: a line across a plate's top at exactly the plate's thickness, a curve down a
+pyramid's flank sloping with it. There is no direction to state, because the space you drew in already is one:
+the curve is thrown along that space's own normal, which is exactly what its 2D view shows, so what you drew is
+what the plan of the result looks like. *Which* face it lands on is decided once — the face you can see from
+where you drew, and the one the drawing actually falls on — and then **remembered**, so moving the drawing
+afterwards never quietly hops it onto another face. A segment lands as a segment and a Bézier as a Bézier, to
+the last bit; a circle lands as the **ellipse it really is** when the face stands at an angle, fitted into the
+run at a tenth of a micron because a curve in space has no name for a conic yet. If the drawing hangs over the
+edge of the face, it is not clipped and it is not refused: it lands in that face's **plane**, whole, and the
+drawing tells you which of the two happened. A face standing edge-on to your drawing says so and comes back
+the moment you tilt the plane, and an imported body — which has no named faces at all — says that too, and
+points at *Intersection curve*, which does work on one. What comes back is a curve in space like any other:
+sweep a tube along it, stand a station on it, or connect it to the next run.
+
 **A working plane's context is the part's section — and the section is an input.** Drawing on a plane that is
 not the plan needs to know where the material is, so every such plane draws **the part's section at itself**,
 in its own coordinates: a face space draws its face's true boundary (a pyramid's lateral face draws its

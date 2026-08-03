@@ -131,7 +131,7 @@ object Intersect3 {
                 val elements = ArrayList<Curve3Element>()
                 var fitted = false
                 for (p in run.pieces) {
-                    val made = lift(p.piece, plane)
+                    val made = lifted(p.piece, plane)
                     if (made.second) fitted = true
                     elements.addAll(made.first)
                 }
@@ -359,8 +359,13 @@ object Intersect3 {
      * unchanged. (Adding an `Arc3` would make the circular half exact and is deliberately not done in this
      * step — see the record: a case is added with the producer that needs *it*, and the elliptic half would
      * still be fitted.)
+     *
+     * **Shared rather than copied** (OP-26, step 8): this is *the* lift from a plane's own (u, v) into space,
+     * not the intersection's private one, so [Project3] — which projects a drawing onto a face and then has
+     * exactly the same lifting to do — calls it rather than restating it. One lift, one exactness contract,
+     * one fitting tolerance for the whole of OP-26.
      */
-    private fun lift(
+    fun lifted(
         e: ProfileElement,
         plane: Plane3,
     ): Pair<List<Curve3Element>, Boolean> =

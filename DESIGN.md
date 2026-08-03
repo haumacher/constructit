@@ -5910,8 +5910,17 @@ Each step is whole on its own — a thing that works, not a layer that waits.
    cubic cannot carry curvature at both ends, but a chain of three of them can, and the system that says so is
    square and linear — see *Implementation status (as built — step 7: connect, the joining piece derived from
    two tangents)*.
-8. **Projection onto a face.** A plan curve onto a face along a direction; exact for analytic faces, the
-   honest mesh answer or a named refusal for a mesh.
+8. ~~**Projection onto a face.** A plan curve onto a face along a direction; exact for analytic faces, the
+   honest mesh answer or a named refusal for a mesh.~~ **Built in session 47**, and the *direction* is
+   deliberately not an input: it is **the normal of the space the curve is drawn in**, because a space already
+   *is* a stated direction and a second way to say it would stop the model being a normal form. Every face this
+   kernel names is a **plane**, so *"exact for analytic faces"* means exactly that and no more — there is no
+   curved-surface operand anywhere, which the record says plainly rather than implying. A **mesh** body is
+   refused by name with the section machinery's own sentence, pointing at step 6. Cut with their arguments: a
+   stated direction, **clipping** to the face and **refusing** when a run leaves it (the run lands in the
+   face's *plane* and the drawing says which happened — trim is to-be-discussed item 4, and a clip's piece
+   count would be a value), projecting a curve *in space*, and projecting onto a bare plane — see
+   *Implementation status (as built — step 8: projection onto a face, an affine map and nothing else)*.
 9. **Imported curves.** The frozen literal plus placement described above, and a **recorded** *"make a
    sketch from this planar wireframe"* gesture that refuses by name when a run is not planar — never a
    silent planarity discovery. Last, consistent with the standing rule that formats go at the end.
@@ -7170,6 +7179,164 @@ refusals by name; the G2 tool as its own id, matching curvature and reloading by
 provenances joined — a segment run to a **helix**, a **combined run** (step 5) to a helix, and a closed
 **intersection curve** (step 6), which has no end and says so in the node rather than in the gesture.
 **1555 → 1591 green**, no new golden, no version bump, no existing golden changed.
+
+### Implementation status (as built — step 8: projection onto a face, an affine map and nothing else)
+
+Step 8 of the order above, and it is **smaller than the entry's own sentence in one respect and exactly it in
+the rest**. The entry reads *"a plan curve onto a face along a direction; exact for analytic faces, the honest
+mesh answer or a named refusal for a mesh"*. What is built is a drawing thrown onto a **face of a solid** along
+**the normal of the space it was drawn in**, exact for every face this kernel names — and *"along a direction"*
+is deliberately not a fourth input, for the reason given below. No imported curves (step 9), no trim or split,
+no clipping, no surface layer, and nothing from the unbounded-tool record.
+
+**A face in this kernel is a `FacePatch`, and every one of them is a plane.** `Section3.faces` already answers
+*what are this body's faces* with a **structural name** (OP-8 — built from the feature's own parameters, never
+re-identified from mesh topology), a **plane** whose normal points out of the material, and an **outline** in
+that plane's own (u, v); a curved boundary piece sweeps a cylinder and comes back as a patch with **no** plane
+and a sentence saying so. So the honest scope of this step is stated rather than implied: **projection onto a
+plane, which is exact**, and no projection onto a curved surface at all, because there is no such operand
+anywhere in the system — a general surface layer is the one thing OP-26's own to-be-discussed list names as
+outside it. That is a smaller step than *"exact for analytic faces"* sounds, and it is the whole of what the
+kernel can honestly mean by the phrase.
+
+**The direction is the drawing's own space, and that is the decision the step turns on.** A stated direction
+would be more general on paper; it is not more general here, and three arguments say so in order of weight.
+It is what *"drop it onto the face"* **means**: the projection along a space's normal is precisely what that
+space's own 2D view shows, so the result's shadow back in the drawing space **is** the drawing, exactly, and
+the defining property needs no tolerance to state. A direction is already **stateable by construction**: a
+space *is* a direction, and a datum takes any hinge and any angle (OP-17), so a route to be thrown obliquely is
+drawn in the space that throws it — while a direction operand would be a *second way to say what a space
+already says*, which is the same fault OP-26 refuses in a helix's negative pitch and negative turn count. And
+it needs no new operand, no new slot kind and no 3D manipulator, which is the parenting rule paying out again.
+A direction lying **in** the face — a plan curve thrown at an upright side face — is then a property of values,
+so it is node invalidity with a reason that heals (OP-3, and *The station*'s rule) and never a gesture refusal:
+tilt the space and the run comes straight back.
+
+**Which face is a choice, scored once and persisted — step 6's treatment, one operand along.** The gesture is
+two ordinary picks (the drawing, then the body), so the face cannot be a third click: a solid is picked by its
+footprint edge, and a footprint edge cannot tell a top from a bottom. It is therefore scored from the drawing
+itself, by one sentence — **the face the drawing lands on, and of those the one you are looking at** — and the
+index into `Section3.faces`'s provenance order is written into the step's existing `signs=` and taken verbatim
+on every replay (OP-1/OP-18). Two halves, each doing work the other cannot:
+
+- *the one you are looking at* is the **nearest along the direction, towards the eye**, and a space is always
+  seen from its own `+normal` (the plan is looked down on; a face space's normal points out of the material at
+  the viewer; a datum's is its frame's). So a plan curve over a plate engraves its **top** without the rule
+  knowing what a top is — the four upright sides are edge-on to the plan and drop out on their own — and it
+  makes no difference whether the plate stands on the plan or floats above it;
+- *the face the drawing lands on* is what decides an **inclined** face, where the first half alone would be
+  wrong: over a pyramid's south flank the *plane* of the north flank stands higher, so a rule that only measured
+  distance would engrave the wrong side of the roof. Containment is asked against the face outline's own
+  tessellation, which is a **scoring** measurement — the same category as step 6's *which curve is nearest this
+  click* — and never a condition on a value.
+
+The regression it is guarded against is the fillet's own, two features along: draw a line over the pyramid's
+south flank and throw it there, then drag the line over the **north** flank until a fresh scoring would prefer
+that face (checked, so the probe means something), and the reload still hands back the flank the user chose.
+
+**Exactness is the vocabulary's fact again, and this step's map is the friendliest one yet.** An orthographic
+projection along a fixed direction onto a plane is **affine**, so:
+
+- a **segment** projects to an exact `Seg3` and a **cubic** to an exact `Bezier3`, control point for control
+  point, at **zero tolerance** — affine invariance, the identical argument steps 5 and 6 make, and asserted
+  against the map applied by hand rather than against a copy of the implementation;
+- an **arc, a circle, an ellipse or an elliptic arc** projects to a **conic, exactly**: an affine image of an
+  ellipse is an ellipse, recovered in closed form from its conjugate semi-diameters (OP-24's `Conics.transform`),
+  which is why a circle thrown at a face standing at an angle comes back as the ellipse it really is. `GeomMath.transform`
+  is *not* used for the two circular kinds and that is not an oversight: it scales a radius by `sqrt|det|`,
+  which is right for a similarity and wrong for any other affine map, so both are read as the conics they are
+  first. What is then **fitted** is only the lift, because `Curve3Element` has no conic case — to the stated
+  `Intersect3.FIT_TOL_MM` = **1e-4 mm**, by the same construction and the same number, so OP-26 has one fitting
+  tolerance rather than three.
+
+**The lift is step 6's, shared rather than copied.** `Intersect3.lifted` is the one function that turns a
+drawing in a plane into pieces in space, and this step calls it: one lift, one exactness contract, one fitting
+tolerance for the whole of OP-26. What step 8 adds in front of it is a 2D affine map and nothing else — which
+is why the whole geometry is one small file.
+
+**Running off the face: it lands in the face's plane, and the drawing says so.** The three honest answers were
+weighed and the third is taken, recorded here because silence would not do:
+
+- **clipping to the outline** is *trimming*, which is OP-26's own to-be-discussed item 4 and is deliberately
+  undesigned — step 7 refused to trim its two runs back to the join for exactly this reason. Worse, it would
+  produce a solution set **whose cardinality is a value**: a curve crossing a boundary gives one, two or three
+  pieces depending on where it lies, so a persisted index would name nothing at the places where there is only
+  one. That is the drift step 5 refused a doubling-back view over, and it is what OP-1 exists to prevent;
+- **refusing when it runs off** would make *validity* depend on a containment test this kernel can only answer
+  from a **tessellation** (`RegionBool` works on rings). A run blinking out of existence because a chord of the
+  outline fell the other side of 0.02 mm is a worse object than one that hangs over an edge and says so;
+- **the face's plane, with the landing reported**, which is what is built. It is not a new idea in this kernel:
+  a `LINE` slot takes a segment and works on its **carrier**, a `CIRCLE` slot takes an arc and works on its whole
+  circle, and *"the result may land off the arc's swept range, which is honest and is said in the help of the
+  tools that can do it"*. A face's carrier is its plane. The status line says which of the two happened —
+  *wholly on the face*, or *part of it runs off the face, landing in the face's plane* — and the piece count is
+  unchanged, which is what "not clipped" means concretely.
+
+**A mesh body is refused by name, with the sentence the section machinery already writes.** An import, a general
+boolean's result, a revolve and a sweep have **emergent** faces, so `Section3.faces` hands back nothing and its
+own reason, and the gesture repeats it and adds the route that does work: put a working plane where the body is
+and take the **intersection curve** (step 6, which does have a mesh route), or build what you want beside it.
+Draping over a triangle soup was considered and refused for OP-9's two sink-rule reasons — the result would be
+chords whose piece count is a property of the tessellation rather than of the drawing, and *which* triangle a
+projection landed on is not a name that survives an edit, which is the topological-naming problem this design
+exists to avoid.
+
+**Parenting: the run rides three things, which is one more than the brief asked for.** The drawing, the **space**
+the drawing stands in (tilt it and the direction turns), and the **solid** — retype the plate's thickness and the
+engraving rises with the top face, asserted by coordinate because on a parallel face the coordinate *is* the
+statement. It belongs to the **drawing's** space, exactly as a combined run belongs to its plan's and a join to
+its first pick's — and here that reading is doubly true, since the run's projection there coincides with the
+drawing it was thrown from.
+
+**What it cost outside its own file.** One `Construction` op plus one accessor (`drawnPieces`, so a gesture
+scores against exactly what the node will build from), one `Document` method, one `ToolDef` row — and **no** new
+value kind, no new slot kind, no controller code, no file-format argument and **no version bump**: the step is
+an ordinary `tool projectface els=… clicks=… signs=…` line, so `save → load → save` is byte-equal and a reload
+re-derives the run from the drawing and the body as they now stand. `Intersect3.lift` became `Intersect3.lifted`
+and is the one thing this step shares.
+
+**Cut, each with its argument, and named so they are not looked for:**
+
+- **A stated direction** (a picked line, a typed vector). It is the decision above, not an omission: a space
+  already states a direction, any direction is reachable by drawing in the space that has it, and a second
+  statement of the same thing is what makes a stored model stop being a normal form. What is genuinely lost is
+  the **oblique** projection of a curve whose *shape* is stated in one space and whose direction is another's —
+  which would want the direction operand and is worth building when a drawing asks for it.
+- **Clipping to the face, and refusing when the run leaves it** — the two rejected answers above, each with its
+  argument. Trim is to-be-discussed item 4 and nothing here anticipates it.
+- **Projecting a curve *in space*** (a helix, a combined run) onto a face. The entry says *a plan curve*, and a
+  `Path3` has no drawing plane of its own to be thrown along — so it is the stated-direction question wearing a
+  different hat, and `Curves3.projectedOnto` already answers the drawing half of it.
+- **Projecting onto a bare plane** (a datum, a working plane) rather than a face. A face is where the material
+  is, and the payoff of this step is that the run rides the **solid**; a projection onto a datum rides nothing
+  the drawing could not already state.
+- **An outline or an area as the thing thrown.** One pick is one drawn curve, which is the granularity the 2D
+  vocabulary has here and the cut step 5 recorded verbatim; a closed drawing is reachable as a circle or an
+  ellipse, which project as themselves.
+- **An `Arc3` case**, which would make a circle thrown at a parallel face exact instead of fitted — steps 5 and
+  6's own cut, kept for their reason: a case is added with the producer that needs *it*, and the elliptic half
+  would still be fitted either way.
+- **A preview** while the tool is armed, and a **palette glyph** — both for step 2's reasons.
+
+Tests: `ProjectOnFaceTest` (17) — the defining property asserted on an *inclined* face, where "lies in the
+plane" and "casts the drawing back" are two different statements, both at 1e-12; the two exact cases exact, the
+cubic control point for control point against the map applied by hand; a circle thrown at a flank asserted
+against the **exact** ellipse's own equation at the stated tolerance and asserted to be a genuine chain rather
+than an accident; a circle thrown at a parallel face keeping its radius; a run leaving the face built whole,
+unclipped, and saying so; a bore in the face reading as off the face; every refusal by name — edge-on (and
+healing when the space tilts), a curved face with the patch's **own** sentence, and a mesh body with the
+section machinery's; the scoring rule on a plate standing on the plan and floating above it, and on both
+flanks of a pyramid; affinity asserted as affinity (a midpoint stays a midpoint); a bored cap reading as two
+rings; a body **behind** the drawing still reached; and determinism bit for bit.
+`ProjectOnFaceToolTest` (17) — the two-click gesture and the exact run it makes, on a flat face and on a
+pyramid's slope where the height is hand-computable; `signs=5` in the file and a byte-equal `save → load → save`;
+the **stored face surviving a move that would score differently**, with the re-scoring checked to differ; the
+note naming the face, the exactness class and the landing; a run off the face built and reported; the edge-on
+refusal by name and healing on a retyped datum angle; the mesh refusal naming *Intersection curve*; the three
+gesture refusals; the run riding the drawing and riding the **solid's own thickness**; a tube along it
+watertight, a station standing on it, and a **connect** joining it to another projection; drawn in the 3D view
+and picked in both; and one undo. **1593 → 1627 green**, no new golden, no version bump, no existing golden
+changed.
 
 ## Open points (to discuss one by one)
 
@@ -9227,6 +9394,38 @@ provenances joined — a segment run to a **helix**, a **combined run** (step 5)
   for that item. **1555 → 1591 green**, no new golden, no version bump, no existing golden changed. See
   *Implementation status (as built — step 7: connect, the joining piece derived from two tangents)*.
 
+- **Session 47 — a drawing thrown at a body, and the direction nobody has to state (OP-26, step 8).** The
+  eighth step, and the two decisions worth arguing were both about *what not to build*. The first: **what a
+  face is here**. `Section3.faces` already names a body's faces structurally (OP-8) with a plane and an
+  outline, and **every one of them is a plane** — a curved boundary piece sweeps a cylinder and comes back
+  with no plane and a sentence. So the honest reading of *"exact for analytic faces"* is *projection onto a
+  plane, which is exact*, and there is **no** curved-surface operand anywhere in the system; the record says
+  that plainly rather than letting the entry's phrasing imply a surface kernel. The second: **the direction is
+  the drawing's own space, and is not an input at all**. A space *is* a stated direction (a datum takes any
+  hinge and any angle), so a direction operand would be a second way to say what the drawing already says —
+  the fault OP-26 refuses in a helix's negative pitch — and projecting along the space's normal is the one
+  reading with a defining property that needs no tolerance: the run's shadow back in the space it was drawn in
+  **is** the drawing. A face standing edge-on to that direction is then a value, so it is invalidity that
+  heals. **The map is affine, which is the whole of the exactness story**: a segment and a cubic land at zero
+  tolerance control point for control point, a circle thrown at a slope lands as the **exact ellipse** it
+  really is (via OP-24's conjugate diameters — the existing `transformArc` would have scaled a radius by
+  `sqrt|det|`, which is right only for a similarity), and only the *lift* is fitted, because `Curve3Element`
+  has no conic case — at the one 1e-4 mm OP-26 already states, through step 6's own `lifted`, shared rather
+  than copied. **Which face** is OP-1's territory one operand along: two picks leave no room for a third
+  click, and a solid is picked by a footprint edge which cannot tell a top from a bottom, so the face is
+  scored from the drawing itself — *the one the drawing lands on, and of those the one you are looking at* —
+  and persisted in `signs=`, guarded by the fillet's regression (drag the line over the other flank of a
+  pyramid until a fresh scoring would differ, and the reload keeps the chosen face). **Running off the face
+  was the one place three answers were all defensible**, so the choice is recorded with the two rejections:
+  clipping is *trimming* (to-be-discussed item 4) and would make a solution set whose cardinality is a value,
+  which is the drift step 5 refused; refusing would make **validity** depend on a tessellated containment
+  test; so the run lands in the face's **plane**, whole, and the drawing *says* whether it stayed on the face
+  — which is the carrier rule a `LINE` or `CIRCLE` slot has followed all along. A **mesh** body is refused by
+  name with the section machinery's own sentence plus the route that works (step 6), rather than draped over
+  triangles, because a triangle is not a name that survives an edit. **1593 → 1627 green**, no new golden, no
+  version bump, no existing golden changed. See *Implementation status (as built — step 8: projection onto a
+  face, an affine map and nothing else)*.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -11043,7 +11242,15 @@ carried along a path is the missing capability rather than a refinement of an ex
    Cut with their arguments: trimming the runs back to the join and joining several runs into one path (both
    to-be-discussed item 4), more than two ends at once, a G3 mode (no piece kind can state what it would
    match), a preview and a palette glyph.
-7. **Projection onto a face** — exact for analytic faces, honest or refused for a mesh.
+7. ~~**Projection onto a face** — exact for analytic faces, honest or refused for a mesh.~~ **Built in session
+   47**: an affine map plus step 6's own lift, so a segment and a cubic land at zero tolerance and a conic
+   lands as the exact conic it is and is then fitted at the one OP-26 tolerance. Every face this kernel names
+   is a plane, and that is said rather than implied — there is no curved-surface operand. The **direction** is
+   the drawing space's normal and is not an input; **which face** is scored once from where the drawing lands
+   and persisted in `signs=`; a **mesh** body is refused by name, pointing at the intersection curve. Cut with
+   their arguments: a stated direction, clipping and refusing when a run leaves the face (it lands in the
+   face's plane and the drawing says so — trim is to-be-discussed item 4), projecting a curve in space,
+   projecting onto a bare plane, an outline as the thing thrown, an `Arc3` case, a preview and a palette glyph.
 8. **Imported curves** — frozen literal + placement, plus a *recorded* planar-wireframe-to-sketch gesture.
    Last, per the standing rule that formats go at the end of the queue.
 
@@ -11085,7 +11292,11 @@ absent, and independent of everything else here.
 **The rest of the numbered queue is empty.** What remains is the parked list below, each item recorded at
 its source.
 
-Smaller parked items, each already recorded at its source: grouping-per-copy for group arrays and
+Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
+(it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and
+would be silently wrong under any affine map that is not one; session 47's projection routes conics through
+`Conics` instead and says so at the call site, but the assumption is unguarded and the next non-similarity
+transform will meet it. Then: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
 convention (fillet note), drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), Manifold
 face-ID provenance and 3D picking, the mesh-only footprint **for a general boolean's result only** (the

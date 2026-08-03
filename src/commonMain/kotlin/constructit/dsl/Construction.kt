@@ -71,6 +71,7 @@ import constructit.geom.Path3
 import constructit.geom.Plane3
 import constructit.geom.Profile
 import constructit.geom.ProfileElement
+import constructit.geom.Project3
 import constructit.geom.Ray
 import constructit.geom.Region
 import constructit.geom.Section3
@@ -2319,6 +2320,57 @@ class Construction {
         }
 
     /**
+     * A drawing **projected onto a face** (OP-26, step 8): the curve [view], drawn in the space [from],
+     * thrown along that space's own normal onto face [face] of [solid] — the engraved line, the trimmed edge,
+     * the route that has to follow a surface.
+     *
+     * **Three inputs, and the run rides all three** — the parenting rule paying out again (OP-26). Drag a
+     * point of the drawing and the projection follows; tilt or re-anchor the *space* it is drawn in and the
+     * direction turns with it; stretch the **solid** and the face moves under it, taking the engraving along.
+     * Nothing is copied, so there is nothing to keep in step.
+     *
+     * [face] is **structural**: an index into [Section3.faces]'s provenance order (OP-8's own kind of address
+     * — a name built from the feature's parameters, never re-identified from mesh topology), scored once from
+     * the gesture and thereafter restated by the step's `signs=` and taken verbatim (OP-1/OP-18). The view is
+     * taken as an **untyped ref** for the reason a loft's guide and a combined view are: what it has to be is
+     * any drawn curve, and the 2D curve values are six types with one thing in common.
+     *
+     * Everything it can refuse is a condition on **values**, so each is invalidity with a reason that heals
+     * (OP-3): a body whose faces are emergent rather than named (an import, a general boolean — the sentence
+     * [Section3.faces] already writes), a face index the body no longer has, a face that is not a plane, and a
+     * direction lying in the face. See [Project3] for where the answer is exact, where it is fitted, and why a
+     * run that hangs over the edge of the face is reported rather than clipped or refused.
+     */
+    fun projectedOntoFace(
+        view: Ref<*>,
+        from: PlaneRef,
+        solid: SolidRef,
+        face: Int,
+    ): Path3Ref =
+        op(view, from, solid) { args ->
+            val pieces =
+                guidePieces(args[0])
+                    ?: return@op EvalResult.Invalid("what is projected must be a curve — a segment, an arc, a Bézier, a conic or an outline")
+            val feature = (args[2] as SolidValue).solid.feature
+            val (faces, why) = Section3.faces(feature)
+            if (faces == null) {
+                return@op EvalResult.Invalid(why ?: "this body has no named faces to project onto")
+            }
+            val patch =
+                faces.getOrNull(face)
+                    ?: return@op EvalResult.Invalid(
+                        "this body now has ${faces.size} face(s), so the face this curve was thrown at " +
+                            "(#${face + 1}) is gone — put it back, or project onto one it still has",
+                    )
+            val (made, whyNot) = Project3.projectedOnto(pieces, (args[1] as PlaneValue).plane, patch)
+            if (made == null) {
+                EvalResult.Invalid(whyNot ?: "this drawing cannot be projected onto that face")
+            } else {
+                EvalResult.Ok(Path3Value(made.path))
+            }
+        }
+
+    /**
      * A **tube along [path]**: a circle of [radius] carried along the curve in its moving frame (OP-26,
      * step 2).
      *
@@ -2947,6 +2999,21 @@ class Construction {
                 else -> EvalResult.Ok(Path3Value(curves[index].path))
             }
         }
+
+    /**
+     * The **drawn pieces** of [view] as this construction reads them — the same coercion
+     * [projectedOntoFace] and [combinedViews] apply inside their own `compute`.
+     *
+     * Offered so that a gesture scoring *which face a drawing lands on* (OP-26, step 8) measures against
+     * exactly what the node will then build from, rather than against a second reading of the same curve.
+     */
+    fun drawnPieces(
+        view: Ref<*>,
+        ev: Evaluator,
+    ): List<ProfileElement>? {
+        val v = (ev.eval(view.node) as? EvalResult.Ok)?.value ?: return null
+        return guidePieces(v)
+    }
 
     /**
      * The curves [set] currently holds — what a click scores its branch against, exactly as [solutionCount]

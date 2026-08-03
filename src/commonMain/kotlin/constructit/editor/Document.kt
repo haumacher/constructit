@@ -78,6 +78,7 @@ import constructit.geom.Mesh3
 import constructit.geom.Plane3
 import constructit.geom.PlaneSection
 import constructit.geom.ProfileElement
+import constructit.geom.Project3
 import constructit.geom.Section3
 import constructit.geom.Segment
 import constructit.geom.SolidFace
@@ -8909,6 +8910,102 @@ class Document {
         note =
             "${nameOf(curve)}: curve ${chosen + 1} of ${curves.size} where ${space.name} meets ${nameOf(solid)}" +
             (what?.let { " — ${if (it.path.closed) "closed, " else ""}${it.exactnessWord}" } ?: "") +
+            " — move either and it follows"
+        return curve
+    }
+
+    // ---- projection onto a face: a drawing thrown at a body along the way it is drawn (OP-26, step 8) ----
+
+    /**
+     * The **drawing [view] projected onto a face of [solid]** (OP-26, step 8) — an engraved line, a trimmed
+     * edge, a route that has to follow a surface.
+     *
+     * **Two picks and nothing else, and the direction is the drawing's own.** The curve is thrown along the
+     * normal of the space it is drawn in, which is exactly what *"drop it onto the face"* means: the
+     * projection along a space's normal *is* what that space's own view shows, so the result's shadow in that
+     * space is the drawing itself, to the last bit. A direction is therefore never typed and never picked —
+     * a space already *is* one, and datum planes take any hinge and any angle (OP-17), so a route to be
+     * thrown obliquely is drawn in the space that throws it.
+     *
+     * **Which face is a choice, scored once and then persisted.** Among the body's named faces, the one the
+     * drawing lands on and, of those, the one nearest the eye — a space is always seen from its own `+normal`,
+     * so it is *the face you can see from where you drew* ([Project3.landingFace]). The index is written into
+     * the step's `signs=` and taken verbatim by every replay (OP-1/OP-18): a reload that scored again would
+     * move an engraving to the other side of a plate as soon as an edit slid the drawing past it, which is the
+     * fillets-came-back-inverted defect two features along.
+     *
+     * The curve belongs to the **drawing's** space, exactly as a combined run belongs to its plan's and a join
+     * to its first pick's — and here that reading is doubly true, since the projection *coincides* with the
+     * drawing there.
+     *
+     * Refused **by name**, building nothing, only for the structural things: a pick that is not a curve, a
+     * pick that runs on for ever (a line or a ray states no length of run, step 5's own refusal), a pick that
+     * is not a solid, and a **mesh body**, whose faces are emergent rather than named (OP-9's sink rule —
+     * the sentence [Section3] already writes for each kind, plus the route that does work). Everything about
+     * *where* the drawing and the body are is the node's business and comes back as the reason it is invalid,
+     * so it heals when either moves (OP-3): a face standing edge-on to the drawing, a face that is not a
+     * plane, and a face the body no longer has.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun projectOntoFace(
+        view: Element,
+        solid: Element,
+        signs: List<Int> = emptyList(),
+    ): Element? {
+        if (!view.isCurve) {
+            note = "Project onto a face: ${nameOf(view)} is ${kindWord(view)}, not a curve — draw what you want thrown at the body, then click the body"
+            return null
+        }
+        if (view.kind == ElementKind.LINE || view.kind == ElementKind.RAY) {
+            note = "Project onto a face: ${nameOf(view)} runs on for ever, so it states no length of run to throw — project a bounded curve"
+            return null
+        }
+        if (solid.kind != ElementKind.SOLID) {
+            note = "Project onto a face: ${nameOf(solid)} is ${kindWord(solid)}, not a solid — click the body whose face the curve is to land on"
+            return null
+        }
+        val ev = Evaluator()
+        val feature =
+            (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: run {
+                note = "Project onto a face: ${nameOf(solid)} has no value right now, so it shows no face to project onto"
+                return null
+            }
+        val planeRef = planeOfSpace(view.space)
+        val from =
+            (ev.valueOf(planeRef) as? PlaneValue)?.plane ?: run {
+                note = "Project onto a face: ${view.space} has no value right now, so there is no direction to project along"
+                return null
+            }
+        val pieces =
+            cx.drawnPieces(view.ref, ev) ?: run {
+                note = "Project onto a face: ${nameOf(view)} has no value right now, so there is nothing to project"
+                return null
+            }
+        val chosen =
+            signs.getOrNull(0) ?: run {
+                val (index, why) = Project3.landingFace(feature, pieces, from)
+                index ?: run {
+                    note =
+                        "Project onto a face: ${nameOf(solid)} — $why. Put a working plane where the body is and " +
+                        "take the curve there (Intersection curve), or build what you want beside it"
+                    return null
+                }
+            }
+        val curve =
+            add(
+                cx.projectedOntoFace(view.ref, planeRef, solid.ref as SolidRef, chosen),
+                ElementKind.SPACE_CURVE,
+                Styles.SPACE_CURVE,
+            )
+        curve.space = view.space
+        registerSigns(curve, listOf(chosen))
+        val patch = Section3.faces(feature).first?.getOrNull(chosen)
+        val made = patch?.let { Project3.projectedOnto(pieces, from, it).first }
+        val landing =
+            patch?.let { if (Project3.whollyOnFace(pieces, from, it)) "wholly on the face" else "and part of it runs off the face, landing in the face's plane" }
+        note =
+            "${nameOf(curve)}: ${nameOf(view)} thrown onto ${patch?.name?.label ?: "a face"} of ${nameOf(solid)}" +
+            (made?.let { " — ${it.exactnessWord}, $landing" } ?: "") +
             " — move either and it follows"
         return curve
     }
