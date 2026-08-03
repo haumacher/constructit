@@ -545,9 +545,29 @@ object Tools {
      * persisted rather than re-derived — and a tool id is exactly what the file records (OP-18). So a
      * right-hand spring reloads right-handed with no new file argument, and neither build has to read a sign
      * off a number that a later edit could change.
+     *
+     * These two state the radius as a **number** and start the coil along the space's own x. That is the
+     * spelling that says no phase, and it keeps that convention for ever: the id is what files record, so
+     * every drawing already written with it must go on meaning what it meant.
      */
     const val HELIX = "helix"
     const val HELIX_LEFT = "helixleft"
+
+    /**
+     * **The helix stated by two points** (OP-26, step 3, extended): a centre and the point the coil **starts**
+     * at, which state its radius and its **phase** together.
+     *
+     * Two more ids for the same reason the first two are two — handedness is structural and a tool id is what
+     * the file records (OP-18) — and a *second pair* rather than an argument on the first, for the reason
+     * [CIRCLE] and [CIRCLE_R] are two ids for one shape: which inputs a gesture stated is not a value that
+     * may drift, and a build that had to guess which reading was meant would be guessing about geometry.
+     *
+     * What the second point buys is a degree of freedom the drawing could not previously state at all: where
+     * the coil begins. Before it, a thread that had to start at a particular bearing could only be had by
+     * turning the space it was drawn in — compensation where an anchor belongs (OP-26's rule).
+     */
+    const val HELIX_PT = "helixpt"
+    const val HELIX_PT_LEFT = "helixptleft"
 
     /**
      * **Combine two views** (OP-26, step 5): a plan and an elevation, and the run in space whose projection
@@ -869,12 +889,21 @@ object Tools {
             // Two tools, one value: which pieces the curve is made of is stated by which one was used.
             ToolDef(CURVE3, "Curve through points", ToolCategory.CURVES, listOf(SlotKind.POINT3), repeating = true, minPicks = 2, crossSpace = true, closesOnFirstPick = true, help = "Click the points in space the curve runs through — height points, or ordinary points, which lie in the plane they were drawn on. Press Enter to finish, or click the first point again to close the curve. The points are shared, so dragging one (or retyping its height) moves the curve; switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("point in space")) { d, p, _ -> d.curveThroughPoints(p.elements, smooth = false) },
             ToolDef(CURVE3_SMOOTH, "Smooth curve through points", ToolCategory.CURVES, listOf(SlotKind.POINT3), repeating = true, minPicks = 2, crossSpace = true, closesOnFirstPick = true, help = "The same gesture as Curve through points, with the corners rounded off: an interpolating cubic that passes through every point you click and leaves each one along the line to its neighbours. At the ends it runs off along the first and last chord. Enter finishes; clicking the first point again closes it.", slotNames = listOf("point in space")) { d, p, _ -> d.curveThroughPoints(p.elements, smooth = true) },
-            // **The helix** (OP-26 step 3), and two rows are the whole cost of it. `radius` and `pitch` are
-            // waited for; `turns` is defaulted, so `requiredScalars` stops the gesture at two numbers and the
-            // third is there for the typing without ever standing in the way (the prefix rule — a defaulted
-            // slot must never come before one the tool waits for).
-            ToolDef(HELIX, "Helix (right-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "Type a radius and a pitch — the rise per turn — and, if you want more than one, a number of turns; then click the point the axis stands on. The axis is this sketch plane's own normal through that point, so the coil rises out of the plane you are drawing in and tilts with it; the curve starts beside the point along the plane's x direction. Everything stays live: drag the point, retype its height, or retype any of the three numbers. Sweep a tube along it for a spring.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.RIGHT) },
-            ToolDef(HELIX_LEFT, "Helix (left-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "The same gesture as Helix (right-hand), turning the other way as it rises — a left-hand thread, a left-hand spring. Handedness is which tool you used, so it is what the file records and it never changes by itself; a negative pitch is refused, because a coil that descends while it turns right is this one.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.LEFT) },
+            // **The helix** (OP-26 step 3), in two spellings and two handednesses — four rows, and rows are
+            // the whole cost of both. `radius` and `pitch` are waited for; `turns` is defaulted, so
+            // `requiredScalars` stops the gesture at two numbers and the third is there for the typing
+            // without ever standing in the way (the prefix rule — a defaulted slot must never come before one
+            // the tool waits for).
+            //
+            // The **start-point** pair comes first because it is the primary spelling, exactly as *Circle
+            // (centre, point)* stands before *Circle (centre, radius)*: the second click states the radius
+            // *and* the phase — where the coil begins, which is a real degree of freedom the typed spelling
+            // cannot say (it starts along the space's own x). One number fewer to type, and the start point
+            // is an ordinary pick, so clicking an existing one shares its node and the coil follows it.
+            ToolDef(HELIX_PT, "Helix (centre, start point, right-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3, SlotKind.POINT3), scalars = listOf(len("pitch"), num("turns", 1.0)), preview = Previews::helixBase, help = "Type a pitch — the rise per turn — and, if you want more than one, a number of turns; then click the point the axis stands on and the point the coil starts at. Those two clicks state the radius and where the coil begins, so a spring can come off the edge of a hole or the side of a boss and follow it when that moves. The axis is this sketch plane's own normal through the centre, so the coil rises out of the plane you are drawing in and tilts with it. Everything stays live: drag either point, retype a height, or retype either number.", slotNames = listOf("centre", "start point")) { d, p, s -> d.helixThrough(p.elements[0], p.elements[1], s[0], s.getOrNull(1), Handedness.RIGHT) },
+            ToolDef(HELIX_PT_LEFT, "Helix (centre, start point, left-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3, SlotKind.POINT3), scalars = listOf(len("pitch"), num("turns", 1.0)), preview = Previews::helixBase, help = "The same two clicks as Helix (centre, start point, right-hand), turning the other way as it rises — a left-hand thread, a left-hand spring. Handedness is which tool you used, so it is what the file records and it never changes by itself; a negative pitch is refused, because a coil that descends while it turns right is this one.", slotNames = listOf("centre", "start point")) { d, p, s -> d.helixThrough(p.elements[0], p.elements[1], s[0], s.getOrNull(1), Handedness.LEFT) },
+            ToolDef(HELIX, "Helix (centre, radius, right-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "Type a radius and a pitch — the rise per turn — and, if you want more than one, a number of turns; then click the point the axis stands on. The axis is this sketch plane's own normal through that point, so the coil rises out of the plane you are drawing in and tilts with it; the curve starts beside the point along the plane's x direction — this is the spelling that states no starting angle, and Helix (centre, start point) is the one that does. Everything stays live: drag the point, retype its height, or retype any of the three numbers. Sweep a tube along it for a spring.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.RIGHT) },
+            ToolDef(HELIX_LEFT, "Helix (centre, radius, left-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "The same gesture as Helix (centre, radius, right-hand), turning the other way as it rises — a left-hand thread, a left-hand spring. Handedness is which tool you used, so it is what the file records and it never changes by itself; a negative pitch is refused, because a coil that descends while it turns right is this one.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.LEFT) },
             // **Combine two views** (OP-26 step 5). Two ordinary curve picks and nothing else — no scalar, no
             // discrete choice, no new slot kind: the correspondence between the two drawings is the common
             // direction of their two spaces, which the drawing already contains. `crossSpace` for the loft's

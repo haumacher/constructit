@@ -2176,6 +2176,10 @@ class Construction {
      * direction is the phase**, so the curve starts at [center] + `u·radius`, beside the axis point along
      * the space's own x. Nothing about where the curve begins is a convention this file invents.
      *
+     * That last reading is what makes this **the spelling that states no phase**: it says a radius and takes
+     * the space's own x for where the coil begins. A drawing that wants to *say* where it begins states it
+     * the way everything else in this kernel is stated — with a point ([helixThrough]).
+     *
      * [hand] is **structural** (OP-1, one dimension up): chirality is discrete, so it is decided by the
      * construction — which in the editor means by *which tool was used*, the same way straight and smooth
      * curves are two tool ids (OP-18) — and is never re-derived from the sign of a number that could drift.
@@ -2209,30 +2213,105 @@ class Construction {
                         "radius is a straight line along its own axis",
                 )
             }
-            if (p == 0.0) {
-                return@op EvalResult.Invalid(
-                    "a helix rises: with a pitch of nothing it closes back onto itself, which is a circle — " +
-                        "draw one in this space instead, or state the rise per turn",
-                )
-            }
-            if (p < 0.0) {
-                return@op EvalResult.Invalid(
-                    "a helix's pitch is its rise per turn and cannot be negative (${Frames3.mm(p)} mm): a coil " +
-                        "that descends while it turns ${hand.word} *is* the ${
-                            (if (hand == Handedness.RIGHT) Handedness.LEFT else Handedness.RIGHT).word
-                        } coil, so state that handedness rather than a negative pitch",
-                )
-            }
-            if (n <= 0.0) {
-                return@op EvalResult.Invalid(
-                    "a helix needs a positive number of turns — no turns is a point, and a negative count is " +
-                        "this same coil on the other side of its axis point, which is said by turning the " +
-                        "axis round",
-                )
-            }
-            val helix = Curve3Element.Helix3.about(at, pl.normal, pl.u, r, p, n, hand)
-            EvalResult.Ok(Path3Value(Path3(listOf(helix))))
+            helixRising(at, pl.normal, pl.u, r, p, n, hand)
         }
+
+    /**
+     * A **helix about [center] that begins at [start]** (OP-26, step 3) — the second spelling of the coil,
+     * and the one that says where it starts.
+     *
+     * The relation to [helix] is exactly [circleCP]'s to [circleCR]: a centre and a point on it, rather than a
+     * centre and a typed number. Here the point buys two things at once, because a coil's base *is* a circle
+     * — the **radius** is how far [start] stands from the axis, and the **phase** is which way it stands. The
+     * phase is a real degree of freedom of a coil (where the thread begins, which side of a boss the spring
+     * comes off), and before this it could only be the space's own x; a drawing that wanted another one had
+     * to turn the space, which is compensation where an anchor belongs (OP-26's rule).
+     *
+     * **No angle input, deliberately.** With a picked start point, a *stated* bearing is an ordinary relative
+     * point at a polar offset — a construction this kernel already has — so an angle here would be a second
+     * way to say what the drawing can already say, which is the fault a negative pitch is refused for.
+     *
+     * **[start] is read across the axis only**: what it contributes is its offset from [center] with the
+     * axial part taken out, so a start point that has been lifted says the same thing as one that has not,
+     * and the coil still begins level with [center] — which is what [Curve3Element.Helix3.origin] means. In
+     * the everyday gesture both points are drawn in the same space and there is nothing to take out.
+     *
+     * The phase is carried as that **vector**, never as an angle: nothing here computes an `atan2` and feeds
+     * a `cos`/`sin` back, so the curve's first point is [start] to within the one normalization it passes
+     * through, not to within a trigonometric round trip.
+     *
+     * Invalid with a reason that heals (OP-3) for the same four conditions [helix] refuses, and the radius
+     * one reads for *this* spelling: a start point standing on the axis states no radius and no phase.
+     */
+    fun helixThrough(
+        plane: PlaneRef,
+        center: Point3Ref,
+        start: Point3Ref,
+        pitch: ScalarRef,
+        turns: ScalarRef,
+        hand: Handedness,
+    ): Path3Ref =
+        op(plane, center, start, pitch, turns) {
+            val pl = (it[0] as PlaneValue).plane
+            val at = (it[1] as Point3Value).p
+            val from = (it[2] as Point3Value).p
+            val p = sc(it[3]).requireDim(Dimension.LENGTH, "helix pitch").mm
+            val n = sc(it[4]).requireDim(Dimension.NONE, "helix turns").value
+            val axis = pl.normal.normalized()
+            val out = (from - at).let { d -> d - axis * d.dot(axis) }
+            val r = out.length()
+            if (r <= Vec3.EPS) {
+                return@op EvalResult.Invalid(
+                    "a helix needs a positive radius, and here that is how far its start point stands from " +
+                        "the axis — this one stands on the axis itself (${Frames3.mm(r)} mm off it), which " +
+                        "states neither a radius nor a direction to start in: move it off the centre",
+                )
+            }
+            helixRising(at, axis, out, r, p, n, hand)
+        }
+
+    /**
+     * The half of a helix that is the same however the coil was spelled: the three conditions on its
+     * **rise** — and, once they hold, the curve.
+     *
+     * Shared rather than written twice because it is one statement of one doctrine: each of these is a
+     * *second way to say something the drawing can already say* (see [Curve3Element.Helix3]), and a refusal
+     * that drifted between the two spellings would make which tool was used change what a pitch means. The
+     * **radius** condition is not here, because it is the one thing the two spellings say differently — a
+     * typed number that is not positive, or a start point standing on the axis.
+     */
+    private fun helixRising(
+        origin: Vec3,
+        axis: Vec3,
+        phase: Vec3,
+        r: Double,
+        p: Double,
+        n: Double,
+        hand: Handedness,
+    ): EvalResult {
+        if (p == 0.0) {
+            return EvalResult.Invalid(
+                "a helix rises: with a pitch of nothing it closes back onto itself, which is a circle — " +
+                    "draw one in this space instead, or state the rise per turn",
+            )
+        }
+        if (p < 0.0) {
+            return EvalResult.Invalid(
+                "a helix's pitch is its rise per turn and cannot be negative (${Frames3.mm(p)} mm): a coil " +
+                    "that descends while it turns ${hand.word} *is* the ${
+                        (if (hand == Handedness.RIGHT) Handedness.LEFT else Handedness.RIGHT).word
+                    } coil, so state that handedness rather than a negative pitch",
+            )
+        }
+        if (n <= 0.0) {
+            return EvalResult.Invalid(
+                "a helix needs a positive number of turns — no turns is a point, and a negative count is " +
+                    "this same coil on the other side of its axis point, which is said by turning the " +
+                    "axis round",
+            )
+        }
+        return EvalResult.Ok(Path3Value(Path3(listOf(Curve3Element.Helix3.about(origin, axis, phase, r, p, n, hand)))))
+    }
 
     /**
      * **Two views combined** (OP-26, step 5): the run in space whose projection onto [planeA] is the curve

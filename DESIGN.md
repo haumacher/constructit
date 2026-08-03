@@ -6392,7 +6392,9 @@ healing — not gesture refusals, for *The station*'s own reason: refusing a ges
 replay depend on one.
 
 **Handedness is structural, and it is structural the way step 1 made "straight or smooth" structural** —
-**which tool was used**. Two `ToolDef` rows, *Helix (right-hand)* and *Helix (left-hand)*, and since a tool id
+**which tool was used**. Two `ToolDef` rows, `helix` and `helixleft` (*Helix (centre, radius, right-hand)* and
+*…left-hand)*; the second spelling below adds a further row per hand rather than an argument, for this same
+reason. Since a tool id
 is what the file records (OP-18) the chirality persists with no argument of its own and is never re-derived
 from the sign of anything. That is OP-1's branch doctrine one dimension up: a discrete choice is scored once,
 at creation, and stored — a sign read back out of a value could drift, and a spring that changed hand when
@@ -6407,6 +6409,67 @@ and the whole spring tilts with it. The gesture is one click and two typed numbe
 defaulted third, which is `ToolDef.requiredScalars` (step 2's own generalization) doing exactly the job it was
 built for. The `POINT3` slot takes a height point as it stands and **shares its node**, and lifts a plain 2D
 point by a zero height on its own space's plane, both of which are step 1's rules unchanged.
+
+**The second spelling, and it is the user's design: a coil that says where it starts (session 49).** The
+paragraph above states the first spelling's phase — the space's own `u` — as *geometry* rather than a
+convention, and it is; but it is geometry the **drawing cannot choose**. A coil's phase is a real degree of
+freedom (where the thread begins, which side of a boss the spring comes off), and a helix that had to begin
+at some other bearing could only be had by turning the space it was drawn in — compensation where an anchor
+belongs, which is OP-26's own rule read back at itself. So there is a second construction,
+`helixThrough(plane, center, start, pitch, turns, hand)`, and two more tool rows: **a centre and the point the
+coil starts at**, stating the radius and the phase with the same two clicks. That is exactly the relation
+*Circle (centre, point)* has to *Circle (centre, radius)* — a coil's base *is* a circle — and it is a second
+pair of ids rather than an argument on the first pair for that pair's own reason: which inputs a gesture
+stated is not a value that may drift, and handedness stays structural in each.
+
+**The value needed no change at all, and that is the earlier decision paying out.** `Curve3Element.Helix3`
+already carries the phase as a stored field, so the second spelling is a second way of *computing* one — not
+a new curve, not a new field, not a migration. The derivation is
+`out = (start − centre) − axis·((start − centre)·axis)`, with `radius = |out|` and `phase = out`: the
+direction is carried as a **vector** and never as an angle, so nothing takes an `atan2` and feeds a `cos`
+back, and the curve's first point is the start point to **1e-14 mm** — arithmetic rather than a tolerance,
+and exact wherever the doubles allow. Reading the start point **across the axis only** is the one reading
+under which the `POINT3` slot's height points mean anything here: a start point that has been lifted says the
+same thing as one that has not, and the coil still begins *level with its centre*, which is what
+`Helix3.origin` means.
+
+**No angle input, and the first spelling keeps its convention for ever.** An angle beside the two points
+would be a second way to say what the drawing already says — with a picked start point, a *stated* bearing is
+an ordinary relative point at a polar offset — which is the fault a negative pitch is refused for. And
+`helix`/`helixleft` are untouched, gesture and phase alike: a tool id is what a file records (OP-18), so
+every drawing already written with them must go on meaning what it meant, and what they mean is *the spelling
+that states no phase*. The four rows are labelled to read as one family — **Helix (centre, start point,
+right-hand / left-hand)** and **Helix (centre, radius, right-hand / left-hand)**, the input spelling then the
+chirality — which is a relabelling and nothing more: ids are frozen, labels are not.
+
+**The refusals split the way the doctrine says they must.** A radius of nothing is a *value*, so it is node
+invalidity that heals (OP-3), in this spelling's own words — *its start point stands on the axis*, which
+covers both a coincident point and one lifted straight above the centre, and which is a different sentence
+from the typed spelling's *a coil of no radius is a straight line*. The three conditions on the **rise** are
+shared code (`helixRising`), because a pitch refusal that drifted between two tools would make which gesture
+was used change what a pitch means. What the *gesture* refuses is only the two structural things: a pick that
+is not a point, and **one point clicked for both** — which no edit could heal, since one node cannot stand at
+both ends of a radius. (Dragging the start point onto the centre **welds** them — the bind-in-place
+substrate of OP-5 — which is the same fault arrived at from the other side: the curve goes invalid by name,
+and the way back is the undo.)
+
+**What the second spelling buys is sharing, and that is the whole argument for a point over a number.** The
+start point is an ordinary pick, so clicking one that something else already uses *shares its node*: a coil
+can begin at the edge of a drilled hole or on a boss and turn with it when that moves — one drag, and the
+circle and the coil's phase follow together, because there is one node to follow. A typed starting angle
+could only have agreed with such a point, never followed it.
+
+**The preview cut is lifted for these two rows and only them.** Step 3 recorded "no preview" for the typed
+rows and that stands — they complete on their first click, which is *Circle (centre, radius)*'s own reason —
+but a phase is something a user **aims**, so the two-point rows draw the base circle from the centre out to
+the cursor (`Previews.helixBase`). It is honest in the strict sense the preview mechanism requires: a coil
+about this space's normal casts exactly that circle *in this space*, so what is drawn is the curve's own
+shadow, and a centre with no value in these coordinates draws nothing rather than a guess.
+
+**No version bump, and the old files prove it.** A new tool id is a new *value* of an argument that already
+existed, not a stored literal changing meaning (OP-18's rule, and this is the fourth time it has held). A
+script written by the old tool before the second spelling existed is a permanent load test: it still builds
+the identical curve, still starts along the space's own x, and still saves back byte for byte.
 
 **Its curvature is a closed form, and that is what the step was placed here for.** `κ = r/(r² + b²)` with
 `b = pitch/2π` — **constant**, so `Frames3.curvatureAt` returns a *fact about the curve* rather than
@@ -6501,6 +6564,22 @@ both views, the tube along it as an ordinary spring solid with a plan footprint,
 byte-equal with the handedness recovered from the tool id, one undo, hiding, the gesture refusal by name, the
 node's refusal naming the cure and healing, the session-35 counts, and an SVG golden of the plan projection.
 **1348 → 1375 green**, one new golden, no version bump, no existing golden changed.
+
+Tests for the second spelling (session 49): `HelixStartPointTest` (17) — the coil's first point **is** the
+start point, to 1e-14 mm, for six bearings round the centre in both handednesses and again on a 55° datum
+plane where the space's `u` runs somewhere else entirely; the radius stated by the two points and following a
+drag of either; a start point **shared** with a circle, where one drag moves the circle and the coil's phase
+together; the old spelling unchanged beside the new one in one drawing, and a **literal script written by the
+old tool** still building the identical curve and still saving back byte for byte; `save → load → save`
+byte-equal with the handedness on the tool id and the phase on the picks; one undo; a watertight spring along
+a coil that starts at −y; the base circle previewed while the start point is chosen, creating no node; the
+turn count still optional and the status line naming the radius the picks bought; a lifted start point
+stating the same phase as a flat one; a start point on the axis refused in this spelling's words and healing
+(and the welded case refused and taken back by undo); one point clicked for both refused by name; the rise
+refusals reading identically in both spellings; and the whole coil shown to be the phase-free one turned by
+45°. `PreviewTest`'s generic no-hover-touches-the-graph sweep gained a `POINT3` spot so it covers the new
+rows rather than skipping them. **1646 → 1663 green**, no new golden, no version bump, no existing golden
+changed.
 
 ### Implementation status (as built — the sweep's embedding criterion: *watertight or refused*, kept)
 
@@ -9638,6 +9717,39 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   while its export still writes exactly 36 bodies. **1629 → 1645 green**, no new golden, no version bump, no
   existing golden changed. See *Implementation status (as built — step 9: imported curves, and the sketch
   traced from a flat one)*, which also states what OP-26 as a whole now is and what it is not.
+
+- **Session 49 — a coil says where it starts, because the user asked what states its phase (OP-26, step 3,
+  extended).** The design is the user's, in one sentence: *"the helix has one free parameter that can
+  currently not be defined: the starting angle — wouldn't it be better to define the helix with a centre point
+  and a start point, defining both the radius and the starting angle?"* Yes, and the reason it is better is
+  the doctrine rather than the convenience: a coil's phase is a real degree of freedom, `helixAbout` could
+  only ever be the space's own `u`, and a thread that had to begin elsewhere could only be had by turning the
+  space — **compensation where an anchor belongs**, which is OP-26's own rule pointed back at OP-26. So the
+  helix gained a second *spelling*, not a second curve: two `ToolDef` rows per handedness (four in the family
+  now), one new construction, and **nothing at all in the value** — `Curve3Element.Helix3` already stored its
+  phase as a field, which is step 3's earlier refusal-of-a-convention paying its rent. The radius and the
+  phase come out of the same two clicks, exactly as *Circle (centre, point)* stands to *Circle (centre,
+  radius)*, and the phase is carried as a **vector** (`start − centre`, with the axial part taken out) rather
+  than through an angle, so the curve's first point *is* the start point to 1e-14 mm — no `atan2`/`cos` round
+  trip exists to lose it in. **No angle input**, deliberately: with a picked start point, a stated bearing is
+  an ordinary polar relative point, so a number beside the points would be the second-way-to-say-it fault a
+  negative pitch is refused for. The **old ids keep their gesture and their convention for ever** — a tool id
+  is what files record — and are now documented as *the spelling that states no phase*; only the four labels
+  were re-cut so the family reads as one (input spelling, then chirality), since ids are frozen and labels are
+  not. What the change is *for* is sharing: the start point is an ordinary pick, so a coil can begin at a
+  drilled hole's edge and follow it — one drag moves the circle and the coil's phase together, which a typed
+  starting angle could only have agreed with, never followed. The refusals split the way the doctrine
+  requires: a start point on the axis is node invalidity in this spelling's own words and heals, the three
+  **rise** refusals are shared code so a pitch cannot mean two things, and the gesture refuses only what no
+  edit could heal (a non-point pick, one point clicked for both — and dragging one onto the other **welds**
+  them, OP-5's bind-in-place substrate, which is the same fault from the other side and is taken back by the
+  undo). One recorded cut was
+  lifted with its reason: the two-point rows draw a **base-circle preview**, because a phase is something a
+  user aims, and the circle is the coil's own shadow in the space being drawn in; the typed rows still have
+  none, for *Circle (centre, radius)*'s reason. **No version bump** — a new tool id is a new value of an
+  existing argument, and a literal script written by the old tool is now a permanent load test proving it.
+  **1646 → 1663 green**, no new golden, no existing golden changed. See *Implementation status (as built —
+  step 3: the helix…)*, which records the second spelling in place.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

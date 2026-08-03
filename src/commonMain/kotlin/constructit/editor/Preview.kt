@@ -445,6 +445,25 @@ object Previews {
         return listOf(PreviewShape.Circ(Circle(centre, r)))
     }
 
+    /**
+     * *Helix (centre, start point)*: the **base circle** the two clicks state — the radius the cursor is
+     * dragging out, and the bearing the coil will start at (OP-26, step 3).
+     *
+     * Honest rather than a stand-in: a coil about this space's own normal casts exactly this circle *in this
+     * space*, so what is drawn is the curve's own shadow where the drawing is being made — and the phase,
+     * which is the whole reason for this spelling, is visible as the cursor's bearing before the click.
+     *
+     * The pick is an element (a `POINT3` slot names a point rather than placing one), so the centre is read
+     * off its value, and a centre with **no** value in these coordinates — a height point lifted off this
+     * plane — draws nothing rather than a guess.
+     */
+    fun helixBase(c: PreviewContext): List<PreviewShape> {
+        val centre = (c.element(0)?.let { c.ev.valueOf(it.ref) } as? PointValue)?.p ?: return emptyList()
+        val r = (c.cursor - centre).length()
+        if (r < Vec2.EPS) return emptyList()
+        return listOf(PreviewShape.Circ(Circle(centre, r)))
+    }
+
     /** The live circumcircle through the two picked points and the cursor. */
     fun circle3(c: PreviewContext): List<PreviewShape> {
         val a = c.point(0) ?: return emptyList()

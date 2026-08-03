@@ -307,13 +307,17 @@ typing that number closes it. Everything else is what any solid gets: it shows i
 click in plan, unions and subtracts with the parts around it, exports to every format, and one undo takes the
 whole gesture back.
 
-**A helix — a spring, a coil, the path a thread runs on.** *Helix (right-hand)* and *Helix (left-hand)* take a
-radius, a rise per turn and — if you want more than one — a number of turns, then one click on the point the
-axis stands on. The axis is the sketch plane's own **normal** through that point, so the coil rises out of the
-plane you are drawing in and tilts with it, and the curve starts beside the point along the plane's x
-direction. It is the first curve here that lies in **no** plane, which is exactly what it is for: sweep a tube
-along it and you have a spring, watertight, in one further gesture. Everything stays live — drag the point,
-retype its height, retype the radius, the pitch or the turn count, and the coil and everything riding it
+**A helix — a spring, a coil, the path a thread runs on.** *Helix (centre, start point, right-hand)* and its
+left-hand twin take a rise per turn and — if you want more than one — a number of turns, then two clicks: the
+point the axis stands on, and the point the coil **starts** at. Those two clicks state the radius *and* where
+the coil begins, so a spring can come off the edge of a drilled hole or the side of a boss and follow it when
+that moves — the start point is an ordinary pick, so clicking one that is already in the drawing shares it.
+*Helix (centre, radius, right-hand)* and its twin are the spelling that states no starting point: a typed
+radius, one click, and the curve starts beside the point along the plane's x direction. Either way the axis is
+the sketch plane's own **normal** through the centre, so the coil rises out of the plane you are drawing in
+and tilts with it. It is the first curve here that lies in **no** plane, which is exactly what it is for: sweep a tube
+along it and you have a spring, watertight, in one further gesture. Everything stays live — drag either point,
+retype a height, retype the radius, the pitch or the turn count, and the coil and everything riding it
 follow. The turn count may be fractional. Which way it turns is **which tool you used**, so it is what the file
 records and it never changes by itself; a negative pitch is refused by name, because a coil that descends
 while it turns right *is* the left-hand coil, and the drawing should have one way to say a thing rather than

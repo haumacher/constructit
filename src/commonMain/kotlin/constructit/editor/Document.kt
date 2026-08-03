@@ -64,6 +64,7 @@ import constructit.geom.CarryMode
 import constructit.geom.Chains
 import constructit.geom.Conics
 import constructit.geom.Continuity
+import constructit.geom.Curve3Element
 import constructit.geom.CurveEnd
 import constructit.geom.Curves3
 import constructit.geom.Feature3
@@ -8561,7 +8562,6 @@ class Document {
      * clicked twice in a row. Everything about *where* the points are is the node's business and is reported
      * as the reason it is invalid, so it heals when the drawing moves (OP-3, [Construction.pathThrough]).
      */
-    @Suppress("UNCHECKED_CAST")
     fun curveThroughPoints(
         picks: List<Element>,
         smooth: Boolean,
@@ -8590,14 +8590,7 @@ class Document {
                 return null
             }
         }
-        val refs =
-            through.map { el ->
-                if (el.kind == ElementKind.HEIGHT_POINT) {
-                    el.ref as Point3Ref
-                } else {
-                    cx.heightPoint(planeOfSpace(el.space), el.ref as PointRef, cx.const(0.0.mm))
-                }
-            }
+        val refs = through.map { pointInSpace(it) }
         val curve = add(cx.pathThrough(refs, closed = closed, smooth = smooth), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
         val shape = if (smooth) "smooth" else "straight"
         note =
@@ -8628,7 +8621,6 @@ class Document {
      * Everything about the three numbers is the node's business and is reported as the reason it is invalid,
      * so it heals when a number moves back (OP-3, [Construction.helix]).
      */
-    @Suppress("UNCHECKED_CAST")
     fun helixAbout(
         el: Element,
         radius: ScalarRef,
@@ -8641,20 +8633,95 @@ class Document {
             return null
         }
         val plane = planeOfSpace(el.space)
-        val center =
-            if (el.kind == ElementKind.HEIGHT_POINT) {
-                el.ref as Point3Ref
-            } else {
-                cx.heightPoint(plane, el.ref as PointRef, cx.const(0.0.mm))
-            }
         val n = turns ?: cx.const(Quantity.number(1.0))
-        val curve = add(cx.helix(plane, center, radius, pitch, n, hand), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
+        val curve = add(cx.helix(plane, pointInSpace(el), radius, pitch, n, hand), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
         curve.space = el.space
         note =
             "${nameOf(curve)}: a ${hand.word} helix about ${nameOf(el)} — ${Format.num(evalMm(radius))} mm radius, " +
             "${Format.num(evalMm(pitch))} mm per turn, rising out of ${el.space}"
         return curve
     }
+
+    /**
+     * A **helix about [center] that begins at [start]** (OP-26, step 3) — the coil's other spelling, and the
+     * one that states its **phase**.
+     *
+     * Two clicks and two numbers, and the second click is the whole of the difference: where a coil starts is
+     * a real degree of freedom, and [helixAbout] can only ever start it along its space's own x. Stating it
+     * with a point states the radius with the same click — a coil's base *is* a circle, so this stands to
+     * [helixAbout] exactly as *Circle (centre, point)* stands to *Circle (centre, radius)*.
+     *
+     * **The start point is an ordinary pick and its node is shared** (the `POINT3` slot's rule): a coil can
+     * begin at the edge of a drilled hole or on a boss, and it follows when that moves — which is the reason
+     * this spelling exists at all, rather than a stated angle. An angle would be a number beside the drawing;
+     * a point is *in* it (OP-26's explicit-anchor rule).
+     *
+     * Refused **by name**, building nothing, for the two structural things — a pick that is not a point, and
+     * one point clicked for both, which no edit could ever heal because one node cannot stand in two places.
+     * Two *different* points that happen to coincide is a condition on values, so it is the node's business
+     * and comes back as the reason it is invalid, healing when either point moves (OP-3,
+     * [Construction.helixThrough]).
+     */
+    fun helixThrough(
+        center: Element,
+        start: Element,
+        pitch: ScalarRef,
+        turns: ScalarRef?,
+        hand: Handedness,
+    ): Element? {
+        for (el in listOf(center, start)) {
+            if (!el.isPoint) {
+                note =
+                    "Helix: ${nameOf(el)} is ${kindWord(el)}, not a point — click the point the axis stands " +
+                    "on, then the point the coil starts at"
+                return null
+            }
+        }
+        if (center === start) {
+            note =
+                "Helix: ${nameOf(center)} was clicked for both the centre and the start point — those two " +
+                "are what state the radius, and one point cannot stand at both ends of it"
+            return null
+        }
+        val plane = planeOfSpace(center.space)
+        val n = turns ?: cx.const(Quantity.number(1.0))
+        val curve =
+            add(
+                cx.helixThrough(plane, pointInSpace(center), pointInSpace(start), pitch, n, hand),
+                ElementKind.SPACE_CURVE,
+                Styles.SPACE_CURVE,
+            )
+        curve.space = center.space
+        val r = helixOf(curve)?.radius
+        note =
+            "${nameOf(curve)}: a ${hand.word} helix about ${nameOf(center)}, starting at ${nameOf(start)} — " +
+            (r?.let { "${Format.num(it)} mm radius, " } ?: "") +
+            "${Format.num(evalMm(pitch))} mm per turn, rising out of ${center.space}"
+        return curve
+    }
+
+    /** The helix [el] evaluates to, if it is one — what a status line says a picked start point bought. */
+    private fun helixOf(el: Element): Curve3Element.Helix3? =
+        ((Evaluator().eval(el.ref.node) as? EvalResult.Ok)?.value as? Path3Value)
+            ?.path
+            ?.elements
+            ?.firstOrNull() as? Curve3Element.Helix3
+
+    /**
+     * [el] as the **point in space** it already is — a height point taken as it stands, its node *shared*,
+     * and a plain 2D point lifted by a **zero** height onto its own space's plane (OP-26).
+     *
+     * One reading for every tool with a `POINT3` slot, told apart by the element's kind and never by casting
+     * the ref: a curve through points, a coil's axis point and a coil's start point all mean the same thing
+     * by a click on a point, so they say it once.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun pointInSpace(el: Element): Point3Ref =
+        if (el.kind == ElementKind.HEIGHT_POINT) {
+            el.ref as Point3Ref
+        } else {
+            cx.heightPoint(planeOfSpace(el.space), el.ref as PointRef, cx.const(0.0.mm))
+        }
 
     /**
      * **Two views combined into one run** (OP-26, step 5): [plan] drawn in one space, [elevation] drawn in

@@ -489,7 +489,8 @@ class PreviewTest {
                 // the circle is an area too (a closed curve bounds one, OP-17), which is what an AREA or a
                 // loft-part slot picks here — the scene needs no second area for it
                 SlotKind.AREA, SlotKind.LOFT_PART -> listOf(Vec2(-14.0, -20.0))
-                SlotKind.EXISTING_POINT -> listOf(Vec2(25.0, 25.0), Vec2(35.0, 25.0))
+                // …and a point in space (OP-26) is picked, never placed, so it takes the same two points
+                SlotKind.EXISTING_POINT, SlotKind.POINT3 -> listOf(Vec2(25.0, 25.0), Vec2(35.0, 25.0))
                 else -> listOf(Vec2(10.0, 10.0), Vec2(-12.0, 12.0), Vec2(12.0, -14.0))
             }
         return spots[n % spots.size]
