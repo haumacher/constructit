@@ -216,6 +216,23 @@ abstract class Node(val id: String) {
         private set
 
     /**
+     * How often a **mesh** was actually derived from a solid this node produced — the same instrument one
+     * axis further on ([constructit.geom.Solid3]).
+     *
+     * A solid's triangles are derived on first demand, so `computeCount` alone can no longer say what a
+     * gesture cost: the acceptance of the deferral is that a plan drag recomputes features and builds *no*
+     * triangles, while the 3D view builds them the moment it is asked. Per node, document-scoped, no shared
+     * static, for [computeCount]'s reason.
+     *
+     * Counted where it happens rather than where it is triggered: the node hands its value a note saying
+     * *tell me when you build*, and the consumer that forces the mesh — the 3D scene, a volume, an export —
+     * is charged against the node that owns the body. A value handed straight on (an identity placement) keeps
+     * counting against the node that made it, since the note is set once.
+     */
+    var meshCount: Int = 0
+        private set
+
+    /**
      * Drop this node's memo. Called at every **mutation point** (OP-5): a literal write, a weld or wire
      * or capture re-pointing [SourceNode.boundTo] / [ParameterNode.boundTo] / [IndirectNode.boundTo].
      *
@@ -249,6 +266,9 @@ abstract class Node(val id: String) {
         }
         computeCount++
         val result = compute(args)
+        // The mesh half of the instrument: a solid this node just produced counts its derivation here, if it
+        // is not already counting it somewhere upstream (see [meshCount] and [constructit.geom.Solid3.meterTo]).
+        ((result as? EvalResult.Ok)?.value as? SolidValue)?.solid?.meterTo { meshCount++ }
         if (cacheable && result is EvalResult.Ok) {
             memoArgs = args
             memoResult = result

@@ -376,14 +376,117 @@ private fun curvedBoundary(region: Region): Boolean =
     (listOf(region.outer) + region.holes).any { l -> l.elements.any { it !is ProfileElement.Seg } }
 
 /**
- * A solid: its analytic [feature] **plus** the [mesh] derived from it.
+ * A solid: its analytic [feature] **plus** the [mesh] derived from it — derived **when it is first asked
+ * for**, and remembered from then on.
  *
  * The mesh rides inside the value because it is derived data, not a separate object with a life of its
  * own — and `SolidValue` stays a distinct type from a future mesh-only value, which is the OP-9
  * partition the type system enforces: analytic-preserving features on one side, mesh-only operations
  * (offset/shell/hull, imported meshes) on the other.
+ *
+ * **Why the mesh is derived on demand.** A drag in the plan recomputes every node in the edited cone
+ * (OP-5), and a body whose triangles nobody is looking at was paying for them anyway: a tube along a
+ * three-turn helix is tens of thousands of triangles per mouse move, spent on a picture the 2D canvas
+ * never draws. So the derivation moved *inside* the value: [feature] is computed eagerly by the node, the
+ * triangles are computed by the first consumer that needs triangles (the 3D scene, a volume, a section,
+ * an export, `assertManifold`) and then handed to every consumer after it.
+ *
+ * **Purity is untouched, and the argument is exactly this.** The mesh is a pure function of the feature
+ * (that is what makes every `Feature3` self-contained — see [Feature3.Sweep]), so the same solid always
+ * yields the same triangles no matter when they are built or how often they are asked for. *Laziness
+ * inside an immutable value is not state*: nothing outside can observe the difference except by timing,
+ * the value never changes what it says, and recompute, undo, reload and a byte-equal save are therefore
+ * unaffected. What changed is *when* triangles are built, never *which*.
+ *
+ * **Its identity is reference identity, and that is what the memo always wanted.** This was a data class,
+ * so `equals`, `hashCode` and `toString` all read the mesh — comparing two solids compared two triangle
+ * lists, and printing one printed them. OP-5's memo is `===` on the value object and never needed more
+ * (see [constructit.core.Node.computeMemoized]), and no consumer asks whether two solids are *equal*: two
+ * solids are the same solid when they are the same value, which is a pointer compare that cannot force a
+ * derivation. [toString] names the feature for the same reason — a debug print must not build a mesh.
  */
-data class Solid3(val feature: Feature3, val mesh: Mesh3)
+class Solid3 private constructor(
+    val feature: Feature3,
+    private val cell: MeshCell,
+) {
+    /**
+     * The triangles — built now if this is the first ask, taken from the memo otherwise.
+     *
+     * Not thread-safe on purpose: the browser runs the engine on one thread (OP-12), so a guarded lazy
+     * would be a monitor paid on every read for a race that cannot happen. The JVM suite is
+     * single-threaded per document for the same reason [constructit.core.Node]'s memo is.
+     */
+    val mesh: Mesh3 get() = cell.mesh()
+
+    /** Whether the triangles are already in hand — what the mesh-build instrument reads (see [meterTo]). */
+    val meshBuilt: Boolean get() = cell.built != null
+
+    /**
+     * This solid's mesh under a **different feature**, sharing the very same derivation.
+     *
+     * The one legitimate reason to restate a feature without restating the body: a plan hint stated in
+     * some plane's coordinates (an [Feature3.Imported] outline, a [Feature3.Sweep]'s) is re-projected when
+     * the body is placed, and the triangles are unaffected by which plane one looks at them from. Sharing
+     * the cell is what keeps that free — the mesh is built at most once whichever of the two is asked, and
+     * both hand out the same `Mesh3` object, which is what `SceneSync`'s identity swap is keyed on.
+     */
+    fun restated(feature: Feature3): Solid3 = Solid3(feature, cell)
+
+    /**
+     * Tell [count] when this solid's mesh is derived — **the instrument**, set once, by the node that
+     * produced this value ([constructit.core.Node.meshCount]).
+     *
+     * An observer of a derivation, never a second definition of it: the triangles are the same triangles
+     * whether anybody is listening. First caller wins, so a value handed on unchanged (an identity
+     * placement) keeps counting against the node that actually built it.
+     */
+    fun meterTo(count: () -> Unit) {
+        if (cell.meter == null) cell.meter = count
+    }
+
+    override fun toString(): String = "Solid3($feature)"
+
+    /** The one mutable thing here: the memo cell, shared by every restatement of one body. */
+    private class MeshCell(
+        var built: Mesh3?,
+        private val derive: (() -> Mesh3)?,
+    ) {
+        var meter: (() -> Unit)? = null
+
+        fun mesh(): Mesh3 {
+            built?.let { return it }
+            val m = derive!!()
+            built = m
+            meter?.invoke()
+            return m
+        }
+    }
+
+    companion object {
+        /**
+         * A solid whose mesh is **already in hand** — an imported body, whose triangles came out of a file
+         * rather than out of a feature, and a mesh-only boolean, whose refusal is the engine's verdict on
+         * the triangles themselves (see the note in `Construction.booleanValue`).
+         */
+        fun of(
+            feature: Feature3,
+            mesh: Mesh3,
+        ): Solid3 = Solid3(feature, MeshCell(mesh, null))
+
+        /**
+         * A solid whose mesh is **derived from its feature on demand** — every constructed one.
+         *
+         * [mesh] must be refusal-free: everything that can make a body impossible is decided *before* this
+         * is called, so the node is invalid with a reason at evaluation time and nothing is ever half-built
+         * (OP-3, OP-9). That is a real constraint on every op above, and the audit of it is this slice's
+         * substance — see the refusal table in the design record.
+         */
+        fun derived(
+            feature: Feature3,
+            mesh: () -> Mesh3,
+        ): Solid3 = Solid3(feature, MeshCell(null, mesh))
+    }
+}
 
 /**
  * The 3D kernel: region tessellation, triangulation with holes, and the two features of this slice.
@@ -828,6 +931,12 @@ object Geom3 {
      * solid — and the side walls are a quad strip along every boundary piece, in the loop's own
      * direction. Because both read the *same* tessellated points, every wall edge meets exactly one cap
      * edge, which is where watertightness comes from rather than from a repair pass (OP-2).
+     *
+     * **Refusals first, triangles on demand** ([Solid3]). Every way this can fail is a property of the
+     * *sketch* — no region at all, a boundary that cannot be tessellated, an area that cannot be
+     * triangulated — so all of it is decided here, at evaluation time, and the emission below the fold is
+     * a function that cannot fail. The 2D work (tessellation, ear clipping) stays eager because it is
+     * *what the refusal is about*; the deferred part is the mapping of those flat corners into space.
      */
     fun extrude(
         sketch: Sketch3,
@@ -836,32 +945,37 @@ object Geom3 {
     ): Pair<Solid3?, String?> {
         if (sketch.regions.isEmpty()) return null to "a sketch with no region cannot be extruded"
         if (depth <= WELD_TOL) return null to "extrude depth must be positive"
-        val mb = MeshBuilder()
         val plane = sketch.plane
         val n = plane.normal
+        val prepared = ArrayList<Pair<TessRegion, List<Tri3>>>(sketch.regions.size)
         for (region in sketch.regions) {
             val (tess, why) = tessellateRegion(region, tolMm)
             if (tess == null) return null to (why ?: "cannot tessellate the sketch")
             val (tris, reason) = triangulate(tess)
             if (tris == null) return null to (reason ?: "cannot triangulate the sketch")
+            prepared.add(tess to tris)
+        }
+        return Solid3.derived(Feature3.Extrusion(sketch, depth)) {
+            val mb = MeshBuilder()
+            for ((tess, tris) in prepared) {
+                fun bottom(p: Vec2) = plane.toWorld(p)
 
-            fun bottom(p: Vec2) = plane.toWorld(p)
-
-            fun top(p: Vec2) = plane.toWorld(p) + n * depth
-            for (t in tris) {
-                mb.triangle(top(t.a), top(t.b), top(t.c))
-                mb.triangle(bottom(t.a), bottom(t.c), bottom(t.b))
-            }
-            for (poly in listOf(tess.outer) + tess.holes) {
-                for (i in poly.indices) {
-                    val p = poly[i]
-                    val q = poly[(i + 1) % poly.size]
-                    mb.triangle(bottom(p), bottom(q), top(q))
-                    mb.triangle(bottom(p), top(q), top(p))
+                fun top(p: Vec2) = plane.toWorld(p) + n * depth
+                for (t in tris) {
+                    mb.triangle(top(t.a), top(t.b), top(t.c))
+                    mb.triangle(bottom(t.a), bottom(t.c), bottom(t.b))
+                }
+                for (poly in listOf(tess.outer) + tess.holes) {
+                    for (i in poly.indices) {
+                        val p = poly[i]
+                        val q = poly[(i + 1) % poly.size]
+                        mb.triangle(bottom(p), bottom(q), top(q))
+                        mb.triangle(bottom(p), top(q), top(p))
+                    }
                 }
             }
-        }
-        return Solid3(Feature3.Extrusion(sketch, depth), mb.build()) to null
+            mb.build()
+        } to null
     }
 
     /**
@@ -938,30 +1052,41 @@ object Geom3 {
             return originWorld + axisWorld * s + radialWorld * (r * cos(th)) + normalWorld * (r * sin(th))
         }
 
-        val mb = MeshBuilder()
-        for (tess in tessellated) {
-            for (poly in listOf(tess.outer) + tess.holes) {
-                for (i in poly.indices) {
-                    val p = poly[i]
-                    val q = poly[(i + 1) % poly.size]
-                    for (j in 0 until steps) {
-                        mb.triangle(at(p, j), at(q, j), at(q, j + 1))
-                        mb.triangle(at(p, j), at(q, j + 1), at(p, j + 1))
+        // The caps are triangulated **here**, before anything is emitted, for [Solid3]'s reason: a profile
+        // whose area cannot be triangulated is a refusal about the *sketch*, so it is the node's verdict at
+        // evaluation time and not a surprise the first time somebody looks at the body.
+        val caps = ArrayList<List<Tri3>>(if (full) 0 else tessellated.size)
+        if (!full) {
+            for (tess in tessellated) {
+                val (tris, reason) = triangulate(tess)
+                if (tris == null) return null to (reason ?: "cannot triangulate the revolve profile")
+                caps.add(tris)
+            }
+        }
+        return Solid3.derived(Feature3.Revolution(sketch, axisOrigin, axis, angle)) {
+            val mb = MeshBuilder()
+            for ((ti, tess) in tessellated.withIndex()) {
+                for (poly in listOf(tess.outer) + tess.holes) {
+                    for (i in poly.indices) {
+                        val p = poly[i]
+                        val q = poly[(i + 1) % poly.size]
+                        for (j in 0 until steps) {
+                            mb.triangle(at(p, j), at(q, j), at(q, j + 1))
+                            mb.triangle(at(p, j), at(q, j + 1), at(p, j + 1))
+                        }
+                    }
+                }
+                if (!full) {
+                    for (t in caps[ti]) {
+                        // The start cap faces backwards out of the sweep, the end cap forwards — the same
+                        // reversed-bottom / upright-top rule the extrude uses.
+                        mb.triangle(at(t.a, 0), at(t.c, 0), at(t.b, 0))
+                        mb.triangle(at(t.a, steps), at(t.b, steps), at(t.c, steps))
                     }
                 }
             }
-            if (!full) {
-                val (tris, reason) = triangulate(tess)
-                if (tris == null) return null to (reason ?: "cannot triangulate the revolve profile")
-                for (t in tris) {
-                    // The start cap faces backwards out of the sweep, the end cap forwards — the same
-                    // reversed-bottom / upright-top rule the extrude uses.
-                    mb.triangle(at(t.a, 0), at(t.c, 0), at(t.b, 0))
-                    mb.triangle(at(t.a, steps), at(t.b, steps), at(t.c, steps))
-                }
-            }
-        }
-        return Solid3(Feature3.Revolution(sketch, axisOrigin, axis, angle), mb.build()) to null
+            mb.build()
+        } to null
     }
 
     // ---- the sweep: a profile carried along a curve in space, on the moving frame (OP-26's step 2) ----
@@ -1035,11 +1160,50 @@ object Geom3 {
                 "of ${Frames3.deg(twistRad - frame.seam)}° (or that plus any whole number of turns) to close it"
         }
 
-        val (mesh, noMesh) = sweptShells(listOf(tess), frame.stations, frame.closed) { st, p -> st.place(p) }
-        if (mesh == null) return null to (noMesh ?: "cannot build this sweep")
-        val outline = if (plan == null) emptyList() else Silhouette.of(mesh, plan)
-        return Solid3(Feature3.Sweep(path, profile, up, rollRad, twistRad, outline), mesh) to null
+        val (shells, noMesh) = sweptShells(listOf(tess), frame.stations, frame.closed) { st, p -> st.place(p) }
+        if (shells == null) return null to (noMesh ?: "cannot build this sweep")
+        // **The plan comes off the run, not off the triangles** ([Silhouette.ofSwept]). It used to be
+        // `Silhouette.of(mesh, plan)`, which made the 2D view the one consumer that could not avoid meshing —
+        // and this body is exactly the one the deferral is for. The stations are already in hand from the
+        // refusal checks above, so the outline costs a projection per station and nothing else.
+        val outline =
+            if (plan == null) {
+                emptyList()
+            } else {
+                Silhouette.ofSwept(frame.stations, tess.outer, roundRadius(profile), frame.closed, plan)
+            }
+        return Solid3.derived(Feature3.Sweep(path, profile, up, rollRad, twistRad, outline), shells) to null
     }
+
+    /**
+     * The **plan of a swept body**, rebuilt in [plane] from the feature alone — what a placement asks for
+     * when it has moved a sweep into a new space (`Construction.placeSolid`).
+     *
+     * The feature is by definition enough to rebuild the identical frame ([Feature3.Sweep]), so this is that
+     * rebuild and then the outline: `O(stations)` arithmetic, no triangles. A refusal is impossible to report
+     * from here — a plan is a hint, not a verdict — so a frame that cannot be built yields *no* hint, which is
+     * exactly what a move without a re-projection already yields.
+     *
+     * A **translationally** carried section is not asked about: the only feature that states one is the
+     * cutting tool of a swept cut, which is discarded the moment its boolean has run and shows no plan at all.
+     */
+    fun sweptPlan(
+        feature: Feature3.Sweep,
+        plane: Plane3,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): List<Region> {
+        if (feature.carry != CarryMode.ROTATING) return emptyList()
+        val (tess, _) = tessellateRegion(feature.profile.region, tolMm)
+        if (tess == null || tess.outer.isEmpty()) return emptyList()
+        val reach = tess.outer.maxOf { it.length() }
+        if (reach <= WELD_TOL) return emptyList()
+        val (frame, _) = Frames3.along(feature.path, feature.up, feature.roll, feature.twist, reach, tolMm)
+        if (frame == null) return emptyList()
+        return Silhouette.ofSwept(frame.stations, tess.outer, roundRadius(feature.profile), frame.closed, plane)
+    }
+
+    /** The **analytic** radius of a round section, and null for any other — see [Silhouette.ofSwept]. */
+    private fun roundRadius(profile: SweepProfile): Double? = (profile as? SweepProfile.Round)?.radius
 
     /**
      * The **shells a run of stations carries [sections] through**: one quad band per span and, on an open
@@ -1057,6 +1221,12 @@ object Geom3 {
      * The ring at a station is computed **once** and both adjacent bands use it, which is where
      * watertightness comes from — the prism's own argument (OP-2), not a repair pass. A closed run needs no
      * caps, its last band handing back to its first ring.
+     *
+     * **What it returns is the emission, not the mesh** ([Solid3]): the two things that can go wrong — a run
+     * with no span in it, and a section whose area cannot be triangulated into a cap — are decided here, so
+     * the caller has its refusal at evaluation time, and the function handed back cannot fail. Every station
+     * ring, and therefore every triangle, is computed inside it, which is the whole of what a plan drag now
+     * skips.
      */
     internal fun sweptShells(
         sections: List<TessRegion>,
@@ -1064,46 +1234,54 @@ object Geom3 {
         closed: Boolean,
         reversed: Boolean = false,
         place: (Frame3, Vec2) -> Vec3,
-    ): Pair<Mesh3?, String?> {
+    ): Pair<(() -> Mesh3)?, String?> {
         if (stations.size < 2) return null to "a sweep needs at least two stations along its run"
-        val mb = MeshBuilder()
+        val caps = ArrayList<List<Tri3>>(if (closed) 0 else sections.size)
+        if (!closed) {
+            for (tess in sections) {
+                val (tris, noTris) = triangulate(tess)
+                if (tris == null) return null to (noTris ?: "cannot cap this sweep")
+                caps.add(tris)
+            }
+        }
+        return {
+            val mb = MeshBuilder()
 
-        fun tri(
-            a: Vec3,
-            b: Vec3,
-            c: Vec3,
-        ) = if (reversed) mb.triangle(a, c, b) else mb.triangle(a, b, c)
-        for (tess in sections) {
-            val polys = listOf(tess.outer) + tess.holes
-            val rings = stations.map { st -> polys.map { poly -> poly.map { place(st, it) } } }
-            val bands = if (closed) stations.size else stations.size - 1
-            for (k in 0 until bands) {
-                val lo = rings[k]
-                val hi = rings[(k + 1) % stations.size]
-                for (pi in polys.indices) {
-                    val poly = polys[pi]
-                    for (i in poly.indices) {
-                        val j = (i + 1) % poly.size
-                        tri(lo[pi][i], lo[pi][j], hi[pi][j])
-                        tri(lo[pi][i], hi[pi][j], hi[pi][i])
+            fun tri(
+                a: Vec3,
+                b: Vec3,
+                c: Vec3,
+            ) = if (reversed) mb.triangle(a, c, b) else mb.triangle(a, b, c)
+            for ((si, tess) in sections.withIndex()) {
+                val polys = listOf(tess.outer) + tess.holes
+                val rings = stations.map { st -> polys.map { poly -> poly.map { place(st, it) } } }
+                val bands = if (closed) stations.size else stations.size - 1
+                for (k in 0 until bands) {
+                    val lo = rings[k]
+                    val hi = rings[(k + 1) % stations.size]
+                    for (pi in polys.indices) {
+                        val poly = polys[pi]
+                        for (i in poly.indices) {
+                            val j = (i + 1) % poly.size
+                            tri(lo[pi][i], lo[pi][j], hi[pi][j])
+                            tri(lo[pi][i], hi[pi][j], hi[pi][i])
+                        }
+                    }
+                }
+                if (!closed) {
+                    // (ref, bi, tangent) is right-handed, so a cap triangle wound counter-clockwise in the
+                    // profile's own coordinates faces **along** the tangent: the end cap as it is, the start
+                    // cap reversed — the extrude's own top/bottom rule, one dimension round.
+                    val first = stations.first()
+                    val last = stations.last()
+                    for (t in caps[si]) {
+                        tri(place(first, t.a), place(first, t.c), place(first, t.b))
+                        tri(place(last, t.a), place(last, t.b), place(last, t.c))
                     }
                 }
             }
-            if (!closed) {
-                val (tris, noTris) = triangulate(tess)
-                if (tris == null) return null to (noTris ?: "cannot cap this sweep")
-                // (ref, bi, tangent) is right-handed, so a cap triangle wound counter-clockwise in the
-                // profile's own coordinates faces **along** the tangent: the end cap as it is, the start cap
-                // reversed — the extrude's own top/bottom rule, one dimension round.
-                val first = stations.first()
-                val last = stations.last()
-                for (t in tris) {
-                    tri(place(first, t.a), place(first, t.c), place(first, t.b))
-                    tri(place(last, t.a), place(last, t.b), place(last, t.c))
-                }
-            }
-        }
-        return mb.build() to null
+            mb.build()
+        } to null
     }
 
     /** Why [loop] is not a closed outline — naming the piece that leaves the gap — or null when it is one. */
@@ -1372,7 +1550,15 @@ object Geom3 {
         return LoftPlan(sections, preps.toList(), us, ring2, ringW, runs, hand, rails) to null
     }
 
-    /** The mesh half of a loft: the bands, the caps, and the folds that are refused before a triangle. */
+    /**
+     * The mesh half of a loft: the bands, the caps, and the folds that are refused before a triangle.
+     *
+     * **Refused before a triangle** is now literal ([Solid3]): the two fold tests and the two cap steps are
+     * questions about the *plan* — the section rings, the rulings between them, the correspondence the seam
+     * states — so they are all asked here, in one pass over the bands that emits nothing, and the emission
+     * that follows cannot fail. Only the rows, which is where a guided band's sampling lives and where every
+     * triangle comes from, waits for somebody to ask for triangles.
+     */
     private fun loftShell(
         plan: LoftPlan,
         seams: List<Int>,
@@ -1387,15 +1573,14 @@ object Geom3 {
         val runs = plan.runs
         val hand = plan.hand
         val rails = plan.rails
-
-        // ---- the shell ----
-        val mb = MeshBuilder()
         val m = us.size
+
+        // ---- every refusal, and nothing emitted ----
         for (k in 0 until sections.size - 1) {
-            // Two ways a band can be folded rather than swept, both refused before a triangle is emitted: a
-            // ruling that runs *backwards* (which is what two section planes crossing inside the solid looks
-            // like where it matters), and two rails that meet (which is what a seam turned too far does).
-            // Neither is asked of an apex band: every rail of one legitimately ends at the same point.
+            // Two ways a band can be folded rather than swept: a ruling that runs *backwards* (which is what
+            // two section planes crossing inside the solid looks like where it matters), and two rails that
+            // meet (which is what a seam turned too far does). Neither is asked of an apex band: every rail
+            // of one legitimately ends at the same point.
             if (preps[k] != null && preps[k + 1] != null) {
                 for (j in 0 until m) {
                     if ((ringW[k + 1][j] - ringW[k][j]).dot(runs[k]) <= WELD_TOL) {
@@ -1413,49 +1598,62 @@ object Geom3 {
                         "another vertex"
                 }
             }
-            val here = rails.filter { it.touch.containsKey(k) && it.touch.containsKey(k + 1) }
-            val steps = if (here.isEmpty()) 1 else here.maxOf { stepsOf(it, k) }
-            val rows =
-                (0..steps).map { i ->
-                    val t = i.toDouble() / steps
-                    val bows = here.map { bowOf(it, k, t) }
-                    (0 until m).map { j ->
-                        var p = ringW[k][j] * (1.0 - t) + ringW[k + 1][j] * t
-                        if (here.isNotEmpty()) {
-                            val w = weightsAt(here.map { it.param }, us[j])
-                            for ((gi, bow) in bows.withIndex()) p += bow * w[gi]
-                        }
-                        p
-                    }
-                }
-            for (i in 0 until steps) {
-                for (j in 0 until m) {
-                    val j2 = (j + 1) % m
-                    mb.triangle(rows[i][j], rows[i][j2], rows[i + 1][j2])
-                    mb.triangle(rows[i][j], rows[i + 1][j2], rows[i + 1][j])
-                }
-            }
         }
         // The caps are the terminal sections, triangulated and **conformed to the sampled ring** — the same
         // T-junction rule a prism's caps follow (see [prismMesh]): the band's first row runs through every
         // sampled parameter, so the cap has to as well or the shell has a crack in it.
+        val caps = ArrayList<Pair<LoftPrep, List<Tri3>>>(2)
+        val capAsIs = ArrayList<Boolean>(2)
         for (k in listOf(0, sections.size - 1)) {
             val p = preps[k] ?: continue
             val (tris, why) = triangulate(p.tess)
             if (tris == null) return null to "section ${k + 1}: ${why ?: "cannot be triangulated"}"
             val (split, why2) = splitToRequired(tris, ring2[k]!!)
             if (split == null) return null to (why2 ?: "cannot close section ${k + 1}")
+            caps.add(p to split)
             // a cap triangle maps to the world with its normal along +plane.normal; the outward one is against
             // the run at the first section and along it at the last, and `hand` is which of the two that is
-            val asIs = if (k == 0) hand[k] < 0 else hand[k] > 0
-            for (t in split) {
-                val a = p.plane.toWorld(t.a)
-                val b = p.plane.toWorld(t.b)
-                val c = p.plane.toWorld(t.c)
-                if (asIs) mb.triangle(a, b, c) else mb.triangle(a, c, b)
-            }
+            capAsIs.add(if (k == 0) hand[k] < 0 else hand[k] > 0)
         }
-        return Solid3(Feature3.Loft(sections, seams, guides), mb.build()) to null
+
+        // ---- the shell ----
+        return Solid3.derived(Feature3.Loft(sections, seams, guides)) {
+            val mb = MeshBuilder()
+            for (k in 0 until sections.size - 1) {
+                val here = rails.filter { it.touch.containsKey(k) && it.touch.containsKey(k + 1) }
+                val steps = if (here.isEmpty()) 1 else here.maxOf { stepsOf(it, k) }
+                val rows =
+                    (0..steps).map { i ->
+                        val t = i.toDouble() / steps
+                        val bows = here.map { bowOf(it, k, t) }
+                        (0 until m).map { j ->
+                            var p = ringW[k][j] * (1.0 - t) + ringW[k + 1][j] * t
+                            if (here.isNotEmpty()) {
+                                val w = weightsAt(here.map { it.param }, us[j])
+                                for ((gi, bow) in bows.withIndex()) p += bow * w[gi]
+                            }
+                            p
+                        }
+                    }
+                for (i in 0 until steps) {
+                    for (j in 0 until m) {
+                        val j2 = (j + 1) % m
+                        mb.triangle(rows[i][j], rows[i][j2], rows[i + 1][j2])
+                        mb.triangle(rows[i][j], rows[i + 1][j2], rows[i + 1][j])
+                    }
+                }
+            }
+            for ((ci, cap) in caps.withIndex()) {
+                val (p, split) = cap
+                for (t in split) {
+                    val a = p.plane.toWorld(t.a)
+                    val b = p.plane.toWorld(t.b)
+                    val c = p.plane.toWorld(t.c)
+                    if (capAsIs[ci]) mb.triangle(a, b, c) else mb.triangle(a, c, b)
+                }
+            }
+            mb.build()
+        } to null
     }
 
     /**
@@ -1940,9 +2138,12 @@ object Geom3 {
         val merged = mergeSlabs(out)
         if (merged.isEmpty()) return null to "the boolean leaves nothing of the solid"
         val prism = Feature3.Prism(pa.plane, merged)
-        val (mesh, whyMesh) = prismMesh(prism, tolMm)
-        if (mesh == null) return null to (whyMesh ?: "cannot build the boolean's mesh")
-        return Solid3(prism, mesh) to null
+        // The analytic boolean is analytic all the way: its result is a prism, so it refuses like one and its
+        // triangles wait like one — nothing here reads either operand's mesh (see `Construction.booleanValue`
+        // for the general engine, which does and therefore cannot wait).
+        val (shell, whyMesh) = prismShell(prism, tolMm)
+        if (shell == null) return null to (whyMesh ?: "cannot build the boolean's mesh")
+        return Solid3.derived(prism, shell) to null
     }
 
     /**
@@ -2067,6 +2268,22 @@ object Geom3 {
         prism: Feature3.Prism,
         tolMm: Double = GeomMath.TESS_TOL_MM,
     ): Pair<Mesh3?, String?> {
+        val (emit, why) = prismShell(prism, tolMm)
+        return if (emit == null) null to why else emit() to null
+    }
+
+    /**
+     * [prismMesh]'s two halves separated ([Solid3]): every refusal, then the emission that cannot refuse.
+     *
+     * All of it is a question about the *slabs* — a slab with no height, two that overlap, an area whose
+     * rings do not nest, a level whose difference cannot be triangulated — so a prism that cannot be built is
+     * an invalid node at evaluation time exactly as it was. What waits is the mapping into space: the wall
+     * strips, the conforming of each ring to the global corner set, and the caps' triangles in the world.
+     */
+    internal fun prismShell(
+        prism: Feature3.Prism,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<(() -> Mesh3)?, String?> {
         val slabs = prism.slabs
         if (slabs.isEmpty()) return null to "a prism needs at least one slab"
         for (s in slabs) if (s.height <= WELD_TOL) return null to "a slab of the prism has no height"
@@ -2095,26 +2312,9 @@ object Geom3 {
         // the one global corner set every polygon is made to agree with
         val required = (slabRings.flatten() + caps.flatMap { it.second }).flatten().distinct()
 
-        val mb = MeshBuilder()
-        val n = prism.plane.normal.normalized()
-
-        fun world(
-            p: Vec2,
-            z: Double,
-        ): Vec3 = prism.plane.toWorld(p) + n * z
-        for ((si, rings) in slabRings.withIndex()) {
-            val z0 = slabs[si].z0
-            val z1 = slabs[si].z1
-            for (ring in rings) {
-                val poly = conform(ring, required)
-                for (i in poly.indices) {
-                    val p = poly[i]
-                    val q = poly[(i + 1) % poly.size]
-                    mb.triangle(world(p, z0), world(q, z0), world(q, z1))
-                    mb.triangle(world(p, z0), world(q, z1), world(p, z1))
-                }
-            }
-        }
+        // Every cap's triangles, in the order they will be emitted — this is where a cap can refuse, so it
+        // is asked before there is a solid at all.
+        val capTris = ArrayList<Triple<Double, Boolean, List<Tri3>>>(caps.size)
         for ((z, rings, up) in caps) {
             val (regions, whyR) = RegionBool.regionsOf(rings)
             if (regions == null) return null to whyR
@@ -2125,6 +2325,32 @@ object Geom3 {
                 if (tris == null) return null to why2
                 val (split, why3) = splitToRequired(tris, required)
                 if (split == null) return null to why3
+                capTris.add(Triple(z, up, split))
+            }
+        }
+
+        return {
+            val mb = MeshBuilder()
+            val n = prism.plane.normal.normalized()
+
+            fun world(
+                p: Vec2,
+                z: Double,
+            ): Vec3 = prism.plane.toWorld(p) + n * z
+            for ((si, rings) in slabRings.withIndex()) {
+                val z0 = slabs[si].z0
+                val z1 = slabs[si].z1
+                for (ring in rings) {
+                    val poly = conform(ring, required)
+                    for (i in poly.indices) {
+                        val p = poly[i]
+                        val q = poly[(i + 1) % poly.size]
+                        mb.triangle(world(p, z0), world(q, z0), world(q, z1))
+                        mb.triangle(world(p, z0), world(q, z1), world(p, z1))
+                    }
+                }
+            }
+            for ((z, up, split) in capTris) {
                 for (t in split) {
                     if (up) {
                         mb.triangle(world(t.a, z), world(t.b, z), world(t.c, z))
@@ -2133,8 +2359,8 @@ object Geom3 {
                     }
                 }
             }
-        }
-        return mb.build() to null
+            mb.build()
+        } to null
     }
 
     /** [ring] with every corner of [required] that lies in the interior of one of its edges inserted. */

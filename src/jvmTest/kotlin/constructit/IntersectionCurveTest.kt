@@ -287,7 +287,7 @@ class IntersectionCurveTest {
     @Test
     fun aMeshBodysCurveSaysItIsChords() {
         val src = bar(r = 30.0, h = 60.0)
-        val imported = Solid3(Feature3.Imported("bar.jt"), src.mesh)
+        val imported = Solid3.of(Feature3.Imported("bar.jt"), src.mesh)
         val curves = curvesOf(imported, atHeight(30.0))
         assertEquals(1, curves.size, "one ring of chords: ${curves.size}")
         assertTrue(curves[0].sampled, "the mesh route draws chords, and the curve says so")
@@ -390,7 +390,7 @@ class IntersectionCurveTest {
         // An open run needs a face that is cut without the cut closing — an *open shell*, which is what an
         // imported open body is (session 34).
         val src = plate()
-        val open = Solid3(Feature3.Imported("lid.jt", openShell = "the lid is one face"), openTop(src))
+        val open = Solid3.of(Feature3.Imported("lid.jt", openShell = "the lid is one face"), openTop(src))
         val plane = Plane3(Vec3(0.0, 30.0, 0.0), Vec3.X, Vec3.Z)
         val curves = curvesOf(open, plane)
         assertTrue(curves.isNotEmpty(), "the plane cuts the lid")

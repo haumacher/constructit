@@ -132,7 +132,13 @@ private fun setupApp() {
         preview.draw()
     }
 
+    // the two flags the frame coalescing below is made of, declared here because `repaint` clears one
+    var framePending = false
+    var docPending = false
+
     fun repaint() {
+        // a paint that happens now satisfies any frame that was still owed (see `frameSoon`)
+        docPending = false
         // the drawing buffer must match the element's CSS size on *every* paint, not only on window
         // resize: panel content or a wrapping status line changes the canvas box too, and a stale buffer
         // is silently scaled by CSS — which offsets every hit test from what the user sees
@@ -162,18 +168,51 @@ private fun setupApp() {
      * suite drives synchronously — a gesture there still means exactly one `onChange`, and it is the *shell*
      * that decides how many of those become pixels. Everything else (`repaint`, the view switch) still
      * paints straight through, so a state change is on screen before the next line of code runs.
+     *
+     * **And the same for a document change**, which is where the argument above was first owed and only the
+     * camera got it. A drag in the *plan* delivers pointer moves at the same rate an orbit does, and each one
+     * ran a full `repaint` — the 2D canvas, the preview if it is open, and the whole side panel — so a heavy
+     * drawing fell behind the cursor while drawing frames nobody saw. [Editor] stays exactly as pure and
+     * exactly as synchronous as [Viewport3]: one gesture is still one `onChange`, and the coalescing is here.
+     * A frame that has both to do does the document's paint, since [repaint] draws the 3D view too.
+     *
+     * **Which changes coalesce, stated precisely, because a document change is not only a picture.** The
+     * argument above is about *two* events and no others: a **pointer move** and a **wheel** notch, which
+     * arrive faster than the display refreshes. Everything else — a click, a key, a button, a file load, a
+     * view switch — happens once per human act, so it paints straight through and the panel's DOM is true
+     * before the next line of code runs. That matters beyond tidiness: the side panel is not pixels but *state*
+     * a click's own consequence is read from (the tree, the status line, the inspector's fields), and deferring
+     * that would make "what the drawing says" arrive a frame after the thing it says it about. So the shell
+     * marks the two streaming events ([streamed]) and coalesces only inside them — which is exactly where the
+     * lag was.
      */
-    var framePending = false
-
-    fun draw3dSoon() {
+    fun frameSoon(wholeDocument: Boolean) {
+        if (wholeDocument) docPending = true
         if (framePending) return
         framePending = true
         window.requestAnimationFrame {
             framePending = false
-            draw3d()
+            val whole = docPending
+            docPending = false
+            if (whole) repaint() else draw3d()
         }
     }
-    editor.onChange = { repaint() }
+
+    fun draw3dSoon() = frameSoon(wholeDocument = false)
+
+    /** Whether the change being handled comes from one of the two events that outrun the display. */
+    var streaming = false
+
+    /** [body] handled as a *streaming* event: its document change becomes at most one paint per frame. */
+    fun streamed(body: () -> Unit) {
+        streaming = true
+        try {
+            body()
+        } finally {
+            streaming = false
+        }
+    }
+    editor.onChange = { if (streaming) frameSoon(wholeDocument = true) else repaint() }
     // **A camera move is not a document change.** An orbit writes one of the camera's four numbers and
     // nothing else: no element, no parameter, no selection, no status line (the panel's only 3D-dependent
     // text is `Viewport3.help`, which reads the tool and the plane, never the eye). So the side panel is
@@ -292,13 +331,14 @@ private fun setupApp() {
         if (e.button.toInt() == 1) e.preventDefault() // no middle-click autoscroll
         editor.pointerDown(pos(e), button(e), additive = e.shiftKey)
     })
-    canvas.addEventListener("mousemove", { editor.pointerMove(pos(it as MouseEvent)) })
+    // the two events that outrun the display, and the only two whose paint is coalesced (see `streamed`)
+    canvas.addEventListener("mousemove", { streamed { editor.pointerMove(pos(it as MouseEvent)) } })
     canvas.addEventListener("mouseup", { editor.pointerUp(pos(it as MouseEvent)) })
     canvas.addEventListener("mouseleave", { editor.pointerUp(pos(it as MouseEvent)) })
     canvas.addEventListener("wheel", {
         val e = it as WheelEvent
         e.preventDefault()
-        editor.wheel(pos(e), e.deltaY)
+        streamed { editor.wheel(pos(e), e.deltaY) }
     })
     canvas.addEventListener("dblclick", { editor.finishPath() })
 
@@ -324,14 +364,15 @@ private fun setupApp() {
     canvas3.addEventListener("mousemove", {
         val e = it as MouseEvent
         viewport.cameraModifier = modifier(e)
-        viewport.pointerMove(pos3(e))
+        // a drag here may be the *drawing's* (edit-in-3D), so it is a streaming document change like the plan's
+        streamed { viewport.pointerMove(pos3(e)) }
     })
     canvas3.addEventListener("mouseup", { viewport.pointerUp(pos3(it as MouseEvent)) })
     canvas3.addEventListener("mouseleave", { viewport.pointerUp(pos3(it as MouseEvent)) })
     canvas3.addEventListener("wheel", {
         val e = it as WheelEvent
         e.preventDefault()
-        viewport.wheel(pos3(e), e.deltaY)
+        streamed { viewport.wheel(pos3(e), e.deltaY) }
     })
     // double-click reframes — unless a tool is drawing here, where it means what it means on the canvas:
     // finish the run. The decision is the controller's, so it is asserted headlessly like the rest.

@@ -204,6 +204,10 @@ fun Feature3.movedBy(x: Xform3): Feature3 =
  *
  * `result to reason`, the convention every kernel function here follows, so a placement whose plane frame
  * has gone degenerate becomes an invalid node with a reason and heals when it stops being (OP-3).
+ *
+ * **Lazy through the move** ([Solid3]): whether the frame is rigid is a question about the frame, so the
+ * refusal is here, while the turned triangles are derived from the source's when somebody asks for them —
+ * a placed body that nobody looks at moves for the price of one feature.
  */
 fun Solid3.movedBy(x: Xform3): Pair<Solid3?, String?> {
     if (x.isIdentity) return this to null
@@ -211,5 +215,5 @@ fun Solid3.movedBy(x: Xform3): Pair<Solid3?, String?> {
         return null to
             "a solid can only be placed by a rigid motion (a turn and a shift); this frame scales, shears or mirrors it"
     }
-    return Solid3(feature.movedBy(x), mesh.movedBy(x)) to null
+    return Solid3.derived(feature.movedBy(x)) { mesh.movedBy(x) } to null
 }

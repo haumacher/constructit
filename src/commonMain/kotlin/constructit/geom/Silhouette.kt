@@ -39,8 +39,207 @@ package constructit.geom
  * the only arithmetic is a projection and a sign. What is approximate is the mesh, which is the standing
  * bargain for anything that has left the analytic layer (OP-15) — a bore's outline is its chords, exactly as
  * the 3D view draws it.
+ *
+ * **And one plan that is read off a feature rather than off triangles** ([ofSwept]). A *swept* body has a
+ * feature but no sketch to show, so its plan came through here as well — which made the 2D view the one
+ * consumer that could not avoid meshing, and a tube along a coil the one body a plan drag had to tessellate.
+ * The run and the section answer the same question directly and exactly; the mesh route above stays what it
+ * is, for the bodies that genuinely have nothing but triangles.
  */
 object Silhouette {
+    /**
+     * **The plan of a swept body, read off its run instead of its triangles** — the loops it projects to
+     * along [plane]'s normal, in that plane's own 2D coordinates.
+     *
+     * *Why there is a second route at all.* A swept solid's plan is a silhouette rather than a sketch, and
+     * taking it from the mesh ([of]) made the 2D canvas the one consumer that could not avoid meshing — so a
+     * tube along a three-turn helix rebuilt tens of thousands of triangles per mouse move for a plan drag
+     * that never draws one (the deferral in [Solid3]). This route asks the run itself.
+     *
+     * *What it is.* At each station the outline of the body, seen in this plane, touches the section at its
+     * two **extreme points across the run**: take the in-plane direction `m` perpendicular to the projected
+     * tangent, and the section's support points along `+m` and `−m` are on the outline. Walking those gives
+     * two rails, and the rails **are** the plan of the body's sides.
+     *
+     * *And it is exact for a tube's sides.* `m` is perpendicular to the tangent and lies in the plane, so it
+     * lies in the section's own plane — which means for a circular section the support point is at exactly
+     * the stated radius, whatever the run's inclination, with no cosine and no tessellation of the circle
+     * involved ([radius] is passed analytically for that reason). For a general section the support is taken
+     * over the tessellated boundary, which is OP-15's standing bargain and no worse than the mesh was. The
+     * mitre push at a kink is included, because the support is taken of the *placed* ring, so the outer side
+     * of a corner reaches its mitre point rather than the offset of the corner.
+     *
+     * **What it costs, said plainly, because this outline is also the pick target.** Two things differ from
+     * the mesh silhouette:
+     * - an **end face** of an open run is closed by the chord between its two rails, not by the outline of
+     *   the projected end face. A body seen more end-on than side-on therefore has a hint that stops short of
+     *   its own end by up to the section's reach, and a click that far past the last station may miss it. The
+     *   rails run right up to the end, so what is *drawn* and what is *picked* stay the same geometry — the
+     *   HitTest invariant — and the hint is a hint.
+     * - where the run projects onto **one point** (a leg running straight down onto this plane) the rails
+     *   are undefined, and what is drawn instead is the section's own projected outline there — exactly the
+     *   right picture of a body seen end-on, and for a round section an exact circle.
+     *
+     * It stays a **pure function of the feature and the plane** — no quality argument, no mesh, no
+     * tessellation of a round section — so the pick target cannot drift with a rendering choice and comes back
+     * identical after a save and a reload. (That is a constraint on any later tessellation-quality work: the
+     * *station count* may not become a render-time argument, because this outline reads it.)
+     *
+     * Loops, never an area — [Silhouette]'s own word: a run that comes back alongside itself in projection
+     * (a coil) draws each pass's own rails rather than the boundary of their union, and every line drawn is a
+     * line the body really has.
+     */
+    fun ofSwept(
+        stations: List<Frame3>,
+        section: List<Vec2>,
+        radius: Double?,
+        closed: Boolean,
+        plane: Plane3,
+    ): List<Region> {
+        if (stations.size < 2 || section.isEmpty()) return emptyList()
+        val n = stations.size
+        val centres = stations.map { plane.toLocal(it.at) }
+        // Per station, the two points its section is extreme at across the run — or nothing, where the run
+        // points straight at this plane and there is no "across".
+        val rails = arrayOfNulls<Pair<Vec2, Vec2>>(n)
+        for (k in 0 until n) {
+            // the chord this station's direction is read from: its neighbours, wrapping on a closed run and
+            // one-sided at an open end
+            val prev =
+                when {
+                    k > 0 -> k - 1
+                    closed -> n - 1
+                    else -> k
+                }
+            val next =
+                when {
+                    k < n - 1 -> k + 1
+                    closed -> 0
+                    else -> k
+                }
+            val flat = centres[next] - centres[prev]
+            val span = (stations[next].at - stations[prev].at).length()
+            if (span <= 0.0 || flat.length() <= END_ON * span) continue
+            rails[k] = support(stations[k], section, radius, flat.perp() * (1.0 / flat.length()), plane)
+        }
+
+        val loops = ArrayList<Region>()
+        if (closed && rails.all { it != null }) {
+            // A closed run whose rails are defined throughout comes back to itself, and the two rails are two
+            // rings: joining them into one loop would draw two radial lines the body has no edge at.
+            loops.add(chain(rails.map { it!!.first }, true))
+            loops.add(chain(rails.map { it!!.second }, true))
+        } else {
+            var k = 0
+            while (k < n) {
+                if (rails[k] == null) {
+                    k++
+                    continue
+                }
+                var j = k
+                while (j + 1 < n && rails[j + 1] != null) j++
+                val run = (k..j).map { rails[it]!! }
+                loops.add(
+                    if (run.size == 1) {
+                        // one station on its own: the one chord across its section is all it can claim
+                        chain(listOf(run[0].first, run[0].second), false)
+                    } else {
+                        chain(run.map { it.first } + run.map { it.second }.asReversed(), true)
+                    },
+                )
+                k = j + 1
+            }
+        }
+        // …and wherever a stretch of the run points straight at this plane, the section's own projected
+        // outline is what the body shows there — drawn where that stretch begins and where it ends.
+        for (k in 0 until n) {
+            if (rails[k] != null) continue
+            if (k == 0 || k == n - 1 || rails[k - 1] != null || rails[k + 1] != null) {
+                loops.add(sectionLoop(stations[k], section, radius, plane))
+            }
+        }
+        return loops
+    }
+
+    /**
+     * The two points of [station]'s section that are extreme along [m] in [plane] — the outline's two rails.
+     *
+     * For a round section this is arithmetic rather than a search: [m] lies in the section's own plane (it is
+     * perpendicular to the tangent and to the plane's normal), so `radius · m` expressed in the station's
+     * `(ref, bi)` axes *is* the extreme point, and the exactness note in [ofSwept] is this one line. For any
+     * other section the support is taken over its tessellated boundary.
+     */
+    private fun support(
+        station: Frame3,
+        section: List<Vec2>,
+        radius: Double?,
+        m: Vec2,
+        plane: Plane3,
+    ): Pair<Vec2, Vec2> {
+        val world = plane.u * m.x + plane.v * m.y
+        if (radius != null) {
+            val inFrame = Vec2(world.dot(station.ref), world.dot(station.bi))
+            val len = inFrame.length()
+            if (len > 0.0) {
+                val at = inFrame * (radius / len)
+                return plane.toLocal(station.place(at)) to plane.toLocal(station.place(-at))
+            }
+        }
+        var hi = section[0]
+        var lo = section[0]
+        var hiD = Double.NEGATIVE_INFINITY
+        var loD = Double.POSITIVE_INFINITY
+        for (p in section) {
+            val d = (station.place(p)).dot(world)
+            if (d > hiD) {
+                hiD = d
+                hi = p
+            }
+            if (d < loD) {
+                loD = d
+                lo = p
+            }
+        }
+        return plane.toLocal(station.place(hi)) to plane.toLocal(station.place(lo))
+    }
+
+    /**
+     * The section's own outline at [station], projected — what a run shows where it points straight at this
+     * plane. Exact and one element for a round section; the tessellated boundary otherwise.
+     */
+    private fun sectionLoop(
+        station: Frame3,
+        section: List<Vec2>,
+        radius: Double?,
+        plane: Plane3,
+    ): Region {
+        val centre = plane.toLocal(station.at)
+        if (radius != null) {
+            return Region(Loop(listOf(ProfileElement.CircleE(Circle(centre, radius)))), emptyList())
+        }
+        return chain(section.map { plane.toLocal(station.place(it)) }, true)
+    }
+
+    /**
+     * A rail (or a ring) as a [Region] of straight pieces — the same shape [regionOf] hands back for a traced
+     * mesh outline, and for the same reason: the three consumers of a plan draw, measure and marquee-test
+     * pieces, and none of them assumes an area.
+     */
+    private fun chain(
+        points: List<Vec2>,
+        closed: Boolean,
+    ): Region {
+        val merged = mergeCollinear(points, closed)
+        val last = if (closed) merged.size else merged.size - 1
+        return Region(Loop((0 until last).map { ProfileElement.Seg(Segment(merged[it], merged[(it + 1) % merged.size])) }), emptyList())
+    }
+
+    /**
+     * How short a projected chord may get before a stretch of the run counts as pointing **straight at** the
+     * plan — relative to the chord it projects from, so it is an angle (about 0.06°) and not a length.
+     */
+    private const val END_ON = 1e-3
+
     /**
      * The outline loops of [mesh] seen along [plane]'s normal, in that plane's own 2D coordinates.
      *

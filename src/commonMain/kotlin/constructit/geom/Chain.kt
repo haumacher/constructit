@@ -834,13 +834,13 @@ object Chains {
             if (t == null) return null to (why ?: "cannot tessellate the cutting chain's own side")
             tess.add(t)
         }
-        val (mesh, whyMesh) =
+        val (shell, whyMesh) =
             Geom3.sweptShells(tess, run, closed = false, reversed = reversed) { st, p -> carry.place(st, p) }
-        if (mesh == null) return null to whyMesh
+        if (shell == null) return null to whyMesh
         val spine = Path3(run.zipWithNext().map { (a, b) -> Curve3Element.Seg3(a.at, b.at) })
-        return Solid3(
+        return Solid3.derived(
             Feature3.Sweep(spine, SweepProfile.Section(regions.first()), up, 0.0, 0.0, emptyList(), carry.mode),
-            mesh,
+            shell,
         ) to null
     }
 

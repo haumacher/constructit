@@ -254,7 +254,7 @@ class PlaneSectionTest {
     @Test
     fun aMeshOnlySectionDrawsAndRefusesInputs() {
         val solid = solidOf(box())
-        val fake = Solid3(Feature3.MeshBoolean(BoolOp.SUBTRACT), solid.mesh)
+        val fake = Solid3.of(Feature3.MeshBoolean(BoolOp.SUBTRACT), solid.mesh)
         val sec = Section3.sectionOf(fake, Plane3(Vec3(0.0, 0.0, 10.0), Vec3.X, Vec3.Y))
         assertTrue(sec.drawn.isNotEmpty(), "it draws")
         assertTrue(sec.edges.isEmpty() && sec.corners.isEmpty(), "and names nothing")

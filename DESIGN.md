@@ -153,6 +153,160 @@ Chosen over both "single-output + selector-on-node" and "multi-output ports":
 > went from **~2.5–3.2 ms to under 0.01 ms** (300–450× run to run), i.e. a repaint that changes nothing
 > upstream does no geometric work at all. `Node.computeCount` is the instrument the tests state that in.
 
+> **As-built note — the mesh a value builds only when it is asked (session 52, slice A of the responsiveness
+> item).** The note above stopped one step short of the whole cost. Recompute became free for the cone a
+> gesture does not touch — but for the cone it *does* touch, a solid's `compute` built its triangles, and the
+> plan does not draw triangles. Reported as *"a tube along a helix produces plenty of triangles. The rendering
+> looks very smooth, but when moving points that change the helix, the UI becomes incredibly laggy — even in
+> 2D. Can we defer mesh creation when editing in 2D, so a changed solid does not thwart modeling?"* Three
+> separable causes were found and all three verified in the code: **(a)** the mesh was part of the value, built
+> eagerly at every construction site; **(b)** nothing coalesced the *document* repaint, so the shell painted
+> once per pointer event while the 3D camera path had learned that lesson years earlier; **(c)** the sweep's
+> self-intersection guard is quadratic in the station count, and the station count grows with the turns. This
+> note is (a) and (b). (c) is untouched and stated at the end.
+>
+> **The mechanism: `Solid3` keeps its mesh in a memo cell and derives it on first demand.** `Solid3(feature,
+> mesh)` became `Solid3.derived(feature) { … }` — the mesh-building code moved *inside* a provider, at every
+> construction site, so nothing that only looks at the plan builds a triangle. `Solid3.of(feature, mesh)` is
+> the other door, for the two bodies whose triangles are not derived from a feature at all (an imported mesh,
+> a general boolean's result).
+>
+> - **Purity is untouched, and this is the argument.** A `Feature3` is by construction *enough to rebuild the
+>   identical mesh* — that is why the sweep's own note lists its four frame numbers — so the mesh is a pure
+>   function of the feature: same inputs, same triangles, however late and however often they are asked for.
+>   *Laziness inside an immutable value is not state*: nothing outside can observe the difference except by
+>   timing, the value never changes what it says, and recompute, undo, reload and a byte-equal save are
+>   therefore unaffected. What changed is **when** a mesh is built, never **which** mesh.
+> - **A solid's identity is now reference identity, which is what the memo always wanted.** `Solid3` was a
+>   data class, so `equals`, `hashCode` and `toString` all read the mesh — comparing two solids compared two
+>   triangle lists and printing one printed them, which under deferral would have *forced* them. The memo
+>   above is `===` on the value object and never needed more, and no consumer asks whether two solids are
+>   equal: two solids are the same solid when they are the same value. `toString` names the feature.
+> - **No thread safety, deliberately.** The browser runs the engine on one thread (OP-12), so a guarded lazy
+>   would buy a monitor on every mesh read against a race that cannot happen; the JVM suite is
+>   single-threaded per document for the same reason the value memo is. The cell is a nullable field.
+> - **The mesh survives a restatement.** A plan hint stated in one plane's coordinates is re-projected when
+>   the body is placed (`Solid3.restated`), and both objects share one cell — so the mesh is built at most
+>   once whichever is asked, and both hand out the same `Mesh3` object, which is what `SceneSync`'s identity
+>   swap (`had.mesh === node.mesh`) is keyed on.
+>
+> **The refusal audit, which is the heart of it and is a doctrine question, not a mechanical one.** OP-9's
+> *watertight-or-refused* and OP-3's *invalidity that names itself and heals* both say a body that cannot be
+> built is an **invalid node at evaluation time, with a reason**. Deferral must not turn that into a surprise
+> discovered while drawing. So every solid-producing op was gone through and every refusal classified by what
+> decides it — and the outcome is stronger than the rule the queue item asked for: **for every constructed
+> feature, every refusal is decidable from the feature, and all of them stayed eager.** The mesh stage of a
+> constructed body *cannot fail*, which is why `Solid3.mesh` is still a plain non-null `Mesh3` with no new
+> failure channel anywhere.
+>
+> | Feature | refusals, all of them eager (at eval) | what waits for a demand |
+> |---|---|---|
+> | `Extrusion` | no region; a non-positive depth; a boundary that cannot be tessellated; an area that cannot be triangulated | mapping the flat corners into space — caps and wall strips |
+> | `Revolution` | no region; an axis with no direction; a non-positive angle; more than a full turn; a profile that **crosses** the axis or lies **on** it; a cap that cannot be triangulated | the station ring sweep and the two caps in the world |
+> | `Sweep` | a non-positive tube radius; a profile whose outline does not close, encloses no area or has no size; a path with no pieces or no length; a bend no mitre exists at; the **profile's reach exceeding the local radius of curvature** (`Embedding`, local *and* global); a closed path whose frame does not come back to itself; a run with fewer than two stations; a cap that cannot be triangulated | every station ring and every band triangle — the whole of what a plan drag now skips |
+> | `Loft` | fewer than two sections; more than one apex, or one inside the run; a section with holes or more than one area; a guide that misses corresponding points; **bands that fold into each other**; **rails that cross** in mid-run; a cap that cannot be triangulated or conformed | the row sampling of every band (where a guide's steps live) and the triangles off it |
+> | `Prism` (and the **analytic** boolean, whose result is one) | a slab with no height; slabs that overlap; rings that do not nest; a level whose difference cannot be combined, tessellated, triangulated or conformed; a boolean that leaves nothing | the wall strips, the conforming of each ring to the global corner set, the caps in the world |
+> | placement (`movedBy`) | a frame that is not a rigid motion | turning the source's triangles — and the source's own derivation stays deferred through it |
+> | `Imported` | (none — the triangles came out of a file; the open-shell flag is read once where the literal is built) | nothing: the mesh is already in hand |
+> | `MeshBoolean` | **the engine's verdict on two meshes** | **nothing — this one stays eager, see below** |
+>
+> The two moves that made this possible are worth naming, because they are what "the refusal is about the
+> feature" means concretely. First, the **2D work stays eager**: tessellating a region and ear-clipping it is
+> *what the refusal is about*, so it is done at eval and its result is captured by the provider — the deferred
+> half is only the mapping of flat corners into space. Second, `sweptShells`, `prismShell` and `loftShell` now
+> **return the emission rather than the mesh** (`Pair<(() -> Mesh3)?, String?>`): they validate, then hand back
+> a function that cannot fail. A refusal-free provider is a real constraint on every op above them, and it is
+> stated at `Solid3.derived`.
+>
+> **The one op that stays eager, and why that is doctrine rather than laziness.** A **general (mesh) boolean**
+> — `MeshBool` over Manifold, the route two operands with no common axis take — cannot say in advance why it
+> will not work: its operands *are* triangles, and whether they intersect in a solid at all is the engine's
+> verdict on them. Deferring it would mean an invalid body first discovered while drawing, either thrown where
+> nothing catches it or silently absent, which is the outcome watertight-or-refused exists to forbid. So it
+> runs at eval, and forcing both operands' meshes is part of running it. The cost is stated rather than hidden:
+> **a document whose body is a general boolean still meshes on every drag frame** — the report's own case (a
+> plain tube along a coil) does not go through it, and a *prismatic* boolean is deferred like the prism it
+> produces. A future slice could give the mesh stage a named-refusal channel through the existing status/note
+> route and defer this too; nothing here forecloses it.
+>
+> **And one op that forces its *operand's* mesh for the same kind of reason**: the cut by an unbounded chain
+> (`splitSolid`). The cutting tool is bounded *to the body*, so how big it has to be comes out of the body's
+> own extent, and two of that node's refusals ("this cut leaves the solid untouched", "this cut removes the
+> whole solid") compare volumes. Those are the node's **value**, not its picture, so they belong at eval — a
+> volume is exactly the kind of number the slice-B law says must never be coarse or late.
+>
+> **The footprint hint — the one design decision, and it had to be made.** A swept body has a feature but no
+> sketch to show in plan, so its hint was `Silhouette.of(solid.mesh, plane)`: the 2D view was the one consumer
+> that could not avoid meshing, for exactly the body in the report. Three routes were possible and the choice
+> is **the exact one, off the run** (`Silhouette.ofSwept`). At each station the outline touches the section at
+> its two extreme points *across* the run: take the in-plane direction `m` perpendicular to the projected
+> tangent, and the section's support points along `±m` are on the outline; walking them gives two rails, and
+> the rails **are** the plan of the body's sides. It is **exact for a tube**, and the reason is a small
+> theorem worth keeping: `m` is perpendicular to the tangent and lies in the plane, so it lies in the
+> section's own plane — hence for a circular section the support point is at exactly the stated radius,
+> whatever the run's inclination, with no cosine and no tessellation of the circle in it. The mitre push is
+> included, because the support is taken of the *placed* ring, so the outer side of a corner reaches its mitre
+> point. Two costs, said out loud because the hint is also the **pick target**: an **end face** of an open run
+> is closed by the chord between its two rails rather than by the projected end face, so a body seen more
+> end-on than side-on has a hint that stops short of its own end by up to the section's reach; and where the
+> run projects onto **one point** the rails are undefined, and what is drawn there is the section's own
+> projected outline (an exact circle, for a round section). What is *not* a cost: it is a pure function of the
+> feature and the plane, so the pick target cannot drift with a rendering choice and comes back identical
+> after a save and a reload — which is why the **coarse-mesh** route was rejected outright (it fails the
+> acceptance test on its own, since it builds triangles) and the **keep-it-eager** route with it (it does not
+> fix the report). The one golden that draws a swept plan came back **geometrically identical** — the same
+> seven-corner outline of an L-shaped tube, walked from another corner the other way round — which is the best
+> evidence the route is the same curve the silhouette was tracing. One constraint this places on later work:
+> the **station count** may not become a render-time argument, because this outline reads it.
+>
+> **One paint per animation frame for the document, too** (`Main.kt`). `editor.onChange = { repaint() }` now
+> goes through the same `requestAnimationFrame` coalescing the camera has had, with one pending flag for both
+> so a frame that has both to do does the document's paint. `Editor` stays exactly as pure and as synchronous
+> as `Viewport3`: one gesture is still one `onChange`, and it is the shell that decides how many of those
+> become pixels. Everything that must be on screen before the next line of code runs — the view switch, the
+> preview toggle, a note, a resize, the initial paint — still calls `repaint()` straight through, and that was
+> checked call site by call site (the ~30 explicit ones are unchanged).
+>
+> **And *which* changes coalesce had to be stated precisely, because the browser found the answer.** The first
+> version coalesced every `onChange` and **six of the eight Playwright flows failed** — they read the side
+> panel's DOM (the element tree, the status line, an inspector field) immediately after a click, and the panel
+> had not been rebuilt yet. That is not a test artefact but the real distinction: the panel is not pixels, it
+> is **state a click's own consequence is read from**, and deferring it makes "what the drawing says" arrive a
+> frame after the thing it says it about. The argument in `draw3dSoon`'s own comment was never about document
+> changes in general — it is about the **two events that outrun the display**: a pointer *move* and a wheel
+> notch. So the shell marks exactly those two (`streamed { … }`, on both canvases) and coalesces only inside
+> them; a click, a key, a button, a file load paint straight through. That is where the lag was anyway — a drag
+> is nothing but moves — and with the rule stated this way all eight flows pass again. This half has no
+> headless seam (neither does `draw3dSoon`, for the same reason: `requestAnimationFrame` is the shell's, OP-12),
+> and what vouches for it is the eight flows in real Chrome, which is also what caught the over-reach.
+>
+> **The instrument, and the numbers.** `Node.meshCount` sits beside `Node.computeCount`: per node,
+> document-scoped, no shared mutable static. It is counted where it happens rather than where it is triggered
+> — a node hands the value it just produced a note saying *tell me when you build* (`Solid3.meterTo`, set
+> once), so the consumer that forces a mesh is charged against the node that owns the body, and a value handed
+> straight on keeps counting against the node that made it. On the report's own body — a tube of radius 3
+> along a three-turn coil, **11924 triangles**:
+>
+> - a 21-frame plan drag of the coil's centre: **21 meshes → 0**, i.e. ~250000 triangles per drag → none;
+> - the same drag with the 3D scene extracted: **21 meshes**, one per frame that moved the body and none for
+>   the frame that moved nothing (the value memo serving the release) — deferral is not "never";
+> - wall-clock for those 21 frames, JVM: **30–70 ms** in the plan versus **295–380 ms** with the mesh
+>   demanded, so a plan frame is roughly 5–10× cheaper and the residue is cause (c);
+> - a hundred frames with nothing changed leave **both** counters where they were — OP-5's own acceptance, one
+>   axis further on;
+> - comparing, hashing, printing or collecting a solid builds nothing;
+> - and the numbers the drawing reports are unchanged and asserted as numbers: 24000 mm³ for a 40×60×10 plate,
+>   20000 mm³ after a 20×20 plug is subtracted analytically, the extent exactly 40×60×10, a prism's section
+>   still exact and structural (and needing no mesh at all), a sweep's section still drawn from the mesh, the
+>   STL still written, `assertManifold` on every solid still holding.
+>
+> **What is deliberately not here.** Cause **(c)**, the quadratic self-intersection guard, is untouched: the
+> sweep's frame and `Embedding.check` are feature-level refusals and therefore still run on every drag frame,
+> which is what the residual per-frame cost above is. **Slice B** (tessellation quality as a render-time
+> argument, coarse while dragging, the fine mesh on an idle callback) and **slice C** (a worker, or a mesher
+> that yields) are not started and no stub of them exists. `prismMesh` is kept as a public function over the
+> new `prismShell`, so nothing outside had to change.
+
 ### How the coupled points attach (details deferred to their own OPs)
 - **OP-4 (measurements):** `Measure.Distance(P1, P2) → Scalar` is an ordinary node; its
   `Scalar` output feeds any `Scalar` input. Graph stays acyclic.
@@ -10020,6 +10174,39 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   reason: a new *free* point can never lie on a circle. Nothing was cut, no id changed, no version bump.
   **1671 → 1687 green**, no new golden, no existing golden changed. See *Implementation status (as built — a
   point slot either shares a point or states one)*.
+- **Session 52 — the mesh a value builds only when it is asked (slice A of the responsiveness item).** The
+  report was *"a tube along a helix produces plenty of triangles… when moving points that change the helix,
+  the UI becomes incredibly laggy — even in 2D. Can we defer mesh creation when editing in 2D, so a changed
+  solid does not thwart modeling?"* — and the answer is the user's own, taken literally: a solid's triangles
+  are now derived **on first demand** inside the immutable value, so a plan drag of a three-turn spring builds
+  **zero** of the 11924 triangles it used to rebuild on every mouse move, and the shell's document repaint
+  joined the camera's on `requestAnimationFrame`. The work was not the laziness, which is thirty lines; it was
+  the **refusal audit**, and it came out better than the rule it was held to. OP-9's watertight-or-refused and
+  OP-3's naming-and-healing both put a body-that-cannot-be-built at *evaluation* time, so every solid op was
+  gone through and every refusal classified by what decides it — and for every constructed feature *all* of
+  them turned out to be decidable from the feature, which is now the invariant: the mesh stage of a
+  constructed body **cannot fail**, `Solid3.mesh` needs no new failure channel, and the shells hand back an
+  emission (`() -> Mesh3`) rather than a mesh so that the compiler carries the constraint. Two things had to
+  be argued rather than coded. A **general mesh boolean** stays eager with its reason stated: its operands
+  *are* triangles and its refusal is the engine's verdict on them, so deferring it would move an invalid body
+  from eval time to draw time, which is exactly what the doctrine forbids — a stated exception beats a silent
+  behaviour change. And a **swept body's plan hint**, which was the silhouette of its own mesh and so the one
+  consumer that made the 2D view mesh: it is now read off the run and the section, and it is *exact* for a
+  tube because the in-plane direction across the run lies in the section's own plane, so a circular section's
+  support point is at exactly the stated radius however the run is inclined — no cosine, no tessellation of
+  the circle, and therefore no rendering choice anywhere near a pick target. The one golden that draws a swept
+  plan came back **geometrically identical**, the same seven corners walked from another one the other way
+  round, which is the best evidence available that the new route traces the curve the old one did. Purity is
+  untouched and the argument is one line: the mesh is a pure function of the feature, so laziness inside an
+  immutable value is not state. The repaint half taught its own lesson: coalescing *every* document change
+  broke six of the eight browser flows, because the side panel is not a picture but **state a click's own
+  consequence is read from** — so the coalescing is now stated for the two events that actually outrun the
+  display, a pointer move and a wheel notch, which is where the lag lived anyway. `Solid3` stopped being a data class in the process — comparing or printing a
+  solid must not force its triangles, and OP-5's memo is `===` on the value and never wanted more.
+  **1692 → 1700 green**, one golden regenerated (same geometry, new winding), nothing cut. Slices B
+  (render-time tessellation quality) and C (meshing off the main thread) remain, and so does the quadratic
+  self-intersection guard, which is a feature-level refusal and still runs per frame. See *the mesh a value
+  builds only when it is asked* under *Evaluation*.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -11920,6 +12107,22 @@ absent, and independent of everything else here.
    **instrument, not a stopwatch**: a mesh-build counter beside `Node.computeCount`, and headless assertions
    that a plan drag builds **zero** triangles, that a 3D drag builds one coarse mesh per frame and exactly one
    fine mesh after release, and that a measured volume is never coarse.
+
+   > **Slice A is delivered (session 52) — see *the mesh a value builds only when it is asked* under
+   > *Evaluation*.** (a) and (b) are done: the mesh is a lazily derived, memoized field of `Solid3`, the
+   > document repaint is coalesced onto `requestAnimationFrame` in the shell, and the instrument is
+   > `Node.meshCount`. The coalescing is **per streaming event** — a pointer move and a wheel notch, the two
+   > that outrun the display — because coalescing every document change deferred the side panel's DOM, which is
+   > state a click's consequence is read from; the browser flows caught that and the rule is now stated.
+   > A plan drag of the report's own body (a tube on a three-turn coil, 11924 triangles)
+   > builds **0** meshes where it built 21, and the same drag with the 3D view open builds 21. The design
+   > decision the slice hinged on went to the **exact** route: a swept body's plan hint is now read off its run
+   > and its section (`Silhouette.ofSwept`), exact for a tube's sides, with its two costs stated at the pick
+   > target. One op stays eager with a stated reason — a **general (mesh) boolean**, whose refusal is the
+   > engine's verdict on triangles and cannot be honestly named before they exist. **(B) and (C) remain**, and
+   > so does **(c)**: the quadratic guard is a feature-level refusal, so it still runs on every drag frame and
+   > is the residual per-frame cost. One constraint slice B inherits: the **station count** may not become a
+   > render-time argument, because the plan hint reads it — a picture's quality may not move a pick target.
 2. **The helix's key points, and a point on a helix** (the user's design). Today `Document.extractPoints`
    falls through to `emptyList()` for a `SPACE_CURVE` and `Element.isCurve` excludes one, so a coil has no end
    point, no start point and no centre; and the rider forms (`AXIS_COORD`, `ALONG_LINE`, `CIRCLE_ANGLE`,
@@ -11940,7 +12143,44 @@ absent, and independent of everything else here.
    anchoring problem one dimension up — so those curves refuse by name with that reason, recorded as a future
    extension and not a limit.
 
-**Beyond those two, the rest of the numbered queue is empty.** What remains is the parked list below, each
+**Queued in session 52 (user-directed): the sphere — a concept the tool had missed.** Asked as *"spheres — a
+missed concept so far, right?"*, and the honest answer was *yes as a concept, no as a capability*: the word
+appears nowhere in the engine (only `computeBoundingSphere` in the camera), `Feature3` is Extrusion /
+Revolution / Sweep / Loft / Prism / MeshBoolean / Imported — and yet a ball builds today. Verified headlessly
+at c3ad438: an arc from pole to pole, its closing diameter, a region, revolved a full turn gives 4970
+triangles, `Watertight.defect == null`, volume 33402.9 mm³ against 33510.3 analytic for r = 20 — 0.32 % short,
+because it is inscribed twice over (a chorded meridian carried on chorded parallels). So **a sphere needs no
+new `Feature3` kind**: `Revolution` already retains its exact profile sketch, arcs included. What is missing
+splits in three, and only the first is small.
+
+3. **The gesture (small).** *Sphere (centre, radius)* and *Sphere (centre, surface point)* — two rows that
+   build the half-disc profile and the full revolve **by construction**, a macro over primitives that already
+   exist, so the DAG is ordinary: the radius is a parameter, the arc and the axis stay live, and dragging the
+   centre moves the ball. Nothing new in the kernel. The help says plainly that the body is a revolve and that
+   its section is chorded until item 4 — the same honesty *Tube*'s help now carries about its plan hint. The
+   pairing with *Circle (centre, radius)* / *(centre, point)* is deliberate: a ball is what a circle says one
+   dimension up, and the two spellings are the same two the circle has.
+4. **Analytic faces for surfaces of revolution.** `Section3.faces`, `.edges` and `.structuralRefusal` all
+   answer `REVOLVE_ONLY` today, so a revolution has no named faces: its section falls back to `meshSection`,
+   its curves draw as chords, they cannot be used as construction inputs, and there is no face to sketch on.
+   That is a *Revolution* gap and not a sphere gap — **every turned part in the tool has it** — and closing it
+   is what makes a plane through a ball an exact circle, a cylindrical section two exact lines, and *Sketch on
+   face* reach a shaft's flat end. It wants a face-patch family for surfaces of revolution (spherical,
+   conical, toroidal and planar bands, read off the profile's own pieces), which is also what the parked 3D
+   blending work will need. Bigger than item 3, and shared.
+5. **The sphere as a *locus* — the concept behind the concept.** In the plane the circle is how the drawing
+   carries **distance**: circle ∩ circle is an ordered intersection set whose branch is a stored `Select` sign
+   (OP-1), and tangency and Apollonius are built on it. In space there is no distance-based construction at
+   all — points in space come only from height points (OP-25), riders on curves, projections and section
+   corners, and `Intersect3` is plane-∩-solid and nothing else (OP-26 step 6). A sphere supplies the missing
+   locus, and it composes exactly as its 2D twin does: **sphere ∩ sphere** is a circle in space, **three
+   spheres** are the trilateration pair, **sphere ∩ curve** is the points at a stated distance along a run.
+   That is how a drawing says *"40 from that corner and 55 from that one"* by construction rather than by
+   solver — the piece of the no-solver stance that exists only in the plane today. OP-sized: a `Sphere3`
+   value, ordered 3D intersection sets, branch by sign, and the same rule that governs every scored choice
+   (scored once at creation, stored, never re-scored on replay).
+
+**Beyond those five, the rest of the numbered queue is empty.** What remains is the parked list below, each
 item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**

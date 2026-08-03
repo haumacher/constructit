@@ -2668,8 +2668,16 @@ class Construction {
         if (Geom3.sameAxis(a.feature, b.feature)) {
             Geom3.boolean(kind, a, b)
         } else {
+            // **The one operation whose mesh stays eager, and the reason is doctrinal** ([Solid3]). Every
+            // constructed feature can say *in advance* why it cannot be built — a degenerate profile, an empty
+            // area, a bend the section outgrows — so its triangles wait for somebody to want them while its
+            // refusal stays where OP-3 and OP-9 put it, at evaluation time. A general boolean cannot: its
+            // operands *are* triangles, and whether they intersect in a solid at all is the engine's verdict on
+            // them. Deferring it would mean an invalid body first discovered while drawing — either thrown
+            // where nothing catches it or silently absent — which is exactly the outcome watertight-or-refused
+            // exists to forbid. So it runs now, and forcing its operands' meshes is part of running it.
             val (mesh, why) = MeshBool.boolean(kind, a.mesh, b.mesh)
-            if (mesh == null) null to why else Solid3(Feature3.MeshBoolean(kind), mesh) to null
+            if (mesh == null) null to why else Solid3.of(Feature3.MeshBoolean(kind), mesh) to null
         }
 
     /**
@@ -2766,6 +2774,11 @@ class Construction {
         op(*listOfNotNull(solid, chain, plane, along).toTypedArray()) {
             val target = (it[0] as SolidValue).solid
             openShellOf(target)?.let { why -> return@op EvalResult.Invalid(why) }
+            // **This op reads its target's triangles, and it cannot wait for a demand** ([Solid3]): the tool is
+            // bounded to the body, so *how big* it has to be comes out of the body's own extent, and two of
+            // this node's refusals compare volumes. Both are the node's *value* rather than its picture, so
+            // the mesh is forced here — a cut is one of the two places (the other is the general boolean) where
+            // deferral would only move the same work later and take a named refusal with it.
             val directrix = if (along == null) null else (it[3] as Path3Value).path
             val (tools, whyTools) =
                 if (directrix == null) {
@@ -2837,7 +2850,9 @@ class Construction {
         // the **open-shell flag**, derived here because here is where the literal's value is built: it is a
         // pure function of these triangles, so a reload derives the same answer and no stored flag can drift
         // from the geometry it describes (see [Feature3.Imported.openShell])
-        val value = SolidValue(Solid3(Feature3.Imported(source, openShell = Watertight.defect(posed)), posed))
+        // The one solid whose mesh was never derived from a feature: a file said what the triangles are, so
+        // there is nothing to defer and nothing that could refuse later ([Solid3.of]).
+        val value = SolidValue(Solid3.of(Feature3.Imported(source, openShell = Watertight.defect(posed)), posed))
         return op { EvalResult.Ok(value) }
     }
 
@@ -2892,12 +2907,16 @@ class Construction {
         plane: Plane3,
     ): Solid3 =
         when (val f = solid.feature) {
-            is Feature3.Imported -> Solid3(Feature3.Imported(f.source, Silhouette.of(solid.mesh, plane), f.openShell), solid.mesh)
+            // An imported body's triangles are the only thing it has, and they are already in hand, so
+            // projecting them costs a pass over them and no derivation ([Solid3.of]).
+            is Feature3.Imported ->
+                solid.restated(Feature3.Imported(f.source, Silhouette.of(solid.mesh, plane), f.openShell))
             // …and a **sweep**, for the identical reason (OP-26): its plan is a silhouette rather than a
             // sketch, so it is stated in some plane's coordinates and the move dropped it. Re-projected here,
-            // in the plane the body is now being shown in, which is the only place that knows one.
-            is Feature3.Sweep ->
-                Solid3(Feature3.Sweep(f.path, f.profile, f.up, f.roll, f.twist, Silhouette.of(solid.mesh, plane)), solid.mesh)
+            // in the plane the body is now being shown in, which is the only place that knows one — and off
+            // the *run* rather than off the triangles ([Geom3.sweptPlan]), because a placed sweep must not be
+            // the one body a plan drag has to mesh.
+            is Feature3.Sweep -> solid.restated(f.copy(plan = Geom3.sweptPlan(f, plane)))
             else -> solid
         }
 
