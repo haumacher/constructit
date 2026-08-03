@@ -189,7 +189,7 @@ fun Feature3.movedBy(x: Xform3): Feature3 =
         // only the path and the direction the start reference is derived from move. Its **plan is dropped**
         // for [Feature3.Imported]'s reason — that outline is stated in the coordinates of a plane this move
         // invalidates — and whoever moved the body re-projects (`Construction.placeSolid`).
-        is Feature3.Sweep -> Feature3.Sweep(path.movedBy(x), profile, x.linear(up), roll, twist)
+        is Feature3.Sweep -> Feature3.Sweep(path.movedBy(x), profile, x.linear(up), roll, twist, carry = carry)
         is Feature3.MeshBoolean -> this
         // ...and an imported body keeps its provenance but **loses its plan**, deliberately: that outline is
         // stated in the coordinates of a plane this move invalidates, so carrying it over would draw the body

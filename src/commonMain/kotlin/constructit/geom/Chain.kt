@@ -314,6 +314,536 @@ object Chains {
         return (left to right) to null
     }
 
+    // ---- the swept cut: the directrix as a general Path3, and the mode (OP-22's extension, step 2) ----
+    // Step 1's cut extrudes the chain straight through the target along its space's normal. That straight
+    // line **is** a directrix — the degenerate one — so what follows is not a second operator but the same
+    // one with its second operand allowed to curve: the chain rides a moving frame along a `Path3`
+    // ([Frames3], OP-26's step 2, reused wholesale), and *how* it rides is the one discrete mode
+    // ([CarryMode]). Two things the straight case hid have to be answered here, and both are answered the
+    // way step 1 answered the chain's rays — **unbounded in the statement, bounded in the implementation**:
+    // the directrix's own ends run on, and the profile's reach becomes the target's own extent.
+
+    /**
+     * How many times the effective reach and the stations that matter are re-derived from one another.
+     *
+     * They define each other — which stations can reach the target depends on how far the section reaches,
+     * and how far it reaches depends on which stations had to be covered — so the pair is taken to a fixed
+     * point from below, starting at the target's distance from the run. It is reached in one step for any
+     * run that passes the target once (the commonest case by far) and in two for one that comes back
+     * alongside it; a run that keeps needing more is a run that has folded, which the criterion below then
+     * refuses in its own words rather than this loop deciding anything.
+     */
+    private const val REACH_PASSES = 4
+
+    /**
+     * The two **tool solids** that split [target] by [chain] drawn on [plane] and carried along [directrix]
+     * in the [mode] stated: the left half first, the right half second (the chain's own direction of travel,
+     * see [Chain]).
+     *
+     * **The degenerate directrix is the straight case, and it takes the straight case's code.** A directrix
+     * running along [plane]'s own normal is the line step 1 already extrudes along, so it is dispatched
+     * *by predicate, up front* to [tools] — which keeps OP-22's exact slab algebra reachable for it (a swept
+     * mesh could only ever be a general boolean) and makes "the straight case is unchanged" a fact about the
+     * code rather than a tolerance in a test. It is also why the two modes coincide there: they are the same
+     * call.
+     *
+     * **The directrix is unbounded too, and that is one concept rather than two.** A *finite* directrix would
+     * reintroduce "extrude far enough along it" — the very guess this operator exists to remove — so the run
+     * **continues out of each end along its end tangent**, exactly as a chain continues out of each end along
+     * its first and last span. Nothing states how far: the ends are pushed out until the section they carry
+     * can no longer touch the target, which is derived from the target every pass and stored nowhere. That a
+     * straight extension needs exactly **one** station is not a shortcut but the sweep's own rule — a chord
+     * of a line *is* the line — and it is why lengthening the drawn route changes nothing at all: the
+     * section's coordinates of a fixed point do not vary along a straight run.
+     *
+     * **The other end of the same statement**: the run is *clipped* to the stations whose sections can reach
+     * the target, so what is built is the piece of an unbounded surface that matters, and a run that folds
+     * through itself well clear of the solid is no more a defect than a chain's ray that leaves the box.
+     *
+     * Everything here is a function of values inside one call (OP-21): nothing about the graph's shape
+     * depends on how big the target is, and a target that grows is bounded larger next pass.
+     */
+    fun sweptTools(
+        chain: Chain,
+        plane: Plane3,
+        directrix: Path3,
+        mode: CarryMode,
+        target: Mesh3,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<Pair<Solid3, Solid3>?, String?> {
+        if (target.vertices.isEmpty()) return null to "the solid to cut has no geometry to bound the cutting tool with"
+        if (directrix.isEmpty) return null to "this route has no pieces, so there is nothing to carry the cut along"
+        if (straightAlong(directrix, plane.normal)) return tools(chain, plane, target, tolMm)
+
+        val (lo3, hi3) = Geom3.bounds(target) ?: return null to "the solid to cut has no geometry to bound the cutting tool with"
+        val corners = boxCorners(lo3, hi3)
+        val centre = (lo3 + hi3) * 0.5
+        val radius = (hi3 - lo3).length() * 0.5
+        val chainBox = bounds(chain)
+        val m =
+            margin(
+                maxOf(
+                    hi3.x - lo3.x,
+                    hi3.y - lo3.y,
+                    hi3.z - lo3.z,
+                    chainBox?.let { max(it.second.x - it.first.x, it.second.y - it.first.y) } ?: 0.0,
+                ),
+            )
+
+        // **The section's own axes at the start are the chain's own space**, which is the frames decision
+        // this operator was given: the chain's 2D coordinates and the frame's start reference are one
+        // statement. Handing the space's *u* to the transport makes the section stand exactly as drawn when
+        // the run leaves along the space's normal — the everyday case, and the one where a naive `up = the
+        // normal` would be degenerate and fall back on a world axis (see [Frames3.startReference]). Where the
+        // run leaves along *u* instead, *v* is perpendicular to it by construction, so the drawing still
+        // answers and no world axis is ever consulted.
+        val t0 = Curves3.tangentAt(directrix.elements.first(), 0.0) ?: return null to "this route has no direction at its start"
+        val up = if ((plane.u - t0 * plane.u.dot(t0)).length() > 1e-6) plane.u else plane.v
+        val carry = Carry(mode, plane, if (t0.dot(plane.normal.normalized()) < 0.0) -1.0 else 1.0)
+
+        val (frame, whyFrame) = Frames3.along(directrix, up, tolMm = tolMm)
+        if (frame == null) return null to (whyFrame ?: "cannot build a moving frame along this route")
+        // A closed route is cut open where it stands **furthest from the solid** — the one place a cut can
+        // have its ends without them mattering — after which it is the open case exactly, caps and all. That
+        // is what makes a revolved cut fall out of this operator instead of needing one of its own.
+        val stations = if (directrix.closed) openedAwayFrom(frame.stations, lo3, hi3) else frame.stations
+        if (stations.size < 2) return null to "this route has no length, so there is nothing to carry the cut along"
+        val startRay = Ray3(stations.first().at, -stations.first().tangent)
+        val endRay = Ray3(stations.last().at, stations.last().tangent)
+        val rays = if (directrix.closed) null else (startRay to endRay)
+
+        // the seed: how far the far edge of the solid stands from the run, rays included
+        var relevance = corners.maxOf { runDistance(it, stations, rays) } + m
+        var span = 0..0
+        var boxLo = Vec2(0.0, 0.0)
+        var boxHi = Vec2(0.0, 0.0)
+        var reach = 0.0
+        for (pass in 0 until REACH_PASSES) {
+            span = relevantSpan(stations, rays, lo3, hi3, relevance)
+            val box = sectionBox(stations, span, corners, carry, chainBox, m)
+            boxLo = box.first
+            boxHi = box.second
+            reach = boxReach(boxLo, boxHi)
+            if (reach <= relevance) break
+            relevance = reach
+        }
+
+        // …and now the ends: walk out to the first station the section can no longer reach the solid from,
+        // and where the run itself ends, run it on until that is true. The caps then stand strictly outside
+        // the target, which is the same guarantee the chain's own closure gets from the margin.
+        var k0 = span.first
+        var k1 = span.last
+        while (k0 > 0 && boxDistance(stations[k0].at, lo3, hi3) <= reach + m) k0--
+        while (k1 < stations.size - 1 && boxDistance(stations[k1].at, lo3, hi3) <= reach + m) k1++
+        if (k1 == k0) {
+            if (k1 < stations.size - 1) {
+                k1++
+            } else {
+                k0--
+            }
+        }
+        if (k0 < 0) return null to "this route is a single station, so there is nothing to carry the cut along"
+        val run = ArrayList(stations.subList(k0, k1 + 1))
+        val nearStart = boxDistance(run.first().at, lo3, hi3) <= reach + m
+        val nearEnd = boxDistance(run.last().at, lo3, hi3) <= reach + m
+        if (directrix.closed && (nearStart || nearEnd)) {
+            return null to
+                "this closed route never leaves the solid's reach, so the cut has no clear end — state the " +
+                "route as an open run through the body, or move it clear of the solid where it should stop"
+        }
+        if (nearStart) run.add(0, runOn(run.first(), backwards = true, d = reach + 2.0 * m + (run.first().at - centre).length() + radius))
+        if (nearEnd) run.add(runOn(run.last(), backwards = false, d = reach + 2.0 * m + (run.last().at - centre).length() + radius))
+
+        // **The embedding criterion, in its bounded-reach form** ([Embedding]): the same double-normal
+        // machinery the sweep uses, with the profile's own (infinite) reach replaced by the derived one and
+        // the run replaced by the piece of it that matters. And what it decides is not only watertightness:
+        // a surface that does not meet itself over the solid's extent is exactly a surface for which *"which
+        // side"* has an answer there, so the refusal and this operator's semantics are one statement.
+        val length = run.last().s - run.first().s
+        val report =
+            Embedding.check(
+                MovingFrame(run, length, closed = false, seam = 0.0),
+                reach,
+                "the cut's reach across this solid (${Frames3.mm(reach)} mm)",
+                subject = "the cutting surface",
+                cure = "open the run out, or bring the cut nearer to it",
+            )
+        report.defect?.let { return null to it }
+        foldDefect(run, carry, boxLo, boxHi)?.let { return null to it }
+
+        val (sides, whySides) = halves(chain, boxLo, boxHi, tolMm)
+        if (sides == null) return null to whySides
+        // Which way the shell is wound, asked once for the whole tool: the rotating carry always advances
+        // along its own tangent, so only reading the section mirrored can turn it round, while a
+        // translational carry keeps the section as drawn and may instead travel against its normal.
+        val reversed =
+            when (mode) {
+                CarryMode.ROTATING -> carry.handed < 0.0
+                CarryMode.TRANSLATIONAL -> (run.last().at - run.first().at).dot(plane.normal.normalized()) < 0.0
+            }
+        val (left, whyL) = sweptShell(sides.first, run, carry, reversed, up, tolMm)
+        if (left == null) return null to (whyL ?: "cannot build the cutting tool")
+        val (right, whyR) = sweptShell(sides.second, run, carry, reversed, up, tolMm)
+        if (right == null) return null to (whyR ?: "cannot build the cutting tool")
+        return (left to right) to null
+    }
+
+    /**
+     * Whether [path] is the **degenerate directrix** — the straight line along [n], which is what a cut with
+     * no directrix at all already is.
+     *
+     * A predicate over the pieces rather than a measurement of the mesh they make: every piece is straight
+     * and every one runs along the given direction, so the answer is exact and a hair of curvature makes it
+     * false rather than nearly true.
+     */
+    private fun straightAlong(
+        path: Path3,
+        n: Vec3,
+    ): Boolean {
+        if (path.closed) return false
+        val axis = n.normalized()
+        for (el in path.elements) {
+            if (el !is Curve3Element.Seg3) return false
+            val d = el.end - el.start
+            if (d.length() <= Vec3.EPS) return false
+            if (abs(abs(d.normalized().dot(axis)) - 1.0) > 1e-9) return false
+        }
+        return path.elements.isNotEmpty()
+    }
+
+    /** The eight corners of the axis-aligned box `[lo, hi]` — what the target is measured by. */
+    private fun boxCorners(
+        lo: Vec3,
+        hi: Vec3,
+    ): List<Vec3> =
+        listOf(
+            Vec3(lo.x, lo.y, lo.z),
+            Vec3(hi.x, lo.y, lo.z),
+            Vec3(lo.x, hi.y, lo.z),
+            Vec3(hi.x, hi.y, lo.z),
+            Vec3(lo.x, lo.y, hi.z),
+            Vec3(hi.x, lo.y, hi.z),
+            Vec3(lo.x, hi.y, hi.z),
+            Vec3(hi.x, hi.y, hi.z),
+        )
+
+    /** How far [p] stands from the box `[lo, hi]` — zero inside it. */
+    private fun boxDistance(
+        p: Vec3,
+        lo: Vec3,
+        hi: Vec3,
+    ): Double {
+        val dx = max(0.0, max(lo.x - p.x, p.x - hi.x))
+        val dy = max(0.0, max(lo.y - p.y, p.y - hi.y))
+        val dz = max(0.0, max(lo.z - p.z, p.z - hi.z))
+        return Vec3(dx, dy, dz).length()
+    }
+
+    /**
+     * How far the box `[lo, hi]` stands from the ray [r] — a ternary search, and it is exact rather than a
+     * sampling: the distance from a point to a convex set is a convex function, so its composition with the
+     * ray's own affine parameter has exactly one minimum and no local one to fall into.
+     */
+    private fun rayBoxDistance(
+        r: Ray3,
+        lo: Vec3,
+        hi: Vec3,
+    ): Double {
+        val centre = (lo + hi) * 0.5
+        var a = 0.0
+        var b = max(0.0, (centre - r.origin).dot(r.dir)) + (hi - lo).length()
+        repeat(80) {
+            val x = a + (b - a) / 3.0
+            val y = b - (b - a) / 3.0
+            if (boxDistance(r.at(x), lo, hi) <= boxDistance(r.at(y), lo, hi)) b = y else a = x
+        }
+        return boxDistance(r.at((a + b) / 2.0), lo, hi)
+    }
+
+    /** How far [p] stands from the run — its stations as a polyline, plus the two rays that continue it. */
+    private fun runDistance(
+        p: Vec3,
+        stations: List<Frame3>,
+        rays: Pair<Ray3, Ray3>?,
+    ): Double {
+        var best = Double.MAX_VALUE
+        for (k in 0 until stations.size - 1) {
+            val a = stations[k].at
+            val d = stations[k + 1].at - a
+            val len2 = d.dot(d)
+            val t = if (len2 <= Vec3.EPS) 0.0 else min(1.0, max(0.0, (p - a).dot(d) / len2))
+            best = min(best, (p - (a + d * t)).length())
+        }
+        if (rays != null) {
+            for (r in listOf(rays.first, rays.second)) {
+                val t = max(0.0, (p - r.origin).dot(r.dir))
+                best = min(best, (p - r.at(t)).length())
+            }
+        }
+        return best
+    }
+
+    /**
+     * The stations whose sections can reach within [near] of the box `[lo, hi]` — first and last, as a range.
+     *
+     * A **range** rather than a set, because what is built is one connected piece of the run: everything
+     * between the first station that matters and the last one does, whether or not it comes within reach in
+     * between. The run's own two ends are measured as **rays**, since they continue, which is what lets a
+     * route drawn short of the solid still cut it.
+     */
+    private fun relevantSpan(
+        stations: List<Frame3>,
+        rays: Pair<Ray3, Ray3>?,
+        lo: Vec3,
+        hi: Vec3,
+        near: Double,
+    ): IntRange {
+        var first = -1
+        var last = -1
+        for (k in stations.indices) {
+            val d =
+                when {
+                    rays != null && k == 0 -> rayBoxDistance(rays.first, lo, hi)
+                    rays != null && k == stations.size - 1 -> rayBoxDistance(rays.second, lo, hi)
+                    else -> boxDistance(stations[k].at, lo, hi)
+                }
+            if (d <= near) {
+                if (first < 0) first = k
+                last = k
+            }
+        }
+        // Nothing within reach at all: the cut misses this solid, and that is a property of the *result* —
+        // the boolean's own "this cut leaves the solid untouched" says it, in the words the user can act on.
+        if (first < 0) {
+            val k = stations.indices.minByOrNull { boxDistance(stations[it].at, lo, hi) } ?: 0
+            return k..k
+        }
+        return first..last
+    }
+
+    /**
+     * The box the chain is clipped to, in the chain's **own 2D coordinates**: the target as it stands in
+     * every station of [span]'s frame, the chain's own finite extent, and a margin round both.
+     *
+     * The projection into a station's frame is **linear**, so taking the target's eight box [corners] bounds
+     * every point inside it exactly — no sampling, and no vertex count to depend on. The margin does here
+     * what it does in step 1: it puts every face of the closure strictly outside the target, so the
+     * coplanar-face degeneracy is unreachable by construction (see [MARGIN_FRACTION]).
+     */
+    private fun sectionBox(
+        stations: List<Frame3>,
+        span: IntRange,
+        corners: List<Vec3>,
+        carry: Carry,
+        chainBox: Pair<Vec2, Vec2>?,
+        m: Double,
+    ): Pair<Vec2, Vec2> {
+        var lo: Vec2? = null
+        var hi: Vec2? = null
+        for (k in span) {
+            for (c in corners) {
+                val q = carry.sectionOf(stations[k], c)
+                lo = if (lo == null) q else Vec2(min(lo.x, q.x), min(lo.y, q.y))
+                hi = if (hi == null) q else Vec2(max(hi.x, q.x), max(hi.y, q.y))
+            }
+        }
+        if (chainBox != null) {
+            val a = chainBox.first
+            val b = chainBox.second
+            lo = if (lo == null) a else Vec2(min(lo.x, a.x), min(lo.y, a.y))
+            hi = if (hi == null) b else Vec2(max(hi.x, b.x), max(hi.y, b.y))
+        }
+        val l = lo ?: Vec2(0.0, 0.0)
+        val h = hi ?: Vec2(0.0, 0.0)
+        return (l - Vec2(m, m)) to (h + Vec2(m, m))
+    }
+
+    /**
+     * The **effective reach**: how far the clipped section stands from the frame's origin, which sits on the
+     * run — *the distance to the far edge of the target's extent*, and the number the embedding criterion is
+     * asked about instead of a profile's own (infinite) one.
+     */
+    private fun boxReach(
+        lo: Vec2,
+        hi: Vec2,
+    ): Double =
+        listOf(lo, Vec2(hi.x, lo.y), hi, Vec2(lo.x, hi.y)).maxOf { it.length() }
+
+    /**
+     * **How the chain's own 2D coordinates are read at a station** — the mode, and the one sign that keeps
+     * the section standing as it was drawn.
+     *
+     * [place] is the whole of [CarryMode] in two lines: rotating is the moving frame's own placement, mitre
+     * and all ([Frame3.place]); translational keeps the chain's space's axes and moves only the origin, so
+     * every section is parallel to the space it was drawn in and there is no mitre to make — parallel
+     * sections do not trim each other.
+     *
+     * **[handed] is why a route travelled the other way cuts the same body.** The frame's second axis is
+     * `tangent × ref`, which *is* the space's own **v** while the run leaves along the space's normal and is
+     * its negative while the run leaves against it — so a route drawn pointing the other way through the same
+     * plane would sweep the mirror image of the chain, and the half the user clicked would come out on the
+     * other side. Reading the section's y through this sign undoes exactly that, and nothing else: with it, a
+     * straight directrix along the normal and one along its negative are the same cut, which is what "the
+     * straight case is the degenerate directrix" has to mean. The tie (a run leaving *within* the chain's
+     * plane) goes to `+1`, deterministically, because a run that grazes the section's own plane has no
+     * side to prefer and every reload must pick the same one.
+     */
+    private class Carry(
+        val mode: CarryMode,
+        val plane: Plane3,
+        val handed: Double,
+    ) {
+        /** Where the world point [p] stands in a station's section coordinates — [place]'s inverse in (x, y). */
+        fun sectionOf(
+            st: Frame3,
+            p: Vec3,
+        ): Vec2 {
+            val q = p - st.at
+            return when (mode) {
+                CarryMode.ROTATING -> Vec2(q.dot(st.ref), handed * q.dot(st.bi))
+                CarryMode.TRANSLATIONAL -> Vec2(q.dot(plane.u), q.dot(plane.v))
+            }
+        }
+
+        /** Where the section point [p] stands in the world at [st]. */
+        fun place(
+            st: Frame3,
+            p: Vec2,
+        ): Vec3 =
+            when (mode) {
+                CarryMode.ROTATING -> st.place(Vec2(p.x, handed * p.y))
+                CarryMode.TRANSLATIONAL -> st.at + plane.u * p.x + plane.v * p.y
+            }
+    }
+
+    /**
+     * A station [d] mm out along the run beyond [st] — how the directrix's ends **run on**.
+     *
+     * One station is the whole extension, and that is the sweep's own rule rather than an economy: the
+     * continuation is straight, a chord of a line *is* the line, and the frame carries through a straight run
+     * unchanged. Its cap plane is normal to the run (no mitre out there, since nothing turns) and it carries
+     * no curvature, because a straight run has none.
+     */
+    private fun runOn(
+        st: Frame3,
+        backwards: Boolean,
+        d: Double,
+    ): Frame3 {
+        val dir = if (backwards) -st.tangent else st.tangent
+        return Frame3(st.s + (if (backwards) -d else d), st.at + dir * d, st.tangent, st.ref, st.tangent, 0.0)
+    }
+
+    /**
+     * A closed run cut open at the station **furthest from the box** `[lo, hi]`, its arc lengths restated
+     * from there.
+     *
+     * A cut needs its tool's ends somewhere; the place they cost nothing is the far side of the loop, where
+     * the section cannot reach the solid anyway — and once it is open it is the open case exactly, so a
+     * closed directrix needs no branch anywhere below this line.
+     */
+    private fun openedAwayFrom(
+        stations: List<Frame3>,
+        lo: Vec3,
+        hi: Vec3,
+    ): List<Frame3> {
+        val n = stations.size
+        if (n < 2) return stations
+        val far = stations.indices.maxByOrNull { boxDistance(stations[it].at, lo, hi) } ?: 0
+        val out = ArrayList<Frame3>(n)
+        var s = 0.0
+        for (i in 0 until n) {
+            val st = stations[(far + i) % n]
+            if (i > 0) s += (st.at - out.last().at).length()
+            out.add(Frame3(s, st.at, st.tangent, st.ref, st.mitre, st.curvature))
+        }
+        return out
+    }
+
+    /**
+     * Why the tool folds back on itself between two stations — or null when every band advances.
+     *
+     * The exact condition, and one statement for both modes: **the section at the next station must stand
+     * strictly beyond the plane the section at this one lies in**. In [CarryMode.ROTATING] that plane is the
+     * mitre plane, so this is the corner condition — a mitre that eats more of a span than the span has to
+     * give trims the band past itself, which is a fold no proximity test can see. In
+     * [CarryMode.TRANSLATIONAL] the section planes are all parallel to the chain's own space, so the same
+     * sentence reads as *the run must keep advancing through that space* — and while it does, no two sections
+     * can meet at all, since they lie in distinct parallel planes.
+     *
+     * Checked at the **four corners of the clipped box** and nowhere else, which is exact rather than a
+     * sample: both the mitre push and the advance are affine in the section's (x, y), so their extremes are
+     * at the corners of the box every profile point lies in.
+     */
+    private fun foldDefect(
+        run: List<Frame3>,
+        carry: Carry,
+        lo: Vec2,
+        hi: Vec2,
+    ): String? {
+        val probes = listOf(lo, Vec2(hi.x, lo.y), hi, Vec2(lo.x, hi.y))
+        val n = carry.plane.normal.normalized()
+        val advance = (run.last().at - run.first().at).dot(n)
+        for (k in 0 until run.size - 1) {
+            val a = run[k]
+            val b = run[k + 1]
+            val ahead =
+                when (carry.mode) {
+                    CarryMode.ROTATING -> a.mitre
+                    CarryMode.TRANSLATIONAL -> if (advance < 0.0) -n else n
+                }
+            for (p in probes) {
+                if ((carry.place(b, p) - carry.place(a, p)).dot(ahead) > Geom3.WELD_TOL) continue
+                return when (carry.mode) {
+                    CarryMode.ROTATING ->
+                        "the cut folds back on itself ${Frames3.mm(a.s)} mm along the route — the corner there " +
+                            "turns more sharply than the cut reaches across this solid " +
+                            "(${Frames3.mm(boxReach(lo, hi))} mm), so the two sides of the join trim past each " +
+                            "other; open the corner out, or bring the cut nearer to the run"
+                    CarryMode.TRANSLATIONAL ->
+                        "the route stops advancing through the chain's own plane ${Frames3.mm(a.s)} mm along it, " +
+                            "so a section carried without turning would fold back through the one before it — " +
+                            "carry it rotating instead, or keep the route going the way it started"
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * One half of the split, as a solid: [regions] carried along [run] in the [mode] stated.
+     *
+     * The mesh is [Geom3.sweptShells]' — the sweep's own bands and caps, so the tool is watertight for the
+     * reason a swept solid is and not for a reason of its own. Its feature says **`Sweep`**, which is the
+     * honest answer to the only question anything ever asks of a tool solid's feature: a swept body shares an
+     * axis with nothing (OP-26), so the boolean below it takes the general engine (OP-9), exactly as a cut
+     * with a curved tool must. Where a half comes back as more than one region the feature names the first;
+     * the tool is discarded the moment the boolean has run.
+     */
+    private fun sweptShell(
+        regions: List<Region>,
+        run: List<Frame3>,
+        carry: Carry,
+        reversed: Boolean,
+        up: Vec3,
+        tolMm: Double,
+    ): Pair<Solid3?, String?> {
+        if (regions.isEmpty()) return null to "this chain cuts nothing off the solid's extent"
+        val tess = ArrayList<Geom3.TessRegion>(regions.size)
+        for (r in regions) {
+            val (t, why) = Geom3.tessellateRegion(r, tolMm)
+            if (t == null) return null to (why ?: "cannot tessellate the cutting chain's own side")
+            tess.add(t)
+        }
+        val (mesh, whyMesh) =
+            Geom3.sweptShells(tess, run, closed = false, reversed = reversed) { st, p -> carry.place(st, p) }
+        if (mesh == null) return null to whyMesh
+        val spine = Path3(run.zipWithNext().map { (a, b) -> Curve3Element.Seg3(a.at, b.at) })
+        return Solid3(
+            Feature3.Sweep(spine, SweepProfile.Section(regions.first()), up, 0.0, 0.0, emptyList(), carry.mode),
+            mesh,
+        ) to null
+    }
+
     /**
      * The two areas the chain cuts the box `[lo, hi]` into: **left of travel first**, right second.
      *

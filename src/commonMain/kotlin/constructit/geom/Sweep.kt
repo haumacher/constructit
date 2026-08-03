@@ -42,6 +42,32 @@ sealed interface SweepProfile {
 }
 
 /**
+ * **How a section is carried along a run** — the sweep's one discrete mode (OP-22's extension, step 2).
+ *
+ * The two are the two honest answers to *"and what does the section do while it travels"*, and they
+ * **coincide exactly** while the run is straight, which is why the mode arrives with the curved directrix
+ * and not before: with nothing to turn about there is nothing to distinguish.
+ *
+ * - [ROTATING] — the section rides the moving frame ([Frames3]) and turns with the run, so it stays
+ *   perpendicular to it. This is what a swept solid does and what *"the cut follows the feature"* means.
+ * - [TRANSLATIONAL] — the section stays **parallel to its own space** and only its origin travels, so what
+ *   moves along the run is a rigid translation. This is the mitre-free reading: a slot cut by a saw held at
+ *   one angle while the work is moved along a curve.
+ *
+ * It is **structural** in exactly the sense [Handedness] is (OP-1, OP-21): a discrete choice, decided by the
+ * construction that states it — in the editor by which tool row was used — recorded in the step and never
+ * inferred from geometry that could drift.
+ */
+enum class CarryMode {
+    ROTATING,
+    TRANSLATIONAL,
+    ;
+
+    /** The word a status line and a refusal use. */
+    val word: String get() = if (this == ROTATING) "rotating" else "translational"
+}
+
+/**
  * One **station of the moving frame**: where the frame stands along the path, and how it is turned there.
  *
  * A value and a function of the path, deliberately *not* a sketch space — a frame at a parameter **is** one
@@ -593,19 +619,34 @@ object Embedding {
      * terms, in that order, so the local failure keeps its own words where both would fire.
      *
      * [what] is how the refusal names the profile's size ("the tube's radius (5 mm)"), passed in because the
-     * profile's *kind* is the sweep's business while this is the *path's* statement.
+     * profile's *kind* is the sweep's business while this is the *path's* statement. [subject] and [cure]
+     * are the same courtesy for the *consequence*: the swept cut (OP-22's extension, step 2) fails in the
+     * same geometry with a different name and a different way out, and both default to the sweep's own
+     * words, so every message this ever produced is byte-identical.
+     *
+     * **[reach] need not be the profile's own**, and that is the whole of the bounded-reach form. An
+     * *unbounded* profile — a chain that runs to infinity, which is what a cut is made with — has infinite
+     * reach, and with it this criterion degenerates: `κ·∞ ≥ 1` refuses every bend there is. The fix is a
+     * derived number rather than a different criterion: the **effective** reach is the distance to the far
+     * edge of the target's extent, so what is asked becomes *"does the surface fold through itself **within
+     * the region that matters**"* — and the same restriction applies to [frame], which the caller hands over
+     * already clipped to the stations whose sections can reach the target. Neatly, non-self-intersection over
+     * that region is exactly the condition under which *"which side"* is well defined, so the refusal and the
+     * operator's semantics are one statement. See `Chains.sweptTools`.
      */
     fun check(
         frame: MovingFrame,
         reach: Double,
         what: String,
+        subject: String = "the sweep",
+        cure: String = "thin the section, or open the run out",
     ): EmbeddingReport {
         // ---- the first term: 1/κ_max, station by station, and in station order so the message is stable
         for (st in frame.stations) {
             if (st.curvature * reach >= 1.0) {
                 return EmbeddingReport(
                     "$what is larger than the bend ${Frames3.mm(st.s)} mm along " +
-                        "the path (radius ${Frames3.mm(1.0 / st.curvature)} mm), so the sweep would pass through itself",
+                        "the path (radius ${Frames3.mm(1.0 / st.curvature)} mm), so $subject would pass through itself",
                     Double.MAX_VALUE,
                     0,
                 )
@@ -656,7 +697,7 @@ object Embedding {
             return EmbeddingReport(
                 "the run passes within ${Frames3.mm(bestD)} mm of itself, between ${Frames3.mm(bestA)} mm and " +
                     "${Frames3.mm(bestB)} mm along the path, while $what needs ${Frames3.mm(clearance)} mm " +
-                    "between them — so the sweep would cut into itself; thin the section, or open the run out",
+                    "between them — so $subject would cut into itself; $cure",
                 bestD,
                 examined,
             )

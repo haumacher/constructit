@@ -6532,6 +6532,13 @@ the tube's radius (5 mm) needs 10 mm between them — so the sweep would cut int
 open the run out"*. Both arc positions, the approach, the clearance it needed, and the two cures. Thinning the
 wire heals it; opening the pitch heals it; the tests assert both.
 
+> **Added in session 42, and the only change to this note:** the reach this criterion is asked about need not
+> be a *profile's*. The **swept cut** (OP-22's extension, step 2) hands it a **derived** one — the distance to
+> the far edge of the target's extent — together with the piece of the run that reaches the target, which is
+> what gives an *unbounded* profile a criterion at all instead of one that reads `κ · ∞ ≥ 1`. Two defaulted
+> arguments (the subject and the cure a message names) were added for it; every message this note describes is
+> byte-identical. The machinery, the argument and the resolution below are unchanged.
+
 **The resolution is stated in millimetres, because it has one** (OP-15). The spine is a polyline within
 `TESS_TOL_MM` of the curve it samples, so a distance measured on it is within twice that of the truth, and the
 refusal fires only when the run is inside its clearance by **more than the mesh's own stated error** — about
@@ -8483,6 +8490,36 @@ says so in its own words, because the interaction is worth knowing: a tube as fa
   built — the unbounded chain, and the cut that is a split)* under *An unbounded tool is a legitimate
   operand*.
 
+- **Session 42 — the swept cut: a directrix that curves, and two ways to carry a section (OP-22's
+  extension, step 2).** The second and last step of the unbounded operator, built. The directrix is now a
+  general `Path3` — not required to be planar, not required to be perpendicular to the chain's space — and the
+  chain rides it on step 2's moving frame, reused wholesale. The straight case is **the same code**: a route
+  along the chain space's normal is the degenerate directrix and is dispatched by predicate back to step 1's
+  extrusion, which makes the step-1 result identical vertex for vertex, keeps OP-22's exact path reachable for
+  it, and is *why* the two modes coincide there — they are one call. **Rotating or translational is the
+  mode**, and it is structural: four tool rows, the mode stated by which row was used, recorded by the tool id
+  and never inferred (asserted by reloading and getting that mode's body back, where the other's differs by
+  hundreds of mm³). Each mode has its own closed form, which is how each is tested rather than compared:
+  carried on the frame a cut removes `area × arc length`, carried flat it removes `area × rise` whatever the
+  route does sideways, and on one oblique straight route the two are 41 % apart. **The directrix is unbounded
+  too** — its ends run on along their end tangents, which is the chain's own ray rule one dimension up, and it
+  costs exactly one station because a straight continuation is one span; drawing the route short and drawing
+  it long give the same cut, asserted. The same clipping bounds the *run*: only the stations whose sections
+  can reach the body are built, which is what lets a closed route be cut open where it stands furthest from
+  the body (the revolved cut, with no case of its own) and what makes a fold beyond the body nobody's
+  business. **The reach becomes the target's**: the effective reach is the far edge of the body's extent seen
+  from the run — the clipped section's own corner — and with it `Embedding.check` works unchanged, which is
+  what gives an infinite profile a criterion at all. Proved by the *same bend twice*: refused with its apex
+  inside the block, accepted 280 mm above it; and refused over a body whose corners are then pulled in, where
+  nothing about the cutting surface changed. And the refusal turns out to be the semantics: a surface that does
+  not meet itself over the body's extent is exactly one for which *"which side"* has an answer there. One sign
+  was found by a test rather than by reasoning — a route travelled the other way through the same plane would
+  sweep the **mirror** of the chain and keep the other half — and undoing it is the invariant *a route drawn
+  backwards cuts the same body*. Cost: one enum, one defaulted feature field, one extracted mesh builder, two
+  defaulted message arguments, four tool rows; nothing in the value types, the evaluator, the format, the
+  export seam or the views. **1414 → 1435 green**, no new golden, no version bump. See *Implementation status
+  (as built — the swept cut, and the two ways to carry a section)*.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -8536,7 +8573,7 @@ carried for later 3D even though invisible in 2D.
 > faces*, cutting the plan geometry at each opening. That conflates the plan drawing with the solid,
 > and it is one of the two reasons the as-built wall needs rework. See *A wall is an output feature*.
 
-## An unbounded tool is a legitimate operand (OP-22's extension — step 1 BUILT, step 2 unimplemented)
+## An unbounded tool is a legitimate operand (OP-22's extension — BUILT, both steps)
 
 **The gap, in the user's own framing (session 37).** Subtraction today requires the *removed* operand to be
 a solid — something with a bounded volume. But *"cutting something away does not require the subtracted
@@ -8632,9 +8669,10 @@ every ancestor solid (GitHub #9), that composes with what is already built.
    and the kept side a persisted sign; eval-time bounding against the target's extent; the refusals above.
    The rotating/translational mode is not built here and is not half-built either — the two coincide exactly
    for a straight directrix, so there is nothing yet to distinguish.
-2. **The swept cut.** The directrix as a general `Path3`, and with it the **mode**. Reuses step 2's moving
-   frame wholesale; adds the unbounded directrix and the bounded-reach form of the self-intersection
-   criterion.
+2. **The swept cut** — **BUILT** (session 42; see *Implementation status (as built — the swept cut, and the
+   two ways to carry a section)* below). The directrix as a general `Path3`, and with it the **mode**. Reuses
+   step 2's moving frame wholesale; adds the unbounded directrix and the bounded-reach form of the
+   self-intersection criterion.
 
 **Queue position.** Not part of OP-26 and not behind it — it is independent of curves. Ranked **above** the
 remaining curve steps once the sweep has landed, and **above** 3D blends, because blends are the harder
@@ -8764,6 +8802,158 @@ is expressible today by cutting again on the other side or by *Split*, and a one
 affordance rather than a piece of the operator — worth having, not worth conflating with it. And a chain is
 not yet a **2D** cutting tool: it separates a plane, but nothing trims a drawn curve with it, which is the
 same operator one dimension down and is not claimed.
+
+### Implementation status (as built — the swept cut, and the two ways to carry a section)
+
+Step 2 whole: **the directrix is a general `Path3`, and how the chain rides it is a stated mode**. No new
+value type, no new node kind, no format version and no second boolean path — the operator gained an operand
+and a discrete choice, which is what "one operator, not a ladder" was supposed to mean when the two steps
+were planned.
+
+**The straight case is not *unchanged*, it is the same code — and that is a dispatch, made up front.** A
+directrix running along the chain space's own normal **is** the line step 1 already extrudes along, so
+`Chains.sweptTools` recognizes it by predicate (every piece straight, every piece along the normal) and hands
+it straight back to `Chains.tools`. Three things fall out of that one line rather than being arranged: the
+step-1 result is identical *vertex for vertex* (asserted, not compared to a tolerance); OP-22's **exact** slab
+algebra stays reachable for it, where a swept mesh could only ever be a general boolean; and the two carry
+modes **coincide there because they are the same call**, which is the record's claim about why the mode could
+not have arrived earlier. The predicate is over the pieces, never over a mesh, so a hair of curvature makes it
+false rather than nearly true.
+
+**The frames, as the record decided them, plus one sign the record could not have foreseen.** The chain's
+sketch space gives both its 2D coordinates and the moving frame's start reference; the directrix is a general
+`Path3`, neither planar nor perpendicular to anything. What is handed to `Frames3.startReference` is the
+space's own **u** (falling back to **v**, which is perpendicular to the run whenever *u* is not) rather than
+its normal — because the everyday case is a route leaving *along* the normal, which is exactly where a normal
+would project to nothing and the frame would fall back on a **world** axis. With *u* the section stands
+exactly as it was drawn.
+
+The sign is `Carry.handed`, and it is worth stating because it was found by a test rather than by reasoning.
+The frame's second axis is `tangent × ref`, which *is* the space's own **v** while the run leaves along the
+space's normal and its **negative** while the run leaves against it — so a route drawn pointing the other way
+through the same plane would sweep the **mirror image** of the chain, and the half the user clicked would come
+out on the other side of the body. The section's y is read through that sign, which undoes exactly that and
+nothing else. The invariant it buys is asserted directly: *a route travelled the other way cuts the same
+body*, which is what "the straight case is the degenerate directrix" has to mean if a directrix is allowed to
+point either way along the same line.
+
+**Unbounded, in both roles, and the second one costs one station.** The directrix's ends **run on along their
+end tangents** — the identical rule the chain's two rays follow one dimension down, so unboundedness stays one
+concept and needs no input of its own. It is implemented on the *stations* rather than on the path, and that
+is the sweep's own rule paying out: a straight continuation is one span (a chord of a line *is* the line), the
+frame carries through it unchanged, and the section coordinates of a fixed point do not vary along it at all.
+So the ends are pushed out until the section they carry can no longer touch the target — a distance derived
+from the target every pass, stored nowhere — and **lengthening the drawn route changes nothing**, which is
+asserted with a route that stops halfway inside the block against one drawn well clear of it.
+
+The other end of the same statement is that the run is **clipped** to the stations whose sections can reach
+the target, exactly as the chain's rays are clipped to a box. That is what makes a fold in the route beyond
+the body nobody's business — and it is what lets a **closed** directrix fall out with no case of its own: a
+loop is cut open at the station standing furthest from the body, and from there it is the open case, caps and
+all. The revolved cut of the operator's own table is therefore built rather than promised.
+
+**The bound is the target seen from every station that matters, and eight points give it exactly.** The
+projection of a point into a station's frame is **linear**, so the extremes over the target's whole extent are
+attained at the eight corners of its box: no sampling, no vertex count, and a bound that is exact rather than
+conservative-by-luck. The box is the union of those corners over the relevant stations, unioned with the
+chain's own finite extent and inflated by step 1's margin (`max(1 mm, 5 %)`), which does here what it does
+there — every face of the closure lies strictly outside the target, so coplanarity is unreachable by
+construction.
+
+Which stations are relevant and how far the section reaches **define each other**, so the pair is taken to a
+fixed point from below, seeded with the distance from the target's far corner to the run. It settles in one
+step for a route that passes the body once and in two for one that comes back alongside it; a route that keeps
+needing more is a route that has folded, and the criterion below refuses it in its own words rather than the
+loop deciding anything.
+
+**The bounded-reach criterion, and why the refusal and the semantics are one statement.** An unbounded profile
+has *infinite* reach, so the sweep's own test (`reach × κ ≥ 1`, plus the double normal) degenerates: it would
+refuse every bend there is. What is handed to `Embedding.check` instead is the **effective** reach — the
+distance from the run to the far edge of the target's extent, which is precisely the clipped section's own
+corner — together with the clipped run. Same machinery, same double normals, a derived number. Two defaulted
+arguments were added to `Embedding.check` so the refusal speaks as a *cut* ("the cutting surface", "open the
+run out, or bring the cut nearer to it"); every message the sweep ever produced is byte-identical.
+
+And the criterion is not only about watertightness. A cutting surface that does not meet itself over the
+solid's extent is exactly a surface for which *"which side"* has an answer **there** — so the refusal and this
+operator's semantics are one statement, which is what the record predicted and what makes the bounded form the
+honest one rather than a lenience. The pair that proves the reach is derived is the **same bend twice**:
+refused with its apex inside the block, accepted with the apex 280 mm above it (where the run through the body
+is straight and the cut is the straight channel); and, separately, the **same bend and the same chain over a
+body whose corners are then pulled in** — nothing about the cutting surface changes, and it builds.
+
+**Each mode folds its own way, and one sentence covers both.** The condition is that *the section at the next
+station stands strictly beyond the plane the section at this one lies in*. Read against the **mitre** plane
+that is the corner condition — a mitre eating more of a span than the span has to give trims the band past
+itself, which no proximity test can see. Read against the **chain's own plane** it says the run must keep
+advancing through that plane, and while it does, no two sections can meet at all, since they lie in distinct
+parallel planes. It is checked at the four corners of the clipped box and nowhere else, which is exact and not
+a sample: both the mitre push and the advance are affine in the section's (x, y). The translational refusal
+names the other carry as its cure, because that is genuinely what to do.
+
+*(This decides, for the cut's own derived section, the corner case queued in session 40 for the sweep — and
+only for it. The question that entry parks — whether the sweep's refusals speak about the curve or about the
+mesh — does not arise here, because the cut's section is itself derived from the body rather than stated by
+the user, so there is no analytic limit for a mesh-level check to fire inside of.)*
+
+**Which boolean engine the tool takes was again not a choice**, and it is the same sentence step 1 wrote: both
+halves go to `Construction.booleanValue`, the one dispatch. A swept tool shares an axis with nothing (OP-26),
+so a genuinely swept cut is always a **general** boolean and says so in its type — while the degenerate
+directrix never reaches this code at all and keeps the exact path. The tool solids carry `Feature3.Sweep`,
+which gained one defaulted field, `carry`: with the mode in it, `(path, profile, up, roll, twist, carry)` is
+still enough to rebuild the identical body, instead of the feature describing one carry while the mesh shows
+the other.
+
+**What it cost.** One enum (`CarryMode`), one defaulted field on `Feature3.Sweep` and the one line in
+`Xform3` that carries it through a placement, one extracted function (`Geom3.sweptShells` — the sweep's own
+bands and caps, now built once and used by both, with a single `reversed` flag because a shell wound one way
+at its sides and the other at its ends is not a surface), one new `Curves3.tangentAt` (a seventh exhaustive
+`when` over the piece kinds), two defaulted arguments on `Embedding.check`, and **four tool rows**. Nothing in
+the value types, the evaluator, the file format, the export seam, the 3D view or the renderer needed a line —
+a swept cut is a solid, and `signs=` already carried the kept side.
+
+**Four rows, and the multiplication is two separate reasons.** *Cut* against *Split* is what step 1's two rows
+already are — how many halves become elements. *Rotating* against *translational* is a **discrete structural
+choice**, and this project states such a choice by the tool that made it, exactly as a helix's two handednesses
+are two rows (OP-1/OP-18): the file records the mode by recording the tool id, replay consumes it verbatim, and
+there is no number anywhere that could drift into the other answer. Asserted by reloading each mode's drawing
+and getting *that* mode's body back, where the other's differs by hundreds of cubic millimetres.
+
+**Acceptance (`SweptCutTest`, 15 tests; `SweptCutToolTest`, 6).** The volumes are stated rather than measured,
+and one identity does most of the work: a section whose centroid sits on the path sweeps exactly
+`area × arc length`, because the sweep's Jacobian is linear in the section's coordinates and a centred
+section's first moment is zero — which makes the mitre at a corner and the oblique faces a channel exits
+through volume-neutral for the same reason. So a channel along a bent route is asserted against the arc
+between the two crossings the route's own coordinates give; a **translational** cut is asserted against
+`area × rise`, which the route's sideways wandering cannot change; and the two modes on one oblique straight
+route come out as `area × t` and `area × t / cos 45°`, 41 % apart, which is the section's orientation stated
+as a number rather than described. Also: the two halves of a swept split sum to the whole body (which is the
+covering claim, and the only test that could catch a bound too small); the degenerate directrix identical to
+step 1 vertex for vertex, in both modes; a route travelled backwards cutting the same body; the route drawn
+short cutting as far as the long one; the fold refused inside and accepted outside; the same bend refused over
+a body and accepted over a smaller one; the fold healing when the bend is opened; the translational refusal by
+name; a closed route; a tilted chain plane; the route live under a drag with no node rebuilt. As gestures: the
+four rows, the mode in the status line and in the file, `save → load → save` **byte-equal** with the reloaded
+body's volume agreeing to 1e-9 mm³, the split's two halves, all four writers, one undo, and the cut hiding.
+**1414 → 1435 green**, no new golden, no existing golden changed, no version bump.
+
+**What is deliberately not here.** Cutting by a **face of another solid**, which the record names as a later
+consequence and which is a different operand rather than a different directrix. A **variable** section — one
+clipped per station instead of once for the run — which is the only thing that would relax the single derived
+reach; today a route that turns sharply while the body is large is *refused* although a per-station section
+would have fitted, and that boundary is stated rather than discovered (it is OP-26's own variable-section
+question, and it is a feature, not a fix). A **roll or twist** input on the cut: the chain's space already
+fixes the section's orientation, and a roll would be a second way to say what the drawing says. A **plan
+footprint** for the result, which is the general boolean's own parked item (OP-9's mesh-is-a-sink rule) and
+not this operator's — a swept cut draws in the 3D view, exports and composes, but is not pickable in the plan
+by a footprint it has no analytic reading for. And a **preview** while the tool is armed, for the sweep's own
+reason: the picture of this operation is the solid.
+
+A **helix** is an ordinary directrix here — nothing special-cases it, and `Curves3.tangentAt` answers for it
+like any other piece — but it is not claimed as a useful one: the derived reach across a body is usually
+larger than a coil's own radius of curvature, so a helical groove is refused by the criterion above and wants
+a swept **solid** subtracted instead, which is already built (OP-26, step 2). That the refusal is the honest
+one is the point; it is not a gap this step left open.
 
 ## A wall is an output feature (OP-21 — RESOLVED)
 
@@ -10147,13 +10337,17 @@ the span — reduces on a sampled smooth curve to `reach ≥ R·cos(θ/2)`, whic
 first: **do the sweep's refusals speak about the curve or about the mesh?** The answer wants stating once, for
 the local criterion and this one together, rather than being settled by whichever check is written second.
 
-**Queued in session 37, and its first step built in session 41 — an unbounded tool as a boolean operand
-(OP-22's extension).** Independent of OP-26 and ranked above its remaining steps once the sweep has landed,
-and above 3D blends: a half-space, then an unbounded prism, then an unbounded revolve/sweep, built as
-**split** with cut defined as split-keeping-one-side. **Step 1 is done** — the chain as a value, the straight
-cut, split, the persisted side and the eval-time bound. **What remains queued is step 2**: the directrix as a
-general `Path3`, and with it the rotating/translational mode, which is meaningless until a directrix can
-curve. See *An unbounded tool is a legitimate operand*.
+**Retired in session 42 — an unbounded tool as a boolean operand (OP-22's extension), both steps.** Queued in
+session 37, step 1 built in session 41 and **step 2 in session 42**: the directrix is a general `Path3`, the
+rotating/translational carry is a stated structural mode, the directrix is unbounded in the same sense the
+chain is (its ends run on along their end tangents), and the self-intersection criterion has its bounded-reach
+form — the far edge of the target's extent, over the piece of the run that reaches it. Nothing of the entry is
+left: the half-space, the unbounded prism and the unbounded sweep are all the one operator with different
+operands. It leaves **two things parked**, each stated with the work: cutting by a **face of another solid**
+(a different operand, which the record already names as a later consequence), and a **variable** section —
+one clipped per station rather than once for the run — which is the only thing that would relax the single
+derived reach, and which is OP-26's own variable-section question rather than this operator's. See *An
+unbounded tool is a legitimate operand*.
 
 **Named in session 37 and not yet queued — two gaps a real structural part shows** (from a cast arm looked at
 in the round): **3D edge blends**, which is most of what the eye reads as a casting and is a dimensioned

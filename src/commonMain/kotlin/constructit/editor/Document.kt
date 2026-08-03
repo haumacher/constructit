@@ -58,6 +58,7 @@ import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
+import constructit.geom.CarryMode
 import constructit.geom.Chains
 import constructit.geom.Conics
 import constructit.geom.Feature3
@@ -8936,7 +8937,9 @@ class Document {
     ): Boolean = el.kind == ElementKind.CHAIN || areaPickFilter(ev)(el)
 
     /**
-     * **Cut** the solid [solidEl] with the chain [chainEl], keeping the side the click at [at] is on.
+     * **Cut** the solid [solidEl] with the chain [chainEl], keeping the side the click at [at] is on — and,
+     * where [alongEl] names one, carrying the chain along that **curve in space** in the [carry] stated
+     * (OP-22's extension, step 2).
      *
      * A cut *is* a split with one half kept, which is why this builds the same node
      * ([Construction.splitSolid]) as [splitByChain] and differs only in how many halves become elements. The
@@ -8944,6 +8947,10 @@ class Document {
      * `signs=` (OP-1/OP-18): [signs] is what a replay hands back, and when it is present nothing is scored
      * again — so an edit that moves the chain across the body keeps the half the user chose instead of
      * quietly swapping to the other one.
+     *
+     * The **mode is structural and it is the tool row that states it** — two rows, as a helix's two
+     * handednesses are two rows (OP-18) — so the file records it by recording which tool ran, replay never
+     * infers it from geometry, and there is no number anywhere that could drift into the other answer.
      */
     @Suppress("UNCHECKED_CAST")
     fun cutByChain(
@@ -8951,22 +8958,26 @@ class Document {
         chainEl: Element,
         at: Vec2? = null,
         signs: List<Int> = emptyList(),
+        alongEl: Element? = null,
+        carry: CarryMode = CarryMode.ROTATING,
     ): Element? {
         val chain = chainRefFor(solidEl, chainEl) ?: return null
+        val along = if (alongEl == null) null else (spaceCurveRef(alongEl, "Cut by chain") ?: return null)
         val side = signs.firstOrNull() ?: sideScoredAt(chain, at)
         val cut =
             add(
-                cx.splitSolid(solidEl.ref as SolidRef, chain, planeOfSpace(chainEl.space), side),
+                cx.splitSolid(solidEl.ref as SolidRef, chain, planeOfSpace(chainEl.space), side, along, carry),
                 ElementKind.SOLID,
                 Styles.SOLID,
             )
         registerSigns(cut, listOf(side))
-        madeSolid(cut, "${nameOf(solidEl)} cut by ${nameOf(chainEl)}, keeping the ${sideWord(side)} side")
+        madeSolid(cut, "${nameOf(solidEl)} cut by ${nameOf(chainEl)}${alongWord(alongEl, carry)}, keeping the ${sideWord(side)} side")
         return cut
     }
 
     /**
-     * **Split** the solid [solidEl] in two along the chain [chainEl]: both halves, as two solids.
+     * **Split** the solid [solidEl] in two along the chain [chainEl]: both halves, as two solids — carried
+     * along [alongEl] in the [carry] stated where one is named.
      *
      * The general operation, and the one a clamshell housing is. Nothing is scored here and nothing is
      * persisted beyond the step itself: the pair is *ordered* by the chain's own direction of travel — left
@@ -8977,17 +8988,27 @@ class Document {
     fun splitByChain(
         solidEl: Element,
         chainEl: Element,
+        alongEl: Element? = null,
+        carry: CarryMode = CarryMode.ROTATING,
     ): Element? {
         val chain = chainRefFor(solidEl, chainEl) ?: return null
+        val along = if (alongEl == null) null else (spaceCurveRef(alongEl, "Split by chain") ?: return null)
         val plane = planeOfSpace(chainEl.space)
         val ref = solidEl.ref as SolidRef
-        val left = add(cx.splitSolid(ref, chain, plane, 1), ElementKind.SOLID, Styles.SOLID)
-        val right = add(cx.splitSolid(ref, chain, plane, -1), ElementKind.SOLID, Styles.SOLID)
+        val left = add(cx.splitSolid(ref, chain, plane, 1, along, carry), ElementKind.SOLID, Styles.SOLID)
+        val right = add(cx.splitSolid(ref, chain, plane, -1, along, carry), ElementKind.SOLID, Styles.SOLID)
         note =
-            "${nameOf(solidEl)} split by ${nameOf(chainEl)} into ${nameOf(left)} (the left of the chain's run) and " +
-            "${nameOf(right)} (its right) — two solids, either of which can be hidden or cut again"
+            "${nameOf(solidEl)} split by ${nameOf(chainEl)}${alongWord(alongEl, carry)} into ${nameOf(left)} " +
+            "(the left of the chain's run) and ${nameOf(right)} (its right) — two solids, either of which can be " +
+            "hidden or cut again"
         return left
     }
+
+    /** How a status line names the directrix and the mode — nothing at all where the cut runs straight. */
+    private fun alongWord(
+        alongEl: Element?,
+        carry: CarryMode,
+    ): String = if (alongEl == null) "" else " swept along ${nameOf(alongEl)} (${carry.word})"
 
     /** The chain [chainEl] hands a cut, with both gesture refusals made by name — or null. */
     private fun chainRefFor(

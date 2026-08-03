@@ -313,6 +313,12 @@ sealed interface Feature3 {
      * knows which plane that is ([Silhouette], the same field and the same reason [Imported] has one): a
      * sweep has no prismatic reading, so there is no sketch to draw as a footprint, and a projection with no
      * plane is not defined.
+     *
+     * [carry] is how the section travels — riding the frame or staying parallel to its own space (see
+     * [CarryMode]). A *sweep* always states the rotating one, which is why it is defaulted; the **swept cut**
+     * (OP-22's extension, step 2) states either, and the field is what keeps `(path, profile, up, roll,
+     * twist, carry)` enough to rebuild the identical body rather than the feature describing one carry while
+     * the mesh shows the other.
      */
     data class Sweep(
         val path: Path3,
@@ -321,6 +327,7 @@ sealed interface Feature3 {
         val roll: Double,
         val twist: Double,
         val plan: List<Region> = emptyList(),
+        val carry: CarryMode = CarryMode.ROTATING,
     ) : Feature3 {
         override val footprint: List<Region> get() = plan
     }
@@ -1028,39 +1035,75 @@ object Geom3 {
                 "of ${Frames3.deg(twistRad - frame.seam)}° (or that plus any whole number of turns) to close it"
         }
 
-        val polys = listOf(tess.outer) + tess.holes
-        val stations = frame.stations
-        val rings = stations.map { st -> polys.map { poly -> poly.map { st.place(it) } } }
+        val (mesh, noMesh) = sweptShells(listOf(tess), frame.stations, frame.closed) { st, p -> st.place(p) }
+        if (mesh == null) return null to (noMesh ?: "cannot build this sweep")
+        val outline = if (plan == null) emptyList() else Silhouette.of(mesh, plan)
+        return Solid3(Feature3.Sweep(path, profile, up, rollRad, twistRad, outline), mesh) to null
+    }
+
+    /**
+     * The **shells a run of stations carries [sections] through**: one quad band per span and, on an open
+     * run, a cap at each end.
+     *
+     * Extracted from [sweep] so that the sweep (OP-26, step 2) and the **swept cut** (OP-22's extension,
+     * step 2) build their meshes from one piece of code rather than two that must be kept in step. What the
+     * two differ in is exactly the two arguments: **[place]**, because a cut may carry its section
+     * translationally instead of on the frame ([CarryMode]), and **[reversed]**, which is one question asked
+     * once — *does this carry turn the section's own orientation round?* A cut whose route runs against its
+     * chain space's normal reads the section mirrored, and a translational carry may travel against that
+     * normal outright; either way **every** triangle turns, bands and caps together, since a shell wound one
+     * way at its sides and the other at its ends is not a surface at all.
+     *
+     * The ring at a station is computed **once** and both adjacent bands use it, which is where
+     * watertightness comes from — the prism's own argument (OP-2), not a repair pass. A closed run needs no
+     * caps, its last band handing back to its first ring.
+     */
+    internal fun sweptShells(
+        sections: List<TessRegion>,
+        stations: List<Frame3>,
+        closed: Boolean,
+        reversed: Boolean = false,
+        place: (Frame3, Vec2) -> Vec3,
+    ): Pair<Mesh3?, String?> {
+        if (stations.size < 2) return null to "a sweep needs at least two stations along its run"
         val mb = MeshBuilder()
-        val bands = if (frame.closed) stations.size else stations.size - 1
-        for (k in 0 until bands) {
-            val lo = rings[k]
-            val hi = rings[(k + 1) % stations.size]
-            for (pi in polys.indices) {
-                val poly = polys[pi]
-                for (i in poly.indices) {
-                    val j = (i + 1) % poly.size
-                    mb.triangle(lo[pi][i], lo[pi][j], hi[pi][j])
-                    mb.triangle(lo[pi][i], hi[pi][j], hi[pi][i])
+
+        fun tri(
+            a: Vec3,
+            b: Vec3,
+            c: Vec3,
+        ) = if (reversed) mb.triangle(a, c, b) else mb.triangle(a, b, c)
+        for (tess in sections) {
+            val polys = listOf(tess.outer) + tess.holes
+            val rings = stations.map { st -> polys.map { poly -> poly.map { place(st, it) } } }
+            val bands = if (closed) stations.size else stations.size - 1
+            for (k in 0 until bands) {
+                val lo = rings[k]
+                val hi = rings[(k + 1) % stations.size]
+                for (pi in polys.indices) {
+                    val poly = polys[pi]
+                    for (i in poly.indices) {
+                        val j = (i + 1) % poly.size
+                        tri(lo[pi][i], lo[pi][j], hi[pi][j])
+                        tri(lo[pi][i], hi[pi][j], hi[pi][i])
+                    }
+                }
+            }
+            if (!closed) {
+                val (tris, noTris) = triangulate(tess)
+                if (tris == null) return null to (noTris ?: "cannot cap this sweep")
+                // (ref, bi, tangent) is right-handed, so a cap triangle wound counter-clockwise in the
+                // profile's own coordinates faces **along** the tangent: the end cap as it is, the start cap
+                // reversed — the extrude's own top/bottom rule, one dimension round.
+                val first = stations.first()
+                val last = stations.last()
+                for (t in tris) {
+                    tri(place(first, t.a), place(first, t.c), place(first, t.b))
+                    tri(place(last, t.a), place(last, t.b), place(last, t.c))
                 }
             }
         }
-        if (!frame.closed) {
-            val (tris, noTris) = triangulate(tess)
-            if (tris == null) return null to (noTris ?: "cannot cap this sweep")
-            // (ref, bi, tangent) is right-handed, so a cap triangle wound counter-clockwise in the profile's
-            // own coordinates faces **along** the tangent: the end cap as it is, the start cap reversed —
-            // the extrude's own top/bottom rule, one dimension round.
-            val first = stations.first()
-            val last = stations.last()
-            for (t in tris) {
-                mb.triangle(first.place(t.a), first.place(t.c), first.place(t.b))
-                mb.triangle(last.place(t.a), last.place(t.b), last.place(t.c))
-            }
-        }
-        val mesh = mb.build()
-        val outline = if (plan == null) emptyList() else Silhouette.of(mesh, plan)
-        return Solid3(Feature3.Sweep(path, profile, up, rollRad, twistRad, outline), mesh) to null
+        return mb.build() to null
     }
 
     /** Why [loop] is not a closed outline — naming the piece that leaves the gap — or null when it is one. */

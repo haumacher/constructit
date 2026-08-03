@@ -45,9 +45,9 @@ enum class Handedness(val turnSign: Double) {
  * case with no producer is a case with no test, because every consumer (`sample`, the projection, the
  * drawing, the picking, the moving frame's sampling and its curvature) would have to guess at behaviour
  * nothing exercises. `Arc3` (a circle in an arbitrary plane) is still absent for exactly that reason. Adding
- * one is adding a branch to six exhaustive `when`s — [Curves3.sample], [Curves3.projectedOnto],
- * [Path3.movedBy], and [Frames3]'s step count, point and curvature — so that a new case cannot be silently
- * dropped.
+ * one is adding a branch to seven exhaustive `when`s — [Curves3.sample], [Curves3.projectedOnto],
+ * [Curves3.tangentAt], [Path3.movedBy], and [Frames3]'s step count, point and curvature — so that a new case
+ * cannot be silently dropped.
  */
 sealed interface Curve3Element {
     /** Where this piece begins — the chain's hand-over point from the piece before it. */
@@ -323,6 +323,31 @@ object Curves3 {
             )
         }
         return out
+    }
+
+    /**
+     * The **direction one piece leaves in** at parameter [t] — unit, or null where the piece has none.
+     *
+     * What an *unbounded* directrix is stated by (OP-22's extension, step 2): a run that continues out of
+     * each end **in the direction it was already going**, which is the identical rule a chain's two rays
+     * follow one dimension down ([Chains.through]) and needs no input of its own. A cubic's derivative can
+     * vanish at an end where two control points coincide, so the chord to the far control point is the
+     * fallback — the direction the piece actually leaves in, and the same answer the curve has a hair later.
+     */
+    fun tangentAt(
+        el: Curve3Element,
+        t: Double,
+    ): Vec3? {
+        val d =
+            when (el) {
+                is Curve3Element.Seg3 -> el.end - el.start
+                is Curve3Element.Bezier3 -> {
+                    val v = bezierTangentAt(el, t)
+                    if (v.length() > Vec3.EPS) v else el.p3 - el.p0
+                }
+                is Curve3Element.Helix3 -> el.tangentAt(t)
+            }
+        return if (d.length() > Vec3.EPS) d.normalized() else null
     }
 
     /** A point on a cubic Bézier in space at parameter [t] — de Casteljau's weights, written out. */

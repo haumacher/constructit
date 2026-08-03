@@ -4,6 +4,7 @@ import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
+import constructit.geom.CarryMode
 import constructit.geom.Handedness
 import constructit.geom.Justification
 import constructit.geom.Vec2
@@ -626,6 +627,25 @@ object Tools {
     const val SPLIT_BY_CHAIN = "splitbychain"
 
     /**
+     * **The swept cut** (OP-22's extension, step 2): the same two uses, with a **curve in space** picked as
+     * the directrix the chain is carried along, and the **carry mode** stated by which row was used.
+     *
+     * Four ids where two would do arithmetically, and each half of the multiplication is a separate reason.
+     * *Cut* against *Split* is what the two rows above already are — how many halves become elements.
+     * *Rotating* against *translational* is a **discrete structural choice** (`CarryMode`), and this project
+     * states such a choice by the tool that made it — the helix's two handednesses are two rows for exactly
+     * the same reason (OP-1/OP-18) — so the file records it by recording the tool, and no replay ever has to
+     * work out from the geometry which one was meant.
+     *
+     * The straight cut is *not* a fifth row: it is these rows with no curve picked, which is the degenerate
+     * directrix, and `Chains.sweptTools` hands it back to the straight code.
+     */
+    const val CUT_ALONG_CURVE = "cutbychainalong"
+    const val CUT_ALONG_CURVE_FLAT = "cutbychainalongflat"
+    const val SPLIT_ALONG_CURVE = "splitbychainalong"
+    const val SPLIT_ALONG_CURVE_FLAT = "splitbychainalongflat"
+
+    /**
      * **Place a solid**: read its own coordinates in the active sketch space's frame, at a picked point,
      * turned by an angle. Generic over solids — an imported reference body and an extruded part place
      * identically — which is why it lives here with the other solid operations and not with the import.
@@ -840,6 +860,14 @@ object Tools {
             ToolDef(CHAIN, "Chain (cutting curve)", ToolCategory.CURVES, listOf(SlotKind.POINT), repeating = true, minPicks = 2, help = "Click the points the cut runs through, then press Enter: the first and last become rays, so the chain runs to infinity at both ends and separates the drawing into two sides. Two clicks give an infinite line; each further click bends it. Cut or split a solid with it afterwards — or cut with any closed curve you have already drawn.", slotNames = listOf("point on the chain")) { d, p, _ -> d.chainThroughPoints(p.points) },
             ToolDef(CUT_BY_CHAIN, "Cut by chain", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.CHAIN, SlotKind.SIDE), help = "Click the solid, then the chain to cut it with (a drawn chain, or any closed curve — a circle cuts a through-bore), then click the side to keep. The side is remembered, so moving the chain afterwards never swaps which half survives.", slotNames = listOf("solid", "chain", "side to keep")) { d, p, _ -> d.cutByChain(p.elements[0], p.elements[1], p.clicks.lastOrNull(), p.signs) },
             ToolDef(SPLIT_BY_CHAIN, "Split by chain", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.CHAIN), help = "Click the solid, then the chain: both halves become solids, so a clamshell housing is one gesture. Hide or cut either afterwards.", slotNames = listOf("solid", "chain")) { d, p, _ -> d.splitByChain(p.elements[0], p.elements[1]) },
+            // …and the same two uses with a **directrix** (step 2). The route is picked like any curve in
+            // space and runs on past the body at both ends, so "long enough" is never a number anybody types;
+            // the carry mode is the row, because it is a discrete structural choice and this project states
+            // those by which tool was used.
+            ToolDef(CUT_ALONG_CURVE, "Cut by chain along a curve", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.CHAIN, SlotKind.PATH3, SlotKind.SIDE), help = "Click the solid, the chain (or any closed curve), the curve in space to carry it along, then the side to keep: the chain is swept along the route and the swept surface cuts the body — the pocket where a pipe enters a housing, a curved relief, a channel that follows a route. The section turns with the route, staying square to it. Draw the chain about the sketch space's origin: it is read in the route's own frame with that origin on the route, so a chain drawn 20 mm off the origin cuts 20 mm off the route. The route runs on past the body at both ends, so it never has to be drawn long enough; only the part of it that meets the body is used.", slotNames = listOf("solid", "chain", "route", "side to keep")) { d, p, _ -> d.cutByChain(p.elements[0], p.elements[1], p.clicks.lastOrNull(), p.signs, p.elements[2], CarryMode.ROTATING) },
+            ToolDef(CUT_ALONG_CURVE_FLAT, "Cut by chain along a curve (translational)", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.CHAIN, SlotKind.PATH3, SlotKind.SIDE), help = "The same gesture as Cut by chain along a curve, with the section kept parallel to the plane it was drawn in instead of turning with the route — the cut a saw held at one angle makes while the work is moved along a curve. The two agree exactly while the route is straight and part company as soon as it bends; which one a cut uses is what the file records, so it never changes by itself.", slotNames = listOf("solid", "chain", "route", "side to keep")) { d, p, _ -> d.cutByChain(p.elements[0], p.elements[1], p.clicks.lastOrNull(), p.signs, p.elements[2], CarryMode.TRANSLATIONAL) },
+            ToolDef(SPLIT_ALONG_CURVE, "Split by chain along a curve", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.CHAIN, SlotKind.PATH3), help = "Click the solid, the chain and the curve in space to carry it along: both halves of the swept cut become solids. The section turns with the route, and is read with its sketch space's origin on the route.", slotNames = listOf("solid", "chain", "route")) { d, p, _ -> d.splitByChain(p.elements[0], p.elements[1], p.elements[2], CarryMode.ROTATING) },
+            ToolDef(SPLIT_ALONG_CURVE_FLAT, "Split by chain along a curve (translational)", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.CHAIN, SlotKind.PATH3), help = "The same gesture as Split by chain along a curve, with the section kept parallel to the plane it was drawn in instead of turning with the route.", slotNames = listOf("solid", "chain", "route")) { d, p, _ -> d.splitByChain(p.elements[0], p.elements[1], p.elements[2], CarryMode.TRANSLATIONAL) },
             // ----- Planes: every tool that creates a working plane, in one group (GitHub #9, the user's
             // rule — "the section-plane tool is not a solid creation tool"). *Section* is not here: it makes
             // 2D geometry *from* a solid and stays with the solids. What they share is that each records its

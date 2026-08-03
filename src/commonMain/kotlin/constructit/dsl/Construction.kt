@@ -38,6 +38,7 @@ import constructit.geom.Axis3
 import constructit.geom.Bezier
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
+import constructit.geom.CarryMode
 import constructit.geom.Chain
 import constructit.geom.Chains
 import constructit.geom.Circle
@@ -2480,17 +2481,34 @@ class Construction {
      * the cut removes the whole body, an empty *discarded* half means it removes nothing — and that silence
      * is precisely what picking the wrong side looks like, so it is said (OP-3: invalid with a reason,
      * healing the moment the chain crosses the material).
+     *
+     * **[along] is the directrix, and it is the operator's second operand rather than a variant of it**
+     * (OP-22's extension, step 2). With none, the cut runs straight through along [plane]'s normal — which
+     * *is* the degenerate directrix, not a different operation, and [Chains.sweptTools] says so by handing a
+     * straight-along-the-normal directrix back to the same code the null case takes. [carry] is how the
+     * section travels while it does ([CarryMode]): **structural**, decided by the construction — in the
+     * editor by which tool row was used, exactly as a helix's handedness is — and never inferred from the
+     * geometry. Both are arguments here and not values inside `compute` for that reason: they say what is
+     * built, and only *how big* it has to be is derived from the target.
      */
     fun splitSolid(
         solid: SolidRef,
         chain: ChainRef,
         plane: PlaneRef,
         side: Int,
+        along: Path3Ref? = null,
+        carry: CarryMode = CarryMode.ROTATING,
     ): SolidRef =
-        op(solid, chain, plane) {
+        op(*listOfNotNull(solid, chain, plane, along).toTypedArray()) {
             val target = (it[0] as SolidValue).solid
             openShellOf(target)?.let { why -> return@op EvalResult.Invalid(why) }
-            val (tools, whyTools) = Chains.tools((it[1] as ChainValue).chain, (it[2] as PlaneValue).plane, target.mesh)
+            val directrix = if (along == null) null else (it[3] as Path3Value).path
+            val (tools, whyTools) =
+                if (directrix == null) {
+                    Chains.tools((it[1] as ChainValue).chain, (it[2] as PlaneValue).plane, target.mesh)
+                } else {
+                    Chains.sweptTools((it[1] as ChainValue).chain, (it[2] as PlaneValue).plane, directrix, carry, target.mesh)
+                }
             if (tools == null) return@op EvalResult.Invalid(whyTools ?: "cannot bound the cutting tool to this solid")
             val kept = if (side >= 0) tools.first else tools.second
             val dropped = if (side >= 0) tools.second else tools.first
