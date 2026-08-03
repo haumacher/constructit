@@ -668,6 +668,16 @@ object Tools {
     const val STATION = "station"
 
     /**
+     * **A sketch made from an imported wireframe** (OP-26, step 9): a sketch space on a flat imported run's
+     * own plane, with the run traced into it as ordinary points and segments.
+     *
+     * With the plane tools because a plane is the first thing it makes — and because what it *is* is the
+     * station's construction with the number left out: a flat run states its plane completely. It records its
+     * own steps for that reason, and does not replicate (a sketch space is organisation, not geometry).
+     */
+    const val SKETCH_FROM_WIRE = "wiresketch"
+
+    /**
      * **Where a sketch space's origin sits** (OP-17, session 32): anchor it on a corner of the part's
      * section here, plus an in-plane (dx, dy). Generic over spaces that have a plane — a face's and a
      * datum's origin are moved by the same gesture and the same node.
@@ -721,6 +731,12 @@ object Tools {
      * identically — which is why it lives here with the other solid operations and not with the import.
      */
     const val PLACE_SOLID = "placesolid"
+
+    /**
+     * **Place a curve in space** — [PLACE_SOLID] one dimension down, and the gesture an imported wireframe's
+     * position is stated by. Generic over runs for the same reason: the import is merely its first caller.
+     */
+    const val PLACE_CURVE = "placecurve"
 
     // Construct
     const val PERP_BISECTOR = "perpbis"
@@ -949,6 +965,10 @@ object Tools {
             // together. It does not replicate — a pattern fans a *gesture*, and a placement's subject is one
             // named body (OP-23).
             ToolDef(PLACE_SOLID, "Place solid", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.POINT), scalars = listOf(ang("angle", 0.0)), replicates = false, help = "Type an angle if you want one, then click a solid and the point it should sit at: the body is moved so its own coordinates are read from the sketch space you are in, at that point, turned by that angle. The point and the angle stay live — drag the point and the body follows, retype the angle and it turns. An imported reference body arrives already placed this way.", slotNames = listOf("solid", "at point")) { d, p, s -> d.placeSolid(p.elements[0], p.points[0], s.firstOrNull()) },
+            // ...and the identical gesture one dimension down (OP-26, step 9): an imported **wireframe** is
+            // moved by the same two live nodes a body is, through the same rigid map, so a run and a body
+            // welded to one anchor point can never drift apart.
+            ToolDef(PLACE_CURVE, "Place curve in space", ToolCategory.CURVES, listOf(SlotKind.PATH3, SlotKind.POINT), scalars = listOf(ang("angle", 0.0)), replicates = false, help = "Type an angle if you want one, then click a curve in space and the point it should sit at: the run is moved so its own coordinates are read from the sketch space you are in, at that point, turned by that angle. The point and the angle stay live — drag the point and the run follows, retype the angle and it turns. An imported wireframe arrives already placed this way.", slotNames = listOf("curve in space", "at point")) { d, p, s -> d.placeCurve(p.elements[0], p.points[0], s.firstOrNull()) },
             ToolDef(CUT_OPENINGS, "Cut openings", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), help = "Click a solid extruded from a wall footprint: every opening on that wall becomes a subtracted box, sill to head. Openings added later need the tool again.", slotNames = listOf("wall solid")) { d, p, _ -> d.cutOpenings(p.elements[0]) },
             // ----- Cutting with an *unbounded* tool (OP-22's extension). The chain is drawn like any other
             // run of points and is a value of its own; the two tools that use it are one node with a
@@ -988,6 +1008,11 @@ object Tools {
             // `sketchspace` step like every other plane tool and does not replicate; a station **family** is
             // OP-26's own to-be-discussed item and is deliberately not this row.
             ToolDef(STATION, "Station (plane across a curve)", ToolCategory.PLANES, listOf(SlotKind.PATH3), scalars = listOf(len("distance")), recordsSteps = true, replicates = false, help = "Type a distance (or pick a parameter in the panel), then click a curve in space: the 2D view switches to a new sketch plane standing square across the run that far along it, measured from the curve's start. The origin is on the curve, the normal is the direction the curve is going, and the axes are the moving frame's — so what you draw there rides the run and stays aligned to itself along it. Extrude builds along the plane's normal, Cut goes the other way. The distance stays a parameter: retype it and the plane slides along the curve with everything drawn on it, and a distance past the end of the run makes the plane invalid until you bring it back.", slotNames = listOf("curve in space")) { d, p, s -> d.createStationSpace(p.elements[0], s[0]) },
+            // ----- and the fourth plane that is a face of nothing: the plane of an imported **wireframe**
+            // (OP-26, step 9). One PATH3 pick and no number at all, because a flat run states its plane
+            // completely — it is the station's construction with the distance left out. It records its own
+            // steps (a `sketchspace` and the traced geometry) and does not replicate.
+            ToolDef(SKETCH_FROM_WIRE, "Sketch from wireframe", ToolCategory.PLANES, listOf(SlotKind.PATH3), recordsSteps = true, replicates = false, help = "Click an imported wireframe run that is flat: the 2D view switches to a new sketch plane on that run's own plane, with the run traced into it as ordinary points and segments you can drag, dimension, trace into an outline and extrude. The sketch rides the imported body — drag the body's point and the plane and everything on it follow. A run that is not flat is refused by name, saying how far off a plane it is: a curve in space is not a sketch, and it is never quietly flattened into one.", slotNames = listOf("imported wireframe")) { d, p, _ -> d.sketchFromWireframe(p.elements[0]) },
             // ----- sketch on a *side* face (OP-17). One click, on a solid's footprint edge: a side face
             // projects to exactly that edge, so the edge names the face and the solid at once. Like the
             // path and opening tools this one records a step of its own (`sketchspace`, naming the

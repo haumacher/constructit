@@ -507,7 +507,10 @@ dishonest or a compliance project. **JT** shipped the way it was scoped: still a
 implementation. **Reading JT *into* a drawing is done too**: a file's bodies arrive as frozen mesh literals
 with parametric placements (a point and an angle you can drag and type), and a body whose surface does not
 close comes in **flagged as an open shell** — it displays, arranges and re-exports, while the two print
-formats and every boolean refuse it by name.
+formats and every boolean refuse it by name. A file's **wireframe** parts (centrelines, sketches, section
+curves) arrive the same way, as curves in space with the same placement — so a tube sweeps along an imported
+route and a station stands on one — and a **flat** imported run can be traced into an ordinary sketch on its
+own plane with one click, which refuses by name (and says how far off a plane it is) when the run is not flat.
 
 ## Documentation
 

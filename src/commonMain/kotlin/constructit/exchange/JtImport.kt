@@ -1,7 +1,9 @@
 package constructit.exchange
 
 import constructit.editor.Appearance
+import constructit.geom.Curves3
 import constructit.geom.Mesh3
+import constructit.geom.Path3
 import constructit.geom.Tri
 import constructit.geom.Vec3
 import constructit.geom.Xform3
@@ -10,6 +12,7 @@ import de.haumacher.kotlinjt.scene.LengthUnit as JtLengthUnit
 import de.haumacher.kotlinjt.scene.Mat4 as JtMat4
 import de.haumacher.kotlinjt.scene.Material as JtMaterial
 import de.haumacher.kotlinjt.scene.Mesh as JtMesh
+import de.haumacher.kotlinjt.scene.PolylineSet as JtPolylineSet
 import de.haumacher.kotlinjt.scene.Scene as JtScene
 import de.haumacher.kotlinjt.scene.SceneNode as JtSceneNode
 
@@ -19,10 +22,16 @@ import de.haumacher.kotlinjt.scene.SceneNode as JtSceneNode
  * Everything below the seam is the sibling library's (`de.haumacher.kotlinjt`): `readScene` hands over the
  * same format-agnostic scene the writer takes — named nodes, local transforms, indexed-triangle meshes,
  * simple materials, units explicit in the model — so this file is an adapter and nothing else. No decoding,
- * no format knowledge: a `de.haumacher.kotlinjt.scene.Scene` in, a list of [JtBody] out, and the document
+ * no format knowledge: a `de.haumacher.kotlinjt.scene.Scene` in, [JtBody]s and [JtWire]s out, and the document
  * work happens in [Imports].
  *
- * Four things it decides, each of which could have gone the other way:
+ * Five things it decides, each of which could have gone the other way:
+ *
+ * **A wireframe-only part is a body of the drawing, not a note** (OP-26, step 9). JT files carry plenty of
+ * them — sketches, centrelines, construction curves — and until that step they were skipped and named. They
+ * come in as [JtWire]s: the file's own polylines, under the identical contract a mesh gets. What has not
+ * changed is that nothing is *inferred* from them — the file said points, and points are what the drawing
+ * gets.
  *
  * **One body per geometry-bearing *path*, not per node.** The library shares instanced subtrees, so the ten
  * instances of one bolt are ten paths through the *same* `SceneNode` object — and they are ten bodies,
@@ -60,9 +69,33 @@ object JtImport {
         val note: String?,
     )
 
-    /** What a scene offered: the bodies, and what was skipped on the way. */
+    /**
+     * One **wireframe part** a JT file offers (OP-26, step 9): its [runs] in the part's **own** coordinates in
+     * millimetres, at the file's [pose], with whatever the file said about its [name] and [material].
+     *
+     * The exact twin of [JtBody] and deliberately a separate type rather than a body with a nullable mesh: a
+     * run and a body are two different values of this engine (a `Path3` and a `Mesh3`) and become two
+     * different element kinds, so a single type carrying "one or the other" would push that choice into every
+     * consumer.
+     *
+     * **Several runs, one part**, which is why this is a part rather than a run: a `PolylineSet` is a shared
+     * point pool with one index run per polyline, and a `Path3` is a *single* chain, so disjoint polylines
+     * cannot be one value. They are one part all the same — so [Imports] gives them **one anchor point and one
+     * angle between them**, and dragging it moves the whole wireframe. Sharing a node *is* equality (OP-5);
+     * there is nothing to build for it.
+     */
+    class JtWire(
+        val name: String,
+        val runs: List<Path3>,
+        val pose: Xform3,
+        val material: Appearance?,
+        val note: String?,
+    )
+
+    /** What a scene offered: the bodies, the wireframe parts, and what was skipped on the way. */
     class JtBodies(
         val bodies: List<JtBody>,
+        val wires: List<JtWire>,
         val notes: List<String>,
     )
 
@@ -82,12 +115,14 @@ object JtImport {
         mmPerUnit: Double,
     ): JtBodies {
         val out = ArrayList<JtBody>()
+        val wires = ArrayList<JtWire>()
         val notes = ArrayList<String>()
         // How many geometry-bearing nodes have been *met*, which is what the positional stand-in name below
-        // counts. Deliberately not `out.size`: that counts the bodies actually taken, so every node this walk
-        // skipped — a wireframe-only part — read the same number and five different parts of one file all
-        // came out called `body12`. A name that cannot tell two things apart is worse than no name, and this
-        // one is read by a note whose whole job is to say *which* part was not imported.
+        // counts — meshes and wireframe alike, in one sequence. Deliberately not `out.size`: that counts the
+        // bodies alone, so back when a wireframe part was skipped every one of them read the same number and
+        // five different parts of one file all came out called `body12`. They are imported now (OP-26, step 9)
+        // and the rule is unchanged for the reason it was made: a number that names a position in the **file**
+        // is the only thing about an unnamed node that is unique, whatever the walk goes on to do with it.
         var met = 0
         // the library's own honesty contract, carried through unchanged: what it could not represent
         // faithfully is what this import could not either
@@ -99,18 +134,75 @@ object JtImport {
         ) {
             val here = node.transform * world
             val mesh = node.meshes.firstOrNull()
+            // **One name per geometry-bearing node, whichever kinds of geometry it bears.** The two cases are
+            // asked separately rather than as an either/or: the library's writer refuses to emit a node with
+            // triangles *and* polylines, but a file it did not write may carry one, and taking only the mesh
+            // would drop that node's wireframe **silently** — the one thing an import may never do. They share
+            // the node's name because they are one node.
+            val name = if (mesh != null || node.polylines.isNotEmpty()) nameOf(node, met++) else ""
             if (mesh != null) {
-                out.add(bodyOf(nameOf(node, met++), mesh, here, node.material, mmPerUnit))
-            } else if (node.polylines.isNotEmpty()) {
-                // Wireframe-only parts (JT carries plenty: sketches, centrelines, construction curves).
-                // Named rather than dropped, because a part that is simply *missing* from a drawing is the
-                // kind of surprise an import must not spring — the same rule the export's notes follow.
-                notes.add("${nameOf(node, met++)} is wireframe only (no triangles) — not imported")
+                out.add(bodyOf(name, mesh, here, node.material, mmPerUnit))
+            }
+            if (node.polylines.isNotEmpty()) {
+                // **A wireframe part comes in as runs** (OP-26, step 9). JT carries plenty of them —
+                // sketches, centrelines, construction curves — and they used to be skipped and named. They are
+                // now curves of the drawing under the identical contract an imported body has: a frozen
+                // literal with a parametric placement, offering no construction inputs. The finest tier only,
+                // for [bodies]'s own reason: the tiers are LODs, and picking a coarse one would bake a display
+                // decision into the model.
+                wireOf(name, node.polylines.first(), here, node.material, mmPerUnit)?.let { wires.add(it) }
             }
             for (c in node.children) walk(c, here)
         }
         walk(scene.root, JtMat4.IDENTITY)
-        return JtBodies(out, notes)
+        return JtBodies(out, wires, notes)
+    }
+
+    /**
+     * One wireframe part from its [set]: one run per index run, each a **polyline** through the points the
+     * file listed — no fitting, no smoothing, no arc recognition. Null when nothing in it is a run.
+     *
+     * A line of fewer than two points is dropped rather than named: it is not a run at all, and the format's
+     * own contract already says every polyline has at least two. A line whose consecutive points coincide is
+     * kept as the file wrote it — a zero-length piece is what the *value* says, and this adapter does not
+     * repair geometry (the rule [meshOf] follows for a degenerate triangle is the same one).
+     *
+     * A **non-rigid transform is baked and said**, exactly as [bodyOf] does it and for the same reason: a
+     * scale, a shear or a mirror is not a placement, so it cannot become one.
+     */
+    private fun wireOf(
+        name: String,
+        set: JtPolylineSet,
+        world: JtMat4,
+        material: JtMaterial?,
+        mmPerUnit: Double,
+    ): JtWire? {
+        val pose = xformOf(world, mmPerUnit)
+        val rigid = pose.isRigid()
+        val out = ArrayList<Path3>()
+        for (line in set.lines) {
+            val pts =
+                line.mapNotNull { i ->
+                    set.positions.getOrNull(i)?.let { Vec3(it.x.toDouble() * mmPerUnit, it.y.toDouble() * mmPerUnit, it.z.toDouble() * mmPerUnit) }
+                }
+            if (pts.size < 2) continue
+            // a run whose last point *is* its first is a closed one, and closure is **structure** (OP-21): it
+            // is said by the file's own index run, never measured back off the geometry afterwards
+            val closed = pts.size >= 4 && pts.first() == pts.last()
+            val open = if (closed) pts.dropLast(1) else pts
+            val path = Path3(Curves3.straightThrough(open, closed), closed)
+            if (path.elements.isEmpty()) continue
+            out.add(if (rigid) path else path.movedBy(pose))
+        }
+        if (out.isEmpty()) return null
+        val note =
+            if (rigid) {
+                null
+            } else {
+                "$name carries a transform that scales, shears or mirrors it, which is not a placement — " +
+                    "it was applied to the run's own points instead, so it cannot be re-placed from it"
+            }
+        return JtWire(name, out, if (rigid) pose else Xform3.IDENTITY, appearanceOf(material), note)
     }
 
     /**

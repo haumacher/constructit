@@ -708,4 +708,98 @@ object Curves3 {
         val l = lo ?: return null
         return l to (hi ?: l)
     }
+
+    // ---- the plane a *frozen* run lies in (OP-26, step 9: the sketch made from an imported wireframe) ----
+
+    /**
+     * How far a run's points may stand off one plane and still be called flat, **in millimetres**.
+     *
+     * This number exists for exactly one kind of curve and must not be read as a general tolerance: a
+     * **constructed** path's planarity is a *fact of its construction* — points in one space are in one
+     * plane, structurally, with nothing measured (OP-26's parenting rule, consequence 3). An **imported** run
+     * has no construction: it is a list of numbers a file states, so the only way to ask whether it is flat is
+     * to measure, and a measurement needs a limit.
+     *
+     * **Why 0.01 mm**, argued from both sides, because both of them decide it:
+     * - *Above the file's own noise.* JT stores positions as `float`, so a point a CAD system authored exactly
+     *   in a plane arrives rounded: half an ULP per coordinate, which is ≈1e-4 mm out of plane at a metre from
+     *   the origin and ≈1e-3 mm at ten metres — the largest model anybody routes a wireframe through. A tighter
+     *   limit would refuse flat sketches for being written down in single precision, which is a fact about the
+     *   format and not about the geometry.
+     * - *Below anything a drawing calls flat.* 0.01 mm is the tightest general tolerance a shop quotes (ISO
+     *   2768-f is ±0.05 mm at 30 mm), so a run that stays inside it cannot be moved by transcribing it into a
+     *   plane by an amount that part's own drawing distinguishes. And a run that is genuinely *in* space — a
+     *   routed centreline, a spring, a hemmed edge — misses a plane by whole millimetres, so nothing that is
+     *   really a curve in space slips through: the gap between the two cases is three orders of magnitude wide
+     *   and this number sits in the middle of it.
+     */
+    const val FLAT_TOL_MM = 0.01
+
+    /**
+     * The plane [path] lies in, or the **named reason** it has none — the question OP-26's step 9 asks before
+     * it will make a sketch out of an imported wireframe, and the only place in this engine where planarity is
+     * *measured* rather than known.
+     *
+     * **Newell's normal, not a least-squares fit.** The area-weighted sum over the run's edges is a closed
+     * form — one pass, no iteration, no eigenproblem — and it is *exact* for points that really are coplanar,
+     * which is the case that has to be exact. A least-squares plane would answer the same thing for flat input
+     * and differ only in how it apportions a residual that is about to be refused anyway, at the cost of a
+     * solve whose answer would have to be bit-identical on every machine and every reload.
+     *
+     * Two refusals, and each names what is actually wrong:
+     * - a run whose points sweep **no area** — a straight one, or one that doubles back on itself — lies in
+     *   infinitely many planes, so there is no plane to pick and picking one would be inventing a rotation;
+     * - a run that misses every plane by more than [tolMm], which is a curve in space and is said to be one,
+     *   with the number it missed by.
+     *
+     * The frame is the run's own: the origin is where the run **starts**, the x axis is the way it leaves
+     * that point, and the normal is Newell's — so the sketch that comes out of it is stated in the coordinates
+     * the file's own geometry suggests rather than in a frame this function invented.
+     */
+    fun planeOfRun(
+        path: Path3,
+        tolMm: Double = FLAT_TOL_MM,
+    ): Pair<Plane3?, String?> {
+        val pts = polyline(path)
+        if (pts.size < 3) {
+            return null to "it is a single straight run, and a straight line lies in infinitely many planes — there is no one plane to sketch in"
+        }
+        var n = Vec3.ZERO
+        for (i in pts.indices) {
+            val a = pts[i]
+            val b = pts[(i + 1) % pts.size]
+            n += Vec3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y))
+        }
+        val (lo, hi) = bounds(path) ?: return null to "it has no points"
+        val span = (hi - lo).length()
+        // |n| is twice the area the run's points span, so this says "its area is no more than the tolerance
+        // times its length" — i.e. it is as good as straight, whichever way it is turned
+        if (n.length() <= 2.0 * tolMm * maxOf(span, 1.0)) {
+            return null to "its points sweep no area — a straight run lies in infinitely many planes, so there is no one plane to sketch in"
+        }
+        val normal = n.normalized()
+        var c = Vec3.ZERO
+        for (p in pts) c += p
+        val centroid = c * (1.0 / pts.size)
+        var dev = 0.0
+        for (p in pts) dev = maxOf(dev, kotlin.math.abs((p - centroid).dot(normal)))
+        if (dev > tolMm) {
+            return null to
+                "it is not flat: its points stand up to ${Frames3.mm(dev)} mm off the best plane through them, " +
+                "and the limit is ${Frames3.mm(tolMm)} mm — this is a curve in space, not a sketch"
+        }
+        val origin = pts[0] - normal * (pts[0] - centroid).dot(normal)
+        val along = pts[1] - pts[0]
+        val flat = along - normal * along.dot(normal)
+        // a first chord along the normal cannot happen for a run this flat, but the fallback is the moving
+        // frame's own tie-break (`Frames3.startReference`) rather than a guess: the least-aligned world axis
+        val u =
+            if (flat.length() > Vec3.EPS) {
+                flat.normalized()
+            } else {
+                val axis = listOf(Vec3.X, Vec3.Y, Vec3.Z).minByOrNull { kotlin.math.abs(normal.dot(it)) } ?: Vec3.X
+                (axis - normal * axis.dot(normal)).normalized()
+            }
+        return Plane3(origin, u, normal.cross(u)) to null
+    }
 }

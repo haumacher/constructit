@@ -55,6 +55,7 @@ import constructit.dsl.resultOf
 import constructit.dsl.roundedRect
 import constructit.dsl.valueOf
 import constructit.exchange.MeshText
+import constructit.exchange.PathText
 import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
@@ -75,6 +76,7 @@ import constructit.geom.Handedness
 import constructit.geom.IntersectionCurve
 import constructit.geom.Justification
 import constructit.geom.Mesh3
+import constructit.geom.Path3
 import constructit.geom.Plane3
 import constructit.geom.PlaneSection
 import constructit.geom.ProfileElement
@@ -273,6 +275,18 @@ class SketchSpace(
      * with a reason, which heals (OP-3).
      */
     val along: ScalarEntry? = null,
+    /**
+     * WIREFRAME only (OP-26, step 9): the **imported run** whose own plane this space is.
+     *
+     * The third space derived from a curve rather than from a solid, and it takes the shape the station
+     * already established: a piece of geometry and nothing else — a wireframe states its plane completely, so
+     * unlike a datum's angle or a station's distance there is no number left over for the user to type.
+     *
+     * It is only ever an *imported* run, and that is the whole of why measuring its plane is allowed: the
+     * literal is frozen and its placement is rigid, so the plane is a pure function of numbers that cannot
+     * change their answer (see [Document.sketchFromWireframe]).
+     */
+    val wire: Element? = null,
 ) {
     /**
      * Which corner of this space's own section the origin is anchored on, or null while it sits at the
@@ -305,6 +319,9 @@ class SketchSpace(
     /** A **station** across a curve in space (OP-26, step 4) — see [station]. */
     val isStation: Boolean get() = station != null
 
+    /** The **plane of an imported wireframe** (OP-26, step 9) — see [wire]. */
+    val isWire: Boolean get() = wire != null
+
     /**
      * A datum plane — a line and an angle, a bare height, or a station along a curve — as opposed to a
      * solid's face or the plan.
@@ -314,10 +331,10 @@ class SketchSpace(
      * material side states it on its own normal) and how the view introduces itself. Both hold for a station
      * word for word, which is the point of a station being a sketch space at all.
      */
-    val isDatum: Boolean get() = hinge != null || parallel || isStation
+    val isDatum: Boolean get() = hinge != null || parallel || isStation || isWire
 
     /** A space on a solid's planar side face (OP-8's `sideFacePlane`). */
-    val isFace: Boolean get() = plane != null && hinge == null && !parallel && !isStation
+    val isFace: Boolean get() = plane != null && hinge == null && !parallel && !isStation && !isWire
 }
 
 /** A retained, displayable/selectable graph output with style + kind. */
@@ -2027,6 +2044,7 @@ class Document {
                 proto.parallel,
                 proto.station,
                 proto.along,
+                proto.wire,
             )
         // where "created before" is decided (GitHub #9): every element already born is this plane's ancestor,
         // and nothing born after it ever becomes one — see [spaceAncestors]
@@ -2339,6 +2357,8 @@ class Document {
             // a station (OP-26, step 4): the one number it is, and the run it is measured along
             space.isStation ->
                 "${space.name} (${Format.num(spaceAlongMm(space))} mm along ${space.station?.let { nameOf(it) }})"
+            // the plane of an imported wireframe (OP-26, step 9): the run *is* the whole description
+            space.isWire -> "${space.name} (plane of ${space.wire?.let { displayName(it) }})"
             // the hinge-less parallel case (GitHub #9): a height, and the space it is a height above
             space.parallel -> "${space.name} (${Format.num(spaceOffsetMm(space))} mm from ${space.from})"
             space.isDatum ->
@@ -9651,6 +9671,208 @@ class Document {
         val ref = cx.placeSolid(el.ref as SolidRef, activePlane(), at, angle ?: cx.const(Quantity.deg(0.0)))
         return add(ref, ElementKind.SOLID, Styles.SOLID)
             .also { madeSolid(it, "${nameOf(el)} placed in ${activeSpace.name}") }
+    }
+
+    // ---- imported curves: a frozen run, its placement, and the sketch a flat one makes (OP-26, step 9) ----
+
+    /**
+     * Which curve elements came **from a file** — the literals and the placements riding them, by runtime id.
+     *
+     * A set rather than a field on [Element] for [elementMaterials]'s reason: provenance is a fact the *steps*
+     * establish, so replay rebuilds it by running [importCurve] and [placeCurve] again, and nothing about it
+     * is stored separately from the construction that makes it true.
+     *
+     * What turns on it is one thing only, and it is a doctrinal thing: [sketchFromWireframe] measures
+     * planarity, and a *gesture* may only refuse on a measurement when the measurement cannot change its
+     * answer. A frozen literal moved by a rigid placement cannot (OP-9's open-shell argument, session 34,
+     * exactly), and a constructed run can — drag one of its points and it stops being flat. So the gesture is
+     * offered on these and named as refused on anything else.
+     */
+    private val importedCurves = HashSet<String>()
+
+    /** Whether [el] is a curve a file brought in — the literal, or a placement of one (see [importedCurves]). */
+    fun isImportedRun(el: Element): Boolean = el.id in importedCurves
+
+    /**
+     * A **reference run**: the polyline a file gave us, at the [pose] that file put it at (OP-26, step 9).
+     *
+     * The literal half of an imported curve, and the twin of [importBody] in every respect — one element, one
+     * step, and the step carries the points themselves ([PathText]) because an imported run *has* no
+     * construction to describe. What rides it is a [placeCurve], which is what makes it movable; the importer
+     * adds both, exactly as it does for a body (see `Imports`).
+     */
+    fun importCurve(
+        source: String,
+        path: Path3,
+        pose: Xform3 = Xform3.IDENTITY,
+    ): Element? {
+        val text = PathText.encode(path) ?: return null
+        return recording(
+            "importcurve",
+            *listOfNotNull(
+                Arg.Keyed("src", Arg.Label(scalarWord(source))),
+                Arg.Keyed("pose", Arg.Nums(pose.values().map { Quantity.number(it) })).takeIf { !pose.isIdentity },
+                Arg.Keyed("path", Arg.Text(text)),
+            ).toTypedArray(),
+        ) {
+            add(cx.importedPath(scalarWord(source), path, pose), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
+                .also { importedCurves.add(it.id) }
+        }
+    }
+
+    /**
+     * **Place** the curve in space [el]: read its own coordinates in the active sketch space's frame, at the
+     * point [at], turned by [angle] about that space's normal (`cx.placeCurve`).
+     *
+     * [placeSolid] one dimension down, and generic over runs for the same reason: an import is merely the
+     * first caller. What comes out is a *new* curve element whose operand is the one picked, so the literal
+     * becomes this run's construction material and the two views draw one run rather than two.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun placeCurve(
+        el: Element,
+        at: PointRef,
+        angle: ScalarRef? = null,
+    ): Element? {
+        if (el.kind != ElementKind.SPACE_CURVE) {
+            note = "Place curve: ${nameOf(el)} is ${kindWord(el)}, not a curve in space"
+            return null
+        }
+        val ref = cx.placeCurve(el.ref as Path3Ref, activePlane(), at, angle ?: cx.const(Quantity.deg(0.0)))
+        val placed = add(ref, ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
+        if (isImportedRun(el)) importedCurves.add(placed.id)
+        note = "${nameOf(placed)}: ${nameOf(el)} placed in ${activeSpace.name} — drag the point to move it"
+        return placed
+    }
+
+    /**
+     * **A sketch made from an imported wireframe** (OP-26, step 9): a sketch space on the run's own plane,
+     * with the run transcribed into it as ordinary points and segments.
+     *
+     * **Two recorded steps, and between them they say the whole thing** — the `sketchspace` that puts a plane
+     * on the run ([createWireSpace]) and the `wiresketch` that states the geometry. The second carries the
+     * transcribed **coordinates**, so a replay never re-measures anything and never re-reads the run: the
+     * planarity question is asked once, here, by a person, and its answer is written down (*recorded, never
+     * discovered*, OP-23). The points are ordinary free points from that moment on — drag them, weld them,
+     * dimension them, trace them into an outline and extrude it — and the step restates where they have been
+     * dragged to, exactly as a `point` step does.
+     *
+     * **Why the sketch lands in the run's own plane rather than in the space you are standing in.** A flat
+     * wireframe *states* a plane; transcribing it into a different one would either refuse every run that is
+     * not already lying on the active plane, or silently foreshorten it — and the second is the very thing
+     * OP-26 forbids. The space is derived from the run, which is the station's own shape (a sketch space whose
+     * plane is a node over a `Path3`), so this adds no concept: the sketch therefore **rides the placement**,
+     * and dragging the imported body's anchor carries the plane and everything drawn on it along.
+     *
+     * **Refused by name, building nothing**, for three things — a pick that is not a curve in space; a run
+     * that is not imported, because its planarity is either a fact of its construction or a value that can
+     * change under a drag, and a gesture may not refuse on one of those; and a run that is **not flat**, with
+     * the number it misses a plane by (see [Curves3.planeOfRun] for the tolerance and its argument).
+     */
+    fun sketchFromWireframe(el: Element): Element? {
+        val what = "Sketch from wireframe"
+        if (el.kind != ElementKind.SPACE_CURVE) {
+            note = "$what: ${displayName(el)} is ${kindWord(el)}, not a curve in space — click an imported wireframe run"
+            return null
+        }
+        if (!isImportedRun(el)) {
+            note =
+                "$what: ${displayName(el)} was not imported — it is a curve this drawing constructs, so it is already " +
+                "made of points you can edit, and whether it is flat is a fact of how it was built rather than " +
+                "something to measure"
+            return null
+        }
+        val path = (Evaluator().valueOf(el.ref) as? Path3Value)?.path
+        if (path == null) {
+            note = "$what: ${displayName(el)} has no run right now"
+            return null
+        }
+        val (plane, why) = Curves3.planeOfRun(path)
+        if (plane == null) {
+            note = "$what: ${displayName(el)} cannot become a sketch — $why"
+            return null
+        }
+        val points = Curves3.polyline(path)
+        // a closed run's polyline ends where it began; the sketch states each point once and closes by saying so
+        val open = if (path.closed && points.size > 1) points.dropLast(1) else points
+        val local = open.map { plane.toLocal(it) }
+        val base = activeSpace
+        val space = createWireSpace(el) ?: return null
+        val made = traceWireSketch(el, local, path.closed)
+        note =
+            "${space.name}: ${displayName(el)} traced into a sketch on its own plane — ${local.size} points and " +
+            "${made.size} segments you can drag, dimension and build on (${base.name} is one click away in the space list)"
+        return made.firstOrNull()
+    }
+
+    /**
+     * The traced geometry itself, as its own recorded step — the half [sketchFromWireframe] writes down and
+     * the **whole** of what a replay runs.
+     *
+     * Public because the loader is its second caller, and that is the point: the step states the transcribed
+     * coordinates, so loading a drawing re-measures no planarity and re-reads no run. [run] is named for
+     * provenance — the sketch belongs to that wireframe, and deleting the wireframe takes the space, and hence
+     * the sketch, with it, exactly as a station's contents go with its run.
+     */
+    fun traceWireSketch(
+        run: Element,
+        local: List<Vec2>,
+        closed: Boolean,
+    ): List<Element> =
+        recording(
+            "wiresketch",
+            *listOfNotNull(
+                Arg.El(run),
+                Arg.Keyed("pts", Arg.Positions(local)),
+                Arg.Keyed("closed", Arg.Text("1")).takeIf { closed },
+            ).toTypedArray(),
+        ) {
+            transcribe(local, closed)
+        }
+
+    /**
+     * The sketch space **on an imported run's own plane** (OP-26, step 9) — the station's construction with
+     * the one number left out, because a flat run states its plane completely.
+     *
+     * Recorded as a `sketchspace` step naming the run, so replay rebuilds the space from the same node and the
+     * plane is a *derived* thing rather than twelve stored numbers: move the run's placement and the space
+     * moves with it. A run that stops being flat makes the plane's node invalid with the reason and everything
+     * drawn on it hides until it is flat again (OP-3) — which a rigid placement can never actually cause, and
+     * which is why the gesture is allowed to refuse on the same measurement.
+     */
+    fun createWireSpace(
+        curve: Element,
+        named: String? = null,
+    ): SketchSpace? {
+        if (curve.kind != ElementKind.SPACE_CURVE) return null
+        val name = named ?: nextDatumName()
+        if (spaceNamed(name) != null) return null
+        val base = activeSpace
+        noteSpaceSwitch()
+        return recording("sketchspace", Arg.Label(name), Arg.Keyed("wire", Arg.El(curve))) {
+            @Suppress("UNCHECKED_CAST")
+            addSpace(SketchSpace(name, null, from = base.name, wire = curve), cx.runPlane(curve.ref as Path3Ref))
+        }
+    }
+
+    /**
+     * The transcription itself: a free point per [local] coordinate and a segment between consecutive ones,
+     * closing the ring when [closed] — ordinary sketch geometry in the active space, and nothing else.
+     *
+     * Free points rather than points derived from the literal, deliberately. What the gesture is *for* is
+     * re-engineering: the file's sketch becomes the drawing's own, so every point is a degree of freedom the
+     * user owns from here on. Derived points would be unmovable, which would make a traced sketch the one
+     * sketch in this editor nobody can edit.
+     */
+    private fun transcribe(
+        local: List<Vec2>,
+        closed: Boolean,
+    ): List<Element> {
+        val pts = local.map { freePoint(Quantity.mm(it.x), Quantity.mm(it.y)) }
+        val out = ArrayList<Element>(pts.size)
+        for (i in 0 until pts.size - 1) out.add(segment(pts[i], pts[i + 1]))
+        if (closed && pts.size >= 3) out.add(segment(pts.last(), pts.first()))
+        return out
     }
 
     /** The named entry driving [ref] — every scalar a tool consumes came from the panel. */

@@ -7,6 +7,7 @@ import constructit.core.ScalarValue
 import constructit.core.SourceNode
 import constructit.dsl.PointRef
 import constructit.exchange.MeshText
+import constructit.exchange.PathText
 import constructit.geom.Justification
 import constructit.geom.Vec2
 import constructit.geom.Xform3
@@ -242,6 +243,20 @@ object DocumentFormat {
             "relative", "absolute", "unweld" -> {
                 val dofs = relativeDofs(doc, step, ev)
                 if (dofs.isEmpty()) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(dofs))
+            }
+            // a traced wireframe's points are ordinary free points from the moment they exist (OP-26, step 9),
+            // so where they have been dragged to is state and is restated — the `point` step's own rule, for
+            // a step that made a whole sketch of them. What is *not* re-read is the run: the coordinates are
+            // the file's answer to a question asked once, and a reload must not ask it again.
+            "wiresketch" -> {
+                val moved = step.creates.filter { it.isPoint }.map { posOf(it) }
+                if (moved.any { it == null }) {
+                    step.args
+                } else {
+                    step.args.map { arg ->
+                        if (arg is Arg.Keyed && arg.key == "pts") Arg.Keyed("pts", Arg.Positions(moved.filterNotNull())) else arg
+                    }
+                }
             }
             "point", "orthostart", "orthovertex", "orthoprepend" ->
                 step.creates.firstOrNull()?.let { posOf(it) }?.let { listOf(Arg.Pos(it)) } ?: step.args
@@ -662,6 +677,26 @@ object DocumentFormat {
                         ?: throw LoadError("this import's mesh is not readable — the drawing was written by a different version")
                 doc.importBody(unquote(keyed(words, "src") ?: "?"), mesh, pose(words))
             }
+            // A **reference run** read from a file (OP-26, step 9) — the same step one dimension down, and
+            // the same reason for carrying geometry: an imported curve has no construction either. See
+            // [PathText] for the layout. A *new step kind* needs no version bump (OP-18).
+            "importcurve" -> {
+                val path =
+                    PathText.decode(keyed(words, "path") ?: throw LoadError("importcurve is missing 'path='"))
+                        ?: throw LoadError("this import's run is not readable — the drawing was written by a different version")
+                doc.importCurve(unquote(keyed(words, "src") ?: "?"), path, pose(words))
+                    ?: throw LoadError("this import's run is not a polyline")
+            }
+            // The sketch traced from a flat imported wireframe (OP-26, step 9). The step carries the
+            // **coordinates**, so replay re-measures nothing: whether that run was flat was decided once, by a
+            // person, and the answer is what is written down (*recorded, never discovered*). A new step kind,
+            // so no version bump (OP-18).
+            "wiresketch" ->
+                doc.traceWireSketch(
+                    el(1),
+                    keyedPositions(words, "pts"),
+                    keyed(words, "closed") == "1",
+                )
             "weld" -> doc.weld(el(1), el(2))
             "attach" -> doc.attachToCurve(el(1), el(2))
             "weldortho" -> doc.weldOrthoEndpointToPoint(el(1), el(2))
@@ -755,6 +790,7 @@ object DocumentFormat {
         var offset: ScalarEntry? = null
         var path: Element? = null
         var along: ScalarEntry? = null
+        var wire: Element? = null
         for (w in words.drop(2)) {
             val v = w.substringAfter('=', "")
             when (w.substringBefore('=')) {
@@ -767,11 +803,19 @@ object DocumentFormat {
                 // written down changes meaning and no version bump goes with them
                 "path" -> path = byName[v] ?: throw LoadError("unknown element '$v'")
                 "at" -> along = namedScalar(doc, v)
+                // the plane of an imported wireframe (OP-26, step 9) — one more argument, so nothing already
+                // written down changes meaning and no version bump goes with it
+                "wire" -> wire = byName[v] ?: throw LoadError("unknown element '$v'")
                 // the parallel case (a datum moved along its own normal) — a *new* argument, so no stored
                 // literal changes meaning and no version bump goes with it (OP-18's doctrine)
                 "offset" -> offset = namedScalar(doc, v)
                 else -> throw LoadError("unknown sketchspace argument '${w.substringBefore('=')}'")
             }
+        }
+        if (wire != null) {
+            doc.createWireSpace(wire, named = name)
+                ?: throw LoadError("'${doc.nameOf(wire)}' is no curve in space to take a sketch plane from")
+            return
         }
         if (path != null) {
             val d = along ?: throw LoadError("a station sketch plane is missing 'at='")
@@ -1180,6 +1224,15 @@ object DocumentFormat {
         if (v.startsWith("\"")) Regex("\"([^\"]*)\"").findAll(v).map { it.groupValues[1] }.toList() else listOf(v)
 
     private fun unquote(s: String) = s.removeSurrounding("\"")
+
+    /** A `key=x,y;x,y` argument — the transcribed sketch of a wireframe writes one (OP-26, step 9). */
+    private fun keyedPositions(
+        words: List<String>,
+        key: String,
+    ): List<Vec2> =
+        words.firstOrNull { it.startsWith("$key=") }
+            ?.removePrefix("$key=")?.split(';')?.filter { it.isNotEmpty() }?.map { parsePos(it) }
+            ?: emptyList()
 
     /** The `key=a;b` numbers of a step, empty when it carries none (an older script, a tool with no DOF). */
     private fun keyedNums(

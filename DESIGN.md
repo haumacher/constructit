@@ -5531,8 +5531,13 @@ extension, named rather than half-built.
   body's vertices, with a note saying so and saying that the body therefore cannot be re-placed from it. A
   mirror re-winds its triangles on the way in, because a mirrored mesh that kept its winding encloses negative
   volume — a solid turned inside out — and an importer that has to bake one still has to bake it honestly.
-- **A wireframe-only part** (polylines, no triangles — JT files carry plenty: centrelines, sketches) — skipped
-  and **named**, never silently dropped, the same rule the export's notes follow. *(A stand-in name numbers
+- ~~**A wireframe-only part** (polylines, no triangles — JT files carry plenty: centrelines, sketches) —
+  skipped and **named**~~ — **reversed in session 48 by OP-26's step 9: such a part is now *imported*, as one
+  frozen `Path3` literal per polyline with the identical placement a body gets** (see *Implementation status
+  (as built — step 9: imported curves, and the sketch traced from a flat one)*). Skipping was the honest answer
+  only while this kernel had no curve value to put a polyline in; OP-26 built one. What survives the reversal
+  unchanged is the naming rule below, which now names an imported run instead of a skipped one, never silently
+  dropped, the same rule the export's notes follow. *(A stand-in name numbers
   the node's place among the file's **geometry-bearing nodes**, not among the bodies taken. Fixed in session
   36 on a real file: a KUKA robot written from a CATIA `.cgr` leaves all seventeen of its shape nodes
   unnamed, and since the counter had been the result's own length, all five skipped parts came out called
@@ -5713,7 +5718,8 @@ renamed, copper-dressed plate exported to JT and imported into a **fresh** drawi
 the trip, the name through the naming authority, the Tier-1 colour and roughness round-tripped, and metalness
 back as **0** — the export's own recorded loss, asserted from the other side. The committed **Siemens NX
 fixture** (`nist-mtc-crada-assembly.jt`): 36 bodies over 269,000 triangles, every one watertight, every one
-named, ten instances of one nut at ten distinct places, five wireframe-only parts skipped and named, positive
+named, ten instances of one nut at ten distinct places, five wireframe-only parts skipped and named (they are
+**imported** since session 48 — see step 9 of OP-26, and the same test now asserts the 197 runs they hold), positive
 volume overall and per body — and `save → load → save` **byte-equal** with every vertex and every triangle
 bit-identical after the reload. Placement: an imported body follows its dragged anchor and its retyped angle
 with its volume unchanged, and a **constructed** solid places identically and keeps its analytic feature. The
@@ -5775,7 +5781,7 @@ Three broad families (see OP-9 decision above):
   Note CSG/implicit representations sidestep some of this (no persistent B-rep topology to
   re-identify) but make "sketch on this face / fillet this edge" harder to express.
 
-## Curves in space, and the sweep (OP-26 — DESIGN AGREED, unimplemented)
+## Curves in space, and the sweep (OP-26 — RESOLVED)
 
 **Why this exists at all.** Everything this kernel can build is either flat or a prism of something flat.
 A cable, a tube, a conduit, a handrail, a moulding, a gutter, a duct, a ramp — every one of them is *a
@@ -5921,9 +5927,17 @@ Each step is whole on its own — a thing that works, not a layer that waits.
    face's *plane* and the drawing says which happened — trim is to-be-discussed item 4, and a clip's piece
    count would be a value), projecting a curve *in space*, and projecting onto a bare plane — see
    *Implementation status (as built — step 8: projection onto a face, an affine map and nothing else)*.
-9. **Imported curves.** The frozen literal plus placement described above, and a **recorded** *"make a
+9. ~~**Imported curves.** The frozen literal plus placement described above, and a **recorded** *"make a
    sketch from this planar wireframe"* gesture that refuses by name when a run is not planar — never a
-   silent planarity discovery. Last, consistent with the standing rule that formats go at the end.
+   silent planarity discovery. Last, consistent with the standing rule that formats go at the end.~~ **Built
+   in session 48**, and it is the mesh import's own machinery one dimension down: a JT file's wireframe parts
+   are now runs of the drawing rather than a skipped note. The sketch gesture lands in **the run's own plane**
+   — a sketch space derived from the run, which is the station's construction with the number left out —
+   because transcribing into some *other* space would either refuse every run not already lying on it or
+   foreshorten one that is tilted. Planarity is measured at **0.01 mm** and only ever on a frozen literal. Cut
+   with their arguments: a curve channel in the **export** seam (no writer carries one, and a constructed run
+   has none either), a wireframe part's **colour**, and transcribing into an existing space — see
+   *Implementation status (as built — step 9: imported curves, and the sketch traced from a flat one)*.
 
 ### The station — one, stated by a distance (settled session 37; step 4 of the order of work)
 
@@ -7337,6 +7351,167 @@ gesture refusals; the run riding the drawing and riding the **solid's own thickn
 watertight, a station standing on it, and a **connect** joining it to another projection; drawn in the 3D view
 and picked in both; and one undo. **1593 → 1627 green**, no new golden, no version bump, no existing golden
 changed.
+
+### Implementation status (as built — step 9: imported curves, and the sketch traced from a flat one)
+
+Step 9 of the order above, the last of OP-26, and it is **two separable things that were both built**: a JT
+file's *wireframe* parts arrive as runs of the drawing, and a flat imported run can be **traced** into ordinary
+2D sketch geometry by a recorded gesture that refuses by name when the run is not flat.
+
+**What an imported run *is*, and it is one sentence copied rather than a new one written: a frozen `Path3`
+literal with a parametric placement.** That is OP-9's own note about an imported mesh, word for word, which is
+what the parenting rule promised — *imported* is the third provenance and "needs no new machinery and gets no
+exception". `Construction.importedPath` is an `OpNode` with an **empty input list** whose value is built once
+(so OP-5's memo hands out the same object for ever, exactly as the mesh literal's does);
+`Construction.placeCurve` is `placeSolid` with `Path3.movedBy` in place of `Solid3.movedBy`, over the *same*
+`placementFrame`, so a run and a body welded to one anchor point cannot drift apart. `Document.importCurve`
+mirrors `importBody` and `Imports.placeRuns` mirrors `Imports.place`: the same `anchorOf` decomposition of the
+file's pose into a plan anchor and a residual, the same naming authority (OP-18), the same placement recorded
+as an **ordinary tool step** (`tool placecurve`), the same hidden literals in one recorded `hide`. One undo
+still takes a whole import, because none of that changed.
+
+**Three things had to differ, and each is a fact about wireframes rather than a decision about imports.**
+*(a) A part is several runs, and they share one placement.* A `PolylineSet` is a shared point pool with one
+index run per polyline, and a `Path3` is a **single** chain, so disjoint polylines cannot be one value — but
+they are one part, and what says so is that every run's placement reads the **same anchor point node and the
+same angle parameter**. Drag it and the whole wireframe moves. Sharing a node *is* equality (OP-5); there was
+nothing to build for it. *(b) `JtImport.JtWire` is a type of its own* rather than a body with a nullable mesh,
+because a run and a body are two different values of this engine and become two different element kinds; a
+single type would have pushed that choice into every consumer. *(c) A wireframe part's **material is dropped**
+— named here rather than silently ignored: Tier 1 dresses solids, and a curve in this model has no appearance
+to carry.
+
+**`PathText` is `MeshText`'s twin, down to sharing its Base64.** `CIP1`, the point count, a closed flag, then
+float64 x, y, z per point — and it stores the **points, not the pieces**, because a polyline's pieces share
+their endpoints and a chain whose pieces did not meet would not be a `Path3` at all. The step therefore carries
+the file's own numbers and never the file's bytes, which is the mesh literal's reason unchanged: *replay must
+never re-run a reader*. A piece kind an import cannot produce is not encodable, by construction — `encode`
+refuses anything but a segment chain.
+
+**No version bump, and the doctrine says why.** Two new step kinds (`importcurve`, `wiresketch`) and one new
+`sketchspace` argument (`wire=`). No stored literal changed its meaning, and a drawing written before this
+build simply has none of them (OP-18) — the same reasoning the `import` step itself landed under.
+
+**The identical contract, including its limits.** An imported run displays, draws in the plan and in the 3D
+view, is picked in both, and fills every `PATH3` slot in the tool table by being an ordinary `SPACE_CURVE`
+element — which is why *tube*, *sweep*, *station*, *connect*, *project*, *cut along a curve* took **no work at
+all** and are asserted rather than assumed. It offers **no construction inputs**: the literal is a node with no
+inputs, so nothing of the file's geometry is a node of the drawing — no vertex to drag, no end to weld, no
+piece to break — and the only editable things an import creates are the anchor and the angle it made itself.
+That is the same sink rule an imported body has (OP-9), and the contrast is asserted beside it: a *constructed*
+run's node takes the points it runs through.
+
+**What "exports where the format can carry it" came to, stated as the cut it is.** No writer carries a curve:
+`ExportScene` is *solids only* — "an export writes bodies; a construction line is not a body" — so an imported
+run exports nowhere, and **so does a constructed one**. Nothing about the import is special-cased here, which
+is the point; a curve channel through the export seam would be four writers' worth of work and a change to what
+every existing drawing's file contains, and it belongs to whichever step decides that curves are exportable at
+all. Named as a future extension, not half-built. (JT and GLB could carry one; 3MF and STL cannot.)
+
+#### The sketch traced from a flat wireframe
+
+**The gesture, in one line: click a flat imported run, and the 2D view opens on that run's own plane with the
+run traced into it as ordinary points and segments.** *Sketch from wireframe* is one `PATH3` pick and no number
+at all — because a flat run **states** its plane completely, which makes this the station's construction with
+the distance left out.
+
+**Why the run's own plane, and not the space you are standing in.** Transcribing into the active space has
+exactly two possible readings and both are worse: *refuse* every run that does not already lie on that plane —
+which is nearly every run in a real file, since a part's sketch sits on the part's own plane — or **project**
+one that is tilted, which is the silent flattening the entry forbids in so many words. The run's plane is a
+node (`Construction.runPlane`) and the space is derived from it (`Document.createWireSpace`), so this is the
+shape a station already established — a sketch space whose plane is a node over a `Path3` — and it adds no
+concept. Its payoff is the parenting rule paying out for imported geometry: **the sketch rides the placement**,
+so dragging the imported body's anchor carries the plane and everything drawn on it along, exactly. Its price
+is stated with it: the sketch is parented to that run, so deleting the wireframe takes the space and the sketch
+with it, precisely as a station's contents go with its run.
+
+**The points are free, and that is what "ordinary sketch geometry" means.** What the gesture is *for* is
+re-engineering, so from the moment it runs the file's sketch is the drawing's own: every traced point is a
+degree of freedom the user owns — draggable, weldable, dimensionable, traceable into an outline and
+extrudable. Points *derived* from the literal were rejected for the obvious reason: they would be unmovable,
+which would make a traced sketch the one sketch in this editor nobody can edit.
+
+**Recorded, and it re-measures nothing.** Two steps: the `sketchspace ... wire=e3` that puts the plane on the
+run, and a `wiresketch` that carries the **transcribed coordinates** and the closure. So a reload never asks
+the planarity question again — it was asked once, by a person, and what is written down is the answer
+(*recorded, never discovered*, OP-23, applied to a measurement instead of to a click). The step **restates**
+those coordinates from the points as they now stand, exactly as a `point` step does, so a traced point that has
+been dragged comes back where it was dragged to rather than where the file put it.
+
+**The tolerance is 0.01 mm, measured as the greatest distance of any of the run's points from the best plane
+through them — and the number is argued from both sides, because both of them decide it.** *Above the file's
+own noise*: JT stores positions as `float`, so a point a CAD system authored exactly in a plane arrives
+rounded — about 1e-4 mm out of plane at a metre from the origin and 1e-3 mm at ten metres, the largest model
+anybody routes a wireframe through — and a tighter limit would refuse flat sketches for being written down in
+single precision, which is a fact about the format rather than about the geometry. *Below anything a drawing
+calls flat*: 0.01 mm is the tightest general tolerance a shop quotes (ISO 2768-f is ±0.05 mm at 30 mm), so a
+run inside it cannot be moved by transcribing it into a plane by an amount that part's own drawing
+distinguishes — while a run that is genuinely *in* space misses a plane by whole millimetres. The gap between
+the two cases is three orders of magnitude wide and the number sits in the middle of it. The plane itself is
+**Newell's normal**, not a least-squares fit: one closed-form pass, exact for points that really are coplanar
+(which is the case that has to be exact), and with no solve whose answer would have to be bit-identical on
+every machine and every reload.
+
+**Four refusals, each by name and each building nothing.** A pick that is not a curve in space. A run that is
+**not flat**, with the number it misses by (*"its points stand up to 21.637 mm off the best plane through them,
+and the limit is 0.01 mm — this is a curve in space, not a sketch"*). A **straight** run, which lies in
+infinitely many planes, so there is no plane to pick and picking one would be inventing a rotation. And a
+**constructed** run — which is the doctrinal one: refusing a *gesture* on a measurement is only safe when the
+measurement cannot change its answer, and a frozen literal moved by a rigid placement cannot, while a
+constructed run stops being flat the moment somebody drags one of its points. (That is session 34's open-shell
+argument reused verbatim, one dimension down.) A constructed run needs none of this anyway: its planarity is a
+fact of its construction and it is *already* made of points that can be edited.
+
+**Acceptance (`JtWireframeTest`, 16 tests, and three tests of `JtImportTest` rewritten).** A file written by
+the sibling's **own writer** — it does write polyline sets, so these are real bytes and the whole reading path
+is under test: two polylines in one part come back as two runs whose points are the file's own to the last bit,
+as chains of `Seg3` with nothing fitted; a file in inches scales; a run is named through the naming authority,
+placed by an anchor and an angle, follows its dragged anchor rigidly, hides and shows, survives `save → load →
+save` **byte-equal** with every point bit-identical, and one undo takes the whole import; its raw literal is
+hidden in a recorded step, so one run is drawn and not two; it offers no construction inputs, asserted against
+a constructed run that does. A **mixed** file brings a body and a wireframe in and the result says which is
+which per part. The gesture: a flat run becomes a sketch whose segments measure the file's own chords, in a
+space labelled *plane of centreline*, replaying byte-equal; a traced point drags and its drag survives a save;
+the tolerance converts a run 0.009 mm off a plane and refuses one 0.011 mm off (a saddle, whose deviation is
+**exactly** half its offset by symmetry, so the two sides are 10 % either way of a number rather than of a
+fit); a bent run, a straight run and a constructed run are each refused by name; and the traced sketch's plane
+moves exactly with the imported body's anchor. It composes: a **tube** sweeps along an imported route and is
+watertight, a **station** stands on one, and a **connect** joins one to a constructed run.
+
+Three tests of `JtImportTest` changed, and the reason is the step itself. `aWireframeOnlyPartIsSkippedAndNamed`
+became `aWireframeOnlyPartComesInAsARunRatherThanANote` — the note it asserted (*"centreline is wireframe only
+(no triangles) — not imported"*) was the honest thing to say while there was no curve value to put a polyline
+in, and there is one now. `unnamedPartsAreNumberedByPositionInTheFileSoSkippedOnesStayDistinct` keeps its rule
+and its reason — a stand-in name is a position in the **file** — and now asserts it over three *imported* runs
+instead of three notes. And the **Siemens NX fixture** asserts the reversal at scale: its five wireframe-only
+parts are **197 runs** (`SectionCurvesOf_…`, `Traceline_Curves`), every one named, the result carrying no notes
+at all, and the export still writing exactly the 36 bodies — because an export writes bodies. **1629 → 1645
+green**, no new golden, **no version bump**, no existing golden changed.
+
+**What OP-26 as a whole now is.** A curve in space is a first-class value of the graph (`Path3`, a chain of
+`Seg3`, `Bezier3` and `Helix3`), drawn in the 3D view and projected into the plan, pickable in both. It is
+produced by five constructions and one import: through points in space (straight or smooth), as a **helix**, by
+**combining two views**, as the **intersection** of a plane and a solid, as a **connect** between two runs, as
+a **projection** onto a face, and as an **imported** literal. It carries a **rotation-minimizing moving frame**
+with a stated start roll and twist, on which the **sweep** rides (a tube, or any closed profile), refusing a
+bend tighter than the profile by name; a **station** is a stated distance along a run and is an ordinary sketch
+space, so everything drawn on one rides the run; a run is also a **directrix** for the swept cut and split
+(OP-22's extension) and a **carrier** for a wall. Every one of those is parented — a value in world space whose
+construction rides the drawing — except the imported literal, which is frozen by definition and carries a
+parametric placement instead.
+
+**And what it is not, stated so it is not looked for.** There is **no surface layer**, so *surface ∩ surface*,
+lofted or ruled surfaces and a station *on* a surface do not exist and are not deferrals — that is a surface
+kernel and a different project (the closing note of *To be discussed*). There is **no `Arc3`**: no producer
+needs an arc *as an arc* yet, and a case with no producer is a case with no test. **Trim, split and join in
+space** are not built (to-be-discussed item 4), so a composite path made of several runs is not a value and two
+runs that meet are two runs. There is **no station family** — one station at a time (item 1a) — no **3D offset
+curve** (item 2) and no **variable-section sweep** (item 3), each of which is a settling discussion rather than
+a queue line. **3D sketch constraints** are refused permanently and by design, not deferred. A curve is not
+**exportable** by any writer. And one defect stays queued rather than being papered over: a mitred sweep whose
+two corners are closer together than the sum of their trims folds back on itself and still passes every
+manifold test (*Queued in session 40*) — the queue entry says why it needs a decision before a patch.
 
 ## Open points (to discuss one by one)
 
@@ -9426,6 +9601,44 @@ changed.
   version bump, no existing golden changed. See *Implementation status (as built — step 8: projection onto a
   face, an affine map and nothing else)*.
 
+- **Session 48 — a file's wireframe is a run, and a flat one can be traced (OP-26, step 9; OP-26 is whole).**
+  The last step, and the smallest in new mechanism precisely because the eight before it and OP-9's import had
+  built everything it needed: a wireframe part becomes a **frozen `Path3` literal with a parametric
+  placement**, which is OP-9's sentence about a mesh with one noun changed. `placeCurve` is `placeSolid` over
+  the same `placementFrame`, `PathText` is `MeshText` down to its Base64, and the import reaches `anchorOf`,
+  the naming authority, the hidden-literal rule and `tool place…` as they stand — so the run is a body of the
+  drawing (dragged, hidden, byte-equal, one undo) without a line of new import machinery. Because the element
+  kind is the existing `SPACE_CURVE`, every `PATH3` slot took it with **no work at all**: a tube sweeps along
+  an imported route, a station stands on one, a connect joins one to a constructed run — asserted rather than
+  assumed. Three things had to differ and each is a fact about wireframes: a part is **several runs sharing one
+  anchor** (a `Path3` is one chain, but the part is one part, and sharing a node *is* equality), `JtWire` is a
+  type of its own rather than a mesh-shaped one with a hole in it, and a wireframe's **colour is dropped**,
+  said rather than ignored. **The interesting decision was where a traced sketch lands.** The active space was
+  the obvious answer and is the wrong one twice over: it would refuse nearly every real run (a part's sketch
+  sits on the *part's* plane), or it would foreshorten a tilted one, which is the silent flattening the entry
+  forbids. So the sketch lands in **the run's own plane** — a space derived from the run, which is the
+  station's construction with the number left out, so no concept is added — and the payoff is that the sketch
+  **rides the placement**: drag the imported body's point and the plane and everything on it follow. Its price
+  is stated with it (delete the wireframe and the sketch goes, exactly as a station's contents do). The points
+  are **free**, not derived, because the gesture exists for re-engineering and derived points would make a
+  traced sketch the one sketch nobody can edit. **Planarity is measured at 0.01 mm**, and the number is argued
+  from both sides: above float32's out-of-plane noise even on a ten-metre model (~1e-3 mm), an order below the
+  finest general tolerance a shop quotes, with three orders of magnitude of daylight between the two cases it
+  separates; the plane is **Newell's normal**, exact for coplanar points and needing no solve. And the gesture
+  refuses a **constructed** run outright, which is the doctrinal move rather than a convenience: a gesture may
+  only refuse on a measurement that cannot change its answer, and a frozen literal moved by a rigid placement
+  cannot — session 34's open-shell argument, reused verbatim one dimension down. The step is **recorded as its
+  coordinates**, so a reload re-measures nothing and re-reads no run, and it restates a traced point that has
+  been dragged. **No version bump**: two new step kinds and one new `sketchspace` argument, no stored literal
+  changed meaning. Cut with their arguments: **exporting a curve** (`ExportScene` is bodies by definition — an
+  imported run exports nowhere and so does a constructed one, and a curve channel is four writers and a change
+  to what every file contains), a wireframe part's **material**, and transcription into an **existing** space.
+  Three `JtImportTest` tests were rewritten with the reason on them — the *"wireframe only … not imported"*
+  note is gone, and the Siemens fixture's five wireframe parts are **197 named runs** with no notes at all
+  while its export still writes exactly 36 bodies. **1629 → 1645 green**, no new golden, no version bump, no
+  existing golden changed. See *Implementation status (as built — step 9: imported curves, and the sketch
+  traced from a flat one)*, which also states what OP-26 as a whole now is and what it is not.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -11251,8 +11464,17 @@ carried along a path is the missing capability rather than a refinement of an ex
    their arguments: a stated direction, clipping and refusing when a run leaves the face (it lands in the
    face's plane and the drawing says so — trim is to-be-discussed item 4), projecting a curve in space,
    projecting onto a bare plane, an outline as the thing thrown, an `Arc3` case, a preview and a palette glyph.
-8. **Imported curves** — frozen literal + placement, plus a *recorded* planar-wireframe-to-sketch gesture.
-   Last, per the standing rule that formats go at the end of the queue.
+8. ~~**Imported curves** — frozen literal + placement, plus a *recorded* planar-wireframe-to-sketch gesture.
+   Last, per the standing rule that formats go at the end of the queue.~~ **Built in session 48, and with it
+   OP-26 is whole**: a JT file's wireframe parts arrive as `Path3` literals with the identical contract its
+   meshes have — placed by an anchor and an angle, named by the naming authority, hidden literals, one undo
+   per import, byte-equal round trip, and no construction inputs. The *sketch from wireframe* gesture makes a
+   sketch space on a flat run's own plane and traces the run into it as ordinary free points and segments,
+   refusing by name at **0.01 mm** of flatness and refusing a *constructed* run outright, because only a
+   frozen literal moved by a rigid placement can answer a measured question the same way for ever. **No
+   version bump** — two new step kinds and one new `sketchspace` argument, so no stored literal changed
+   meaning. Cut with their arguments: exporting a curve (the export seam is bodies, for every run), a
+   wireframe part's material, and transcription into an existing space.
 
 **Queued in session 40 — a mitre that eats more than the span it runs into.** Found while probing the sweep's
 embedding criterion, and a **different defect** from the one that session fixed: at a corner the mitred join

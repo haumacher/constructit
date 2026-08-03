@@ -2822,6 +2822,77 @@ class Construction {
             else -> solid
         }
 
+    // ---- imported curves: the same two nodes one dimension down (OP-26, step 9) ----
+
+    /**
+     * A **run literal**: the polyline a file gave us, named by the [source] it came from (OP-26, step 9).
+     *
+     * The exact twin of [importedSolid], and deliberately not a generalisation of it: a node with **no
+     * inputs**, so it is a constant of the graph rather than a degree of freedom, and the memo (OP-5) builds
+     * its value once and hands it out by pointer ever after. What the step stores is the points
+     * ([constructit.exchange.PathText]), never the file's bytes, for the reason a mesh literal does — replay
+     * must not re-run a reader.
+     *
+     * **A polyline and nothing else.** The file listed points and said which are joined; this is that chain of
+     * [Curve3Element.Seg3]. No fitting, no smoothing, no arc recognition — the drawing says exactly what the
+     * file said, which is what makes it a *literal* at all.
+     *
+     * [pose] is the file's own placement of this run, applied here rather than multiplied into the stored
+     * points, so the step keeps the file's two statements apart — these points, at that pose.
+     */
+    fun importedPath(
+        source: String,
+        path: Path3,
+        pose: Xform3 = Xform3.IDENTITY,
+    ): Path3Ref {
+        val value = Path3Value(path.movedBy(pose))
+        return op { EvalResult.Ok(value) }
+    }
+
+    /**
+     * **Placement** of a curve in space: [path] moved so that its own coordinates are read in the frame
+     * [plane] gives, at the in-plane point [at], turned by [angle] about that plane's normal.
+     *
+     * [placeSolid] one dimension down, sharing its whole argument (a rigid map from an orthonormal frame, four
+     * ordinary nodes, parametric like everything else) and its one implementation of what "placed" means
+     * ([placementFrame]) — so an imported run is moved by exactly the map an imported body is, and a run and
+     * a body welded to the same anchor point can never drift apart.
+     *
+     * Generic over runs rather than special to imported ones, for [placeSolid]'s reason: an import merely
+     * happens to be the only caller today.
+     */
+    fun placeCurve(
+        path: Path3Ref,
+        plane: PlaneRef,
+        at: PointRef,
+        angle: ScalarRef,
+    ): Path3Ref =
+        op(path, plane, at, angle) {
+            val p = (it[1] as PlaneValue).plane
+            val a = pt(it[2])
+            val t = sc(it[3]).requireDim(Dimension.ANGLE, "placement angle").base
+            EvalResult.Ok(Path3Value((it[0] as Path3Value).path.movedBy(placementFrame(p, a, t))))
+        }
+
+    /**
+     * The **plane a flat run lies in** (OP-26, step 9) — the sketch space a wireframe's own geometry states.
+     *
+     * The only node in this engine that *measures* planarity, and it is confined to the one provenance where
+     * planarity cannot be known instead: a constructed path through points in one space is planar
+     * structurally, an imported one is a list of numbers. See [Curves3.planeOfRun] for the measurement, for
+     * the tolerance and for the argument behind it.
+     *
+     * A run with no plane is **invalid with the reason**, and it heals (OP-3) — a placement that tilts a run
+     * back into flatness brings the space and everything drawn on it straight back. The *gesture* refuses too
+     * ([constructit.editor.Document.sketchFromWireframe]), which is only safe because the run it refuses on is
+     * a frozen literal moved by a rigid placement, and neither of those can change the answer.
+     */
+    fun runPlane(path: Path3Ref): PlaneRef =
+        op(path) {
+            val (plane, why) = Curves3.planeOfRun((it[0] as Path3Value).path)
+            if (plane == null) EvalResult.Invalid(why ?: "this run lies in no plane") else EvalResult.Ok(PlaneValue(plane))
+        }
+
     /**
      * The rigid map a placement applies: the plane's frame turned by [angle] about its own normal, with its
      * origin moved to where the in-plane point [at] is.

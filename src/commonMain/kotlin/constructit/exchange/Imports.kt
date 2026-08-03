@@ -41,6 +41,16 @@ class ImportResult(
     val fileName: String,
     /** The bodies that became elements of the drawing, in file order, under the names they took. */
     val bodies: List<String>,
+    /**
+     * The **wireframe runs** that became curves of the drawing, in file order, under the names they took
+     * (OP-26, step 9).
+     *
+     * Listed apart from [bodies] because they are a different thing to reach for — a run is what a sweep
+     * rides, a station stands on and a sketch can be traced from — and because saying *how many of each* is
+     * exactly what a mixed file's result has to say. They are not refusals and not notes: until OP-26's last
+     * step a wireframe part was skipped and named in [notes], and this field is what replaced that sentence.
+     */
+    val runs: List<String> = emptyList(),
     /** Bodies the drawing would not take, each with the reason. */
     val refusals: List<String>,
     /**
@@ -51,7 +61,7 @@ class ImportResult(
      * the tool that needs it says no.
      */
     val openShells: List<String> = emptyList(),
-    /** Everything else worth reading: the library's own notes, wireframe parts skipped, poses baked. */
+    /** Everything else worth reading: the library's own notes, poses baked, anything decided on the way in. */
     val notes: List<String>,
     val message: String,
     /** Why nothing at all was imported, or null when something was. */
@@ -68,6 +78,12 @@ class ImportResult(
  * they are called, what units they are in, what the status line says and every refusal. The browser's whole
  * contribution is a file picker handing over bytes, which is why the import flow is headlessly testable end
  * to end — exactly as the export flow is.
+ *
+ * **What an imported *curve* is: the same sentence one dimension down** (OP-26, step 9). A file's wireframe
+ * parts — centrelines, sketches, section curves, of which JT files carry plenty — used to be skipped and
+ * named here. They are bodies of the drawing now: one frozen `Path3` literal per polyline, with the identical
+ * parametric placement, the identical naming, the identical hidden literal, and the identical limit (no
+ * construction inputs). A part's runs **share one anchor point and one angle**, because they are one part.
  *
  * **What an imported body *is*, in a construction DAG.** A frozen solid literal with a parametric placement
  * — the tracing-paper model in 3D. The mesh is a literal because it has no construction: it came from
@@ -152,6 +168,7 @@ object Imports {
                 )
         val offered = JtImport.bodies(scene, mmPerUnit)
         val names = ArrayList<String>()
+        val runNames = ArrayList<String>()
         val refusals = ArrayList<String>()
         val shells = ArrayList<String>()
         val literals = ArrayList<Element>()
@@ -165,6 +182,15 @@ object Imports {
             literals.add(literal)
             if (Watertight.defect(body.mesh) != null) shells.add(took)
         }
+        // **Wireframe parts, on the identical path** (OP-26, step 9) — a frozen literal per run and a
+        // placement riding it, through the same anchor decomposition, the same naming authority and the same
+        // hidden-literal rule. They used to be skipped and named here; nothing else about the import changed.
+        for (wire in offered.wires) {
+            wire.note?.let { notes.add(it) }
+            val (took, made) = placeRuns(doc, fileName, wire)
+            runNames.addAll(took)
+            literals.addAll(made)
+        }
         // **The raw literals are hidden, in one recorded step.** A literal is the file's content in the
         // file's own coordinates — the placement riding it is the body of the drawing — so it draws nothing
         // and is nobody's output. While its placement is visible the export seam already skips it as that
@@ -173,11 +199,18 @@ object Imports {
         // export the rest" true). One step for the whole import, recorded like any other visibility decision
         // (OP-18), so it survives save and undo — and `Show` takes it back.
         if (literals.isNotEmpty()) doc.setElementsVisible(literals, false)
-        if (names.isEmpty()) {
-            val why = (refusals + notes).ifEmpty { listOf("it holds no triangle geometry") }
+        if (names.isEmpty() && runNames.isEmpty()) {
+            val why = (refusals + notes).ifEmpty { listOf("it holds no geometry at all") }
             return refused(format, fileName, "nothing imported from $fileName: " + why.joinToString("; "))
         }
-        val what = "${names.size} bod${if (names.size == 1) "y" else "ies"}"
+        val bodyWord = "${names.size} bod${if (names.size == 1) "y" else "ies"}"
+        val runWord = "${runNames.size} wireframe run${if (runNames.size == 1) "" else "s"}"
+        val what =
+            when {
+                runNames.isEmpty() -> bodyWord
+                names.isEmpty() -> runWord
+                else -> "$bodyWord and $runWord"
+            }
         // stated **first** after the count, because it changes what the body can be used for
         val open =
             if (shells.isEmpty()) {
@@ -192,6 +225,7 @@ object Imports {
             format = format,
             fileName = fileName,
             bodies = names,
+            runs = runNames,
             refusals = refusals,
             openShells = shells,
             notes = notes,
@@ -244,6 +278,45 @@ object Imports {
         val took = doc.nameElement(placed, body.name) ?: body.name
         body.material?.let { doc.setMaterial(placed, it) }
         return took.ifEmpty { body.name } to literal
+    }
+
+    /**
+     * One wireframe part, as the steps a person could have made (OP-26, step 9): a literal per run, **one**
+     * anchor point and **one** angle parameter for the part, a placement per run, and the part's name.
+     * Returns the names the runs took and the literal elements the placements ride.
+     *
+     * Everything here is [place]'s, reached rather than copied: the same [anchorOf] decomposition of the
+     * file's pose, the same *Place* tool recorded through [Document.recordingTool] (one dimension down —
+     * `tool placecurve`), the same naming authority, the same hidden literals. Two things differ, and both are
+     * facts about wireframes rather than decisions about imports:
+     * - **A part is several runs, and they share one placement.** A `Path3` is one chain, so disjoint
+     *   polylines cannot be one value — but they are one part, and one anchor node feeding every run's
+     *   placement is what says so (OP-5: sharing a node *is* equality). Drag it and the whole wireframe moves.
+     * - **No material is assigned.** A curve has no appearance to carry in this model (Tier 1 dresses solids),
+     *   so a file's colour for a wireframe part is dropped — named here rather than silently ignored.
+     */
+    private fun placeRuns(
+        doc: Document,
+        fileName: String,
+        wire: JtImport.JtWire,
+    ): Pair<List<String>, List<Element>> {
+        val (at, angle, residual) = anchorOf(wire.pose)
+        val anchor = doc.freePoint(Quantity.mm(at.x), Quantity.mm(at.y))
+        val turn = doc.newParameter("place-angle", Quantity.rad(angle))
+        val took = ArrayList<String>()
+        val literals = ArrayList<Element>()
+        for (run in wire.runs) {
+            val literal = doc.importCurve(fileName, run, residual) ?: continue
+            literals.add(literal)
+            val picks = Picks(listOf(anchor), listOf(literal), Vec2(at.x, at.y), emptyList())
+            val placed: Element? = doc.recordingTool(Tools.PLACE_CURVE, picks, listOf(turn)) { doc.placeCurve(literal, anchor, turn.ref) }
+            if (placed == null) {
+                took.add(wire.name)
+                continue
+            }
+            took.add(doc.nameElement(placed, wire.name)?.ifEmpty { wire.name } ?: wire.name)
+        }
+        return took to literals
     }
 
     /**

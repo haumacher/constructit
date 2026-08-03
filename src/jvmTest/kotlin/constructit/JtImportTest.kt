@@ -445,11 +445,17 @@ class JtImportTest {
         assertTrue(result.bodies.size > 0, "a real assembly has bodies")
         assertEquals(36, result.bodies.size, "one body per geometry-bearing path — instances included")
         assertEquals(emptyList(), result.refusals, "every body NX tessellated passes the watertight gate")
-        // the five wireframe-only parts are skipped and *named*, never silently dropped
-        assertEquals(5, result.notes.count { it.contains("wireframe only") }, result.notes.toString())
+        // **The five wireframe-only parts now come in as runs** (OP-26, step 9) — they used to be skipped and
+        // named here, and this assertion is the reversal: what was an apology in `notes` is 197 curves of the
+        // drawing (this file's section curves and tracelines), each a polyline of the file's own points.
+        assertEquals(emptyList(), result.notes, "nothing is skipped any more: ${result.notes}")
+        assertEquals(197, result.runs.size, "the five wireframe parts' runs, all of them named")
+        assertTrue(result.runs.all { it.isNotEmpty() }, "every run carries the file's name for its part")
+        assertEquals(197, ed.doc.elements.count { it.kind == ElementKind.SPACE_CURVE && it.visible })
 
         val scene = ExportScene.extract(ed.doc, "nist")
         assertEquals(36, scene.nodes.size, "each body is one export node; the literals beside them are material")
+        assertEquals(emptyList(), scene.notes, "and the 197 runs are not bodies at all — an export writes bodies")
         assertTrue(scene.nodes.all { it.name.isNotEmpty() }, "every body carries the file's name for it")
         assertTrue(scene.triangleCount > 100_000, "the finest LOD came in: ${scene.triangleCount} triangles")
         val volume = scene.nodes.sumOf { Geom3.volume(it.mesh) }
@@ -812,9 +818,17 @@ class JtImportTest {
         assertNull(Imports.openShellDefect(bodies[1].mesh), "the cube is a solid")
     }
 
-    /** A wireframe-only part is skipped and named — never silently dropped. */
+    /**
+     * **A wireframe-only part comes in as a run** (OP-26, step 9) — it is not skipped and it is not a note.
+     *
+     * What this test asserted until that step, quoted so the reversal is legible: *"a wireframe-only part is
+     * skipped and named — never silently dropped"*, with the note
+     * `"centreline is wireframe only (no triangles) — not imported"`. Naming it was the honest thing to do
+     * while there was no curve value to put it in; OP-26 built one, so the file's polylines are now curves of
+     * the drawing under the identical contract its meshes have, and the note has nothing left to say.
+     */
     @Test
-    fun aWireframeOnlyPartIsSkippedAndNamed() {
+    fun aWireframeOnlyPartComesInAsARunRatherThanANote() {
         val ed = Editor()
         val wire =
             SceneNode(
@@ -831,7 +845,8 @@ class JtImportTest {
         val result = Imports.importScene(ed.doc, scene, "wire.jt")
         assertTrue(result.ok, result.message)
         assertEquals(listOf("cube"), result.bodies)
-        assertEquals(listOf("centreline is wireframe only (no triangles) — not imported"), result.notes)
+        assertEquals(listOf("centreline"), result.runs, "the wireframe part is a run of the drawing, by name")
+        assertEquals(emptyList(), result.notes, "and nothing about it is a note any more")
     }
 
     /**
@@ -863,15 +878,13 @@ class JtImportTest {
         val result = Imports.importScene(Editor().doc, scene, "robot.jt")
         assertTrue(result.ok, result.message)
 
-        val skipped = result.notes.filter { it.contains("wireframe only") }
-        assertEquals(3, skipped.size, "all three are named, never silently dropped")
-        assertEquals(3, skipped.distinct().size, "and no two of them share a name: $skipped")
-        // the number is the node's place among the file's geometry-bearing nodes, so it interleaves
-        assertEquals(
-            listOf("body2 is wireframe only (no triangles) — not imported", "body3 is wireframe only (no triangles) — not imported", "body5 is wireframe only (no triangles) — not imported"),
-            skipped,
-        )
+        // Since OP-26's step 9 the wireframe parts are **imported** rather than skipped, so what the stand-in
+        // numbering has to keep apart is now three runs instead of three notes. The rule is unchanged and so
+        // is the reason for it: the number is a position in the **file**, so no two parts can share it.
+        assertEquals(listOf("body2", "body3", "body5"), result.runs, "three wireframe parts, three distinct names")
+        assertEquals(3, result.runs.distinct().size, "and no two of them share one")
         assertEquals(listOf("body1", "body4"), result.bodies, "and the bodies keep their own places")
+        assertEquals(emptyList(), result.notes)
     }
 
     /**
