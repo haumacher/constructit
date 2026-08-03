@@ -419,7 +419,10 @@ class RecordedElementTest {
     private fun spotsFor(kind: SlotKind): List<Vec2>? =
         when (kind) {
             SlotKind.PLACE_POINT, SlotKind.POINT, SlotKind.SIDE -> listOf(FREE_SPOT, FREE_SPOT2, FREE_SPOT3)
-            SlotKind.EXISTING_POINT, SlotKind.POINT3 -> listOf(POINT_A, POINT_B, POINT_C)
+            SlotKind.EXISTING_POINT -> listOf(POINT_A, POINT_B, POINT_C)
+            // …and the placing point slots get **empty** spots, which is the whole of session 50's change:
+            // the sweep then audits that a slot which states a new point records it like everything else
+            SlotKind.INPUT_POINT, SlotKind.POINT3 -> listOf(FREE_SPOT, FREE_SPOT2, FREE_SPOT3)
             SlotKind.SEGMENT, SlotKind.LINE -> listOf(SEG_MID, SEG2_MID, SEG_MID)
             SlotKind.CURVE, SlotKind.CARRIER, SlotKind.MEASURABLE, SlotKind.EXTRACTABLE, SlotKind.GEOMETRY ->
                 listOf(SEG_MID, SEG2_MID, CIRCLE_EDGE)

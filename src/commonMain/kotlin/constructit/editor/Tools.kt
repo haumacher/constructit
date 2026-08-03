@@ -15,6 +15,17 @@ import constructit.units.Quantity
 /**
  * What the next click of a tool must supply. SIDE just captures a click position (creates nothing).
  *
+ * **The point slots split by *why* the slot names a point, and that split is the whole law** (session 50,
+ * the user's rule: *"every tool that requires points as inputs should either select an existing point or
+ * create a new free point"*). A slot names a point either because the result is **built from** it — a
+ * helix's centre and start point, a curve's waypoints, a dimension's two ends, the anchor a point is made
+ * to follow — or because the tool **changes the point it names**: Join welds one point onto another, Make
+ * absolute and Unlink give a following point its coordinates back. An *input* slot places a new free point
+ * where the click hit nothing, exactly as [POINT] does; a *subject* slot has nothing to place and says so.
+ * Which of the two a slot is, is the slot kind and nothing else, so no tool carries a case for it:
+ * [PLACE_POINT], [POINT], [INPUT_POINT] and [POINT3] place ([Tools.placesPoint]), [EXISTING_POINT] and
+ * [ON_CIRCLE_POINT] do not ([Tools.needsExistingPoint]).
+ *
  * AREA is the 2D→3D seam's slot (OP-17): it takes anything that *bounds an area* — a traced `Outline`
  * (one loop), a thick path's footprint (a region with holes), a **closed curve** (a circle), or a
  * **closed chain of curves one step built** (a rectangle, a rounded rectangle, a polygon). One slot for
@@ -27,6 +38,28 @@ import constructit.units.Quantity
 enum class SlotKind {
     PLACE_POINT,
     POINT,
+
+    /**
+     * A point the result is **built from**, handed to the tool as its [Element] rather than as a `PointRef`
+     * — a dimension's two ends, the anchor a relative point is made to follow.
+     *
+     * The twin of [POINT] and it behaves like one at the gesture: clicking an existing point **shares its
+     * node**, and an empty click **states a new free point** there through the same snap-aware route, so a
+     * click on a curve makes a rider and a click on a section corner materializes it (OP-17). What is
+     * different is only what the tool receives — an element, because these tools name their operand (a
+     * dimension annotates *that point*, and `Picks.elements` is what a recorded step writes).
+     */
+    INPUT_POINT,
+
+    /**
+     * A point the tool **changes**, and it must therefore already stand in the drawing: Join's two points,
+     * Make absolute, Unlink, Make relative's *subject*, a space origin's anchor corner.
+     *
+     * The name is the promise — this slot never places one, because there is nothing to place. A point
+     * created by the very gesture that is to weld it, free it, or measure a frame from it would be a
+     * degree of freedom added and removed in one click, which is not the operation the user asked for. So a
+     * miss says what it needs, in the tool's own word for it, and leaves the drawing alone.
+     */
     EXISTING_POINT,
     CURVE,
 
@@ -102,9 +135,14 @@ enum class SlotKind {
      * A **point in space** (OP-26): a height point (OP-25) taken as it is, or an ordinary 2D point, which is
      * lifted by a zero height on its own space's plane exactly as a loft's apex is (`Document.loftSolid`).
      *
-     * Existing points only — this slot never places one. That is what makes the parenting rule visible in the
-     * gesture: a curve is *routed through things that are already in the drawing*, so clicking a point shares
-     * its node and the curve follows it, rather than dropping a copy of its coordinates that follows nothing.
+     * **An empty click states a new point there** ([INPUT_POINT]'s rule, one axis up) — reversing step 3's
+     * *"Existing points only — this slot never places one. That is what makes the parenting rule visible in
+     * the gesture: a curve is routed through things that are already in the drawing"*. The parenting argument
+     * survives untouched, because it was only ever about what a click **on a point** does: that still shares
+     * the node, and the curve still follows it. What the old reading got wrong is the other half — the point
+     * an empty click places is an ordinary point of the drawing, so the curve is routed through something
+     * that *is* in the drawing and everything else can share it in turn. Refusing to place made the helix the
+     * one point-taking tool that could not be used on an empty sheet, which is the user's report.
      */
     POINT3,
 
@@ -844,14 +882,20 @@ object Tools {
             ToolDef(HEIGHT_POINT, "Height point", ToolCategory.POINTS, listOf(SlotKind.POINT), scalars = listOf(len("height")), help = "Type a height (or pick a parameter in the panel), then click a base point — an existing one is shared, empty space places a new one: the result is that point lifted off the sketch plane, with the height an ordinary parameter. In the 3D view you can grab it and drag the height; the base stays draggable where it was drawn.", slotNames = listOf("base"), icon = Icons.HEIGHT_POINT) { d, p, s -> d.heightPointAt(p.points[0], s[0]) },
             ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTERED), help = "Click a circle, arc, ellipse or elliptic arc to add its centre point.", slotNames = listOf("circle or ellipse"), icon = Icons.CENTRE) { d, p, _ -> d.centerOf(p.elements[0]) },
             ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.EXTRACTABLE), help = "Click a curve to add its defining points (endpoints, centre) — or a wall footprint / traced area for its corners, which are then snappable and dimensionable like any point. Works on mirrored and derived geometry too.", slotNames = listOf("curve or area"), icon = Icons.KEY_POINTS) { d, p, _ -> d.extractPoints(p.elements[0]) },
-            ToolDef(JOIN, "Join points", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), replicates = false, help = "Click the point to keep, then a free point to weld onto it (they become one).", slotNames = listOf("kept point", "welded point"), icon = Icons.JOIN) { d, p, _ -> d.weld(p.elements[1], p.elements[0]) },
+            // both slots are *subjects* (see [SlotKind]): a join takes a degree of freedom away from a point
+            // that already stands, so neither click may place one — a point made by this very gesture would
+            // be a freedom added and removed in one go, which is a drag and not a join
+            ToolDef(JOIN, "Join points", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), replicates = false, help = "Click the point to keep, then a free point to weld onto it (they become one). Both must already exist — this tool joins points, it never places one.", slotNames = listOf("kept point", "welded point"), icon = Icons.JOIN) { d, p, _ -> d.weld(p.elements[1], p.elements[0]) },
             // the offset is the tool's own DOF, restated on save through `dofs=` exactly as a dimension's
             // placement is (OP-13/OP-18), so a dragged or typed distance comes back
-            ToolDef(MAKE_RELATIVE, "Make relative", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT), replicates = false, help = "Click a free point, then the point it should follow: it keeps its distance and angle to that anchor, so moving the anchor takes it along. Drag it (or type distance / angle) to change the offset; Make absolute undoes it.", slotNames = listOf("point", "anchor")) { d, p, _ -> d.makeRelative(p.elements[0], p.elements[1], p.dofs) },
-            ToolDef(MAKE_ABSOLUTE, "Make absolute", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), replicates = false, help = "Click a point that follows something — relative to an anchor, welded, or riding a curve — to give it its own coordinates again, where it now stands.", slotNames = listOf("point")) { d, p, _ -> d.makeAbsolute(p.elements[0], p.dofs) },
+            // …and the two halves of the point-slot law in one row: the *subject* is the point being
+            // re-parameterized, so it must already stand; the **anchor** is an ordinary input, so an empty
+            // click there states the point to follow
+            ToolDef(MAKE_RELATIVE, "Make relative", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT, SlotKind.INPUT_POINT), replicates = false, help = "Click a free point that already exists, then the point it should follow — an existing one is shared, empty space places a new anchor: it keeps its distance and angle to that anchor, so moving the anchor takes it along. Drag it (or type distance / angle) to change the offset; Make absolute undoes it.", slotNames = listOf("point", "anchor")) { d, p, _ -> d.makeRelative(p.elements[0], p.elements[1], p.dofs) },
+            ToolDef(MAKE_ABSOLUTE, "Make absolute", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), replicates = false, help = "Click a point that follows something — relative to an anchor, welded, or riding a curve — to give it its own coordinates again, where it now stands. It changes the point you click, so that point must already exist; nothing is placed.", slotNames = listOf("point")) { d, p, _ -> d.makeAbsolute(p.elements[0], p.dofs) },
             // the inverse of *Join* (GitHub issue #10). `fromSelection`, because a welded alias is hidden by
             // construction and a merged dot names no one point — see [ToolDef.fromSelection].
-            ToolDef(UNLINK, "Unlink", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), replicates = false, fromSelection = true, help = "Select a joined point (in the element tree, where a welded point is still listed) and press this: it becomes a free point again, right where it stands. Everything built on it keeps working and simply stops following. Where several points were joined into one, only the selected one leaves.", slotNames = listOf("point"), icon = Icons.UNLINK) { d, p, _ -> d.unlink(p.elements[0], p.dofs) },
+            ToolDef(UNLINK, "Unlink", ToolCategory.POINTS, listOf(SlotKind.EXISTING_POINT), replicates = false, fromSelection = true, help = "Select a joined point (in the element tree, where a welded point is still listed) and press this: it becomes a free point again, right where it stands. Everything built on it keeps working and simply stops following. Where several points were joined into one, only the selected one leaves. It frees the point you name, so that point must already exist; nothing is placed.", slotNames = listOf("point"), icon = Icons.UNLINK) { d, p, _ -> d.unlink(p.elements[0], p.dofs) },
             // ----- Curves -----
             ToolDef(LINE, "Line", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), help = "Click two points to draw an infinite line.", preview = Previews::line, slotNames = listOf("through", "through"), icon = Icons.LINE) { d, p, _ -> d.line(p.points[0], p.points[1]) },
             ToolDef(SEGMENT, "Segment", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), shortcut = 'L', help = "Click two points to draw a segment.", preview = Previews::segment, slotNames = listOf("from", "to"), icon = Icons.SEGMENT) { d, p, _ -> d.segment(p.points[0], p.points[1]) },
@@ -887,7 +931,7 @@ object Tools {
             // curve between two storeys. What comes out is drawn in the 3D view and projected into the plan.
             //
             // Two tools, one value: which pieces the curve is made of is stated by which one was used.
-            ToolDef(CURVE3, "Curve through points", ToolCategory.CURVES, listOf(SlotKind.POINT3), repeating = true, minPicks = 2, crossSpace = true, closesOnFirstPick = true, help = "Click the points in space the curve runs through — height points, or ordinary points, which lie in the plane they were drawn on. Press Enter to finish, or click the first point again to close the curve. The points are shared, so dragging one (or retyping its height) moves the curve; switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("point in space")) { d, p, _ -> d.curveThroughPoints(p.elements, smooth = false) },
+            ToolDef(CURVE3, "Curve through points", ToolCategory.CURVES, listOf(SlotKind.POINT3), repeating = true, minPicks = 2, crossSpace = true, closesOnFirstPick = true, help = "Click the points in space the curve runs through — height points, or ordinary points, which lie in the plane they were drawn on; an existing one is shared, empty space places a new one. Press Enter to finish, or click the first point again to close the curve. The points are shared, so dragging one (or retyping its height) moves the curve; switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("point in space")) { d, p, _ -> d.curveThroughPoints(p.elements, smooth = false) },
             ToolDef(CURVE3_SMOOTH, "Smooth curve through points", ToolCategory.CURVES, listOf(SlotKind.POINT3), repeating = true, minPicks = 2, crossSpace = true, closesOnFirstPick = true, help = "The same gesture as Curve through points, with the corners rounded off: an interpolating cubic that passes through every point you click and leaves each one along the line to its neighbours. At the ends it runs off along the first and last chord. Enter finishes; clicking the first point again closes it.", slotNames = listOf("point in space")) { d, p, _ -> d.curveThroughPoints(p.elements, smooth = true) },
             // **The helix** (OP-26 step 3), in two spellings and two handednesses — four rows, and rows are
             // the whole cost of both. `radius` and `pitch` are waited for; `turns` is defaulted, so
@@ -900,10 +944,10 @@ object Tools {
             // *and* the phase — where the coil begins, which is a real degree of freedom the typed spelling
             // cannot say (it starts along the space's own x). One number fewer to type, and the start point
             // is an ordinary pick, so clicking an existing one shares its node and the coil follows it.
-            ToolDef(HELIX_PT, "Helix (centre, start point, right-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3, SlotKind.POINT3), scalars = listOf(len("pitch"), num("turns", 1.0)), preview = Previews::helixBase, help = "Type a pitch — the rise per turn — and, if you want more than one, a number of turns; then click the point the axis stands on and the point the coil starts at. Those two clicks state the radius and where the coil begins, so a spring can come off the edge of a hole or the side of a boss and follow it when that moves. The axis is this sketch plane's own normal through the centre, so the coil rises out of the plane you are drawing in and tilts with it. Everything stays live: drag either point, retype a height, or retype either number.", slotNames = listOf("centre", "start point")) { d, p, s -> d.helixThrough(p.elements[0], p.elements[1], s[0], s.getOrNull(1), Handedness.RIGHT) },
-            ToolDef(HELIX_PT_LEFT, "Helix (centre, start point, left-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3, SlotKind.POINT3), scalars = listOf(len("pitch"), num("turns", 1.0)), preview = Previews::helixBase, help = "The same two clicks as Helix (centre, start point, right-hand), turning the other way as it rises — a left-hand thread, a left-hand spring. Handedness is which tool you used, so it is what the file records and it never changes by itself; a negative pitch is refused, because a coil that descends while it turns right is this one.", slotNames = listOf("centre", "start point")) { d, p, s -> d.helixThrough(p.elements[0], p.elements[1], s[0], s.getOrNull(1), Handedness.LEFT) },
-            ToolDef(HELIX, "Helix (centre, radius, right-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "Type a radius and a pitch — the rise per turn — and, if you want more than one, a number of turns; then click the point the axis stands on. The axis is this sketch plane's own normal through that point, so the coil rises out of the plane you are drawing in and tilts with it; the curve starts beside the point along the plane's x direction — this is the spelling that states no starting angle, and Helix (centre, start point) is the one that does. Everything stays live: drag the point, retype its height, or retype any of the three numbers. Sweep a tube along it for a spring.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.RIGHT) },
-            ToolDef(HELIX_LEFT, "Helix (centre, radius, left-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "The same gesture as Helix (centre, radius, right-hand), turning the other way as it rises — a left-hand thread, a left-hand spring. Handedness is which tool you used, so it is what the file records and it never changes by itself; a negative pitch is refused, because a coil that descends while it turns right is this one.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.LEFT) },
+            ToolDef(HELIX_PT, "Helix (centre, start point, right-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3, SlotKind.POINT3), scalars = listOf(len("pitch"), num("turns", 1.0)), preview = Previews::helixBase, help = "Type a pitch — the rise per turn — and, if you want more than one, a number of turns; then click the point the axis stands on and the point the coil starts at — an existing point is shared, empty space places a new one. Those two clicks state the radius and where the coil begins, so a spring can come off the edge of a hole or the side of a boss and follow it when that moves. The axis is this sketch plane's own normal through the centre, so the coil rises out of the plane you are drawing in and tilts with it. Everything stays live: drag either point, retype a height, or retype either number.", slotNames = listOf("centre", "start point")) { d, p, s -> d.helixThrough(p.elements[0], p.elements[1], s[0], s.getOrNull(1), Handedness.RIGHT) },
+            ToolDef(HELIX_PT_LEFT, "Helix (centre, start point, left-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3, SlotKind.POINT3), scalars = listOf(len("pitch"), num("turns", 1.0)), preview = Previews::helixBase, help = "The same two clicks as Helix (centre, start point, right-hand) — an existing point is shared, empty space places a new one — turning the other way as it rises — a left-hand thread, a left-hand spring. Handedness is which tool you used, so it is what the file records and it never changes by itself; a negative pitch is refused, because a coil that descends while it turns right is this one.", slotNames = listOf("centre", "start point")) { d, p, s -> d.helixThrough(p.elements[0], p.elements[1], s[0], s.getOrNull(1), Handedness.LEFT) },
+            ToolDef(HELIX, "Helix (centre, radius, right-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "Type a radius and a pitch — the rise per turn — and, if you want more than one, a number of turns; then click the point the axis stands on — an existing point is shared, empty space places a new one. The axis is this sketch plane's own normal through that point, so the coil rises out of the plane you are drawing in and tilts with it; the curve starts beside the point along the plane's x direction — this is the spelling that states no starting angle, and Helix (centre, start point) is the one that does. Everything stays live: drag the point, retype its height, or retype any of the three numbers. Sweep a tube along it for a spring.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.RIGHT) },
+            ToolDef(HELIX_LEFT, "Helix (centre, radius, left-hand)", ToolCategory.CURVES, listOf(SlotKind.POINT3), scalars = listOf(len("radius"), len("pitch"), num("turns", 1.0)), help = "The same gesture as Helix (centre, radius, right-hand) — an existing point is shared, empty space places a new one — turning the other way as it rises — a left-hand thread, a left-hand spring. Handedness is which tool you used, so it is what the file records and it never changes by itself; a negative pitch is refused, because a coil that descends while it turns right is this one.", slotNames = listOf("axis point")) { d, p, s -> d.helixAbout(p.elements[0], s[0], s[1], s.getOrNull(2), Handedness.LEFT) },
             // **Combine two views** (OP-26 step 5). Two ordinary curve picks and nothing else — no scalar, no
             // discrete choice, no new slot kind: the correspondence between the two drawings is the common
             // direction of their two spaces, which the drawing already contains. `crossSpace` for the loft's
@@ -1052,7 +1096,7 @@ object Tools {
             // typing numbers first shifts the origin off the corner. It does not replicate (a space is
             // organisation, not geometry) and it builds nothing: it re-points the space's own origin nodes,
             // which translates everything already drawn there (`Document.setSpaceOrigin`).
-            ToolDef(SPACE_ORIGIN, "Space origin", ToolCategory.PLANES, listOf(SlotKind.EXISTING_POINT), scalars = listOf(len("dx", 0.0), len("dy", 0.0)), replicates = false, scalarsTypedOnly = true, help = "In a face or datum view: click a corner of any section on this plane — the part's, or any other solid the plane cuts — and the drawing's origin moves there — coordinates are then measured from that corner, and the origin follows it through every edit. Type dx (and dy) first to sit a fixed offset away from it; both stay parameters. Anchoring a plane that already carries a sketch moves that sketch with the frame — which is how a whole sketch is shifted on its face.", slotNames = listOf("anchor corner")) { d, p, s -> d.setSpaceOriginAt(p.elements[0], s.getOrNull(0), s.getOrNull(1)) },
+            ToolDef(SPACE_ORIGIN, "Space origin", ToolCategory.PLANES, listOf(SlotKind.EXISTING_POINT), scalars = listOf(len("dx", 0.0), len("dy", 0.0)), replicates = false, scalarsTypedOnly = true, help = "In a face or datum view: click a corner of any section on this plane — the part's, or any other solid the plane cuts — and the drawing's origin moves there — coordinates are then measured from that corner, and the origin follows it through every edit. Type dx (and dy) first to sit a fixed offset away from it; both stay parameters. Anchoring a plane that already carries a sketch moves that sketch with the frame — which is how a whole sketch is shifted on its face. The corner has to be there already: empty space places nothing here, because a point drawn on this plane would move with the frame it was defining.", slotNames = listOf("anchor corner")) { d, p, s -> d.setSpaceOriginAt(p.elements[0], s.getOrNull(0), s.getOrNull(1)) },
             // ----- Construct -----
             // the same defaulted factor as Midpoint: with none it is the bisector, with one it is the
             // perpendicular through that ratio point — composed from the ops that already exist
@@ -1104,7 +1148,7 @@ object Tools {
             ToolDef(EXTENT_Y, "Extent (Y)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), replicates = false, help = "Click a solid to measure how far it reaches along Y.", slotNames = listOf("solid")) { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.Y) },
             ToolDef(EXTENT_Z, "Extent (Z)", ToolCategory.MEASURE, listOf(SlotKind.SOLID), replicates = false, help = "Click a solid to measure its height along Z.", slotNames = listOf("solid")) { d, p, _ -> d.measureSolidExtent(p.elements[0], Axis3.Z) },
             // ----- Annotate: dimensions (OP-4) — the graphic shows a measurement, and drives nothing -----
-            ToolDef(DIM_LINEAR, "Linear dimension", ToolCategory.ANNOTATE, listOf(SlotKind.EXISTING_POINT, SlotKind.EXISTING_POINT, SlotKind.SIDE), shortcut = 'M', replicates = false, preview = Previews::linearDimension, help = "Click two points, then click where the dimension line should sit (drag it later, or type the offset).", slotNames = listOf("from", "to", "placement"), icon = Icons.DIM_LINEAR) { d, p, _ -> d.linearDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
+            ToolDef(DIM_LINEAR, "Linear dimension", ToolCategory.ANNOTATE, listOf(SlotKind.INPUT_POINT, SlotKind.INPUT_POINT, SlotKind.SIDE), shortcut = 'M', replicates = false, preview = Previews::linearDimension, help = "Click the two points to measure between — an existing one is shared, empty space places a new one — then click where the dimension line should sit (drag it later, or type the offset).", slotNames = listOf("from", "to", "placement"), icon = Icons.DIM_LINEAR) { d, p, _ -> d.linearDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
             ToolDef(DIM_RADIAL, "Radial dimension", ToolCategory.ANNOTATE, listOf(SlotKind.CENTERED, SlotKind.SIDE), replicates = false, preview = Previews::radialDimension, help = "Click a circle or arc, then click where the leader and its radius should sit. An ellipse declines by name — it has no single radius.", slotNames = listOf("circle", "placement"), icon = Icons.DIM_RADIAL) { d, p, _ -> d.radialDimension(p.elements[0], p.at, p.dofs) },
             ToolDef(DIM_ANGULAR, "Angular dimension", ToolCategory.ANNOTATE, listOf(SlotKind.LINE, SlotKind.LINE, SlotKind.SIDE), replicates = false, preview = Previews::angularDimension, help = "Click two lines, then click inside the angle you mean — that sector is what the dimension names.", slotNames = listOf("line", "line", "placement"), icon = Icons.DIM_ANGULAR) { d, p, _ -> d.angularDimension(p.elements[0], p.elements[1], p.at, p.dofs) },
         )
@@ -1147,11 +1191,30 @@ object Tools {
     /** The key that arms [id], for the palette's label. */
     fun shortcutOf(id: String): Char? = if (id == SELECT) SELECT_KEY else byId(id)?.shortcut
 
+    /**
+     * Whether a click that hits nothing in a slot of [kind] **states a new point there** — the *input* half
+     * of the point-slot law stated on [SlotKind].
+     *
+     * One predicate, read by the click ([Editor.runToolClick]) and by the snap marker
+     * ([Editor.placesAPoint]), so what the cursor promises and what the click does cannot drift apart.
+     */
+    fun placesPoint(kind: SlotKind?): Boolean =
+        kind == SlotKind.PLACE_POINT || kind == SlotKind.POINT || placesPointElement(kind)
+
+    /** …and of those, the ones the tool receives as an [Element] rather than as a `PointRef`. */
+    fun placesPointElement(kind: SlotKind?): Boolean = kind == SlotKind.INPUT_POINT || kind == SlotKind.POINT3
+
+    /**
+     * Whether a slot of [kind] names a point that **must already stand in the drawing** — the *subject* half
+     * of the same law, and therefore what a miss has to say out loud rather than heal by placing.
+     */
+    fun needsExistingPoint(kind: SlotKind?): Boolean = kind == SlotKind.EXISTING_POINT || kind == SlotKind.ON_CIRCLE_POINT
+
     /** The generic word for a slot of [kind] — [ToolDef.roleOf]'s fallback when a tool declares no name. */
     fun roleOfKind(kind: SlotKind?): String =
         when (kind) {
             null -> "input"
-            SlotKind.PLACE_POINT, SlotKind.POINT, SlotKind.EXISTING_POINT -> "point"
+            SlotKind.PLACE_POINT, SlotKind.POINT, SlotKind.INPUT_POINT, SlotKind.EXISTING_POINT -> "point"
             SlotKind.ON_CIRCLE_POINT -> "point on circle"
             SlotKind.CURVE, SlotKind.EXTRACTABLE -> "curve"
             SlotKind.LINE -> "line"

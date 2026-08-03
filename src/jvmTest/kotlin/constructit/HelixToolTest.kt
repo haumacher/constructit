@@ -381,7 +381,15 @@ class HelixToolTest {
 
     // ---- the refusals ----
 
-    /** A pick that is not a point is refused **by name**, and nothing is built. */
+    /**
+     * A pick that is not a point is refused **by name** when the construction is handed one — and a *click*
+     * on a curve never reaches that refusal at all, because a `POINT3` slot places through the snap
+     * (session 50): the click lands on the segment and becomes a **rider** on it, which is a point.
+     *
+     * That half was written the other way round when the slot took existing points only. It is the same
+     * reading `Circle (centre, radius)` has always had of a click on a line, and it is worth having here:
+     * the coil then stands on the segment and slides with it.
+     */
     @Test
     fun aHelixAboutSomethingThatIsNotAPointIsRefusedByName() {
         val ed = Editor()
@@ -393,14 +401,18 @@ class HelixToolTest {
         ed.click(Vec2(80.0, 0.0))
         val seg = ed.doc.elements.last { it.kind == ElementKind.SEGMENT }
 
-        // the slot itself declines a segment, so the click never reaches the build
+        // a click *on* the segment states a point on it, and the coil stands there
         ed.setTool(Tools.HELIX)
         ed.type("10")
         ed.type("5")
         ed.click(Vec2(40.0, 0.0))
-        assertEquals(0, ed.doc.elements.count { it.kind == ElementKind.SPACE_CURVE }, "nothing was built")
+        val onCurve = assertNotNull(ed.doc.elements.lastOrNull { it.kind == ElementKind.SPACE_CURVE }, "${ed.statusHint}")
+        assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.SPACE_CURVE }, "one coil, riding the segment")
+        val axis = (Evaluator().path3(onCurve.ref as Path3Ref).elements.single() as Curve3Element.Helix3).origin
+        assertClose(axis.x, 40.0, 1e-9, "it stands where the click met the segment")
+        assertClose(axis.y, 0.0, 1e-9, "and on the segment")
 
-        // …and the build refuses the same thing by name when it is handed one directly
+        // …and the build refuses a pick that is not a point by name when it is handed one directly
         assertEquals(
             null,
             ed.doc.helixAbout(seg, ed.doc.newParameter("r", 10.0.mm).ref, ed.doc.newParameter("p", 5.0.mm).ref, null, Handedness.RIGHT),

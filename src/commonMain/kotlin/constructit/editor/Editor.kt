@@ -3320,11 +3320,18 @@ class Editor(
         (el.kind == ElementKind.POINT && isFreeSource(el.ref.node)) ||
             (el.handle as? OrthoCornerHandle)?.let { it.isEndpoint && doc.pathFrameOf(it) == null } == true
 
-    /** True when the active tool's next slot creates a point — the case a snap marker is useful for. */
+    /**
+     * True when the active tool's next slot creates a point — the case a snap marker is useful for.
+     *
+     * Resolved through the same index [runToolClick] uses, repeating tools included: a repeating tool's one
+     * slot repeats, so `filledSlots` runs past the list after the first pick and the marker used to go out
+     * exactly where the gesture goes on placing. The marker is how the user *sees* that an empty click will
+     * place, so it and the click must read the slot the same way ([Tools.placesPoint]).
+     */
     private fun placesAPoint(): Boolean {
         val tool = doc.toolDef(toolId) ?: return false
-        val slot = tool.slots.getOrNull(filledSlots) ?: return false
-        return slot == SlotKind.PLACE_POINT || slot == SlotKind.POINT
+        val slot = (if (tool.repeating) tool.slots.lastOrNull() else tool.slots.getOrNull(filledSlots)) ?: return false
+        return Tools.placesPoint(slot)
     }
 
     private fun clearMagnet() {
@@ -3701,7 +3708,11 @@ class Editor(
         // A tool may have *no* geometry slots at all: its inputs are scalars (point from coordinates), so
         // the click only says "now". Handled by the same completion path below rather than as a special
         // case, which is why the slot lookup is allowed to come back empty.
-        val slot = if (tool.repeating) tool.slots.lastOrNull() else tool.slots.getOrNull(filledSlots)
+        //
+        // A repeating tool's one slot repeats, so [filledSlots] runs past it — resolved as an *index* rather
+        // than as a bare slot because the refusal below wants the tool's own word for that slot ([roleOf]).
+        val slotIndex = if (tool.repeating) tool.slots.lastIndex else filledSlots
+        val slot = tool.slots.getOrNull(slotIndex)
         val picked =
             when (slot) {
                 null -> true
@@ -3709,7 +3720,9 @@ class Editor(
                     pickedPoints.add(placePoint(world))
                     true
                 }
-                SlotKind.EXISTING_POINT -> pickElement(world) { it.isPoint }
+                // the two element-valued point slots, told apart by what a *miss* does and by nothing else:
+                // both share the node of a point they hit (see the placing route below the `when`)
+                SlotKind.EXISTING_POINT, SlotKind.INPUT_POINT -> pickElement(world) { it.isPoint }
                 SlotKind.CURVE -> pickElement(world) { it.isCurve }
                 // a curve's defining points, or an area's corners (the OP-21 extension's key points)
                 SlotKind.EXTRACTABLE -> pickElement(world) { it.isCurve || it.isArea }
@@ -3754,8 +3767,15 @@ class Editor(
             }
         // …and a slot the ordinary pick missed may still have landed on the working plane's **section**, whose
         // curves and corners are inputs (OP-17). Tried second, so a real element always wins.
-        val landed = picked || (slot != null && pickSectionInput(world, slot))
-        // existing-only slots do NOT create anything on a miss — just hint and wait
+        val onSection = !picked && slot != null && pickSectionInput(world, slot)
+        // …and last, an *input* point slot that hit nothing at all **states a point there** (see [SlotKind]).
+        // Third and not first, so an existing point is still shared and a section corner is still
+        // materialized; and not at all after a refusal, because a pick that hit something and was declined
+        // has already said why — placing a point on top of that would answer a different question.
+        val placed =
+            !picked && !onSection && pickRefusal == null && Tools.placesPointElement(slot) && placePointElement(world)
+        val landed = picked || onSection || placed
+        // subject slots do NOT create anything on a miss — just hint and wait
         if (!landed) {
             // A miss must *say* it missed, and say where the operation stands. Silently keeping the old
             // count is the worst of the three possible answers: the drawing does not change, so nothing on
@@ -3765,6 +3785,12 @@ class Editor(
             statusHint =
                 when {
                     refused != null -> refused
+                    // A **subject** slot ([SlotKind]) is the one kind of miss that has to explain itself
+                    // rather than merely report itself: every other point slot would have placed something
+                    // here, so "nothing happened" is the surprise. Said in the tool's own role word, and
+                    // ending in the help, which is where each of these tools states *why* it cannot place.
+                    Tools.needsExistingPoint(slot) ->
+                        "${tool.label} needs an existing ${tool.roleOf(slotIndex)} — click one; nothing was placed. ${tool.help}"
                     // …in the tool's own word for what it wants, so a curve in space says "hit no point in
                     // space" rather than asking for a curve it does not collect
                     tool.repeating -> "That click hit no ${tool.roleOf(0)} — $filledSlots picked so far. ${tool.help}"
@@ -3937,6 +3963,26 @@ class Editor(
         return true
     }
 
+    /**
+     * Fill an **input** point slot that hit nothing by *stating a point there* — [SlotKind]'s law for the
+     * element-valued half.
+     *
+     * Deliberately the very same [placePoint] a `POINT` slot uses, rather than a second and poorer creation
+     * path: a click on a curve becomes a rider, an intersection materializes, a section corner is taken as
+     * an input (OP-17), the grid snap applies, and the `point` step lands in the journal *before* the tool's
+     * own step, so a replay re-runs it and discovers nothing (OP-18).
+     *
+     * What the tool then receives is that point's **element**, looked up in the document rather than guessed
+     * at as "the last one added": a placement may add more than one element (a rider hangs off its host),
+     * and index alignment with `Picks.elements` is what the slot order means.
+     */
+    private fun placePointElement(world: Vec2): Boolean {
+        val ref = placePoint(world)
+        val el = doc.elementFor(ref) ?: return false
+        pickedElements.add(el)
+        return true
+    }
+
     private fun pickElement(
         world: Vec2,
         filter: (Element) -> Boolean,
@@ -3975,7 +4021,7 @@ class Editor(
             when (slot) {
                 // …and a curve in space takes a corner as a point in space (OP-26), lifted by nothing on
                 // the plane that cut it — the same materialization, one slot further
-                SlotKind.EXISTING_POINT, SlotKind.POINT3 -> Document.SectionInput.CORNER
+                SlotKind.EXISTING_POINT, SlotKind.INPUT_POINT, SlotKind.POINT3 -> Document.SectionInput.CORNER
                 SlotKind.LINE, SlotKind.SEGMENT, SlotKind.CURVE, SlotKind.CARRIER, SlotKind.CIRCLE, SlotKind.CENTRIC,
                 SlotKind.EXTRACTABLE, SlotKind.CONIC, SlotKind.CENTERED, SlotKind.MEASURABLE,
                 -> Document.SectionInput.EDGE
@@ -4003,7 +4049,7 @@ class Editor(
                 // a geometry slot (mirror, rotate, array) takes whatever the section offers: a corner is a
                 // point and a section curve is a curve, and both are ordinary operands once materialized
                 SlotKind.GEOMETRY -> true
-                SlotKind.EXISTING_POINT, SlotKind.POINT3 -> k == ElementKind.DERIVED_POINT
+                SlotKind.EXISTING_POINT, SlotKind.INPUT_POINT, SlotKind.POINT3 -> k == ElementKind.DERIVED_POINT
                 else -> true
             }
         if (!fits) {

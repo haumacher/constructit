@@ -7660,6 +7660,114 @@ parts are **197 runs** (`SectionCurvesOf_…`, `Traceline_Curves`), every one na
 at all, and the export still writing exactly the 36 bodies — because an export writes bodies. **1629 → 1645
 green**, no new golden, **no version bump**, no existing golden changed.
 
+### Implementation status (as built — a point slot either shares a point or states one)
+
+**The user's report, and it is a law rather than a fix**: *"Most tools that require a point as input either
+allow to select a point or create a new free point. The helix tool does not — it requires an existing point to
+select. Please make consistent: every tool that requires points as inputs should either select an existing
+point or create a new free point."* Armed on an empty sheet, *Helix (centre, start point)* answered two clicks
+with *"That click hit nothing pickable"* and built nothing; *Curve through points* with *"That click hit no
+point in space"*. A linear dimension over two empty clicks did the same. So did nothing else: every other
+point-taking row went through the snap-aware placement.
+
+**The split is by *why* a slot names a point, and it is stated once, on `SlotKind`.** A slot names a point
+either because the result is **built from** it — a helix's centre and start point, a curve's waypoints, a
+dimension's two ends, the anchor a point is made to follow — or because the tool **changes the point it
+names**: Join welds one onto another, Make absolute and Unlink give a following point its coordinates back,
+Make relative re-parameterizes its subject. An **input** slot places a new free point where the click hit
+nothing; a **subject** slot has nothing to place and says so. That is deliberately *not* the distinction the
+code had, which was "does the tool want a `PointRef` or an `Element`" — an implementation accident of which
+slots happened to call `pickElement`. Two predicates carry it (`Tools.placesPoint`,
+`Tools.needsExistingPoint`), read by the click, by the refusal and by the snap marker, so a new `ToolDef` row
+inherits the rule by choosing its slot kind and no tool holds a case for it.
+
+**One new kind and one reversal.** `INPUT_POINT` is the element-valued *input* — `POINT`'s twin, differing
+only in what the tool receives — and `EXISTING_POINT` keeps its name because its name is now its whole
+promise: this slot never places one. `POINT3` keeps its name and **gains placement**, which reverses step 3's
+recorded decision, quoted in full: *"Existing points only — this slot never places one. That is what makes the
+parenting rule visible in the gesture: a curve is routed through things that are already in the drawing, so
+clicking a point shares its node and the curve follows it, rather than dropping a copy of its coordinates that
+follows nothing."* The parenting argument survives untouched, because it was only ever about what a click **on
+a point** does — that still shares the node, and the curve still follows it. What the old reading got wrong is
+the other half: the point an empty click places *is* an ordinary point of the drawing, with its own `point`
+step, its own name, its own handle and everything else free to share it. Refusing to place did not protect
+parenting; it made the helix the one point-taking tool unusable on an empty sheet.
+
+**One route, and it is the route `POINT` already had** (`Editor.placePointElement` over `placePoint`). A
+placing element-point slot resolves in three tries, in this order: the ordinary pick (so an existing point is
+still *shared*), then the working plane's **section** (so a corner is materialized as a section input, OP-17),
+then the placement — which is snap-aware, so a click on a curve makes a **rider**, an intersection
+materializes, and the grid snap applies. Never after a refusal: a pick that hit something and was declined has
+already said why. What the tool then receives is the point's `Element`, found through `Document.elementFor`
+rather than guessed at as "the last element added", because index alignment with `Picks.elements` is what slot
+order means. A placed point in a `POINT3` slot is the plain 2D point it looks like, lifted by a zero height on
+the active space's plane — the slot's own existing rule for a picked 2D point, and no new value kind.
+
+**Recorded, never discovered** (OP-18): the placement records its `point` (or `pointoncurve`, or
+`sectioninput`) step *before* the tool's step, exactly as a `POINT` slot's placement always has, and the tool
+step names the element it made. A replay re-runs those steps and places nothing new, so `save → load → save`
+is byte-equal and a reloaded document is identical in structure and in names. The **undo** discipline is
+likewise inherited rather than invented: a checkpoint is the saved script, so one undo after the whole gesture
+takes back the tool's result *and* the points it placed — which is precisely what `SEGMENT` over two empty
+clicks has always done, asserted side by side so the two cannot drift.
+
+**The 3D view places, and the reason is that there is nothing to guess.** A `POINT3` slot is `crossSpace` and
+pickable in the 3D view, where a click is a viewing ray — but the ray's meeting with the **active plane** is
+already the one door every gesture comes through (`Editor.enter` over `PlanePerspective.toPlane`), it is where
+the drawing shows the cursor, and it is where a `POINT` slot has placed since edit-in-3D slice 1. So the
+placement is well defined and happens there. The two cases with no such position were answered upstream before
+this change and are unchanged: a ray that meets the plane nowhere is refused with a note and the click does
+not happen at all, and a plane so edge-on that the tolerance must be clamped says so.
+
+**Space origin stays existing-only, and the reason is self-reference.** The origin it moves *is* the frame the
+whole space's coordinates are read in. A point placed in that space is stated in those coordinates; anchoring
+the origin on it would remap the space; the point would move; the origin would move. There is no fixed point
+of that to place — which is not a new finding but the one `Document.setSpaceOriginAt` already refuses drawn
+points by (*"a point drawn on this plane moves with the frame it would define"*), now said at the gesture too.
+What the tool wants is a corner of a **section**, whose position is the solid's and not the space's. Kept
+existing-only, and the help says why. `ON_CIRCLE_POINT` stays for the neighbouring reason: a *new free point*
+cannot satisfy it — a point riding a circle is what *Point on circle* makes — so a placement here could only
+produce something the build would then refuse. (A click on a circle's outline could in principle materialize a
+rider through the same route; that is a different generalization, with a doctrine of its own, and it is not
+here.)
+
+**The final split, row by row.** *Places*: `POINT3` — Curve through points, Smooth curve, Helix (centre, start
+point) ×2 both slots, Helix (centre, radius) ×2; `INPUT_POINT` — Linear dimension's *from* and *to*, Make
+relative's **anchor**. *Existing only*: Join's two points (a join takes a freedom away from a point that
+already stands — one made by the same gesture would be a freedom added and removed in one click, which is a
+drag, not a join), Make absolute, Unlink, Make relative's **subject** (all three change the point they name),
+Space origin's anchor corner (self-reference, above) and Tangent at point's on-circle point (above). A subject
+slot that misses now says so in the tool's own role word — *"Join points needs an existing kept point — click
+one; nothing was placed"* — and ends in the help, where each of those rows states why it cannot place; the
+generic *"that click hit nothing pickable"* would be the wrong answer precisely because every other point slot
+would have placed something. The **snap marker** follows the same predicate, repeating tools included: its
+slot lookup used `slots.getOrNull(filledSlots)`, which runs off the end of a one-slot repeating tool after the
+first pick, so the marker went dark while the gesture went on placing.
+
+Cut, and named: nothing. No tool lost a gesture, no id changed, no file argument was added and no version
+bump — a placed point is an ordinary `point` step, which every build has always written.
+
+Tests: `PointSlotPlacementTest` (16) — the reported gesture on an empty sheet in both handednesses, with the
+radius, the pitch, the turn count and `t = 0` asserted to 1e-14 mm, and the typed spelling from one click; a
+straight and a smooth curve through three empty clicks, each following the point it placed when it is dragged;
+one shared pick and one placed pick in the same gesture, with the shared node moving the coil and the placed
+one draggable; a click on a circle in a `POINT3` slot making a rider that keeps the coil on the circle as the
+radius is retyped; a click on a **section corner** materializing the input, recorded as `sectioninput`, and
+following the datum's height; the snap marker on for the first and the repeating slot of three tools; a
+**generic sweep** over every row with a placing element-point slot, driven from empty space, asserting the
+elements have steps, `save → load → save` byte-equal and the reload identical element for element and name for
+name; one undo asserted against the `POINT`-slot baseline in the same test; every subject slot refusing by
+name with nothing placed, Join's second slot included; Space origin refused at the gesture and at the document
+with the self-reference named, and then anchored on a real corner so it is a refusal and not a dead tool; the
+3D view placing where the ray meets the plane and placing nothing where the ray never lands; a dimension over
+two empty clicks that follows the point it stated; Make relative's anchor stated by an empty click and then
+dragged; and the split itself read off `Tools.all` as a table, so a new row cannot quietly pick the wrong side.
+`HelixToolTest`'s *not a point* case was rewritten rather than deleted: a click on a segment no longer reaches
+that refusal at all, because the slot places through the snap and makes a rider on it — which is the reading
+`Circle (centre, radius)` has always had of the same click. `RecordedElementTest`'s generic audit now clicks
+**empty** spots for the placing kinds, so the sweep covers the new behaviour instead of side-stepping it.
+**1671 → 1687 green**, no new golden, no version bump, no existing golden changed.
+
 **What OP-26 as a whole now is.** A curve in space is a first-class value of the graph (`Path3`, a chain of
 `Seg3`, `Bezier3` and `Helix3`), drawn in the 3D view and projected into the plan, pickable in both. It is
 produced by five constructions and one import: through points in space (straight or smooth), as a **helix**, by
@@ -9880,6 +9988,38 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   the tube is built, recorded, **invalid with the dimension named**, and heals the moment the parameter is
   given a unit. **1663 → 1671 green**, no new golden, no existing golden changed. See *Why the format records
   operations, and the invariant that carries*.
+- **Session 51 — a point slot either shares a point or states one (the user's consistency rule, made law).**
+  The report was one tool and the answer is none: *"Most tools that require a point as input either allow to
+  select a point or create a new free point. The helix tool does not… Please make consistent: every tool that
+  requires points as inputs should either select an existing point or create a new free point."* On an empty
+  sheet the two helix rows, both curve-through-points rows and a linear dimension all answered a click with
+  *"that click hit nothing pickable"* and built nothing, because their slots resolved through `pickElement`
+  while `POINT` went through the snap-aware placement — a difference nobody had ever decided, only inherited
+  from which slots happened to be element-valued. So the fix is not in the helix: the **slot kinds** now carry
+  the whole rule, split by *why* a slot names a point. An **input** (a coil's centre and start, a curve's
+  waypoints, a dimension's ends, the anchor a point is made to follow) places a new free point on an empty
+  click; a **subject** — the point the tool *changes*: Join's two, Make absolute, Unlink, Make relative's
+  first — has nothing to place and now says so in its own role word, with *"nothing was placed"* said out loud
+  because every other point slot would have placed something. Two predicates and one new kind (`INPUT_POINT`,
+  `POINT`'s element-valued twin) carry it, so a new `ToolDef` row inherits the behaviour by choosing a slot
+  kind. **A recorded decision was reversed and quoted**: `POINT3`'s *"existing points only — this slot never
+  places one… a curve is routed through things that are already in the drawing"*. The parenting argument was
+  never wrong, it was only about the *other* click — a pick still shares its node — and the point an empty
+  click places is an ordinary point of the drawing that everything else can share in turn. **One route**: the
+  same `placePoint` a `POINT` slot uses, tried after the ordinary pick and after the section, so a click on a
+  curve still makes a rider, a corner is still materialized as a section input (OP-17), and the `point` step
+  still lands in the journal before the tool's own — replay discovers nothing and one undo takes back the
+  gesture *and* the points it placed, which is the `POINT` slots' discipline inherited rather than a new one.
+  Two questions were answered by investigation rather than assumption: in the **3D view** an empty click has
+  exactly one honest position — where the pointer's ray meets the active plane, which is the one door every
+  gesture already comes through and where the drawing shows the cursor — so it places there, and the two
+  no-position cases were already refused upstream; and **Space origin** stays existing-only because it is
+  genuinely self-referential — the origin it moves is the frame the space's coordinates are read in, so a
+  point placed there would move with the frame it was defining, which is the refusal the document already
+  carried and which the help and the gesture now state too. `ON_CIRCLE_POINT` stays for the neighbour's
+  reason: a new *free* point can never lie on a circle. Nothing was cut, no id changed, no version bump.
+  **1671 → 1687 green**, no new golden, no existing golden changed. See *Implementation status (as built — a
+  point slot either shares a point or states one)*.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -11753,8 +11893,55 @@ the only route today is subtracting a hand-built inner solid. **Draft** follows 
 before them. Also named: **text as geometry** (part marking, serial plates, signage) — a general capability,
 absent, and independent of everything else here.
 
-**The rest of the numbered queue is empty.** What remains is the parked list below, each item recorded at
-its source.
+**Queued in session 51 (user-directed, in this order):**
+
+1. **Interaction stays responsive while a heavy body is being edited.** Reported as *"a tube along a helix
+   produces plenty of triangles … when moving points that change the helix, the UI becomes incredibly laggy —
+   even in 2D"*, and it is a defect in practice rather than a feature, so it outranks item 2. Three separable
+   causes, each verified: (a) **the mesh is part of the value** — `Solid3(feature, mesh)` builds it eagerly
+   inside every `compute`, so a drag rebuilds a tube nobody is looking at; (b) **nothing coalesces the
+   document repaint** — `Main.kt`'s `editor.onChange = { repaint() }` paints synchronously per pointer event,
+   while the 3D *camera* path already learned this lesson (`draw3dSoon`, one paint per animation frame); (c)
+   the sweep's **self-intersection guard is quadratic** in spine segments, and the segment count grows with
+   the turn count. The slices: **(A)** the repaint onto `requestAnimationFrame` plus a **lazily derived,
+   memoized** mesh on the immutable value — purity is untouched (same inputs, same mesh; laziness inside an
+   immutable value is not state) — which needs one design decision, because a *sweep's* plan footprint hint is
+   `Silhouette.of(solid.mesh, plane)`: that hint needs a cheap route, and since it is also the pick target,
+   whichever route is chosen must be stated rather than slipped in; and the eval-time half of
+   *watertight-or-refused* must stay at eval (every refusal decidable from the **feature** stays there, and a
+   mesh-stage failure names its element when first demanded). **(B)** tessellation quality as a **render-time**
+   argument (`meshAt(quality)`, two memoized levels), under the law that **quality is a property of the
+   picture and never of a number the drawing reports** — volume, extent, booleans, section, exports and
+   `assertManifold` always take the fine mesh, and a volume reading shows stale during a gesture rather than
+   depending on interaction state; the fine mesh is then built once on release, scheduled on an idle callback,
+   with `SceneSync`'s existing identity swap (`had.mesh === node.mesh`) carrying the late arrival. **(C)** only
+   if A and B measure short: meshing off the main thread — a mesher that yields between stations, or a **Web
+   Worker** running the engine with `ExportScene` as the serialization seam. The acceptance is an
+   **instrument, not a stopwatch**: a mesh-build counter beside `Node.computeCount`, and headless assertions
+   that a plan drag builds **zero** triangles, that a 3D drag builds one coarse mesh per frame and exactly one
+   fine mesh after release, and that a measured volume is never coarse.
+2. **The helix's key points, and a point on a helix** (the user's design). Today `Document.extractPoints`
+   falls through to `emptyList()` for a `SPACE_CURVE` and `Element.isCurve` excludes one, so a coil has no end
+   point, no start point and no centre; and the rider forms (`AXIS_COORD`, `ALONG_LINE`, `CIRCLE_ANGLE`,
+   `ELLIPSE_PARAM`) are all 2D, so there is no point on a helix at all. **Key points** are general from the
+   first slice — a path's start and end accessors serve the helix, the curve through points, a connect run, an
+   imported wireframe and an intersection curve, and a helix adds its centre, giving it exactly the arc's
+   triple. **A point on a helix** is the rider the point on a circle is, and its degree of freedom is the
+   **angle, deliberately not modular**: 450° *is* the second winding, and the unboundedness is the parameter's
+   content. It is absolute in the helix's own frame (measured from the stored phase about the axis), so
+   nothing re-anchors it when the centre or the radius moves — `CIRCLE_ANGLE`'s own argument. An angle past
+   `turns · 360°` is a **value** condition, so it is node invalidity that names itself and heals (OP-3). **The
+   2D/3D split is in the pick, not in the point**: in the plan every winding projects onto the same circle, so
+   a click there can only honestly mean the first one (an angle in [0°, 360°)) and typing reaches any winding
+   after that (OP-13); in the 3D view the ray knows which winding it hit and yields the angle above 360°
+   directly — the same split `PATH3` already has. A drag follows it: free along the coil in 3D, confined to
+   the current winding in the plan, because the plan cannot say otherwise. **Deliberately scoped:** a rider on
+   a **non-helix** space curve needs a parameter that re-anchors when the defining points move — `ALONG_LINE`'s
+   anchoring problem one dimension up — so those curves refuse by name with that reason, recorded as a future
+   extension and not a limit.
+
+**Beyond those two, the rest of the numbered queue is empty.** What remains is the parked list below, each
+item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
 (it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and
