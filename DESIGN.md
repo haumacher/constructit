@@ -4559,6 +4559,19 @@ at the incircle's centre — with **moving the apex** re-deriving every one of t
   > `compute`. What is still sampled and flagged is the genuinely unnameable: a cut that leaves the material
   > through the cylinder's **ends**, and a cut through a loft's **twisted band**. See *Conics — ellipse and
   > elliptic arc* for the derivation and for why **plane ∩ cone** is a refusal rather than a deferral.
+  >
+  > **Amended in session 55 (a user report).** "A cut **along** the axis is a ruling, a segment" — the bullet
+  > said it, and the code did not have it: the perpendicular reading wants the normals parallel, the inclined
+  > one wants them genuinely oblique, and the sampled strip walks the rulings looking for a *transverse*
+  > crossing — which a plane **parallel to the axis** never makes, because every ruling of the face is parallel
+  > to it. So a vertical working plane through a column drew the column's two cap chords and *not its sides*.
+  > `Section3.axisParallelSideCut` is the missing reading, and it is exact for the reason the bullet promised:
+  > one upright per crossing of the plane's trace with the boundary piece, the crossings the very
+  > `intersectLL`/`intersectLC`/`intersectLE` a planar facet's cut already uses. More than one crossing follows
+  > the planar-face rule verbatim — every upright is **drawn**, the *input* refuses by name ("one input is one
+  > curve"), and a plane that misses the piece says so. The user's column is the fixture
+  > (`AxisParallelSectionTest`), with an off-centre plane asserting the half-chord `√(r² − d²)` so the reading
+  > is the line-against-circle it claims and not a special-cased diameter.
 - **The acceptance numbers, exact where they can be.** A pyramid (100 × 100, apex 90) cut at half height is
   the **exact 50 × 50 square**, corner for corner, all four corners at 1e-9; its section corners are the
   midpoints of base corner and apex for *any* apex, so moving the apex moves them by recompute. An inclined
@@ -10624,6 +10637,20 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   means every freedom stands at its default, which is what it always meant, and a hand-written old-shape
   fixture is kept as a permanent load test. **1744 → 1764 green**, nothing cut. See *a typed number belongs to
   the click that follows* under OP-13.
+- **Session 55, second sitting — the column's missing sides, and a help text that outlived its constraint.**
+  Two user reports, both landed as the small fixes they were. (a) *A plane that intersects a column (extruded
+  circle) does not display the sides of the column*: the axis-parallel cut of a curved side face fell between
+  the three readings the section already had, so a vertical working plane through a column drew its cap chords
+  and nothing else — see the amendment under *the section-inputs honesty line* (OP-15), whose own bullet had
+  promised the ruling all along. Exact, three fixtures, the user's drawing verbatim among them. (b) *Union has
+  still the constraint "extruded along the same axis" — can we drop this?* It was dropped when OP-9's general
+  engine arrived; what remained was the **Union row's help text**, still warning users off the very thing the
+  engine does (measured while triaging: a cross-axis pair fuses through Manifold 2.0.3 into a watertight
+  `MeshBoolean`). The help now states the real partition — same axis is exact and keeps section inputs, every
+  other pair is watertight mesh without them — and what the report exposed beyond the words is queued as its
+  own package: the union *gesture* cannot collect two solids living in two sketch spaces (session 16's parked
+  cut, hit with a real column and foundation), which wants `crossSpace` on the boolean rows plus a solid
+  pickable through its drawn section, and a miss that says how a solid is clicked. **1764 → 1767 green.**
 
 ## Domain layer: architectural drawing (draft — no new solver)
 

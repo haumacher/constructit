@@ -826,8 +826,59 @@ object Section3 {
         // ...and, since the conics package (OP-24), the *inclined* cut of a cylinder is exact too: it is a
         // true ellipse, and the drawing now has a name for one
         inclinedCylinderCut(feature, patch.name, cut)?.let { return SectionEdge(label, it, null, null) to emptyList() }
+        // ...and the cut **parallel to the axis** is exact too, and is the one an architectural drawing lives
+        // on — a column beside a vertical working plane. The two readings above both decline it (the plane
+        // crosses no ruling transversely: every ruling is parallel to it), and the sampled strip below cannot
+        // see it for the same reason, so it has its own reading: the rulings standing where the plane's trace
+        // in the sketch plane crosses the boundary piece — one upright per crossing, each derived from the
+        // profile's own parameters, a line against an arc or a conic (OP-15)
+        axisParallelSideCut(feature, patch.name, cut)?.let { return it }
         val strip = ruledStrip(feature, patch.name) ?: return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
         return cutRuledStrip(label, strip, cut)
+    }
+
+    /**
+     * A curved side face of an extrusion, cut by a plane **parallel to the extrusion's axis**: one upright
+     * segment per crossing of the cutting plane's trace with the boundary piece, exact (OP-15 — the crossings
+     * are the same analytic ones a planar face's cut uses). Null where the plane is not axis-parallel or the
+     * piece is not a curved side, so the caller's other readings stand untouched.
+     *
+     * More than one crossing is the planar-face rule verbatim: one input is one curve, so the edge refuses by
+     * name while every upright is still **drawn** — a vertical plane through a column's middle shows both of
+     * its sides (the report that drove this), and an input wants the plane moved to where the face is crossed
+     * once.
+     */
+    private fun axisParallelSideCut(
+        feature: Feature3,
+        name: FaceName,
+        cut: Plane3,
+    ): Pair<SectionEdge, List<DrawnPiece>>? {
+        if (feature !is Feature3.Extrusion || name !is FaceName.Side) return null
+        val e = Geom3.boundaryPieces(feature).getOrNull(name.piece) ?: return null
+        // a straight piece sweeps a *planar* side face, which [cutPlanarFace] already answers exactly
+        if (e is ProfileElement.Seg) return null
+        val p = feature.sketch.plane
+        if (abs(p.normal.normalized().dot(cut.normal.normalized())) >= 1e-9) return null
+        val line = cutLineIn(p, cut) ?: return null
+        val label = name.label
+        val axis = p.normal.normalized() * feature.depth
+        val uprights =
+            crossingsOf(e, line).map { q ->
+                val w = p.toWorld(q)
+                ProfileElement.Seg(Segment(cut.toLocal(w), cut.toLocal(w + axis)))
+            }
+        return when (uprights.size) {
+            0 -> SectionEdge(label, null, null, "the plane does not cut $label") to emptyList()
+            1 -> SectionEdge(label, uprights[0], null, null) to emptyList()
+            else ->
+                SectionEdge(
+                    label,
+                    null,
+                    null,
+                    "the plane cuts $label into ${uprights.size} separate pieces, and one input is one curve — " +
+                        "move the plane to where that face is crossed once",
+                ) to uprights.map { DrawnPiece(it, false) }
+        }
     }
 
     /**
