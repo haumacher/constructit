@@ -683,6 +683,13 @@ class Editor(
     val tolPx = 10.0
 
     /**
+     * When two candidates for one click count as **equally near** — a rounding tolerance and nothing else
+     * (see [pickSharedPoint]): a point standing on a curve is the same arithmetic away as the curve is, and
+     * this only keeps that equality from falling the wrong side of a floating-point comparison.
+     */
+    private val TIE_EPS = 1e-9
+
+    /**
      * Where the current gesture is, in plane coordinates — the position the *local* pick tolerance is taken
      * at. Written once per pointer event by [enter], which is the one door every gesture comes through.
      */
@@ -1804,7 +1811,7 @@ class Editor(
         if (filledSlots >= tool.slots.size) {
             if (!maybeCompleteTool(at)) statusHint = scalarPrompt(tool)
         } else {
-            statusHint = "${groupFedNote(g)} ${tool.help} (${tool.slots.size - filledSlots} more)"
+            statusHint = "${groupFedNote(g)} ${tool.help} (${stillNeeded(tool)} more)"
         }
         onChange()
         return true
@@ -3718,11 +3725,21 @@ class Editor(
         //
         // A repeating tool's one slot repeats, so [filledSlots] runs past it — resolved as an *index* rather
         // than as a bare slot because the refusal below wants the tool's own word for that slot ([roleOf]).
-        val slotIndex = if (tool.repeating) tool.slots.lastIndex else filledSlots
+        val waiting = if (tool.repeating) tool.slots.lastIndex else filledSlots
+        // **An optional slot is skipped by the very click that fills the slot behind it**
+        // ([SlotKind.OPTIONAL_POINT]): tried here first, and where it takes nothing the click goes on to the
+        // next slot. Only *tried*, because nothing is spent yet — the skip is committed below, together with
+        // the pick that landed, so a click that lands nowhere at all leaves the gesture exactly where it
+        // stood rather than quietly using up the option.
+        val optional = Tools.isOptionalSlot(tool.slots.getOrNull(waiting)) && !pickSharedPoint(world)
+        val slotIndex = if (optional) waiting + 1 else waiting
         val slot = tool.slots.getOrNull(slotIndex)
         val picked =
             when (slot) {
                 null -> true
+                // an optional point slot that *was* filled: the point is already in, by the same sharing rule
+                // [POINT] follows — see [pickSharedPoint]
+                SlotKind.OPTIONAL_POINT -> true
                 SlotKind.PLACE_POINT, SlotKind.POINT -> {
                     pickedPoints.add(placePoint(world))
                     true
@@ -3809,6 +3826,11 @@ class Editor(
             return
         }
         if (slot != null) {
+            // …and here the skip is spent, together with the pick that landed: one click, two slots settled,
+            // and **no click recorded for the one that was skipped** — a click in a step is a choice a replay
+            // must repeat, so inventing one for a pick nobody made would state a choice nobody stated
+            // (the rule [applyToSelection] follows for the same reason)
+            if (optional) filledSlots++
             filledSlots++
             pickedClicks.add(world)
             // …and what this click landed on, for a build that joins to it (see [Picks.landings]). Recorded
@@ -3834,10 +3856,36 @@ class Editor(
             if (!maybeCompleteTool(world)) statusHint = scalarPrompt(tool)
         } else {
             val fed = pickedGroup?.let { groupFedNote(it) + " " } ?: ""
-            statusHint = "$fed${tool.help} (${tool.slots.size - filledSlots} more)"
+            statusHint = "${optionalTaken(tool, slot, slotIndex)}$fed${tool.help} (${stillNeeded(tool)} more)"
         }
         onChange()
     }
+
+    /**
+     * How the status line **acknowledges an optional pick that landed** — in the tool's own word for that slot
+     * and the name of what was picked, or nothing at all when this click filled an ordinary slot.
+     *
+     * The one pick that is otherwise invisible: an optional slot costs no *required* one, so the count in the
+     * hint reads exactly as it did before the click ([stillNeeded] counts what the tool cannot do without).
+     * A click whose whole effect is a pick nobody can see is a click that declined silently, which is the one
+     * thing no route here may do.
+     */
+    private fun optionalTaken(
+        tool: ToolDef,
+        slot: SlotKind?,
+        slotIndex: Int,
+    ): String {
+        if (!Tools.isOptionalSlot(slot)) return ""
+        val el = pickedPoints.lastOrNull()?.let { doc.elementFor(it) } ?: return ""
+        return "${tool.roleOf(slotIndex).replaceFirstChar { it.uppercaseChar() }}: ${doc.nameOf(el)}. "
+    }
+
+    /**
+     * How many **more picks** the armed tool cannot do without — the slots it still has to fill, not counting
+     * the optional ones ([SlotKind.OPTIONAL_POINT]), which is what "2 more" has to mean if the number is to be
+     * a promise about the clicks left rather than about the slots left.
+     */
+    private fun stillNeeded(tool: ToolDef): Int = tool.slots.drop(filledSlots).count { !Tools.isOptionalSlot(it) }
 
     /**
      * A geometry pick, which is the one slot a **whole group** can fill (OP-16).
@@ -3991,6 +4039,43 @@ class Editor(
         val ref = placePoint(world)
         val el = doc.elementFor(ref) ?: return false
         pickedElements.add(el)
+        return true
+    }
+
+    /**
+     * Fill an **optional** point slot from the point [world] hits, **sharing its node**, or take nothing —
+     * which is how that slot is skipped ([SlotKind.OPTIONAL_POINT]).
+     *
+     * Nothing is ever placed here, and nothing is refused either: a click that means the slot behind this one
+     * is simply not this slot's click.
+     *
+     * **An optional slot's candidates are exactly what its build can use** — and that is a rule about optional
+     * slots rather than about anchors. Every *required* point slot may take a wrong pick and have the build
+     * refuse it **by name** (a dimension handed a point in space says so — OP-25/OP-26, session 53), because
+     * there the click has nowhere else to go and a refusal is the whole of the answer. Here it has: the slot
+     * behind this one is offered the same click, so a candidate this slot cannot use must be declined at the
+     * *pick*, or one click would both spend the option and kill the gesture. So what counts is a point whose
+     * value **is** a 2D position of this plane — a corner, a key point of a 2D curve, a rider on one, a welded
+     * alias — while a point in **space** ([Element.inSpace]: a height point, a key point of a curve in space, a
+     * point riding a coil) is not one, however exactly its projection lands under the cursor. That is session
+     * 53's own rule read one slot further: a space point's plan image is *where it projects*, which is not the
+     * point, so no placing, snapping or plane-reading route may quietly take it for the plane point there.
+     *
+     * **How the one click is read is the canvas's own law, not a new one**: *nearest wins*, and a point wins a
+     * **tie**. The two candidates overlap by nature — the corner an anchor wants is a point standing exactly
+     * *on* the outline the next slot wants — so a click aimed at a corner finds both at the same distance and
+     * the more specific of the two takes it (the rule that already gives a circle's centre the click a
+     * geometry slot would have taken). A click that is genuinely nearer the outline than to any point of it is
+     * the outline's, which is what keeps clicking an edge a few tenths from its corner the *section's* pick.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun pickSharedPoint(world: Vec2): Boolean {
+        val hits = HitTest.nearestAll(doc, ev(), world, tolWorld(), proj()) { true }
+        val nearest = hits.firstOrNull()?.second ?: return false
+        val point = hits.firstOrNull { it.first.isPoint && !it.first.inSpace } ?: return false
+        // a rounding tolerance, not a modelling one: the two distances at a corner are the same arithmetic
+        if (point.second > nearest + TIE_EPS) return false
+        pickedPoints.add(point.first.ref as PointRef)
         return true
     }
 

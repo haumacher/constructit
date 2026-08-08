@@ -420,6 +420,9 @@ class RecordedElementTest {
         when (kind) {
             SlotKind.PLACE_POINT, SlotKind.POINT, SlotKind.SIDE -> listOf(FREE_SPOT, FREE_SPOT2, FREE_SPOT3)
             SlotKind.EXISTING_POINT -> listOf(POINT_A, POINT_B, POINT_C)
+            // an **optional** point slot gets an existing point too, so the audit drives the row with its
+            // option *taken* (GitHub #15): the anchored sweep has to record its anchor like every other pick
+            SlotKind.OPTIONAL_POINT -> listOf(POINT_A, POINT_B, POINT_C)
             // …and the placing point slots get **empty** spots, which is the whole of session 50's change:
             // the sweep then audits that a slot which states a new point records it like everything else
             SlotKind.INPUT_POINT, SlotKind.POINT3 -> listOf(FREE_SPOT, FREE_SPOT2, FREE_SPOT3)

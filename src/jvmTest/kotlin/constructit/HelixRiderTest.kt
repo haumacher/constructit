@@ -664,6 +664,55 @@ class HelixRiderTest {
         assertTrue(why.contains(ed.doc.nameOf(pts[1])), "and names it: $why")
     }
 
+    /**
+     * **The same rule, over every route that reads plane coordinates off a point** — the audit the anchored
+     * sweep's probe review asked for (session 54).
+     *
+     * These points are *drawn* in the plan, at their projections, and have been clickable there since this
+     * package made them so — which is right for everything that wants the point in space it is, and never
+     * right for a route that would read the plane point at that projection, because that is a different point.
+     * Two routes could take one and could not have caught it themselves: a **join**, whose master side binds a
+     * plane point's own literal to the master's node (so the alias would read a `Point3Value` and every
+     * consumer of it would go invalid with nothing naming the cause), and **Make relative**, whose
+     * `anchor.ref as? PointRef` cannot fail — `PointRef` is `Ref<PointValue>` and its type argument is erased.
+     * Both now refuse by name, through the one helper (`Document.notInThePlane`) that states the rule.
+     */
+    @Test
+    fun everyPlaneReadingRouteRefusesAPointInSpaceByName() {
+        val ed = Editor()
+        val coil = coilAt(ed, Vec2(0.0, 0.0))
+        val inSpace = keyPointsOf(ed, coil, Vec2(20.0, 0.0)).first { it.inSpace }
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(60.0, 60.0))
+        val plane = assertNotNull(ed.doc.elements.lastOrNull { it.kind == ElementKind.POINT && !it.inSpace })
+        val before = ed.doc.elements.size
+        val steps = ed.doc.journal.size
+
+        // (a) a join onto it: refused by name, and nothing is bound
+        assertTrue(!ed.doc.weld(plane, inSpace), "no join is made")
+        val why = assertNotNull(ed.doc.takeNote(), "and it says why")
+        assertTrue(why.contains(ed.doc.nameOf(inSpace)) && why.contains("point in space"), "naming it: $why")
+        assertTrue(why.contains("height point") || why.contains("curve"), "and the way out: $why")
+
+        // (b) …and an offset measured from it, which no cast could have caught
+        assertTrue(!ed.doc.makeRelative(plane, inSpace), "no offset is made")
+        val why2 = assertNotNull(ed.doc.takeNote(), "and it says why")
+        assertTrue(why2.contains(ed.doc.nameOf(inSpace)) && why2.contains("point in space"), "naming it: $why2")
+        assertTrue(why2.contains("point of the plane"), "and the way out: $why2")
+
+        assertEquals(before, ed.doc.elements.size, "nothing was built either way")
+        assertEquals(steps, ed.doc.journal.size, "and nothing was recorded")
+        // …and the point that could legitimately take one is untouched: a curve through it still works
+        ed.setTool(Tools.CURVE3)
+        ed.click(Vec2(20.0, 0.0))
+        ed.click(Vec2(60.0, 60.0))
+        ed.key("Enter")
+        assertTrue(
+            ed.doc.elements.count { it.kind == ElementKind.SPACE_CURVE } == 2,
+            "a run through the point in space is still an ordinary construction: ${ed.statusHint}",
+        )
+    }
+
     // ---- what a reviewer tries next: the placement, the delete, and the drawing ----
 
     /**

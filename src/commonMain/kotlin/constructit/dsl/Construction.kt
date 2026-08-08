@@ -2489,6 +2489,16 @@ class Construction {
      * user discover the choice by its consequences is exactly what OP-26 rejects. [twist] is the total
      * rotation about the tangent from one end to the other, spread linearly in arc length.
      *
+     * **[anchor] is the point of the section that rides the path** (GitHub issue #15), and null is the
+     * reading that existed before it: the profile's own origin. When it is given, the section is read
+     * *relative to it* — every coordinate of the area minus the anchor's — so an area drawn **in place**,
+     * 5 mm off its space's origin because that is where the part is, rides the run by the point the user
+     * named instead of orbiting 5 mm out from it. An **input node** and not a number, which is the whole
+     * argument for a point: the anchor is shared with whatever was clicked, so dragging that point — a
+     * corner of the section, the coil's own start — moves the swept body by recompute, with no rebuild and
+     * nothing to restate (OP-21). What it is *not* is a compensation the tool works out for the user:
+     * DESIGN.md's *"explicit anchors beat compensation"*, said one feature further.
+     *
      * Invalid with a reason that heals (OP-3) for everything geometric — see [Geom3.sweep] for the list, of
      * which the two that matter are the profile outgrowing the path's bend and a closed path whose frame
      * does not come back to itself.
@@ -2499,10 +2509,25 @@ class Construction {
         profile: RegionRef,
         roll: ScalarRef,
         twist: ScalarRef,
+        anchor: PointRef? = null,
     ): SolidRef =
-        op(path, space, profile, roll, twist) {
-            sweptSolid(it, SweepProfile.Section((it[2] as RegionValue).region))
+        // the anchor is an input **only when there is one**, so an unanchored sweep is the node it always
+        // was — same inputs, same arity, same value (OP-18's rule one level down: nothing changes meaning)
+        op(*listOfNotNull<Ref<*>>(path, space, profile, roll, twist, anchor).toTypedArray()) {
+            val region = (it[2] as RegionValue).region
+            val at = (it.getOrNull(5) as? PointValue)?.p
+            sweptSolid(it, SweepProfile.Section(if (at == null) region else movedBy(region, -at)))
         }
+
+    /** [region] with [d] added to every one of its coordinates — how an anchored [sweep] reads its section. */
+    private fun movedBy(
+        region: Region,
+        d: Vec2,
+    ): Region {
+        val t = Affine.translation(d)
+        // a translation cannot turn a loop round, so the windings are carried over rather than re-oriented
+        return Region(GeomMath.transform(region.outer, t), region.holes.map { GeomMath.transform(it, t) })
+    }
 
     /** The half [tube] and [sweep] share: the frame's inputs read, and the solid or the reason it is not one. */
     private fun sweptSolid(

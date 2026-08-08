@@ -623,6 +623,27 @@ object Embedding {
     private const val CONE_EPS = 1e-9
 
     /**
+     * **Which bend of the run station [i] is, in words** — read off the station's *identity*, not measured
+     * against a tolerance, which is why the two ends can say so exactly.
+     *
+     * The refusal used to lead with the arc length alone, and *"the bend 0 mm along the path"* is the reading
+     * that made a correct refusal unreadable (GitHub issue #15): the station that refuses a section is very
+     * often the **first** one — a coil, an arc, any smooth run bends from the moment it starts — and a
+     * distance that happens to be zero is exactly what a reader takes for "nowhere in particular". So the
+     * place is named in words and the figure is kept beside the radius, where it is a measurement rather than
+     * the sentence's subject.
+     */
+    private fun bendAt(
+        frame: MovingFrame,
+        i: Int,
+    ): String =
+        when (i) {
+            0 -> "the run starts with"
+            frame.stations.lastIndex -> "the run ends with"
+            else -> "part-way along it"
+        }
+
+    /**
      * Whether a profile reaching [reach] from the path is embedded along [frame] — the `min` of the two
      * terms, in that order, so the local failure keeps its own words where both would fire.
      *
@@ -650,11 +671,11 @@ object Embedding {
         cure: String = "thin the section, or open the run out",
     ): EmbeddingReport {
         // ---- the first term: 1/κ_max, station by station, and in station order so the message is stable
-        for (st in frame.stations) {
+        for ((i, st) in frame.stations.withIndex()) {
             if (st.curvature * reach >= 1.0) {
                 return EmbeddingReport(
-                    "$what is larger than the bend ${Frames3.mm(st.s)} mm along " +
-                        "the path (radius ${Frames3.mm(1.0 / st.curvature)} mm), so $subject would pass through itself",
+                    "$what is larger than the bend ${bendAt(frame, i)} (radius ${Frames3.mm(1.0 / st.curvature)} mm, " +
+                        "${Frames3.mm(st.s)} mm along the path), so $subject would pass through itself",
                     Double.MAX_VALUE,
                     0,
                 )

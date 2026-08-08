@@ -6536,6 +6536,11 @@ section off its space's origin and it sweeps off the path by exactly that much),
 to invent, and it is the frame the self-intersection criterion measures against. A profile is an ordinary
 `Region`, so **a pipe is a profile with a hole in it** rather than a second feature.
 
+> This paragraph is still exactly true of a sweep that states nothing else, and it is now the **default**
+> rather than the only reading: a section may name the point of *itself* that rides the run. The rationale
+> above survives untouched — what it got wrong is only that it treated "off the origin" as always meaning
+> "off the run". See *the point of the section that rides the run* below (GitHub issue #15).
+
 **The refusals, each naming what is wrong and where, and all of them node invalidity (OP-3).** The
 self-intersection criterion is per station and is checked before a triangle is emitted: the profile's
 **reach** — its greatest distance from the frame origin — against the path's local **radius of curvature**,
@@ -6608,6 +6613,114 @@ body's note, `save → load → save` byte-equal with the mesh compared vertex f
 refusals, the node's refusal healing back into the 3D view, the session-35 counts with a swept body in the
 scene, and an SVG golden of the footprint. **1311 → 1344 green**, one new golden, no version bump, no
 existing golden changed.
+
+### As built: the point of the section that rides the run (step 2 extended — GitHub issue #15, session 54)
+
+**The report.** A user cut a worm thread: the thread's section drawn **in place** at the shaft's surface,
+5.4 mm off the plan's origin because that is where the material is, and a helix of radius 5.279 mm whose start
+point they had put essentially at the section. The sweep read the area with its own origin on the path, so the
+section orbited 5.4 mm out from a coil that bends every 5.279 mm and the node refused by name — *"the profile's
+reach from the path (5.399 mm) is larger than the bend 0 mm along the path (radius 5.279 mm)"*. **The refusal
+was right; the contract was too narrow.** Nothing about the drawing was wrong: what was missing was a way to
+say *which point of the section is the one that travels*.
+
+**The answer is a stated anchor, not a computed offset** — the doctrine *explicit anchors beat compensation*,
+one feature further on. The sweep gains an **optional point pick**: a point of the section's own plane, and
+when it is given the section's coordinates are read *relative to it* (profile minus anchor) in the moving
+frame. With nothing given, the origin rides the run and the node has the very inputs it had before — same
+arity, same value, same file — so every drawing written before this means exactly what it meant.
+
+**The anchor is an input node, and that is the whole argument for a point over a number.** A click on an
+existing point **shares** it (OP-5), so dragging that point — a corner of the section, a coil's own start —
+moves the swept body by recompute with nothing rebuilt and nothing restated (OP-21). A number would have had
+to be re-typed whenever the part moved; the point cannot fall out of step, because there is only one of it.
+Rejected on the way: an *offset* pair of scalars (a compensation, and a second place for the same fact); an
+`anchor` field on `SweepProfile.Section` (the shift belongs where the inputs are read, and keeping the shifted
+region in the feature is what makes a placement's re-projection and the plan hint agree without a second
+rule); and moving the whole space with *Space origin*, which is the right statement about a whole drawing and
+the wrong one about one section on a shaft that also carries the shaft.
+
+**The gesture: an optional pick that costs the plain gesture nothing.** The slot order is **curve → anchor →
+profile**, with the anchor in the *middle* and skipped by the very click that fills the slot behind it
+(`SlotKind.OPTIONAL_POINT`). So two clicks still build a sweep — no Enter, no keystroke, not one extra
+motion — and three clicks build an anchored one. A trailing optional pick was rejected precisely because
+skipping it would need a terminator (Enter or Escape) on the *unanchored* gesture, which is the common one;
+and a `fromSelection`-style anchor (select the point, then arm) was rejected because a change of sketch plane
+drops the selection, which is exactly what this feature has to survive. How the one click is read is the
+canvas's own law rather than a new one: **nearest wins, and a point wins a tie** — the corner an anchor wants
+stands exactly *on* the outline the next slot wants, so at a corner both are the same distance away and the
+more specific takes it, while a click genuinely nearer the outline than to any point of it is the outline's.
+That rule is what keeps an edge clicked a millimetre from its corner the *section's* pick; it was found by a
+pre-existing probe test, which clicks exactly there and stayed green because of it.
+
+**The run and the section may live in two planes**, so *Sweep* now declares `crossSpace` — the loft's own
+declaration, for the loft's own reason. The user's coil is on a rotated datum and the worm is in the plan; a
+tool that could not span planes could not express the drawing at all. The anchor is required to be in **the
+profile's** plane and a point from another one is refused by name, with the coordinates to place instead: the
+two are subtracted, and coordinates of two different planes have no difference.
+
+**The refusal reads better and says the same thing.** *"the bend 0 mm along the path"* is arithmetically true
+and unreadable — the station that refuses a section is very often the **first** one, because a coil bends from
+the moment it starts, and a distance that happens to be zero is what a reader takes for nowhere. So the place
+is named by the station's own identity (*"the bend the run starts with"*, *"the run ends with"*,
+*"part-way along it"*) and the figure is kept beside the radius, where it is a measurement rather than the
+sentence's subject. It stays a **value** condition throughout: node invalidity that names itself and heals
+(OP-3).
+
+**The file needed no version bump** (OP-18). The anchor rides the ordinary `pts=` argument of the `tool` step,
+which a sweep never wrote before, so no stored literal changed meaning and no migration exists to get wrong; a
+step with no `pts=` is the old reading exactly, and a fixture in the shape an older build wrote is kept as a
+permanent load test. One undo takes the whole three-click gesture, as one transaction (OP-27).
+
+**The tube deliberately gained nothing.** A round section is centred on the path by definition — its radius
+*is* its reach — so it has no off-origin reading to correct and no third pick to offer. Asserted on the tool
+table, where the decision lives.
+
+**Two rules the review's probe made explicit, and both are general.** The probe clicked a **rider's plan dot**
+for the anchor — a point *in space*, drawn in the plan exactly where it projects and clickable there since
+step 3's key points (session 53) — and the first reading adopted it, which is precisely the silent flattening
+session 53 ruled out (*"the answer would be a plane point at the projection, which is not this point"*). The
+cross-plane guard could not catch it either: a rider on a plan-space coil *is* in the plan, and its
+`Point3Ref` then flowed into a `PointRef` input through a cast that cannot fail, because `PointRef` is
+`Ref<PointValue>` and its type argument is erased. So:
+
+1. **An optional slot's candidates are exactly what its build can use.** For a *required* slot a wrong pick may
+   reach `build` and be refused there by name — the click has nowhere else to go, so the refusal is the whole
+   answer. An **optional** slot's declined click *does* have somewhere to go (the slot behind it), so a
+   candidate it cannot use has to be declined at the **pick**, or one click would both spend the option and
+   kill the gesture. `OPTIONAL_POINT` therefore takes a point of the working plane and never one in space; the
+   click falls through by the canvas's own law, and the ordinary miss or the section's pick follows.
+2. **A route that reads plane coordinates off a point refuses a point in space by name** — one helper
+   (`Document.notInThePlane`) in the shape session 53's linear-dimension refusal set: name the element, say
+   what it is, say what to do instead. The audit behind it found **two** routes that could take one and could
+   not have noticed: a **join**, whose *master* side binds the alias's own literal to the master's node (so a
+   plane point would read a `Point3Value` and every consumer of it would go invalid with nothing naming the
+   cause), and **Make relative**, whose anchor cast is the erased one above. Both refuse now. Already safe, and
+   each for a reason worth keeping: a *placing* click, because the snap resolver asks a 2D question with no
+   view and therefore cannot see a space point at all (session 53's own rule, which is what makes every
+   `POINT`/`PLACE_POINT` slot safe in one stroke); the linear dimension, which was the precedent; *Make
+   absolute* and *Unlink*, which handle a space rider deliberately (`detachSpaceRider`); *Space origin*, which
+   needs a section-corner address a space point has not; *Tangent at point*, whose filter is a handle kind; and
+   the `POINT3` slots, for which taking a point in space is the entire point.
+
+Nothing was cut. Tests: `SweepAnchorTest` (16) — the user's script verbatim as a load fixture, then the same
+sweep anchored (valid, watertight, and every point of it asserted to lie within 0.4627 mm of the coil's own
+radius, which is the section's stated reach) and unanchored (refused, both figures named); an analytic coil of
+30 mm radius, 10 mm pitch and two turns carrying a 2 × 2 mm square anchored at its corner, bounded by the
+shell that corner implies and asserted to fill it; the same coil refusing the same square by its own origin,
+with `sqrt(32² + 7²) = 32.757 mm` against `(30² + (10/2π)²)/30 = 30.084 mm`; the anchor dragged and retyped
+with the body following exactly on a straight run; the two-click gesture untouched and the three-click one
+anchored; the nearest-wins tie rule at the everyday zoom; the anchor shared by node and named in the step and
+in the inspector's *built from* row; the whole gesture across a change of sketch plane, byte-equal round trip
+included; one undo; the cross-plane anchor refused by name; a **point in space** refused as an anchor by name
+on every route in, with the gesture shown never to offer one; and the tool table's own promises, including that
+no row may end with an optional slot (nothing behind it could skip it). Plus `HelixRiderTest` gains the audit's
+own regression — a join onto a point in space and an offset measured from one, both refused by name, with a
+curve *through* it still an ordinary construction — and the review's `SweepAnchorProbeTest` (3) stays: the
+anchor as a route into OP-3's healing, a roll turning the section about the anchor, and the rider's dot not
+being flattened. **1723 → 1744 green** (the review's probe among them), no new golden, no version bump, nothing
+existing changed except the four refusal assertions' *subject* — which is to say none of them: every substring
+they check is still in the sentence.
 
 ### Implementation status (as built — step 3: the helix, the first curve that lies in no plane)
 
@@ -10335,6 +10448,42 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   self-intersection guard, which is a feature-level refusal and still runs per frame. See *the mesh a value
   builds only when it is asked* under *Evaluation*.
 
+- **Session 54 — the point of the section that rides the run (OP-26 step 2; GitHub issue #15).** The report was
+  *"sweep does not work or not as expected"*, with a worm thread whose section was drawn **in place** at the
+  shaft's surface and a helix whose start the user had put at that section. The sweep refused it by name, and
+  the refusal was **correct**: the area's own origin rides the path, so a section 5.4 mm off the drawing's
+  origin orbits 5.4 mm out from a coil that bends every 5.279 mm. The interesting part is that nothing was
+  wrong with the drawing and nothing was wrong with the node — the *contract* had no way to say which point of
+  the section travels. So the sweep gained a **stated anchor**: an optional point pick, a point of the
+  section's own plane, and the section is read relative to it. That it is a **point** and not a pair of numbers
+  is the whole of the design: the anchor is an input node, shared with whatever was clicked, so dragging the
+  corner it names moves the body by recompute — an offset would have been a second place for the same fact and
+  would have gone stale the first time the part moved (*explicit anchors beat compensation*, said one feature
+  further on). The gesture question took the longest and its answer is worth keeping: the optional pick sits
+  **between** the two required ones, so it is skipped by the very click that fills the slot behind it and the
+  two-click gesture is untouched — not one keystroke more, where a trailing optional pick would have made the
+  *common* gesture end in Enter. Which of the two slots a click means is decided by the canvas's own law
+  (nearest wins; a point wins a tie, because the corner an anchor wants stands exactly on the outline the next
+  slot wants), and that rule was found by a **pre-existing probe** that clicks a millimetre from a corner: the
+  first reading swallowed its click, the law does not. *Sweep* also declares `crossSpace` now, because the run
+  and the section legitimately live in two planes — the user's coil is on a rotated datum and the worm in the
+  plan — and the anchor is refused by name when it comes from a plane other than the section's, since
+  coordinates of two planes have no difference. The refusal's wording was polished in the same pass: *"the bend
+  0 mm along the path"* named the commonest case (a coil bends from the moment it starts) with the one figure a
+  reader discounts, so the place is now named by the station's identity and the number kept beside the radius.
+  No version bump: the anchor rides the `tool` step's ordinary `pts=`, which a sweep never wrote, so nothing a
+  previous build stored changed meaning. The tube gained nothing, and that is recorded rather than left to be
+  noticed: a round section is centred on the path by definition. The **probe review** then paid for itself
+  twice over, and its find turned into the second rule of the note: clicking a *rider's* plan dot for the
+  anchor was adopted, which is the silent flattening session 53 had ruled out — a point in space is drawn where
+  it projects, and that projection is not the point. Hence **an optional slot's candidates are exactly what its
+  build can use** (a declined click has somewhere else to go, so declining is a *pick* decision there and a
+  build refusal everywhere else), and **every route that reads plane coordinates off a point refuses a point in
+  space by name**, through one helper — an audit that turned up two older routes with the same hole, a join's
+  master side and *Make relative*'s anchor, the latter uncatchable by its own cast because a `Ref<PointValue>`
+  has no type argument at runtime. **1723 → 1744 green**, nothing cut. See *the point of the section that rides
+  the run* under OP-26.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -12197,6 +12346,14 @@ operands. It leaves **two things parked**, each stated with the work: cutting by
 one clipped per station rather than once for the run — which is the only thing that would relax the single
 derived reach, and which is OP-26's own variable-section question rather than this operator's. See *An
 unbounded tool is a legitimate operand*.
+
+**Retired in session 54 — nothing, because GitHub #15 arrived as a demand rather than off this queue.** The
+sweep's anchored reading (see *the point of the section that rides the run* under OP-26) closes the issue and
+retires no queue line; what it retires is a *stated* limitation of step 2's own note — "there is no offset
+argument to invent" — which stands as written for a sweep that names no anchor and is now the default rather
+than the only reading. It leaves **one thing parked**, stated where it belongs: an anchor whose point lives in a
+*different* plane from the section is refused rather than mapped, because mapping it would need a stated
+correspondence between two planes' coordinates (which is a 3D-placement question, not a sweep's).
 
 **Named in session 37 and not yet queued — two gaps a real structural part shows** (from a cast arm looked at
 in the round): **3D edge blends**, which is most of what the eye reads as a casting and is a dimensioned

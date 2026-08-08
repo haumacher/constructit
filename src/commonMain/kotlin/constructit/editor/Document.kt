@@ -4352,6 +4352,22 @@ class Document {
         alias: Element,
         master: Element,
     ): Boolean {
+        // A **point in space** on either side is refused by name (see [notInThePlane]), and the master side is
+        // the one that needed saying: a weld binds the alias's own literal to the master's node, so a master
+        // whose value is a `Point3Value` would leave a plane point reading a point in space and every consumer
+        // of it invalid, with nothing anywhere naming the cause. The pick is legitimate to *make* — a rider's
+        // dot is drawn in the plan and clickable there (OP-26, session 53) — so the refusal belongs here.
+        for (p in listOf(alias, master)) {
+            notInThePlane(
+                p,
+                "a join",
+                "join two points of the plane; a point in space is followed by *building* on it — a curve " +
+                    "through it, or a height point over the base it stands on",
+            )?.let {
+                note = it
+                return false
+            }
+        }
         val node = literalNode(alias) ?: return false
         if (alias.kind != ElementKind.POINT || node.boundTo != null) return false
         if (!master.isPoint || master === alias) return false
@@ -4516,6 +4532,31 @@ class Document {
         return (if (w.first() in "aeiou") "an " else "a ") + w
     }
 
+    /**
+     * Why [el] cannot stand where a point **of the working plane** is wanted, or null when it can — one
+     * sentence for the whole class, in [linearDimension]'s own shape: name the element, say what it is, say
+     * what to do [instead].
+     *
+     * **The rule this states: a route that reads plane coordinates off a point refuses a point in space by
+     * name.** A point in space ([Element.inSpace] — a height point, a key point of a curve in space, a point
+     * riding a coil) is *drawn* in the plan where it projects, and has been pickable there since OP-26's key
+     * points (session 53) — which is right for everything that wants the point in space it is, and never right
+     * for anything that would read the plane point at its projection, since that is a different point. Session
+     * 53 stated the half a *placing* click needs (the snap resolver asks a 2D question and therefore cannot see
+     * one at all); this is the half every *build* needs, and it is one helper rather than a habit so the next
+     * such route cannot forget. [what] names the reading that cannot be made of it.
+     */
+    private fun notInThePlane(
+        el: Element,
+        what: String,
+        instead: String,
+    ): String? =
+        if (!el.inSpace) {
+            null
+        } else {
+            "${nameOf(el)} is a point in space, and $what is stated in the sketch plane's own coordinates — $instead"
+        }
+
     // ---- relative points: re-parameterize a free point onto an anchor (OP-4 case b) ----
 
     /**
@@ -4585,6 +4626,18 @@ class Document {
                 } else {
                     "${nameOf(pt)} is not a free point: only a point that owns its coordinates can be re-anchored"
                 }
+            return false
+        }
+        // …and a point in **space** for the anchor is refused by name (see [notInThePlane]). It could not be
+        // caught by the cast below: `PointRef` is `Ref<PointValue>`, whose type argument is erased, so `as?`
+        // accepts a `Point3Ref` and the polar offset would then be measured from a point that has no position
+        // in this plane at all.
+        notInThePlane(
+            anchor,
+            "the anchor an offset is measured from",
+            "measure ${nameOf(pt)} from a point of the plane — or give it a height, and it is a point in space too",
+        )?.let {
+            note = it
             return false
         }
         @Suppress("UNCHECKED_CAST")
@@ -9450,10 +9503,22 @@ class Document {
      * The area [profile] **swept along the curve in space** [el] (OP-26's step 2) — the general form, of
      * which [tubeAlongCurve] is the circular case.
      *
-     * The profile is read in the moving frame's own coordinates **with its own origin on the path**, so a
-     * section drawn 20 mm off its space's origin runs 20 mm off the route — which is a construction rather
-     * than an argument, and is why there is no offset input here (*Space origin* moves a whole space's
-     * coordinates, and that is the same statement said once for everything drawn there).
+     * The profile is read in the moving frame's own coordinates, by default **with its own origin on the
+     * path**, so a section drawn 20 mm off its space's origin runs 20 mm off the route — a construction
+     * rather than an argument.
+     *
+     * **[anchor] is the point of the section that rides the run** (GitHub issue #15), and it is what makes a
+     * section drawn *in place* sweepable: a worm thread drawn at the shaft's surface stands 5 mm off the
+     * drawing's origin because that is where the part is, and orbiting it 5 mm out from its own coil is not
+     * what anybody meant — so the point it rides on is *stated*, as a pick, rather than compensated for by a
+     * number this tool works out (DESIGN.md's *"explicit anchors beat compensation"*). Clicking an existing
+     * point shares its node, so the body follows it when it is dragged; leaving it out is the older reading
+     * exactly, down to the node's inputs (`Construction.sweep`).
+     *
+     * The anchor must be drawn in **the same space as the profile** — the two are subtracted, and coordinates
+     * of two different planes have no difference — which is refused by name here, with the coordinates to
+     * place instead. *Space origin* is the other way to say the same thing when a whole space is off-origin;
+     * this is the way to say it about one section.
      *
      * The solid is stamped into the **curve's** space, not the active one, for the loft's own reason: that is
      * the space its footprint hint is drawn in and the coordinates a pick of it measures against — and here
@@ -9470,6 +9535,7 @@ class Document {
         profile: Element,
         roll: ScalarRef? = null,
         twist: ScalarRef? = null,
+        anchor: PointRef? = null,
     ): Element? {
         val path = spaceCurveRef(el, "Sweep") ?: return null
         val region =
@@ -9477,10 +9543,43 @@ class Document {
                 note = "Sweep: ${nameOf(profile)} bounds no area, so it is no section to carry along ${nameOf(el)}"
                 return null
             }
+        val anchorEl = anchor?.let { elementFor(it) }
+        // …and a point in **space** is refused before anything else about it is asked: what would be read off
+        // it is the plane point at its projection, which is not this point (see [notInThePlane]). The gesture
+        // cannot offer one — an optional slot declines a candidate it cannot use, so the click goes to the
+        // section instead (`Editor.pickSharedPoint`) — and this is the backstop for every other route in,
+        // which is where a `Point3Ref` would otherwise reach a `PointRef` input through an unchecked cast.
+        if (anchorEl != null) {
+            notInThePlane(
+                anchorEl,
+                "the point a section rides its run on",
+                "place a point in ${spaceLabel(spaceOf(profile))} where ${nameOf(profile)} should ride and pick that — " +
+                    "or leave it out, and the area's own origin rides the run",
+            )?.let {
+                note = "Sweep: $it"
+                return null
+            }
+        }
+        if (anchor != null && anchorEl != null && anchorEl.space != profile.space) {
+            note =
+                "Sweep: ${nameOf(anchorEl)} is drawn in ${spaceLabel(spaceOf(anchorEl))}, and " +
+                "${nameOf(profile)} in ${spaceLabel(spaceOf(profile))} — the point the section rides on is a " +
+                "point of the section's own plane, so place one there and pick that (or leave it out, and the " +
+                "area's own origin rides the run)"
+            return null
+        }
         val solid =
-            add(cx.sweep(path, planeOfSpace(el.space), region, noTurn(roll), noTurn(twist)), ElementKind.SOLID, Styles.SOLID)
+            add(
+                cx.sweep(path, planeOfSpace(el.space), region, noTurn(roll), noTurn(twist), anchor),
+                ElementKind.SOLID,
+                Styles.SOLID,
+            )
         solid.space = el.space
-        madeSolid(solid, "${nameOf(profile)} swept along ${nameOf(el)}")
+        madeSolid(
+            solid,
+            "${nameOf(profile)} swept along ${nameOf(el)}" +
+                (anchorEl?.let { ", riding on ${nameOf(it)}" } ?: ""),
+        )
         return solid
     }
 
@@ -11388,12 +11487,22 @@ class Document {
         // (OP-17). It is skipped here and re-resolved per copy, which is exactly the chain — see
         // [OrbitGesture.chainsPart].
         var ei = if (tool.facePartOperand) 1 else 0
+        // …and which **click** filled each slot, which is not the slot's own index once a slot may be left
+        // out: an optional pick that was skipped consumed no click ([SlotKind.OPTIONAL_POINT]), so the cells
+        // below have to be read off the picks that happened rather than off the slot positions. The cell of a
+        // slot that was skipped stays the origin and is read by nothing — the cells are a per-slot table for
+        // the replay to line up against, and a skipped slot has no pick for anything to ask about.
+        val clickIx = ArrayList<Int?>()
+        var ci = 0
         for (slot in tool.slots) {
             when (slot) {
                 SlotKind.PLACE_POINT, SlotKind.POINT -> slotEl.add(pointEls.getOrNull(pi++))
+                // an optional slot takes a point only when the gesture gave it one
+                SlotKind.OPTIONAL_POINT -> slotEl.add(pointEls.getOrNull(pi)?.also { pi++ })
                 SlotKind.SIDE -> slotEl.add(null)
                 else -> slotEl.add(picks.elements.getOrNull(ei++))
             }
+            clickIx.add(if (Tools.isOptionalSlot(slot) && slotEl.last() == null) null else ci++)
         }
         if (pi != picks.points.size || ei != picks.elements.size) return null // a fan, or a part operand
         val found = slotEl.mapIndexed { i, el -> i to el?.let { memberSlot(it) } }
@@ -11423,7 +11532,7 @@ class Document {
         val cellOffsets = ArrayList<Int>()
         val ev = Evaluator()
         for (i in tool.slots.indices) {
-            val click = picks.clicks.getOrNull(i) ?: Vec2(0.0, 0.0)
+            val click = clickIx[i]?.let { picks.clicks.getOrNull(it) } ?: Vec2(0.0, 0.0)
             val at = indexOf[i] ?: anchor
             cells.add(patternCell(p, -at, click, ev))
             cellOffsets.add(at - anchor)
@@ -11441,6 +11550,9 @@ class Document {
                 }
             when (slot) {
                 SlotKind.PLACE_POINT, SlotKind.POINT -> pointPicks.add(pick ?: return null)
+                // an optional slot contributes a pick only when the gesture filled it, so a fan of
+                // unanchored sweeps carries no anchor and one of anchored sweeps carries exactly one
+                SlotKind.OPTIONAL_POINT -> if (pick != null) pointPicks.add(pick)
                 SlotKind.SIDE -> {}
                 else -> elementPicks.add(pick ?: return null)
             }
@@ -11634,6 +11746,8 @@ class Document {
             val pick =
                 when (slot) {
                     SlotKind.PLACE_POINT, SlotKind.POINT -> pointPicks.getOrNull(pi++)
+                    // an optional slot, replayed exactly as it was recorded: a point if the step names one
+                    SlotKind.OPTIONAL_POINT -> pointPicks.getOrNull(pi)?.also { pi++ }
                     SlotKind.SIDE -> null
                     else -> elPicks.getOrNull(ei++)
                 }

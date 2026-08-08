@@ -61,6 +61,25 @@ enum class SlotKind {
      * miss says what it needs, in the tool's own word for it, and leaves the drawing alone.
      */
     EXISTING_POINT,
+
+    /**
+     * An **optional** point pick (OP-26, the anchored sweep): an existing point of the drawing, shared by
+     * node exactly as [POINT] shares one — or *nothing at all*.
+     *
+     * The one slot kind that may be left unfilled, and the whole of the mechanism is how it is skipped: **a
+     * click that hits no point here is offered to the slot behind it**, and the optional slot is spent only
+     * when that one takes it (`Editor.runToolClick`). So the gesture without the option is exactly the
+     * gesture that existed before — no Enter, no extra click, not one keystroke more — and the gesture with
+     * it is one further click, in the place a click already goes. A click that lands on nothing at all
+     * spends nothing and says so, which is what makes the skip a reading of the click rather than a guess.
+     *
+     * Two rules follow, and both are declarations rather than checks. It **never places a point**
+     * ([Tools.placesPointElement] excludes it): a placed point is indistinguishable from a miss, so an
+     * empty click could not mean "skip" any more. And it must **never be a tool's last slot**, for the same
+     * reason a defaulted scalar must not stand in front of a required one ([ToolDef.requiredScalars]):
+     * there would be no slot behind it for the skipping click to fill.
+     */
+    OPTIONAL_POINT,
     CURVE,
 
     /** Anything carrying an infinite line: a line, a segment or a ray (`Document.carrierLine`). */
@@ -1030,8 +1049,21 @@ object Tools {
             // ----- the sweep (OP-26, step 2): the one solid whose *axis* is a curve. Two tools, one feature
             // and one frame: *Tube* takes a radius, because a circular run is the everyday case and a circle
             // needs no drawing; *Sweep* takes any closed area, drawn wherever it was convenient and read in
-            // the moving frame's own coordinates with its origin on the path — so a section drawn off the
-            // origin sweeps off the path by exactly that much, and no offset argument exists.
+            // the moving frame's own coordinates — by default with its origin on the path, so a section drawn
+            // off the origin sweeps off the path by exactly that much.
+            //
+            // **And an optional third pick says which point of the section rides the run** (GitHub issue #15):
+            // a worm thread drawn *in place* at the shaft's surface is 5 mm off the drawing's origin and
+            // therefore orbited 5 mm off its own coil, which the node then refused by name for outgrowing the
+            // bend — correctly, because what was stated was not what was meant. The cure is the anchor the
+            // user can *state* (DESIGN.md's *"explicit anchors beat compensation"*) and never a compensating
+            // offset the tool computes: an ordinary point pick, shared by node when it lands on an existing
+            // point, so dragging it moves the swept body. Optional in the [SlotKind.OPTIONAL_POINT] sense —
+            // a click that hits no point is the *profile's* click — so the two-pick gesture is untouched and
+            // every drawing written before this means exactly what it meant.
+            //
+            // *Tube* deliberately gains nothing: a round section centred on the path has no off-origin
+            // reading to correct, since its radius *is* its reach and its centre is the run.
             //
             // **Roll and twist are defaulted angle slots on both**, which is why neither gesture grew a step:
             // with nothing typed they are zero and the tool completes on its last click. The roll is a real
@@ -1039,7 +1071,7 @@ object Tools {
             // twist is what closes a non-planar closed run, which is the one case the node refuses by name
             // and tells you the number to type.
             ToolDef(TUBE, "Tube along a curve", ToolCategory.SOLIDS, listOf(SlotKind.PATH3), scalars = listOf(len("radius"), ang("roll", 0.0), ang("twist", 0.0)), help = "Type a radius (or pick a parameter in the panel), then click a curve in space: a round tube follows it — a cable, a conduit, a handrail. Type a roll after the radius to turn the section about the run at its start, and a twist for the total turn from one end to the other. The curve stays live: drag a point it runs through and the tube follows. In the plan the tube shows the outline of its two sides, which is exactly where they are; an end face is closed by a straight line across it, and where the run points straight down into the plan you see the section itself.", slotNames = listOf("curve in space")) { d, p, s -> d.tubeAlongCurve(p.elements[0], s[0], s.getOrNull(1), s.getOrNull(2)) },
-            ToolDef(SWEEP, "Sweep (profile along a curve)", ToolCategory.SOLIDS, listOf(SlotKind.PATH3, SlotKind.AREA), scalars = listOf(ang("roll", 0.0), ang("twist", 0.0)), help = "Click a curve in space, then a closed area — an outline, a wall footprint, a circle, a rounded rectangle: it is carried along the curve, read in the moving frame with the area's own origin on the path, so an area drawn off the origin sweeps off the run. Type a roll first to turn the section about the run at its start, and a twist after it for the total turn from end to end. Both stay parameters. In the plan a swept body shows the outline of its two sides; an end face is closed by a straight line across it, and where the run points straight down into the plan you see the section itself.", slotNames = listOf("curve in space", "profile")) { d, p, s -> d.sweepAlongCurve(p.elements[0], p.elements[1], s.getOrNull(0), s.getOrNull(1)) },
+            ToolDef(SWEEP, "Sweep (profile along a curve)", ToolCategory.SOLIDS, listOf(SlotKind.PATH3, SlotKind.OPTIONAL_POINT, SlotKind.AREA), scalars = listOf(ang("roll", 0.0), ang("twist", 0.0)), crossSpace = true, help = "Click a curve in space, then a closed area — an outline, a wall footprint, a circle, a rounded rectangle: it is carried along the curve, read in the moving frame. Between the two you may click one **point of the section that is to ride the run**: the area then travels with that point on the curve, which is how a section drawn *in place* — a thread at the shaft's surface, a rail beside its route — is swept without moving the drawing. Aim at that point (a click nearer the area's edge than to any point of it is the area's own click), and click no point at all if you want the area's own origin to ride the run, in which case an area drawn off the origin sweeps off it by exactly that much. The point is shared, so dragging it moves the body; it must be a point of the same sketch plane the area is drawn in. The curve and the area may live in different planes: switch the plane between clicks and the picks are kept. Type a roll first to turn the section about the run at its start, and a twist after it for the total turn from end to end. Both stay parameters. In the plan a swept body shows the outline of its two sides; an end face is closed by a straight line across it, and where the run points straight down into the plan you see the section itself.", slotNames = listOf("curve in space", "point of the section to ride the run", "profile")) { d, p, s -> d.sweepAlongCurve(p.elements[0], p.elements[1], s.getOrNull(0), s.getOrNull(1), p.points.firstOrNull()) },
             // ----- and back down again (OP-17's downward direction). *Extrude on face* is the
             // sketch->feature->sketch loop as one gesture: the plan is drawn in the same 2D space, and the
             // tool only says which solid's top face it is stacked on (through `facePlane`, OP-8).
@@ -1235,11 +1267,22 @@ object Tools {
      */
     fun needsExistingPoint(kind: SlotKind?): Boolean = kind == SlotKind.EXISTING_POINT || kind == SlotKind.ON_CIRCLE_POINT
 
+    /**
+     * Whether a slot of [kind] may be left **unfilled** — see [SlotKind.OPTIONAL_POINT] for the whole of
+     * what that means at the gesture.
+     *
+     * A predicate over the kind rather than a flag on the tool, deliberately: which slots a tool has is the
+     * table's business, and *whether a pick can be absent* is a property of what the pick is for. A second
+     * declaration beside the slot list would be a second table to keep in step.
+     */
+    fun isOptionalSlot(kind: SlotKind?): Boolean = kind == SlotKind.OPTIONAL_POINT
+
     /** The generic word for a slot of [kind] — [ToolDef.roleOf]'s fallback when a tool declares no name. */
     fun roleOfKind(kind: SlotKind?): String =
         when (kind) {
             null -> "input"
             SlotKind.PLACE_POINT, SlotKind.POINT, SlotKind.INPUT_POINT, SlotKind.EXISTING_POINT -> "point"
+            SlotKind.OPTIONAL_POINT -> "point to ride on (optional)"
             SlotKind.ON_CIRCLE_POINT -> "point on circle"
             SlotKind.CURVE, SlotKind.EXTRACTABLE -> "curve"
             SlotKind.LINE -> "line"

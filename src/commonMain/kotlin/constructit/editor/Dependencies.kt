@@ -115,6 +115,10 @@ object Dependencies {
             val pick =
                 when (slot) {
                     SlotKind.PLACE_POINT, SlotKind.POINT -> points.getOrNull(pi++)
+                    // an optional slot spends a point only when the step recorded one (see
+                    // [SlotKind.OPTIONAL_POINT]) — otherwise it names nothing and the slots behind it keep
+                    // their own words
+                    SlotKind.OPTIONAL_POINT -> points.getOrNull(pi)?.also { pi++ }
                     SlotKind.SIDE -> null
                     else -> elements.getOrNull(ei++)
                 }
