@@ -3815,6 +3815,89 @@ all of that back at once, which is the payoff of picking having a single seam. T
 out is a `PointSetValue` — an ordered solution set is scaffolding for the `Select` beside it (OP-1), and it is
 that selected point, an element of its own, a click is meant to reach.
 
+### Implementation status (as built — the refusal speaks the drawing's language, and offers the way through)
+
+The demand, verbatim — a group named `base` over a molding built from a pillar's section:
+
+> "Can't place base: n2, oc1, oc2, n4, oc4, n7, oc9, n10 are also used by e3, e5, e7, e8, e9, e10, e11, e12,
+> e13, e14, e15, e16, e17, e18, e19, e20, e21, e22, e23, e24, e25, e26, e27, e28, e29, e30, e31 — include them
+> in the group, or this group cannot move independently"
+>
+> "completely annoying … almost impossible to do so…???"
+
+**The decision behind that message was right and is unchanged.** A base built from the pillar's own section is
+built on freedom the rest of the drawing shares, so it genuinely cannot move independently; a flat group is the
+correct everyday outcome and the frame stays the default (the session-13 note above). What was wrong was
+everything *around* the decision, and it was four separate faults:
+
+- **The group had been created** — flat, correctly — and the message never said so, so a successful gesture read
+  as total failure. The status now leads with what succeeded: *"Grouped 9 elements as base — flat: …"*, and the
+  reason follows as a kind of group rather than as an error.
+- **It printed internal node ids.** `n2 … n10` are the **`IndirectNode`s an ortho vertex is published through**
+  and `oc1 … oc9` the **shared coordinate masters** behind them — eight ids for what the user sees as four
+  corners. `Document.labelOf` had asked `node as? SourceNode` first, so an `IndirectNode` fell straight past the
+  element lookup, and a coordinate scalar has no element publishing it at all. It now answers for **any** node:
+  the element that displays it (through an indirect view included), the **corner element** an ortho coordinate
+  belongs to (via `writableMaster`, since a straight run shares one master), the meeting a junction parameter is
+  the freedom of (OP-20), a space's own origin — and, for a node nothing publishes, *what it is* of the drawing
+  that leans on it ("a shared coordinate of e12"). Never an id. That is OP-18's naming authority applied where it
+  had leaked, and the same fix cleans up the unweld note, which read `boundTo` through the same function.
+- **It enumerated the drawing.** 27 consumers listed is a wall, not a report. `summarizeNames` names three and
+  counts the rest ("e10, e11, e12 and 11 more of the drawing"), five for the shared positions. The two other
+  sites that print the same analysis were audited with it: `Document.placementWarnings` had the identical id
+  leak *and* printed `consumer.id` — a runtime id, which is not even the script name.
+- **And "include them in the group" asked for a hand-pick with no affordance.** The set being demanded is
+  computable, so the dialog computes it: `Document.placementClosure` is a **fixpoint** (pulling a consumer in
+  gives the group that consumer's freedom, which may be shared further out) over the two honest-failure cases —
+  a conflict's consumer, and the element holding a position a member leans on, which for an ortho coordinate is
+  the **whole path**, a path being one unit of freedom. The create dialog offers it as one tick,
+  *"include everything these points are built on"*, with the count **before** confirming ("+ 14 elements") and
+  honestly when that is everything ("that is the whole drawing; leaving it flat may be the better answer") — so
+  the user can decline. It is the macro dialog's own precedent one step further: ticking the closure by default
+  made a naive group movable, and this makes a group that *cannot* be movable movable in one click.
+
+**No new step semantics, and one undo either way.** The closure grows the dialog's prospective membership, which
+Create records exactly as it records any membership (a `group` step's `els=`, OP-18). Creating with the closure is
+one checkpoint (the group and its frame); a creation whose frame is refused is one checkpoint too. `placeGroup`'s
+own refusal and the creation-time note are **one sentence with two prefixes** (`Editor.placementRefusal`), so the
+panel route and the gesture cannot drift apart, and both name the tick as the way through.
+
+**What is deliberately not touched.** The framed-by-default decision (session 13) and the placement semantics
+underneath it: `FramedGroupDefaultTest` and `GroupClosureTest` pin them and are unedited. `GroupCreationWordsTest`
+carries the reported drawing verbatim and asserts the reported ids are the ones the analysis still yields — so
+what changed is what the user is told, and what they can do about it.
+
+**And the closure exposed a real defect one layer down: a sketch space's origin is not a group's freedom.**
+Running the package against the user's *own* file (rather than a reconstruction of it) placed the molding and
+then failed `save → load → save` after a frame **drag**, on one line — a rider's restated parameter,
+`pointoncurve e17 … dofs=-76.51mm` written, `dofs=-45.09mm` reloaded, exactly one frame-delta apart along the
+carrier. The rider's restatement was not the fault. `SketchSpace.originAnchor` is *a free point at (0, 0) in the
+plane's own coordinates*, and to `analysePlacement` it looks exactly like a capturable free point: unbound,
+`PointValue`, and displayed by **no element** — which is the case `ownedBy` answers *"owned"* for. So the frame
+captured it, and it is wrong three times over:
+
+- **it is not a world position.** Framing it slides the whole sketch on that plane sideways in u/v; in the
+  reported drawing that cancelled the pillar's own motion, so the section looked stationary while the solid
+  moved, and the rider measured along a carrier that had moved once against a sketch that had moved back.
+- **it is not the group's.** A space is shared — one group's frame would drag every other drawing on that plane.
+- **and no step restates it**, so it does not survive replay: the file said one position and reloaded to
+  another. That is the byte-inequality, and it was the *file* being wrong rather than the writer.
+
+The rule is therefore stated once and applied at both ends (`Document.isSpaceAnchor`): a space's origin is
+**neither captured nor pinned** — it cannot be carried by a frame, and it cannot hold anything back either,
+because it is not a world position. What makes a sketch follow a placed group is the honest mechanism that was
+always there: a plane **hinged on member geometry** follows by construction (the reported drawing's `plane1` is
+hinged on a perpendicular bisector of two path vertices, so it does), and a section of a solid that moved is
+simply cut where the solid now is. A plane that hangs on nothing in the group does not follow, which is the
+cross-space boundary named in the queue rather than something a capture may fake. `GroupWordsProbeTest` carries
+the user's script verbatim as the permanent regression; `GroupCreationWordsTest` asserts the anchor stands at its
+plane's own origin before and after a frame drag.
+
+**No rider form was found that cannot be frame-carried.** The three the placement already classifies stand
+unchanged — an along-carrier rider is re-anchored, an on-circle angle and a span ratio are rigid as they are —
+and the reported rider was *already* carrier-relative (`makerel`), so the placement correctly left it alone. It
+round-trips now because the geometry it is measured against is the same before and after a reload.
+
 ## Going to 3D
 
 - Sketch → feature → sketch loop (sketch on datum plane → extrude/revolve/sweep → derive
@@ -10756,6 +10839,37 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   nothing until the next canvas click forced one — the handler now repaints like every other panel handler.
   The rest of that report — the placement refusal that prints internal node ids and demands an impossible
   hand-pick — is queued as its own package (the group-creation UX).
+- **Session 55, fourth sitting — the group that "cannot move independently", said in node ids (the user's
+  report, retiring the queued group-creation UX package).** The message was
+  *"Can't place base: n2, oc1, oc2, n4, oc4, n7, oc9, n10 are also used by e3, e5, … e31 — include them in the
+  group"*, and the verdict on it was *"completely annoying … almost impossible to do so…???"*. The **decision**
+  it carried was correct — a base built from the pillar's own section is built on freedom the drawing shares, so
+  a flat group is the right everyday outcome and the framed-by-default rule (session 13) stands. Everything
+  around it was wrong, in four separable ways, and each had a different cause. The group **had been created**
+  and the message never said so, so a gesture that worked read as total failure. The ids were the
+  `IndirectNode`s an ortho vertex is published through and the shared coordinate masters behind them — eight
+  internal names for four corners the user can see — because `labelOf` asked `node as? SourceNode` before it
+  asked which element publishes the node, which an indirect view never is; it now answers for **any** node and
+  ends in "a shared coordinate of e12" rather than an id, which is OP-18's naming authority applied where it
+  had leaked (`placementWarnings` had the same leak *and* printed a **runtime** id). The consumer flood is now
+  three names and a count. And "include them in the group" is now a computation rather than a demand:
+  `Document.placementClosure` is the **fixpoint** of "pull in what conflicts, pull in what holds what a member
+  leans on" — a path pulled in whole, since a path is one unit of freedom — offered in the create dialog as one
+  tick with the count stated **before** confirming, and honestly when the count is the whole drawing. That is
+  the macro dialog's own precedent extended: ticking the closure by default made a naive group movable, and
+  this makes a group that cannot be movable movable in one click. No format change and no new step semantics —
+  the closure grows the dialog's prospective membership, which Create records as it records any membership, and
+  creating with it is one checkpoint. **And the closure exposed a real defect one layer down**, found by
+  running the package against the user's *own* file rather than a reconstruction: a placed group whose frame had
+  been **dragged** did not `save → load → save` byte-equal, diverging on one rider's restated parameter by
+  exactly one frame-delta along its carrier. The restatement was innocent — `SketchSpace.originAnchor`, a free
+  point at (0, 0) *in the plane's own coordinates* that no element displays, was being **captured** as if it
+  were one of the group's world points, so a frame drag slid the whole sketch on that plane in u/v, and nothing
+  restates that anchor, so replay rebuilt it at (0, 0) and the file reloaded to a different drawing. A space's
+  origin is now neither captured nor pinned (`Document.isSpaceAnchor`); what makes a sketch follow a placed
+  group is the mechanism that was always there — a plane hinged on member geometry follows by construction, and
+  a section of a solid that moved is cut where the solid now is. No rider form turned out to be uncarriable.
+  **1784 → 1792 green**, nothing cut. See *the refusal speaks the drawing's language* under OP-16.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -12656,6 +12770,22 @@ pictures a `SOLID` slot reads and cannot be a further boolean's operand by click
 (`BooleanCrossSpaceTest`). Two honest answers exist and neither is this package's: give a mesh boolean the
 **silhouette** plan an imported body already gets (`Silhouette.of`, which would make it drawn *and* picked in
 one stroke), or 3D picking. The miss at least says where to look now.
+
+**Retired in session 55, fourth sitting: the group-creation UX** — queued one sitting earlier out of the same
+user's report and delivered whole. What it retires is not a design question but four failures of *speech* around
+a decision that was already right: a created group that never said it had been created, a refusal printing
+internal node ids (OP-18's naming authority leaking through `labelOf`'s `as? SourceNode`), a consumer list that
+enumerated the drawing, and an instruction — "include them in the group" — that named no way to obey it. All four
+are closed, and the last one by computing the set being demanded (`Document.placementClosure`, a fixpoint) and
+offering it as one tick with its count stated before confirming. Riding it, one correctness defect the closure
+**exposed** rather than caused: a sketch space's origin anchor was being captured by a group's frame, which made
+a dragged placement write a file that reloaded to a different drawing — see the note under OP-16 and
+`GroupWordsProbeTest`, which carries the user's script verbatim. It leaves **one thing parked**, stated where it
+belongs: a group whose members are drawn on a plane that hangs on **nothing in the group** does not carry that
+plane, so the sketch on it stays where it is while the group moves. That is OP-17's cross-space question rather
+than this one's, and it is now the *honest* answer rather than one a capture faked: what makes a sketch follow is
+a plane hinged on member geometry, which follows by construction. See *the refusal speaks the drawing's language*
+under OP-16.
 
 **Named in session 37 and not yet queued — two gaps a real structural part shows** (from a cast arm looked at
 in the round): **3D edge blends**, which is most of what the eye reads as a casting and is a dimensioned

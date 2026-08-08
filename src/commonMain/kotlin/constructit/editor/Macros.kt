@@ -12,6 +12,13 @@ package constructit.editor
 const val MACRO_TOOL_PREFIX = "macro:"
 
 /**
+ * The create dialog's one-click closure (OP-16), named once: the refusal quotes it, the dialog labels its
+ * checkbox with it, and the browser shell renders that label — so the way out is worded the same wherever
+ * the user meets it.
+ */
+const val INCLUDE_CLOSURE_LABEL = "include everything these points are built on"
+
+/**
  * A macro **definition** (OP-6): the sub-construction behind [elements], with the free sources
  * designated as inputs.
  *
@@ -132,11 +139,23 @@ class InputCandidate(
 class CreateDialog(
     val mode: CreateMode,
     var name: String,
-    val members: List<Element>,
+    members: List<Element>,
     val candidates: List<InputCandidate>,
     /** Set when a *tool* is impossible; a group is still offered, since it needs none of this. */
     val problem: String? = null,
+    /**
+     * What the group would still have to contain to be placeable (`Document.placementClosure`) — a function
+     * because a dialog is built from an analysis and holds no document, exactly as the naming hook is.
+     */
+    private val closureOf: (List<Element>) -> List<Element> = { emptyList() },
+    /** How many elements the drawing has, so the closure can say honestly when it swallows all of it. */
+    private val drawingSize: Int = 0,
 ) {
+    private val memberList = ArrayList(members)
+
+    /** The elements the thing being made is built of — grown by [includeClosure], never by anything else. */
+    val members: List<Element> get() = memberList
+
     val title: String get() = if (mode == CreateMode.TOOL) "Make a tool" else "Group"
 
     /**
@@ -193,6 +212,63 @@ class CreateDialog(
     fun toggle(index: Int): Boolean {
         val c = candidates.getOrNull(index) ?: return false
         c.checked = !c.checked
+        closureCache = null // a different membership is built on different things
+        return true
+    }
+
+    // ---- the one-click closure (OP-16's honest failure, with a way through it) ----
+
+    private var closureCache: List<Element>? = null
+
+    /**
+     * The elements this group would **also** have to contain to move independently — the answer to the
+     * refusal the user could not act on (*"include them in the group"*, over dozens of elements, "almost
+     * impossible to do"). Computed over the membership as it stands, ticks included, since a ticked freedom
+     * is already on its way in.
+     *
+     * Empty in [CreateMode.TOOL]: a macro's inputs are *ports*, so what its closure reaches is captured by
+     * design rather than pulled in (OP-6).
+     */
+    val closure: List<Element> get() =
+        closureCache ?: (if (mode == CreateMode.TOOL) emptyList() else closureOf(members + checkedPoints.filter { p -> members.none { it === p } }))
+            .also { closureCache = it }
+
+    /** The action's label — one sentence, in the words the refusal uses. */
+    val closureLabel: String get() = INCLUDE_CLOSURE_LABEL
+
+    /**
+     * What ticking it costs, **as a count, before confirming** — and honestly when that is everything: a
+     * closure that swallows the drawing is a decision the user should be able to decline, not a surprise.
+     */
+    val closureNote: String get() =
+        when {
+            closure.isEmpty() -> "nothing more is needed — this group already moves as one"
+            members.size + closure.size >= drawingSize && drawingSize > 0 ->
+                "+ ${closure.size} elements — that is the whole drawing; leaving it flat may be the better answer"
+            else -> "+ ${closure.size} element${if (closure.size == 1) "" else "s"}"
+        }
+
+    /** Whether the affordance is worth showing at all — still true once taken, so the tick does not vanish. */
+    val hasClosure: Boolean get() = closureTaken || closure.isNotEmpty()
+
+    /**
+     * Whether the closure has been taken in. Membership only ever **grows** here, so the tick is one-way and
+     * the shell renders it as such; the way back is Cancel, which is the way back from every other choice in
+     * this dialog too.
+     */
+    var closureTaken: Boolean = false
+        private set
+
+    /**
+     * Take the closure in — the one click. Membership grows exactly as a ticked candidate's does and is
+     * recorded exactly as any membership is (a `group` step's `els=`, OP-18): no new step semantics.
+     */
+    fun includeClosure(): Boolean {
+        val extra = closure
+        if (extra.isEmpty()) return false
+        memberList.addAll(extra.filter { e -> memberList.none { it === e } })
+        closureCache = null
+        closureTaken = true
         return true
     }
 
@@ -232,6 +308,10 @@ class CreateDialog(
             // how to name an element to the user — its script-local name (OP-18, [Document.nameOf]); a
             // function because a dialog is built from an analysis and has no document to ask
             name: (Element) -> String = { it.id },
+            // what a membership would still have to contain to be placeable, and how big the drawing is —
+            // the one-click closure's two inputs (OP-16), both asked of the document
+            closureOf: (List<Element>) -> List<Element> = { emptyList() },
+            drawingSize: Int = 0,
         ): CreateDialog {
             val tool = mode == CreateMode.TOOL
             // A tool's point rows are the *free points* only — an input port is clicked, and only a free point
@@ -248,7 +328,7 @@ class CreateDialog(
                 } else {
                     analysis.freedoms.map { InputCandidate(it.label, it.element, null, true) }
                 }
-            return CreateDialog(mode, "", members, rows, analysis.problems.firstOrNull()?.takeIf { tool })
+            return CreateDialog(mode, "", members, rows, analysis.problems.firstOrNull()?.takeIf { tool }, closureOf, drawingSize)
         }
     }
 }

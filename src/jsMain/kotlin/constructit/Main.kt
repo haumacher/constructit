@@ -526,6 +526,13 @@ private fun setupApp() {
             t.id == "cd-cancel" -> editor.cancelCreate()
             // "movable (with frame)" — ticked by default, so confirming creates *and* places (OP-16 step 2)
             t.id == "cd-framed" -> d.framed = (t as HTMLInputElement).checked
+            // the one-click closure (OP-16): the shell routes, [Editor.includeCreateClosure] decides — and
+            // since it grows the membership, the dialog has to be re-rendered with its new count
+            t.id == "cd-closure" -> {
+                editor.includeCreateClosure()
+                dialogShown = null
+                renderCreateDialog(editor)
+            }
             // the checkbox has already flipped itself in the DOM; keep the model in step with it
             t is HTMLInputElement -> t.getAttribute("data-cidx")?.toIntOrNull()?.let { i -> d.toggle(i) }
         }
@@ -1164,11 +1171,22 @@ private fun renderCreateDialog(editor: Editor) {
                 "${if (d.framed) " checked" else ""}><span>${d.framedLabel}</span>" +
                 "<span class=\"tports\">${d.framedMeaning}</span></label>"
         }
+    // the one-click closure (OP-16): what the group is built on, offered as a count *before* confirming, so
+    // "include them in the group" is a click rather than a hand-pick of dozens of elements (the user's report)
+    val closure =
+        if (d.mode != CreateMode.GROUP || !d.hasClosure) {
+            ""
+        } else {
+            val taken = if (d.closureTaken) " checked disabled" else ""
+            "<label class=\"cdrow\" title=\"${d.closureNote}\"><input type=\"checkbox\" id=\"cd-closure\"$taken>" +
+                "<span>${d.closureLabel}</span><span class=\"tports\">${d.closureNote}</span></label>"
+        }
     host.innerHTML =
         "<div class=\"cdtitle\">${d.title} — ${d.members.size} element(s)</div>" +
         "<div class=\"cdhelp\">${d.help}</div>" +
         "<input id=\"cd-name\" type=\"text\" placeholder=\"name\" value=\"${d.name}\">" +
         framed +
+        closure +
         rows +
         "<div class=\"cdbuttons\"><button id=\"cd-ok\">Create</button><button id=\"cd-cancel\">Cancel</button></div>"
 }

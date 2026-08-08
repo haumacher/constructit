@@ -1490,7 +1490,15 @@ class Editor(
             return null
         }
         val members = selectedElements
-        val d = CreateDialog.of(mode, members, doc.analyseMacro(members)) { doc.nameOf(it) }
+        val d =
+            CreateDialog.of(
+                mode,
+                members,
+                doc.analyseMacro(members),
+                { doc.nameOf(it) },
+                { doc.placementClosure(it) },
+                doc.elements.size,
+            )
         createDialog = d
         statusHint = d.help
         onChange()
@@ -1501,6 +1509,27 @@ class Editor(
         createDialog = null
         statusHint = ""
         onChange()
+    }
+
+    /**
+     * The create dialog's **one-click closure** (OP-16): pull in everything the ticked freedoms are built on,
+     * so the group can move independently. The shell's checkbox routes here and the dialog decides — the same
+     * discipline every other control of that dialog follows, so it is driven headlessly too.
+     *
+     * Nothing is created yet: this grows the *prospective* membership, which Create then records as it records
+     * any membership (OP-18).
+     */
+    fun includeCreateClosure(): Boolean {
+        val d = createDialog ?: return false
+        val n = d.closure.size
+        if (!d.includeClosure()) {
+            statusHint = "Nothing more to include — this group already moves as one"
+            onChange()
+            return false
+        }
+        statusHint = "Added $n element${if (n == 1) "" else "s"} the group is built on — ${d.members.size} in all, and it can be placed"
+        onChange()
+        return true
     }
 
     /**
@@ -1533,10 +1562,14 @@ class Editor(
                     // The frame is the default, so the everyday group is movable the moment it exists. A
                     // refusal is **not** a failure of the gesture: the group is created flat and the reason is
                     // shown, which is the same honest answer Place gives — and a flat group is a purpose of
-                    // its own (an array original), not a consolation. [Editor.placeGroup] says which of the
-                    // two happened, and that is the half the canvas cannot show, so it is kept verbatim.
+                    // its own (an array original), not a consolation.
+                    //
+                    // **The message therefore leads with what succeeded** (the user's report: the refusal was
+                    // appended to a creation that had worked, so it read as total failure). The reason is
+                    // asked for *before* placing so the two readings share one sentence ([placementRefusal]).
+                    val refusal = if (d.framed) placementRefusal(g) else null
                     val placeNote =
-                        if (!d.framed) {
+                        if (!d.framed || refusal != null) {
                             null
                         } else {
                             placeGroup(g, commit = false)
@@ -1544,6 +1577,7 @@ class Editor(
                         }
                     statusHint =
                         when {
+                            refusal != null -> "$made — flat: $refusal"
                             placeNote != null -> "$made. $placeNote"
                             d.warnings.isEmpty() -> "$made — a named set, with no frame"
                             else -> "$made, but " + d.warnings.joinToString("; ")
@@ -1622,12 +1656,51 @@ class Editor(
     // ---- placed groups (OP-16 step 2) ----
 
     /**
+     * Why [g] cannot carry a frame, in the user's words — null when it can (OP-16's honest-failure rule).
+     *
+     * **One sentence, two gestures.** Placing from the panel prefixes it with *"Can't place kitchen: "*;
+     * creating a framed group that the same reason refuses prefixes it with what nevertheless *succeeded*
+     * ("Grouped 12 elements as base — flat: …"), because the group is created either way and a message that
+     * opens with a refusal reads as total failure — which is exactly how the reported one read.
+     *
+     * Three properties the wording owes the user, all of them what the report was about:
+     *
+     * - **every position is named as the drawing names it** (OP-18's naming authority — [Document.labelOf]
+     *   answers for an ortho vertex, a shared coordinate and a junction alike, and never with a node id);
+     * - the lists are **summarized** ([summarizeNames]): a refusal naming 27 consumers is a wall;
+     * - and it says what to *do*, naming the create dialog's one-click closure rather than asking for a
+     *   hand-pick of dozens of elements.
+     */
+    fun placementRefusal(
+        g: Group,
+        analysis: Placement = doc.analysePlacement(g),
+    ): String? {
+        if (analysis.conflicts.isNotEmpty()) {
+            val points = analysis.conflicts.map { it.point }.distinct()
+            val consumers = analysis.conflicts.map { doc.nameOf(it.consumer) }.distinct()
+            val verb = if (points.size == 1) "is" else "are"
+            return "${summarizeNames(points, POINTS_NAMED)} $verb also used by " +
+                "${summarizeNames(consumers, CONSUMERS_NAMED, "more of the drawing")} outside it, " +
+                "so this group cannot move independently — tick \"$INCLUDE_CLOSURE_LABEL\" in the Group " +
+                "dialog to take ${if (points.size == 1) "what it carries" else "what they carry"} in with it, or leave it flat"
+        }
+        // the refusal survives only for a group that owns no freedom **at all** — of any kind: ortho paths and
+        // the walls riding them are carried (OP-16's ortho-path bonus), and so are riders, polar offsets and
+        // on-circle angles (see [Document.analysePlacement]), so owning no free *point* is not a reason
+        if (!analysis.carriesSomething) {
+            return "it owns no degree of freedom, so a frame would have nothing to move" +
+                if (analysis.uncapturable.isEmpty()) "" else " (${analysis.uncapturable.joinToString("; ")})"
+        }
+        return null
+    }
+
+    /**
      * Place [g]: give it a frame and make the free points it owns frame-relative, so moving the group is
      * one write on the frame. Geometry is unchanged by construction — the retrofit is world-invariant.
      *
      * Refused, with the ambiguity named, when a free point the group owns is also used from outside: that
      * group cannot move independently, and which of the two should own the point is a modelling decision
-     * the editor must not make silently (OP-16).
+     * the editor must not make silently (OP-16) — see [placementRefusal] for the words.
      */
     fun placeGroup(
         g: Group,
@@ -1639,24 +1712,8 @@ class Editor(
             return false
         }
         val analysis = doc.analysePlacement(g)
-        if (analysis.conflicts.isNotEmpty()) {
-            val points = analysis.conflicts.map { it.point }.distinct()
-            val consumers = analysis.conflicts.map { doc.nameOf(it.consumer) }.distinct()
-            val verb = if (points.size == 1) "is" else "are"
-            statusHint =
-                "Can't place ${g.name}: ${points.joinToString(", ")} $verb also used by " +
-                "${consumers.joinToString(", ")} — include ${if (points.size == 1) "it" else "them"} in the group, " +
-                "or this group cannot move independently"
-            onChange()
-            return false
-        }
-        // the refusal survives only for a group that owns no freedom **at all** — of any kind: ortho paths and
-        // the walls riding them are carried (OP-16's ortho-path bonus), and so are riders, polar offsets and
-        // on-circle angles (see [Document.analysePlacement]), so owning no free *point* is not a reason
-        if (!analysis.carriesSomething) {
-            statusHint =
-                "Can't place ${g.name}: it owns no degree of freedom, so a frame would have nothing to move" +
-                if (analysis.uncapturable.isEmpty()) "" else " (${analysis.uncapturable.joinToString("; ")})"
+        placementRefusal(g, analysis)?.let {
+            statusHint = "Can't place ${g.name}: $it"
             onChange()
             return false
         }

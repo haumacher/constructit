@@ -134,6 +134,25 @@ class BrowserE2ETest {
             assertTrue(before != after, "Space+drag should pan the view")
             assertTrue(page.querySelectorAll(".item").size == itemsBuilt, "panning must not change the drawing")
 
+            // **The one-click closure**, in the real dialog (OP-16): a group of *one* point of this
+            // construction could never move independently — the line and the circle are built on it — so the
+            // dialog offers to take what it is built on in, with the count, *before* anything is created.
+            // Only the browser can say the row is there and that clicking it grows the membership.
+            page.click("#tool-select")
+            page.click("#tree .item") // the first point, reached by name rather than by a moved pixel
+            page.click("#g-add")
+            assertTrue(
+                page.querySelector("#cd-closure") != null,
+                "the closure tick is offered: ${page.querySelector("#create-dialog").innerHTML()}",
+            )
+            val alone = page.querySelector("#create-dialog .cdtitle").textContent()
+            page.click("#cd-closure")
+            val withClosure = page.querySelector("#create-dialog .cdtitle").textContent()
+            assertTrue(alone != withClosure, "one click grows the membership: $alone -> $withClosure")
+            assertTrue(page.querySelector("#cd-closure").isChecked(), "…and the tick stays, one-way")
+            page.click("#cd-cancel")
+            assertTrue(page.querySelectorAll("#groups-list .grow").isEmpty(), "Cancel made nothing")
+
             // marquee + grouping through the panel, end to end: a box across the whole canvas takes
             // everything, and the Group button turns that selection into a named group (OP-16)
             page.mouse().move(box.x + box.width * 0.05, box.y + box.height * 0.95)

@@ -577,6 +577,29 @@ class FrameCapture(
 /** A free point of a placed group's closure that something *outside* the group also uses (OP-16). */
 class SharedPoint(val point: String, val consumer: Element)
 
+/** How many shared positions a refusal names before it starts counting — see [summarizeNames]. */
+const val POINTS_NAMED = 5
+
+/** How many consumers a refusal names before it starts counting: enough to look at, never a list. */
+const val CONSUMERS_NAMED = 3
+
+/**
+ * Name at most [keep] of [names] and **count** the rest (OP-16's honest failure, said in one breath).
+ *
+ * A refusal that lists every element of the drawing is a wall rather than a report: the user's own message
+ * named 27 consumers and 8 raw node ids, and what it had to say was *"this is shared with most of the
+ * drawing"*. So the list is a sample plus a number — the sample is what to look at, the number is how big
+ * the decision is.
+ */
+fun summarizeNames(
+    names: List<String>,
+    keep: Int,
+    tail: String = "more",
+): String {
+    if (names.size <= keep) return names.joinToString(", ")
+    return names.take(keep).joinToString(", ") + " and ${names.size - keep} $tail"
+}
+
 /**
  * One re-anchored **junction** of a placed group (OP-16 × OP-20) — the connection analogue of
  * [FrameCapture], and of the rider re-anchoring beside it.
@@ -3314,13 +3337,19 @@ class Document {
      * non-member also depends on is a [conflict][Placement.conflicts]: placing would silently capture
      * something outside, so it is refused instead.
      */
-    fun analysePlacement(g: Group): Placement {
-        val members = groupMembers(g)
+    fun analysePlacement(g: Group): Placement = analysePlacement(groupMembers(g))
+
+    /**
+     * The same analysis over a **prospective** membership — what [placementClosure] asks repeatedly while it
+     * works out what a group would still have to contain, and what the create dialog can therefore offer
+     * before anything is created.
+     */
+    fun analysePlacement(members: List<Element>): Placement {
         val memberSet = members.toHashSet()
         val candidates =
             ancestors(members.map { it.ref.node })
                 .filterIsInstance<SourceNode>()
-                .filter { it.boundTo == null && it.value is PointValue && ownedBy(it, memberSet) }
+                .filter { it.boundTo == null && it.value is PointValue && !isSpaceAnchor(it) && ownedBy(it, memberSet) }
         // the other three kinds of freedom the group may own (see [FreedomKind]): a rider to re-anchor, and
         // the two that are relative to member geometry already and therefore rigid as they stand
         val owned = freedoms(members).filter { it.owned }
@@ -3478,23 +3507,24 @@ class Document {
         val out = ArrayList<String>()
         // the positions the frame would *not* hold, named together with what holds them instead: this is what
         // an unticked candidate costs, and it is invisible on canvas until the group is moved
-        val prospective = HashSet<SourceNode>(a.candidates)
-        for (p in a.paths) prospective.addAll(coordMasters(p, 0) + coordMasters(p, 1))
-        for (j in a.junctionsToAnchor) j.param?.let { prospective.add(it) }
-        val (stuck, drivers) = deformingMembers(groupMembers(g), prospective)
+        val (stuck, pinned) = prospectiveDeformers(groupMembers(g))
         if (stuck.isNotEmpty()) {
+            // every name here is the drawing's own (OP-18) and the lists are summarized: a report that
+            // enumerates the whole drawing is a wall, not an answer (the user's message)
+            val drivers = pinned.map { labelOf(it) }.distinct()
             out.add(
-                "this group cannot move independently — ${stuck.joinToString(", ") { nameOf(it) }} " +
-                    "${if (stuck.size == 1) "is" else "are"} held by ${drivers.joinToString(", ")}, " +
+                "this group cannot move independently — ${summarizeNames(stuck.map { nameOf(it) }, POINTS_NAMED)} " +
+                    "${if (stuck.size == 1) "is" else "are"} held by ${summarizeNames(drivers, CONSUMERS_NAMED)}, " +
                     "shared with the drawing outside the group (tick those in, or group them too)",
             )
         }
         if (a.conflicts.isNotEmpty()) {
             val points = a.conflicts.map { it.point }.distinct()
-            val consumers = a.conflicts.map { it.consumer.id }.distinct()
+            val consumers = a.conflicts.map { nameOf(it.consumer) }.distinct()
             out.add(
-                "this group cannot move independently — ${points.joinToString(", ")} " +
-                    "${if (points.size == 1) "is" else "are"} shared with ${consumers.joinToString(", ")} outside it " +
+                "this group cannot move independently — ${summarizeNames(points, POINTS_NAMED)} " +
+                    "${if (points.size == 1) "is" else "are"} shared with " +
+                    "${summarizeNames(consumers, CONSUMERS_NAMED, "more of the drawing")} outside it " +
                     "(tick ${if (points.size == 1) "it" else "them"} into the group, or group those too)",
             )
         }
@@ -3827,7 +3857,7 @@ class Document {
     private fun deformingMembers(
         members: List<Element>,
         carried: Set<SourceNode>,
-    ): Pair<List<Element>, List<String>> {
+    ): Pair<List<Element>, List<SourceNode>> {
         val orthoCoords = HashSet<SourceNode>()
         for (p in orthoPaths) {
             for (v in p.vertices) {
@@ -3841,12 +3871,80 @@ class Document {
 
         fun pinned(m: Element): List<SourceNode> =
             ancestors(listOf(m.ref.node)).filterIsInstance<SourceNode>().filter { s ->
-                s.boundTo == null && s !in carried && (s.value is PointValue || s in orthoCoords || s in junctionParams)
+                s.boundTo == null && s !in carried && !isSpaceAnchor(s) &&
+                    (s.value is PointValue || s in orthoCoords || s in junctionParams)
             }
         val bad = members.filter { pinned(it).isNotEmpty() }
-        val drivers = LinkedHashSet<String>()
-        for (m in bad) pinned(m).forEach { drivers.add(labelOf(it)) }
+        // the *nodes* rather than their names, because two callers want two different things of them: the
+        // report names them (OP-18, [labelOf]) and the one-click closure has to find the elements that hold
+        // them ([placementClosure])
+        val drivers = LinkedHashSet<SourceNode>()
+        for (m in bad) drivers.addAll(pinned(m))
         return bad to drivers.toList()
+    }
+
+    /**
+     * The positions a placement of [members] would **not** hold — the pinned sources behind
+     * [placementWarnings]' first sentence, and the closure's starting point.
+     */
+    private fun prospectiveDeformers(members: List<Element>): Pair<List<Element>, List<SourceNode>> {
+        val a = analysePlacement(members)
+        val prospective = HashSet<SourceNode>(a.candidates)
+        for (p in a.paths) prospective.addAll(coordMasters(p, 0) + coordMasters(p, 1))
+        for (j in a.junctionsToAnchor) j.param?.let { prospective.add(it) }
+        return deformingMembers(members, prospective)
+    }
+
+    /**
+     * **The one click that makes a group placeable** (OP-16's honest failure, with a way through it): the
+     * elements a group of [members] would additionally have to contain, so that no position it moves is
+     * shared with the drawing outside it and nothing it leans on stays behind.
+     *
+     * The user's report is the specification — *"include them in the group, or this group cannot move
+     * independently"* read as a demand to hand-pick dozens of elements, "almost impossible to do". The set
+     * being asked for is computable, and it is a **fixpoint**, not one hop: pulling a consumer in gives the
+     * group that consumer's own freedom, which may in turn be shared with something further out. Each round
+     * adds at least one element and there are finitely many, so the sweep terminates.
+     *
+     * Two kinds are pulled in, one per honest-failure case:
+     *
+     * - a **conflict**'s consumer — a non-member built on a position the frame would take over;
+     * - the element that **holds** a position a member leans on and the frame would not carry (for an ortho
+     *   coordinate that is the whole path, since a path is one unit of freedom and is captured whole).
+     *
+     * Membership is recorded exactly as any other membership is (a `group` step's `els=`, OP-18) — this adds
+     * no step semantics, only a computed selection.
+     */
+    fun placementClosure(members: List<Element>): List<Element> {
+        val seed = members.toMutableSet()
+        val set = LinkedHashSet(members)
+        repeat(elements.size + 1) {
+            val add = LinkedHashSet<Element>()
+            val current = set.toList()
+            for (c in analysePlacement(current).conflicts) add.add(c.consumer)
+            for (n in prospectiveDeformers(current).second) add.addAll(elementsHolding(n))
+            add.removeAll(set)
+            if (add.isEmpty()) return set.filter { it !in seed }
+            set.addAll(add)
+        }
+        return set.filter { it !in seed }
+    }
+
+    /**
+     * The elements that must join a group for it to own [node] — the element displaying it, or, for an ortho
+     * coordinate, **every vertex of its path**: a path's coordinates are shared along each run, so half a
+     * path cannot be captured ([ownsPath]).
+     */
+    private fun elementsHolding(node: SourceNode): List<Element> {
+        for (path in orthoPaths) {
+            val holds =
+                path.vertices.any { v ->
+                    v.corner.xNode === node || v.corner.yNode === node ||
+                        writableMaster(v.corner.xNode) === node || writableMaster(v.corner.yNode) === node
+                }
+            if (holds) return path.vertices.mapNotNull { elementFor(it.ref) }
+        }
+        return listOfNotNull(elementOwning(node))
     }
 
     /**
@@ -3985,8 +4083,32 @@ class Document {
      * detached rider keeps ([detachRider]). One lookup, so a freed rider is as much the owner of its
      * coordinates as a point created free is.
      */
-    private fun elementOwning(node: SourceNode): Element? =
+    private fun elementOwning(node: Node): Element? =
         elements.lastOrNull { it.ref.node === node || (it.ref.node as? IndirectNode)?.boundTo === node }
+
+    /**
+     * Whether [node] is a **sketch space's origin anchor** (OP-17) — a free point at (0, 0) *in that plane's
+     * own coordinates*, and therefore never a group's degree of freedom.
+     *
+     * It looks exactly like a capturable free point to [analysePlacement] — an unbound `PointValue` source
+     * that no element displays, so [ownedBy] claims it for whatever group's closure reaches it — and
+     * capturing it is wrong three times over (a user report, session 55, found through the third one):
+     *
+     * - **it is not a world position.** It offsets the origin of a *plane*, so a frame that moves it slides
+     *   the whole sketch on that plane sideways in u/v, not through space.
+     * - **it is not the group's.** A space is shared: one group's frame would move every other drawing on
+     *   that plane with it.
+     * - **and no step restates it**, so it does not survive a reload. That is what the report showed: a
+     *   placed group whose frame had been *dragged* wrote a rider's `dofs=` measured on a sketch the capture
+     *   had slid by the frame's delta, while replay rebuilt the anchor at its own (0, 0) — so the file said
+     *   one position and reloaded to another, and `save → load → save` was not byte-equal.
+     *
+     * A plane whose hinge is member geometry follows the frame *by construction*, which is the honest
+     * mechanism and needs no capture; one that does not is the cross-space boundary named under OP-16. So the
+     * anchor is excluded from the capture **and** from the pinned kinds ([deformingMembers]): it is not a
+     * world position, so it can neither be carried nor hold anything back.
+     */
+    private fun isSpaceAnchor(node: SourceNode): Boolean = spaces.any { it.originAnchor?.node === node }
 
     /** Whether the element that *displays* [node] is one of [members] — see [analysePlacement]. */
     private fun ownedBy(
@@ -3998,16 +4120,45 @@ class Document {
     }
 
     /**
-     * How to name a source node to the user: the element showing it (by its one name, OP-18), the meeting it
-     * is the freedom of (OP-20 — a junction has no element, and a raw node id is not something the user has
-     * ever seen), else the node's own id as a last resort.
+     * How to name **any** node to the user (OP-18's naming authority: the file's script-local name is the
+     * only user-visible name, so an internal node id is never one). In order:
+     *
+     * - the element that *displays* the node — which now includes a node an element publishes through an
+     *   [IndirectNode] (an ortho vertex is exactly that, and it used to fall straight through to `n7`);
+     * - an ortho **corner coordinate**, named as the corner element that holds it — a shared scalar has no
+     *   element of its own, but the corner the user clicks does (failing that, a leg of its path);
+     * - the meeting a junction parameter is the freedom of (OP-20), and a sketch space's own origin;
+     * - and, for a node no element publishes at all, **what it is** of the drawing that leans on it —
+     *   "a shared coordinate of e12". Never the id.
      */
     private fun labelOf(node: Node): String {
+        elementOwning(node)?.let { return nameOf(it) }
         (node as? SourceNode)?.let { s ->
-            elementOwning(s)?.let { return nameOf(it) }
+            orthoCoordOwner(s)?.let { return nameOf(it) }
             junctions.firstOrNull { it.param === s }?.let { return "the connection at ${junctionName(it)}" }
+            spaces.firstOrNull { it.originAnchor?.node === s }?.let { return "the origin of ${it.name}" }
         }
-        return node.id
+        val user = elements.firstOrNull { dependsOn(it.ref.node, node, HashSet()) }
+        return if (user == null) "a shared coordinate of the drawing" else "a shared coordinate of ${nameOf(user)}"
+    }
+
+    /**
+     * The corner element an ortho coordinate node belongs to — how a shared `x`/`y` scalar is named (OP-18).
+     *
+     * Asked through [writableMaster] as well as directly, because the coordinates of a straight run are
+     * *shared*: the node a capture or a conflict names is the run's **master**, and the corner that holds it
+     * is what the user sees and clicks.
+     */
+    private fun orthoCoordOwner(node: SourceNode): Element? {
+        for (path in orthoPaths) {
+            for (v in path.vertices) {
+                val holds =
+                    v.corner.xNode === node || v.corner.yNode === node ||
+                        writableMaster(v.corner.xNode) === node || writableMaster(v.corner.yNode) === node
+                if (holds) return elementFor(v.ref) ?: path.legs.firstOrNull()
+            }
+        }
+        return null
     }
 
     /** [roots] and every node they (transitively) depend on. */
