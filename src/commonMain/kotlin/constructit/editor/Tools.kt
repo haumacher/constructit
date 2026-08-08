@@ -219,7 +219,27 @@ class ScalarSlot(
      * does when it is handed no value — for the ratio slot, 0.5, which is exactly `cx.midpoint`.
      */
     val default: Quantity? = null,
-)
+    /**
+     * Whether the [default] chooses a **construction** rather than merely a value — and therefore cannot
+     * become a degree of freedom the step owns (see [ToolDef.ownedSlots]).
+     *
+     * The distinction is the no-solver stance's own: *Midpoint* with no factor builds `cx.midpoint`, a
+     * derived point with **no** freedom at all, while a factor makes it a ratio point that can be dragged
+     * off centre — two different constructions, and 0.5 is the name of the first, not a value of the second.
+     * A polygon's corner radius is the same sentence about structure (OP-21): 0 builds plain segments and a
+     * radius builds OP-23's rounded pattern, so the number decides *how many nodes exist*.
+     *
+     * Declared, never inferred: what a build does when handed no value is the build's own business, so the
+     * table says which kind of default this is rather than the runner guessing from the number.
+     */
+    val structural: Boolean = false,
+) {
+    /**
+     * Whether a *step* can own this slot's value as a freedom when nobody stated one: it has a default to
+     * stand at, and that default is a value rather than a choice of construction ([structural]).
+     */
+    val ownable: Boolean get() = default != null && !structural
+}
 
 /**
  * CUSTOM is where a document's **user-defined macros** land (OP-6): a macro *is* a [ToolDef], so the
@@ -508,6 +528,31 @@ class ToolDef(
      * a defaulted slot must never stand in front of one the tool is waiting for.
      */
     val requiredScalars: Int get() = scalars.count { it.default == null }
+
+    /**
+     * The scalar slots this tool's **step owns as freedoms** when [picked] of them were typed or picked in
+     * order — the defaulted values nobody stated, which the step restates (`dofs=`, OP-18) and the result
+     * element's fields let anybody edit for ever (OP-13).
+     *
+     * Before this, an untyped optional scalar was baked into the build as an anonymous constant, so a coil's
+     * turn count was unreachable the moment the gesture ended — a degree of freedom the user could reach by
+     * neither mouse nor number, which OP-13 calls a bug in the model.
+     *
+     * Two rules, both about keeping the positions the build reads by index honest:
+     *
+     * - the run is **contiguous** from [picked] onward and stops at the first slot that cannot own a value
+     *   ([ScalarSlot.ownable]), because the refs are handed to [build] positionally and a hole in the middle
+     *   would silently shift every slot behind it;
+     * - a tool that **records its own steps** ([recordsSteps]) owns none: what it emits is `sketchspace` or
+     *   `orthostart`, not a `tool` step, so there is no `dofs=` on it to restate one — the two tools this
+     *   concerns (the datum plane's angle, a polygon's corner radius) are named in DESIGN.md.
+     */
+    fun ownedSlots(picked: Int): List<Int> {
+        if (recordsSteps) return emptyList()
+        var end = picked
+        while (end < scalars.size && scalars[end].ownable) end++
+        return (picked until end).toList()
+    }
 }
 
 object Tools {
@@ -538,6 +583,23 @@ object Tools {
         name: String,
         default: Double,
     ) = ScalarSlot(name, Dimension.NONE, Quantity.number(default))
+
+    /**
+     * A dimensionless slot whose default names **which construction** the tool builds rather than a value
+     * it uses — see [ScalarSlot.structural]. A ratio of 0.5 is `cx.midpoint`, a derived point with no
+     * freedom; a stated factor is a draggable ratio point. The two are different geometry, not one geometry
+     * at two values.
+     */
+    private fun choice(
+        name: String,
+        default: Double,
+    ) = ScalarSlot(name, Dimension.NONE, Quantity.number(default), structural = true)
+
+    /** A length slot whose default means *don't* — structural, for the same reason [choice] is. */
+    private fun choiceLen(
+        name: String,
+        mm: Double,
+    ) = ScalarSlot(name, Dimension.LENGTH, Quantity.mm(mm), structural = true)
 
     /** A length slot the tool can do without: [mm] is what it means with nothing typed (0 = "don't"). */
     private fun len(
@@ -899,7 +961,7 @@ object Tools {
             ToolDef(POINT, "Point", ToolCategory.POINTS, listOf(SlotKind.PLACE_POINT), shortcut = 'P', replicates = false, help = "Click empty space to place a free point.", icon = Icons.POINT) { _, _, _ -> },
             // the factor is a *defaulted* scalar slot (0.5 = the midpoint), so the gesture is unchanged and
             // typing a number first turns the same two clicks into a ratio point (OP-13)
-            ToolDef(MIDPOINT, "Midpoint / ratio point", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(num("factor", 0.5)), help = "Click two points to place their midpoint — or type a factor first (0.3 = three tenths of the way, 1.5 = beyond the second point) and drag it along afterwards.", slotNames = listOf("from", "to"), icon = Icons.MIDPOINT) { d, p, s -> d.midpoint(p.points[0], p.points[1], s.firstOrNull()) },
+            ToolDef(MIDPOINT, "Midpoint / ratio point", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(choice("factor", 0.5)), help = "Click two points to place their midpoint — or type a factor first (0.3 = three tenths of the way, 1.5 = beyond the second point) and drag it along afterwards.", slotNames = listOf("from", "to"), icon = Icons.MIDPOINT) { d, p, s -> d.midpoint(p.points[0], p.points[1], s.firstOrNull()) },
             ToolDef(INTERSECT, "Intersect", ToolCategory.POINTS, listOf(SlotKind.CURVE, SlotKind.CURVE), help = "Click two curves to add their intersection point(s). Curves count as their carriers, so a segment reaches beyond its ends and an arc round its whole circle — the point may land off the drawn piece.", slotNames = listOf("curve", "curve"), icon = Icons.INTERSECT) { d, p, _ -> d.intersect(p.elements[0], p.elements[1]) },
             ToolDef(PROJECT, "Project to line", ToolCategory.POINTS, listOf(SlotKind.POINT, SlotKind.LINE), help = "Click a point, then a line, for the perpendicular foot.", slotNames = listOf("point", "line"), icon = Icons.PROJECT) { d, p, _ -> d.projectToLine(p.points[0], p.elements[0]) },
             // the rider's position along its host is **state** (dragged, typed, compensated, or re-anchored by a
@@ -1033,7 +1095,7 @@ object Tools {
             // and one replicated fillet. So the everyday shortcut and the general mechanism are one
             // construction, and the tool records the steps that say which (see [Document.regularPolygonGesture]).
             // It does not itself replicate: what it builds *is* a pattern.
-            ToolDef(POLYGON, "Regular polygon", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(len("corner radius", 0.0)), minCount = 3, recordsSteps = true, replicates = false, preview = Previews::polygon, help = "Set the number of sides, then click the centre and one vertex; the other vertices are that one rotated about the centre. Type a corner radius first to get a rounded polygon — a live pattern whose count you can re-stamp.", slotNames = listOf("centre", "vertex"), icon = Icons.POLYGON) { d, p, s -> d.regularPolygonGesture(p, s) },
+            ToolDef(POLYGON, "Regular polygon", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(choiceLen("corner radius", 0.0)), minCount = 3, recordsSteps = true, replicates = false, preview = Previews::polygon, help = "Set the number of sides, then click the centre and one vertex; the other vertices are that one rotated about the centre. Type a corner radius first to get a rounded polygon — a live pattern whose count you can re-stamp.", slotNames = listOf("centre", "vertex"), icon = Icons.POLYGON) { d, p, s -> d.regularPolygonGesture(p, s) },
             // ----- Solids: the 2D->3D seam (OP-17). The sketch plane is the world XY plane in this
             // slice; the depth/angle is a panel parameter, which is where the feature's DOF is edited
             // (OP-13) since the 3D view has no picking yet.
@@ -1157,7 +1219,7 @@ object Tools {
             // ----- Construct -----
             // the same defaulted factor as Midpoint: with none it is the bisector, with one it is the
             // perpendicular through that ratio point — composed from the ops that already exist
-            ToolDef(PERP_BISECTOR, "Perp. bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(num("factor", 0.5)), help = "Click two points for their perpendicular bisector — or type a factor first for the perpendicular through that point of the span instead.", slotNames = listOf("from", "to"), icon = Icons.PERP_BISECTOR) { d, p, s -> d.perpBisector(p.points[0], p.points[1], s.firstOrNull()) },
+            ToolDef(PERP_BISECTOR, "Perp. bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(choice("factor", 0.5)), help = "Click two points for their perpendicular bisector — or type a factor first for the perpendicular through that point of the span instead.", slotNames = listOf("from", "to"), icon = Icons.PERP_BISECTOR) { d, p, s -> d.perpBisector(p.points[0], p.points[1], s.firstOrNull()) },
             ToolDef(ANGLE_BISECTOR, "Angle bisector", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.POINT, SlotKind.POINT), help = "Click a point, the vertex, then another point.", slotNames = listOf("point", "vertex", "point")) { d, p, _ -> d.angleBisector(p.points[0], p.points[1], p.points[2]) },
             ToolDef(PERPENDICULAR, "Perpendicular", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the perpendicular through it.", slotNames = listOf("line", "through"), icon = Icons.PERPENDICULAR) { d, p, _ -> d.perpendicularThrough(p.elements[0], p.points[0]) },
             ToolDef(PARALLEL, "Parallel", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the parallel through it.", slotNames = listOf("line", "through"), icon = Icons.PARALLEL) { d, p, _ -> d.parallelThrough(p.elements[0], p.points[0]) },

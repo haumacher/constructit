@@ -120,6 +120,9 @@ object SceneRenderer {
     /** Screen length of a drawn frame axis — a marker, so it does not scale with the drawing. */
     private const val FRAME_AXIS_PX = 22.0
 
+    /** How far off the cursor the typed entry is echoed, in pixels — clear of the crosshair, still beside it. */
+    private const val ENTRY_GAP_PX = 12.0
+
     /**
      * The whole drawing, on a target of its own: [begin], [draw], [end].
      *
@@ -151,12 +154,13 @@ object SceneRenderer {
         dependents: Set<Element> = emptySet(),
         spotlight: Set<Element> = emptySet(),
         scaleBar: Boolean = false,
+        entry: Pair<Vec2, String>? = null,
     ) {
         target.begin(wPx, hPx)
         draw(
             doc, ev, proj, target, wPx, hPx, grid, highlight, preview, selected, snap, joins, closing,
             terminal, dimmed, marquee, frames, picked, emphasis, previews, inputs, dependents, spotlight,
-            scaleBar,
+            scaleBar, entry,
         )
         target.end()
     }
@@ -186,6 +190,14 @@ object SceneRenderer {
         dependents: Set<Element> = emptySet(),
         spotlight: Set<Element> = emptySet(),
         scaleBar: Boolean = false,
+        /**
+         * The digits the user is typing for the armed tool, and the plane point to draw them at — the pending
+         * value, echoed **where the cursor is** (`Editor.pendingEntryEcho`).
+         *
+         * Through this seam and no other: the controller stays platform-free, and the one thing a backend has
+         * to be able to do is already in the interface for a dimension's own text ([DrawTarget.text]).
+         */
+        entry: Pair<Vec2, String>? = null,
     ) {
         val view = proj.viewRect(wPx, hPx).let { Rect(it.first, it.second) }
         // The grid is stated in *screen* pixels (about 40 of them per cell), so it exists only where a pixel
@@ -365,6 +377,14 @@ object SceneRenderer {
         // the ruler states a length in pixels, so it says something true only under a similarity — the same
         // rule as the grid, one line above
         if (scaleBar && proj.similarity) drawScaleBar(proj.scaleAt(Vec2(0.0, 0.0)), target, hPx)
+        // …and the number being typed, beside the pointer: the same colour the preview promises the click in,
+        // because it is the same promise about the same click. Offset up and to the right of the cursor, so
+        // the crosshair itself and whatever is under it stay visible.
+        entry?.let { (at, text) ->
+            proj.toScreen(at)?.let { c ->
+                target.text(Vec2(c.x + ENTRY_GAP_PX, c.y - ENTRY_GAP_PX), text, previewStyle, TextAnchor.START)
+            }
+        }
     }
 
     /**

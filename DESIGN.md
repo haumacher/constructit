@@ -625,10 +625,114 @@ Consequences, which is why this is worth stating as a principle rather than a UI
   unwritable, which is the same answer dragging gives: that DOF is gone by construction.
 - **Typing reaches a tool's *inputs* too, not only an existing element's fields.** Digits typed while a
   tool is armed become the scalar it wants, as an ordinary parameter — one mechanism for every scalar slot,
-  and the same principle one step earlier in time (see *Usability — click budgets*).
+  and the same principle one step earlier in time (see *Usability — click budgets*). **The click that
+  follows commits them**, and a defaulted slot nobody states a value for becomes a freedom its *step* owns —
+  see *a typed number belongs to the click that follows* below (session 55), which amends this bullet.
 - Deliberately *not* called a constraint. A handle only writes free source nodes; what stays
   invariant (a leg's axis, a point's curve) is invariant because of the nodes it does *not* write,
   which are shared with the geometry that must follow.
+
+#### A typed number belongs to the click that follows, and an untyped default is still a freedom (as built — a user report, session 55)
+
+Reported as a trace: *"arm Circle (centre, radius), type `20`, then click — no circle is built, the entry
+still holds 20, and the status asks me to type the radius. If you don't watch the status bar this is nothing
+happening at all."* And, separately: an optional scalar nobody types — a coil's turn count — was **unreachable
+for ever afterwards**. Two defects with one root, and the root is a sentence in this OP that was true of only
+half of what a number is used for.
+
+**What the contract said, quoted, and what it says now.** The old rule was: *"Digits typed with a tool armed
+accumulate in the same buffer, and **Enter** turns them into an ordinary parameter"* (the click-budget item
+below). Enter was the *only* commit, so a number and the click it was typed for were two gestures joined by a
+keystroke nobody was told about. The rule now: **a number typed for an armed tool is part of the click that
+follows** — a press that publishes a pick commits the pending entry first, through the very same
+`commitTypedScalar` Enter runs, so *"20, click"* is one gesture, one parameter, one checkpoint and one undo.
+Enter still works (it is how a value is stated before there is anything to click), and Escape still cancels.
+
+Three things fell out of that, each of them general rather than shaped to the report:
+
+- **The tools that used to refuse now take part.** *Wall* and *Opening* declined the click outright while the
+  number they wanted sat in the buffer (*"Wall: type a thickness first"*). They are not special-cased: the
+  commit happens at the press, before any tool's own routing, so their first click states the thickness.
+- **A leg's length is deliberately untouched.** While a path is being drawn the click states *the endpoint
+  itself*, so "use the typed length" and "place it at the cursor" are two different places — the two readings
+  conflict rather than compose, which is exactly not the case for a scalar the tool is missing. `Enter` places
+  the typed leg, the rubber band already draws it to scale, and nothing about direct distance entry changed.
+- **The prompts state the whole contract.** *"radius = 20 mm — Enter to use it"* became *"— click to use it (or
+  press Enter), Esc to cancel"*, and the arming line's *"type a number for another"* became *"to use another,
+  type it and click (or press Enter)"*. A route that is invisible is a route that does not exist.
+
+**Feedback where the user is looking.** The status bar was the only place a pending number appeared, and a
+person mid-gesture is looking at the cursor. So the entry is **echoed at the pointer** through the one text
+primitive the drawing surface has (`DrawTarget.text`, the dimension's own), in the preview's colour because it
+is the same promise about the same click; and the **live preview is computed with the pending value**, which it
+was not — a fillet with a radius being typed now shows the arc that click will build, digit by digit, and the
+arc shrinks back as Backspace does. `Editor` stays platform-free: what crosses the seam is one
+`Pair<Vec2, String>`.
+
+**An untyped optional scalar is a freedom the step owns.** A build handed no value used to make its own
+anonymous constant (`turns ?: cx.const(1)`), and an anonymous constant is a value **nothing can ever reach** —
+not a drag, not a field, not the panel, not the file. By this OP's own words that is a bug in the model, and it
+was the worse half of the report: a coil built without typing a turn count could not be given a second turn by
+any route at all. Now the runner creates **one free source node per defaulted slot nobody stated**
+(`Document.toolScalarRefs`), and the *step* owns it:
+
+- it is **restated by the step** as `dofs=` (OP-18) and read back positionally from the end of that list, so
+  the three kinds of state that already ride `dofs=` keep the positions their builds read them at, and how many
+  freedoms there are is decided by the **tool's slots** rather than by the file;
+- it is **surfaced as an ordinary `HandleField`** under the slot's own name (`turns`, `roll`, `twist`), on every
+  element that step created — so it is typed, dimension-checked, greyed out when driven, and undone one write
+  at a time, like every other field;
+- it is **not** a panel row. A number the user typed stays an ordinary named parameter, which is this OP's
+  typing contract and is untouched; a number the user never mentioned is not a parameter of the drawing, and
+  naming `roll` and `twist` in the panel for every tube nobody rolled would fill the list with values nobody
+  stated. Where committed scalars live is a separate, queued question (panel tiering) and is deliberately not
+  touched here.
+
+The precedent followed is exact: a rider's angle is *"stored in the rider's own parameter node, restated by its
+step as `dofs=`"* (session 53). The alternative considered and rejected was to create a **named parameter** at
+the default instead — which the datum plane's angle already does, and which is why that tool needs nothing
+here. It was rejected for two reasons: it would put two rows in the panel for every tube, pre-empting the
+tiering decision; and it would lengthen the step's `scalar=` list, which is the very list the prefix rule reads
+to decide *which* slots were stated, so a value nobody stated would start standing in front of one somebody
+did.
+
+**A replicated gesture owns one freedom for the whole fan** (OP-23): a coil on every member of a pattern is one
+rule, so the turn count is one number shared by every copy, created once before the loop and restated once by
+the `orbit` step. A value per copy would be geometry the rule does not state.
+
+**Two kinds of default that cannot become a freedom, both declared rather than inferred**
+(`ScalarSlot.structural`, `ToolDef.recordsSteps`), because what a build does with no value is the build's own
+business:
+
+| tool | slot | why it owns none | how the value is reached instead |
+|---|---|---|---|
+| Midpoint / ratio point, Perp. bisector | `factor` = 0.5 | the default names a **construction**: with no factor the point is `cx.midpoint`, derived and with no DOF at all; with one it is a draggable ratio point. Two constructions, not one at two values — and giving the midpoint a freedom would mean a "midpoint" that can be dragged off centre | type a factor, and the ratio point *is* the freedom (a drag handle and a panel parameter) |
+| Regular polygon | `corner radius` = 0 | **structural** (OP-21's rule): 0 builds plain segments, a radius builds OP-23's rounded pattern — the number decides how many nodes exist | type a corner radius; changing it later is a re-stamp, as the count is |
+| Sketch plane (line + angle) | `angle` = 90° | it is **already** an ordinary named parameter at the default (`createDatumSpace` makes one), so it has been editable for ever since GitHub #6 | the panel row it already has |
+| Sketch plane (line + angle) | `offset` = 0 | zero means *no offset node at all* — the plane **is** hinged on its line, and its step records that absence; a freedom here would put an offset parameter into every datum plane ever made | state an offset when creating the plane, or a *Plane at height* |
+| Space origin | `dx`, `dy` = 0 | the step creates **no element**, so there is no handle to reach a field through. The freedom is created and then dropped, deliberately, rather than written to a file nothing can edit | type the offsets, or wire the space's own parameters afterwards. The extension it wants is a plane's own inspector — a space is not an element today |
+
+**No version bump, and old files gain the freedom.** A step that carries no `dofs=` means every freedom stands
+at its slot's default, which is exactly what that file always meant — so no stored literal changed meaning
+(OP-18's own test, the same argument the datum plane's new arguments made). A hand-written fixture in the shape
+this build's predecessor wrote (`TypedScalarTest.OLD_HELIX_CIT`) is kept as a permanent load test: it loads with
+one turn, with **no** load note, and is editable from that moment on. Files written from now on are longer by
+the numbers they restate — all of them, always, even where one still stands at its default, because the reading
+is positional and writing only the moved ones would make `dofs=45deg` on a tube mean *roll* to the writer and
+*twist* to the reader.
+
+Tests: `TypedScalarTest` (20) — the user's trace verbatim (type `20`, click, a circle of exactly 20 mm, one
+undo taking circle and parameter together), the status naming the value and the click path, Escape still
+cancelling, a path leg still placed at the cursor, *Wall* taking a typed thickness with no Enter, the entry
+echoed beside the pointer through a recording target and gone when cancelled, a fillet previewed from the
+digits and shrinking back under Backspace, a coil's `turns` field writing 3 and standing exactly three pitches
+up (1e-12 mm), one undo per write, `save → load → save` byte-equal with the freedom restated, a **typed** turn
+count still an ordinary panel parameter with no freedom beside it, a delete taking the freedom with the coil, a
+grab of the coil naming what can still be set, an old-shape file loading at the default and gaining it, the anchored-sweep fixture rolled 180° from the panel (valid, watertight,
+the whole radial span moved to the other side of the spine, and 360° of roll identical to 0°), one freedom for a
+four-copy orbit, a structural default owning nothing, a step that creates nothing writing nothing, and the whole
+`ToolDef` table audited by a test so a row added later cannot go back to baking a constant. **1744 → 1764
+green**, nothing cut.
 
 ### Editor tool roadmap
 
@@ -1157,7 +1261,9 @@ scripts spend, so the two columns are comparable.
 1. **A typed number is a scalar input — for every scalar slot** (OP-13 generalized). Direct distance entry
    already existed for a path's leg length; it now covers *any* tool's scalar. Digits typed with a tool
    armed accumulate in the same buffer, and Enter turns them into an **ordinary parameter**, named after the
-   slot and uniquified exactly as a panel one is (`depth`, `depth2`). Nothing marks it as typed: it appears
+   slot and uniquified exactly as a panel one is (`depth`, `depth2`). (**Amended in session 55**: the *click*
+   that follows commits them too, and Enter being the only commit is what made "type 20, click" look like
+   nothing happening — see *a typed number belongs to the click that follows* under OP-13.) Nothing marks it as typed: it appears
    in the panel, rides the `param` step and is wireable. Its **undo unit is the operation it was typed
    for**: the parameter is sealed by the tool's own checkpoint, so "7, Enter, click" undoes as one step —
    and a typed value whose tool is cancelled is *retracted* (`Document.retractParameter`, refused if
@@ -1172,7 +1278,8 @@ scripts spend, so the two columns are comparable.
      clicks first) cost the same. And typing is offered **even when the panel memory would already satisfy
      the tool**: a tool consumes the last picks in order, so without that a value could never be overridden
      once anything had been picked. The status line now also *names* the values a tool will consume
-     ("Using depth = h1 — type a number for another"), because silently reusing the last-picked parameter
+     ("Using depth = h1 — to use another, type it and click (or press Enter)", the whole contract since
+     session 55), because silently reusing the last-picked parameter
      was convenient and invisible, and the invisible half is what makes a feature come out the wrong size.
 2. **Single-key tool shortcuts**, as a `ToolDef` field (`shortcut`) — data, like everything else about a
    tool. `S P L C R O W D E X M` (select, point, segment, circle-by-radius, rectangle, outline, wall,
@@ -1312,7 +1419,8 @@ for free, and nothing synthetic is stored —
 One `tool <id>` step covers every tool, replayed through the same `ToolDef.build` the click ran, so
 the format needs no per-tool case and new tools round-trip for free. Its arguments are all generic in
 the same way: `pts=` / `els=` / `clicks=` for the picks, `scalar=` as an **ordered list** of the panel
-scalars the tool consumed, `dofs=` for a tool's own degrees of freedom (a dimension's offset), and
+scalars the tool consumed, `dofs=` for a tool's own degrees of freedom (a dimension's offset, and — last in
+that list, session 55 — the **defaulted scalars nobody stated a value for**), and
 `count=` for a structural count (how many copies or vertices were built — see *Tool inputs* above). Elements are named
 script-locally (`e1`, `e2`, …) by the step that creates them, so the file does not depend on runtime
 id generation, and a step that creates a different number of elements than the script declares is a
@@ -1405,6 +1513,8 @@ it:
 | `sketchspace line= / angle= / part=` — the **datum** variant (OP-17, GitHub #6) | new arguments in this build; the face variant (`el=`/`piece=`) is untouched and told apart by `line=` | none, and **no version bump**: an argument that never existed cannot have meant something else, so no stored literal changes meaning. `part=` is a choice recorded at creation (never re-derived on load); the angle is *state* and rides the `param` step of the parameter this one names |
 
 | `sketchspace offset=` **without** `line=`/`el=` — the *plane at a height* variant, and `sectioninput el=` / `spaceorigin el=` (OP-17, GitHub #9) | new arguments and a new *combination* in this build: no earlier `sketchspace` step lacked both `line=` and `el=`, and an omitted `el=` on the other two means the space's own anchor, which is exactly what every step written before a plane had more than one section meant | none, and **no version bump**, by the same argument as the row above: an argument that never existed cannot have meant something else. `part=` on the height variant is a choice recorded at creation; the height is *state* and rides its parameter's own `param` step |
+
+| `tool <id> dofs=` and `orbit … dofs=` — a step's **own scalar freedoms** (OP-13, session 55) | a defaulted scalar slot nobody stated used to be an anonymous constant inside the build and appeared in no file at all; it is now a free node the step restates, appended **after** the rider / dimension / re-parameterization values that already rode `dofs=` | none, and **no version bump**: a step with no such values means every freedom stands at its slot's default, which is what a file written before this build always meant. How many of them a step has is read off the **tool's slots**, never off the file, which is what makes the positional reading safe for a step that ever owns both kinds |
 
 Known residual, recorded rather than papered over: the **Outline** tracer still resolves its handovers from
 that tool's own clicks on every replay (`jointBetween`), and a determined ortho meeting still picks its
@@ -10483,6 +10593,37 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   master side and *Make relative*'s anchor, the latter uncatchable by its own cast because a `Ref<PointValue>`
   has no type argument at runtime. **1723 → 1744 green**, nothing cut. See *the point of the section that rides
   the run* under OP-26.
+- **Session 55 — a typed number belongs to the click that follows (the user's report, amending OP-13).** The
+  trace was three keystrokes long: *"arm Circle (centre, radius), type `20`, then click — no circle is built,
+  the entry still holds 20, and the status asks me to type the radius"*, with the observation that matters most
+  — *"if you don't watch the status bar this is nothing happening at all."* The diagnosis was not in the tool
+  but in a sentence of OP-13: **Enter was the only commit**, so a number and the click it was typed for were
+  two gestures joined by a keystroke nobody was told about, and the press published its pick while the value it
+  needed sat in the buffer. A press now commits the pending entry through the very code Enter runs, which keeps
+  the whole thing one parameter, one checkpoint and one undo — and it generalizes for free to the two tools
+  that used to *refuse* the click instead (*Wall*, *Opening*: "type a thickness first"), because the commit
+  happens before any tool's routing. The one place it was deliberately **not** applied is a path's **leg
+  length**, and the reason is a genuine conflict rather than caution: there the click states the endpoint
+  itself, so "use the typed length" and "place it at the cursor" are two different places, where a missing
+  scalar has no competing reading at all. The second half of the report was the worse one: an optional scalar
+  nobody types — a coil's turn count — was baked in as an anonymous `cx.const`, which is a value **no route
+  can ever reach**, exactly the state OP-13 calls a bug in the model. So a defaulted slot the user leaves alone
+  is now a **freedom the step owns**: a free node standing at the default, restated by the step as `dofs=`
+  (the seam session 53's rider angle uses) and surfaced as an ordinary `HandleField` under the slot's own name.
+  Not a panel row — a number the user typed stays a named parameter, and naming `roll` and `twist` for every
+  tube nobody rolled would pre-empt the queued tiering question. The rejected alternative is worth keeping:
+  creating a *named* parameter at the default, which the datum plane's angle already does and which is why that
+  tool needed nothing — rejected because it also lengthens the step's `scalar=` list, the very list the prefix
+  rule reads to decide which slots were *stated*. The third fix is the one the user's last sentence asked for:
+  the pending number is **echoed at the cursor** and folded into the **live preview**, so a fillet's arc appears
+  while its radius is still being typed and the picture promises what the click will build. Two kinds of
+  default cannot become freedoms and both are now *declared* rather than inferred — a default that names a
+  **construction** (Midpoint's 0.5 *is* `cx.midpoint`, which has no DOF at all; a polygon's corner radius is
+  structural per OP-21) and a tool that writes its own steps — and the one tool whose step creates no element
+  at all (*Space origin*) is named as parked rather than papered over. No version bump: a file with no `dofs=`
+  means every freedom stands at its default, which is what it always meant, and a hand-written old-shape
+  fixture is kept as a permanent load test. **1744 → 1764 green**, nothing cut. See *a typed number belongs to
+  the click that follows* under OP-13.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -12354,6 +12495,19 @@ argument to invent" — which stands as written for a sweep that names no anchor
 than the only reading. It leaves **one thing parked**, stated where it belongs: an anchor whose point lives in a
 *different* plane from the section is refused rather than mapped, because mapping it would need a stated
 correspondence between two planes' coordinates (which is a 3D-placement question, not a sweep's).
+
+**Retired in session 55 — nothing, because the scalar-UX report arrived as a demand rather than off this
+queue.** What it retires is a *stated contract* rather than a queue line: OP-13's *"Enter turns them into an
+ordinary parameter"*, which made a typed number and the click it was typed for two gestures instead of one, and
+the unspoken half of `ScalarSlot.default` — that a defaulted slot nobody stated became an anonymous constant no
+route could ever reach. Both are closed (see *a typed number belongs to the click that follows* under OP-13). It
+leaves **two things parked**, each stated where it belongs: **where a committed scalar lives** — every typed
+number is a panel row today, and a drawing with thirty of them wants tiering (a row that belongs to a feature
+versus a parameter of the drawing); this package deliberately changed nothing about it, because it is a question
+about the panel and not about reachability. And **a plane's own inspector**: *Space origin* is the one tool whose
+defaulted scalars cannot become freedoms, because its step creates no element to reach a field through — a
+sketch space is not an `Element`, so its `dx`/`dy` (and a datum's angle, which is already a parameter) have no
+selection to hang on.
 
 **Named in session 37 and not yet queued — two gaps a real structural part shows** (from a cast arm looked at
 in the round): **3D edge blends**, which is most of what the eye reads as a casting and is a dimensioned

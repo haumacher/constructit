@@ -71,7 +71,27 @@ class Step(val kind: String, val args: List<Arg>) {
 
     /** Scalars this step introduced (a parameter, a measurement) — a dependency unit for delete too. */
     val createsScalars = ArrayList<ScalarEntry>()
+
+    /**
+     * Degrees of freedom **this step owns**: a defaulted scalar slot the user stated nothing for
+     * ([StepDof], see [Document.runTool]). State, so the writer restates them as `dofs=` (OP-18) and
+     * [Document.ownFields] hands them to the panel as ordinary fields (OP-13).
+     */
+    val ownDofs = ArrayList<StepDof>()
 }
+
+/**
+ * One value a **step** owns rather than the panel: the [node] holding what a defaulted scalar slot means
+ * here, under the slot's own [name] and [dim].
+ *
+ * Why a step and not a parameter row (OP-13 × OP-18). A number the user *typed* is an ordinary named
+ * parameter and stays one — that is the typing contract. A number the user never mentioned is not a
+ * parameter of the drawing: naming `roll` and `twist` in the panel for every tube nobody rolled would fill
+ * the list with values nobody stated. But it is still a degree of freedom, so it must be reachable — and the
+ * step that created it is exactly what knows it exists, exactly as a rider's angle is *"stored in the
+ * rider's own parameter node, restated by its step as `dofs=`"* (session 53). One seam, one precedent.
+ */
+class StepDof(val name: String, val node: SourceNode, val dim: Dimension)
 
 /**
  * Reads and writes a document as a **construction script**: the drawing *is* a construction (OP-5),
@@ -348,16 +368,24 @@ object DocumentFormat {
                 //   without the special case.
                 // - a **dimension's placement** (OP-13), which is dragged and typed.
                 // - a **re-parameterization's offset** (OP-4 case b) — for a tool that creates nothing at all.
+                // - and, **last in the list**, the step's own scalar freedoms ([Step.ownDofs]): a defaulted
+                //   slot nobody stated a value for. Last, and read back from the end, because how many of them
+                //   there are is decided by the *tool's slots* and never by the file — so the three above keep
+                //   the positions their builds read them at, and no tool has to know about the fourth.
                 val riderDof = step.creates.singleOrNull { it.kind == ElementKind.ON_CURVE }?.let { doc.restatedRiderParam(it, ev) }
                 val dofs =
                     listOfNotNull(riderDof) +
                         step.creates.mapNotNull { it.annotation }.flatMap { it.dofValues() } +
-                        relativeDofs(doc, step, ev)
+                        relativeDofs(doc, step, ev) +
+                        ownDofs(step, ev)
                 step.args + signsOf(doc, step) + if (dofs.isEmpty()) emptyList() else listOf(Arg.Keyed("dofs", Arg.Nums(dofs)))
             }
             // the branch this step's click chose, restated so replay never scores it again (OP-1) — see
             // [Document.intersectNear]
             "intersectnear" -> step.args + signsOf(doc, step)
+            // a replicated gesture owns its freedoms once for the whole fan (see [Document.buildOrbit]), and
+            // they ride the same `dofs=` seam a `tool` step's do
+            "orbit" -> ownDofs(step, ev).let { if (it.isEmpty()) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(it)) }
             else -> step.args
         }
     }
@@ -384,6 +412,23 @@ object DocumentFormat {
         e: ScalarEntry,
         ev: Evaluator,
     ): Quantity = ((ev.eval(e.ref.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q ?: Quantity.mm(0.0)
+
+    /**
+     * The current value of every freedom [step] owns ([Step.ownDofs]) — **all of them, always**, in the order
+     * the step created them.
+     *
+     * All of them even where one still stands at its default, because the reading is positional: writing only
+     * the ones that have moved would make `dofs=45deg` on a tube mean *roll* to the writer and *twist* to the
+     * reader. What that costs is a couple of numbers in the file for a value nobody typed; what it buys is that
+     * a file's `dofs=` list has exactly the length the tool's own slots say it has.
+     */
+    private fun ownDofs(
+        step: Step,
+        ev: Evaluator,
+    ): List<Quantity> =
+        step.ownDofs.map { d ->
+            ((ev.eval(d.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q ?: Quantity(0.0, d.dim)
+        }
 
     /**
      * The re-parameterization state a `relative` / `tool makerel` step restates: the offsets of the elements
@@ -1018,6 +1063,7 @@ object DocumentFormat {
         var signs = emptyList<Int>()
         var count = 0
         var chainsPart = false
+        var dofs = emptyList<Quantity>()
 
         fun specs(v: String): List<Pair<Element, Int?>> =
             v.split(',').filter { it.isNotEmpty() }.map { token ->
@@ -1039,6 +1085,10 @@ object DocumentFormat {
                         }
                 "signs" -> signs = v.split(';').filter { it.isNotEmpty() }.map { it.toIntOrNull() ?: throw LoadError("malformed sign '$it'") }
                 "count" -> count = v.toIntOrNull() ?: throw LoadError("malformed count '$v'")
+                // the gesture's own freedoms — a defaulted scalar nobody stated, one number for the whole fan
+                // (see [Document.buildOrbit]); absent from a file written before they were owned, and then
+                // every one of them stands at its default, which is what that file always meant (OP-18)
+                "dofs" -> dofs = v.split(';').filter { it.isNotEmpty() }.map { quantity(it) }
                 // the chained base of a face-part tool (OP-17/OP-23): resolved per copy, in index order, so
                 // copy k subtracts from what copy k-1 left. Written as the rule, never as k names.
                 "part" -> {
@@ -1048,7 +1098,7 @@ object DocumentFormat {
                 else -> throw LoadError("unknown orbit argument '${w.substringBefore('=')}'")
             }
         }
-        doc.replayOrbit(pattern, tool, points, elements, cells, scalars, signs, count, chainsPart)
+        doc.replayOrbit(pattern, tool, points, elements, cells, scalars, signs, count, chainsPart, dofs)
             ?: throw LoadError("pattern '$name' cannot replicate '${tool.id}'")
     }
 
@@ -1251,7 +1301,7 @@ object DocumentFormat {
         val at = clicks.lastOrNull() ?: Vec2(0.0, 0.0)
         val picks = Picks(points, elements, at, clicks, dofs, count, signs)
         // replay through the same recorder the click used, so the reloaded document can be saved again
-        doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+        doc.runTool(tool, picks, scalars)
     }
 
     /** The scalar names in a `scalar=` argument: `"a","b"` -> [a, b]. Names are quoted, so the quotes and

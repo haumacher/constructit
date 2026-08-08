@@ -181,16 +181,30 @@ fun dimensionOf(ref: ScalarRef): Dimension =
 fun explainImmovable(
     el: Element,
     name: String = el.id,
+    /**
+     * Values that are editable without being anything a drag writes — the freedoms the *step* that made [el]
+     * owns (OP-13, `Document.ownFields`). They are no part of the *reason* a grab does nothing, but they are
+     * exactly what to offer instead, and a coil whose turn count is editable must not be called "fully
+     * determined by the construction".
+     */
+    also: List<HandleField> = emptyList(),
 ): String {
     val handle = el.handle
-    val fields = handle?.fields().orEmpty()
+    val fields = handle?.fields().orEmpty() + also
     val dragged: Set<Node> = handle?.dragNodes.orEmpty().toSet()
     // Normally the reason is a field the drag would have written. When the drag can write *nothing* —
     // its whole binding chain ends in derived geometry, so there is no master to name — every
     // unwritable field is the reason instead.
     val candidates = fields.filter { it.node != null && it.node in dragged }.ifEmpty { fields }
     val driven = candidates.filter { !it.writable }.map { it.label }
-    if (driven.isEmpty()) return "$name can't be moved: it is fully determined by the construction."
+    if (driven.isEmpty()) {
+        val settable = fields.filter { it.writable }.map { it.label }
+        if (settable.isNotEmpty()) {
+            return "$name has no free direction: its geometry is determined by the construction. " +
+                "You can still set ${settable.joinToString(", ")} in the panel."
+        }
+        return "$name can't be moved: it is fully determined by the construction."
+    }
     val verb = if (driven.size == 1) "is" else "are"
     val editable = fields.filter { it.writable }.map { it.label }
     val alternative = if (editable.isEmpty()) "" else " You can still set ${editable.joinToString(", ")} in the panel."

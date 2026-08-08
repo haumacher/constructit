@@ -1169,6 +1169,7 @@ class Document {
         recordDepth++
         note = null // a note is about the operation being run now, never about the one before it
         pendingReparams.clear()
+        pendingDofs.clear()
         // an identity snapshot, not a count: a step may *remove* elements too (a break replaces one
         // leg with three), and then a count would mistake shifted survivors for new ones
         val before = elements.toHashSet()
@@ -1184,6 +1185,11 @@ class Document {
             val step = Step(kind, args.toList() + (argsAfter?.invoke() ?: emptyList()))
             step.creates.addAll(created)
             step.createsScalars.addAll(scalars.subList(scalarsBefore, scalars.size))
+            // …and the freedoms this operation's defaulted slots left it holding (see [toolScalarRefs]).
+            // Only when there is an element to reach them through: a step that creates nothing has no field
+            // to offer, and a value written to a file that nothing can edit is noise, not a freedom.
+            if (created.isNotEmpty()) step.ownDofs.addAll(pendingDofs)
+            pendingDofs.clear()
             noteSpace(kind)
             journal.add(step)
             // which step *owns* each re-parameterization this operation performed (OP-4 case b), so the writer
@@ -1200,11 +1206,94 @@ class Document {
             elements.retainAll(before)
             while (scalars.size > scalarsBefore) scalars.removeAt(scalars.size - 1)
             pendingReparams.clear()
+            pendingDofs.clear()
             throw t
         } finally {
             recordDepth--
             pendingBefore = null
         }
+    }
+
+    /**
+     * The freedoms created for the operation being recorded now, adopted by its step in [recording].
+     *
+     * A field rather than a return value for [recording]'s own reason: the step object does not exist until
+     * the body has run, and what created these is inside the body ([toolScalarRefs]).
+     */
+    private val pendingDofs = ArrayList<StepDof>()
+
+    /**
+     * Run [tool]'s build as one recorded `tool` step — **the one seam** a click, a replay, a re-stamp and a
+     * break's internal application all go through, so what a tool receives is decided in exactly one place.
+     *
+     * That is what makes an untyped optional scalar a *freedom* rather than a baked constant: see
+     * [toolScalarRefs].
+     */
+    fun runTool(
+        tool: ToolDef,
+        picks: Picks,
+        scalars: List<ScalarEntry>,
+    ) = recordingTool(tool.id, picks, scalars) { tool.build(this, picks, toolScalarRefs(tool, picks.dofs, scalars)) }
+
+    /**
+     * The scalar refs [tool]'s [build] receives: the parameters picked or typed for it, and then **one free
+     * source node per defaulted slot nobody stated a value for** ([ToolDef.ownedSlots]) — a degree of freedom
+     * the step owns, standing at the slot's default.
+     *
+     * The reversal this is (OP-13's typing contract, amended). A build handed no value used to make its own
+     * anonymous constant (`turns ?: cx.const(1)`), and an anonymous constant is a value **nothing can ever
+     * reach**: not a drag, not a field, not the panel, not the file. A coil built without typing a turn count
+     * could never be given a second turn, which is precisely the state OP-13 calls a bug in the model — *"a
+     * hidden internal parameter … means a DOF exists that the user can only reach by dragging"*, and here not
+     * even that. So the node is the same kind of node it always was; what changed is that the step **knows
+     * about it**, restates it (`dofs=`) and offers it as a field.
+     *
+     * [restated] is the step's `dofs=` as a replay hands it back, read from the **end** of that list because a
+     * step's own state (a rider's parameter, a dimension's placement) comes first and is consumed by the
+     * build. A value of the wrong dimension is ignored in favour of the default rather than trusted, which is
+     * what keeps that positional reading honest for a tool that ever owns both. An **old file** carries none
+     * of this, and then every freedom stands at its default — which is exactly what that file always meant,
+     * so no literal changed meaning and no version bump is owed (OP-18).
+     */
+    private fun toolScalarRefs(
+        tool: ToolDef,
+        restated: List<Quantity>,
+        picked: List<ScalarEntry>,
+    ): List<ScalarRef> {
+        val owned = tool.ownedSlots(picked.size)
+        if (owned.isEmpty()) return picked.map { it.ref }
+        val refs = ArrayList<ScalarRef>(picked.map { it.ref })
+        val values = restated.takeLast(owned.size)
+        for ((j, i) in owned.withIndex()) {
+            val slot = tool.scalars[i]
+            // unreachable — [ToolDef.ownedSlots] offers only slots that have one — and it *stops* rather than
+            // skipping, because a hole here would shift every slot behind it by one
+            val default = slot.default ?: break
+            val q = values.getOrNull(j)?.takeIf { it.dim == slot.dim } ?: default
+            val node = SourceNode(nextId("td"), ScalarValue(q))
+            pendingDofs.add(StepDof(slot.name, node, slot.dim))
+            refs.add(Ref(node))
+        }
+        return refs
+    }
+
+    /**
+     * The step-owned degrees of freedom addressable through [el], as ordinary [HandleField]s (OP-13: typing
+     * and dragging are one operation, and a field is the typed half).
+     *
+     * Offered on **every element that step created**, and that is a decision rather than a convenience: a
+     * replicated gesture (OP-23) creates one element per copy from *one* freedom, so the coil's turn count is
+     * as much a value of the fourth coil as of the first — and picking one of them to carry it would make the
+     * others read as fully determined, which they are not. They share the node, so a write through any of them
+     * is the same write.
+     *
+     * A step that created nothing at all can carry no freedom, because there would be nothing to reach it
+     * through ([recording] drops them); the one tool in that position (*Space origin*) is named in DESIGN.md.
+     */
+    fun ownFields(el: Element): List<HandleField> {
+        val step = creatingStep(el) ?: return emptyList()
+        if (step.ownDofs.isEmpty()) return emptyList()
+        return step.ownDofs.map { scalarField(it.name, it.node, it.dim) }
     }
 
     /**
@@ -7321,7 +7410,7 @@ class Document {
         val def = Tools.byId(toolId) ?: return null
         val picks = Picks(points, els, Vec2(0.0, 0.0), emptyList())
         val before = elements.toHashSet()
-        recordingTool(toolId, picks, scalars) { def.build(this, picks, scalars.map { it.ref }) }
+        runTool(def, picks, scalars)
         return elements.filter { it !in before }.ifEmpty { null }
     }
 
@@ -8996,6 +9085,8 @@ class Document {
             return null
         }
         val plane = planeOfSpace(el.space)
+        // a turn count nobody stated comes from the *tool* as a freedom the step owns ([toolScalarRefs]); the
+        // constant is what a direct call means, and a direct call is code
         val n = turns ?: cx.const(Quantity.number(1.0))
         val curve = add(cx.helix(plane, pointInSpace(el), radius, pitch, n, hand), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
         curve.space = el.space
@@ -9598,7 +9689,15 @@ class Document {
         return el.ref as Path3Ref
     }
 
-    /** An angle input that was not given: a constant zero, so the node always has all five of its inputs. */
+    /**
+     * An angle input that was not given: a constant zero, so the node always has all five of its inputs.
+     *
+     * Reached only from a **direct** call now (a macro, the DSL, a test). Through the tools, a roll or a twist
+     * nobody typed arrives as a *freedom the step owns* instead — a free node standing at the slot's default,
+     * restated by the step and editable in the panel for ever ([toolScalarRefs]). The constant stays because
+     * an API that demands five arguments to make a tube is a worse API, and a value stated in code is a
+     * constant by definition.
+     */
     private fun noTurn(angle: ScalarRef?): ScalarRef = angle ?: cx.const(Quantity.deg(0.0))
 
     /**
@@ -11596,11 +11695,17 @@ class Document {
      *
      * One step, so one checkpoint and one undo removes the whole orbit; and one scoring, since the first copy
      * scores its choices from its own clicks and the rest are handed the result verbatim (OP-1).
+     *
+     * **One freedom, all copies** ([toolScalarRefs]): a defaulted scalar nobody stated is created *once*, for
+     * the gesture, and every copy is built on it — which is what a pattern's own rule reading demands, since a
+     * value per copy would be geometry the rule does not state. So the fan's turn count is one number, restated
+     * once by the `orbit` step (`dofs=`) and editable through *any* of the copies ([ownFields]).
      */
     fun buildOrbit(
         plan: Replication,
         tool: ToolDef,
         scalars: List<ScalarEntry>,
+        dofs: List<Quantity> = emptyList(),
     ): OrbitGesture? {
         val g0 = plan.gesture ?: return null
         val p = plan.pattern
@@ -11618,12 +11723,14 @@ class Document {
             skipIfEmpty = true,
             argsAfter = { if (scored.isEmpty()) emptyList() else listOf(Arg.Keyed("signs", Arg.Text(scored.joinToString(";")))) },
         ) {
+            // once, before the loop: the freedoms belong to the gesture, not to a copy of it
+            val refs = toolScalarRefs(tool, dofs, scalars)
             for (j in 0 until plan.copies) {
                 val before = elements.toHashSet()
                 // a fresh pass per copy: a chained gesture resolves its base against what the copy before it
                 // just built, so this loop is the one place a cached pass would be looking at the wrong document
                 val copyPicks = picksFor(g, j, scored, Evaluator()) ?: break
-                tool.build(this, copyPicks, scalars.map { it.ref })
+                tool.build(this, copyPicks, refs)
                 val made = elements.filter { it !in before }
                 // the first copy scores its choices from its own clicks; every other copy is handed the
                 // result, and the step writes it down — so a reload never scores again (OP-1)
@@ -11729,6 +11836,7 @@ class Document {
         signs: List<Int>,
         count: Int,
         chainsPart: Boolean,
+        dofs: List<Quantity> = emptyList(),
     ): OrbitGesture? {
         fun pick(spec: Pair<Element, Int?>): OrbitPick? {
             val off = spec.second ?: return OrbitPick(null, 0, spec.first)
@@ -11756,7 +11864,7 @@ class Document {
         val g = OrbitGesture(p, tool.id, pointPicks, elPicks, cells, offsets, scalars, signs, count, chainsPart)
         val copies = copiesFor(g, p.count) ?: return null
         val plan = Replication(p, g, copies, null)
-        return buildOrbit(plan, tool, scalars)
+        return buildOrbit(plan, tool, scalars, dofs)
     }
 
     /**

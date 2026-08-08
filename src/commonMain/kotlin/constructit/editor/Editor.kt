@@ -1280,7 +1280,11 @@ class Editor(
         // a placed group selected as a whole addresses its *frame* — the group's three degrees of freedom
         // (OP-16 step 2), which is exactly what dragging it writes, so drag and panel stay one operation
         selectedFrame()?.frameHandle?.let { return it.fields() }
-        return if (selected.size == 1) selection?.handle?.fields() ?: emptyList() else emptyList()
+        val one = selection?.takeIf { selected.size == 1 } ?: return emptyList()
+        // …and the freedoms the *step* that made it owns (OP-13 × OP-18): a defaulted scalar nobody typed —
+        // a coil's turn count, a tube's roll — which used to be an anonymous constant nothing could reach.
+        // Appended, so a handle's own fields keep the order and the indices the panel has always shown.
+        return (one.handle?.fields() ?: emptyList()) + doc.ownFields(one)
     }
 
     /** Short name for the selection, for the inspector header. */
@@ -1987,7 +1991,9 @@ class Editor(
                         val e = entries.getOrNull(i)
                         "${s.name} = " + (e?.name ?: s.default?.let { "${Format.quantity(it)} (default)" } ?: "?")
                     }.joinToString(", ") +
-                    " — type a number for another."
+                    // …and the whole contract for stating another, because "type a number" left out the half
+                    // that finishes the gesture: a click uses what is typed (see [pointerDown])
+                    " — to use another, type it and click (or press Enter)."
             }
         return (if (n == 0) tool.help else "${tool.help} (count $n)") + using
     }
@@ -2023,6 +2029,8 @@ class Editor(
             dependents = selectionDependents().toHashSet(),
             spotlight = spotlight?.let { setOf(it) } ?: emptySet(),
             scaleBar = showScaleBar,
+            // the digits being typed, drawn at the cursor — see [pendingEntryEcho]
+            entry = pendingEntryEcho(),
         )
     }
 
@@ -2077,6 +2085,25 @@ class Editor(
             return
         }
         val world = enter(screen) ?: return
+        // **A click takes the digits that are already typed** (OP-13, amended — see [commitTypedScalar]).
+        //
+        // Reported as *"type 20, click — and nothing happens at all"*: the press published its pick, the tool
+        // was still waiting for the very number sitting in the buffer, and the status line asked for it again.
+        // Typing and clicking were two gestures that had to be joined by a keystroke nobody was told about.
+        // A number typed for an armed tool is a *statement about the click that follows*, so the click uses it
+        // — the same [commitTypedScalar] Enter runs, which keeps it one parameter, one checkpoint, one undo.
+        //
+        // A **leg's** length is deliberately untouched (see [commitTypedLeg]): there the click states the
+        // endpoint itself, so the two readings conflict rather than compose, and [typedScalarSlot] already
+        // answers null while a path is being drawn. Escape still cancels either.
+        if (button == PointerButton.PRIMARY && numericEntry.isNotEmpty() && typedScalarSlot() != null) {
+            val waiting = filledSlots
+            commitTypedScalar()
+            // …unless that value *finished* the tool on the spot, which it does when every slot was already
+            // clicked: then this press was the "use it", and reading it a second time would open a new gesture
+            // with a stray pick in it.
+            if (waiting > 0 && filledSlots == 0) return
+        }
         if (toolId == Tools.SELECT) {
             // one search and one ranking: what this press grabs and what a repeat click cycles through are
             // the same list, so the precedence is written down once (see [pickAt])
@@ -2190,7 +2217,7 @@ class Editor(
             // why it cannot — and either way nothing else is grabbed instead
             if (primedElement != null) {
                 if (!primedElement.hasFreeDof) {
-                    statusHint = explainImmovable(primedElement, doc.nameOf(primedElement))
+                    statusHint = explainImmovable(primedElement, doc.nameOf(primedElement), doc.ownFields(primedElement))
                     pendingNote = statusHint
                     onChange()
                     return
@@ -2228,7 +2255,7 @@ class Editor(
                 dragRiders = doc.riderAnchors()
                 statusHint = note
             } else {
-                statusHint = explainImmovable(hit, doc.nameOf(hit))
+                statusHint = explainImmovable(hit, doc.nameOf(hit), doc.ownFields(hit))
             }
             // …and what the press said is kept for the release: a first click must read exactly as it always
             // did (the reason an immovable element cannot be dragged included), with only the pile's position
@@ -2445,18 +2472,32 @@ class Editor(
             digit && typedScalarSlot() != null -> {
                 numericEntry += key
                 statusHint = typedScalarPrompt()
+                // the number is already in effect as far as the *picture* is concerned: the preview redraws
+                // with it and the entry is echoed at the cursor, so what the next click will build is visible
+                // where the user is looking rather than only in the status bar (OP-13)
+                refreshToolPreviewAtHover()
                 onChange()
                 true
             }
             key == "Backspace" && numericEntry.isNotEmpty() -> {
                 numericEntry = numericEntry.dropLast(1)
-                if (pathActive) refreshPreview() else statusHint = typedScalarPrompt()
+                if (pathActive) {
+                    refreshPreview()
+                } else {
+                    statusHint = typedScalarPrompt()
+                    refreshToolPreviewAtHover()
+                }
                 onChange()
                 true
             }
             key == "Escape" && numericEntry.isNotEmpty() -> {
                 numericEntry = ""
-                if (pathActive) refreshPreview() else statusHint = ""
+                if (pathActive) {
+                    refreshPreview()
+                } else {
+                    statusHint = ""
+                    refreshToolPreviewAtHover()
+                }
                 onChange()
                 true
             }
@@ -2523,10 +2564,33 @@ class Editor(
         return tool.scalars[minOf(typedScalars, tool.scalars.size - 1)]
     }
 
+    /**
+     * What the status line says while digits are pending — and it states **the whole contract**: the value,
+     * and that the next click uses it (see [pointerDown]). "Enter to use it" was the whole sentence before,
+     * which made a click read as *nothing happened* the one time it mattered.
+     */
     private fun typedScalarPrompt(): String {
         val slot = typedScalarSlot() ?: return ""
         if (numericEntry.isEmpty()) return currentHelp()
-        return "${slot.name} = $numericEntry ${unitWord(slot.dim)} — Enter to use it, Esc to cancel"
+        return "${slot.name} = ${entryText(slot)} — click to use it (or press Enter), Esc to cancel"
+    }
+
+    /** The pending entry as the status line and the canvas both say it: `20 mm`, `30°`, a bare `3`. */
+    private fun entryText(slot: ScalarSlot): String = "$numericEntry ${unitWord(slot.dim)}".trim()
+
+    /**
+     * The digits typed so far, and where to draw them: **at the cursor**, because that is where the user is
+     * looking when a click is the next thing they will do (OP-13 — the number and the click are one gesture,
+     * so the number belongs beside the pointer and not only in a bar at the edge of the window).
+     *
+     * Null while a path is being drawn, where the rubber band already draws the typed length to scale, and
+     * null with no cursor position yet — nothing is promised about a click that has no place.
+     */
+    private fun pendingEntryEcho(): Pair<Vec2, String>? {
+        if (numericEntry.isEmpty()) return null
+        val slot = typedScalarSlot() ?: return null
+        val at = hoverWorld ?: return null
+        return at to "${slot.name} = ${entryText(slot)}"
     }
 
     private fun unitWord(dim: Dimension): String =
@@ -2636,18 +2700,35 @@ class Editor(
     private fun refreshToolPreviewAtHover() = refreshToolPreview(hoverWorld)
 
     /**
-     * The value of each of [tool]'s scalar slots **as the next click would use it**: the parameter picked or
-     * typed for it, else the slot's declared default ([ScalarSlot.default]), else null for a slot the tool is
-     * still waiting for. The same three-way answer [currentHelp] words for the status line.
+     * The value of each of [tool]'s scalar slots **as the next click would use it**: the digits **pending** for
+     * it, else the parameter picked or typed for it, else the slot's declared default ([ScalarSlot.default]),
+     * else null for a slot the tool is still waiting for. The same answer [currentHelp] words for the status
+     * line.
+     *
+     * The pending half is the one that was missing, and it is the difference between a preview that promises
+     * what the click will build and one that promises what it would have built before the number was typed —
+     * *"the preview matches the result"* (OP-13) applies to a value being typed exactly as it applies to a
+     * cursor being moved. Uncommitted, so nothing about it reaches the graph: it is one [Quantity] in a
+     * [PreviewContext], which holds no `Construction` at all.
      */
     private fun previewScalars(
         tool: ToolDef,
         ev: Evaluator,
     ): List<Quantity?> {
         val entries = toolScalars(tool)
+        // …and only where the digits *are* a scalar: while a path is being drawn they are a leg's length
+        // ([typedScalarSlot] answers null there), which is no tool's scalar slot
+        val pendingSlot =
+            if (numericEntry.isEmpty() || activePath != null || tool.scalars.isEmpty()) {
+                -1
+            } else {
+                minOf(typedScalars, tool.scalars.size - 1)
+            }
+        val pending = numericEntry.toDoubleOrNull()
         return tool.scalars.mapIndexed { i, slot ->
+            val typing = if (i == pendingSlot) pending?.let { quantityOf(slot.dim, it) } else null
             val picked = entries?.getOrNull(i)?.let { (ev.eval(it.ref.node) as? EvalResult.Ok)?.value as? ScalarValue }
-            picked?.q ?: slot.default
+            typing ?: picked?.q ?: slot.default
         }
     }
 
@@ -3501,7 +3582,7 @@ class Editor(
                 // has collected more clicks, so it has more to take back, not less
                 val refusal =
                     transacted(tool.label) {
-                        doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+                        doc.runTool(tool, picks, scalars)
                     }
                 if (refusal != null) {
                     statusHint = refusal
@@ -3663,7 +3744,8 @@ class Editor(
         // asking for it would read as an instruction rather than an offer
         val missing = wanted.drop(have).filter { it.default == null }
         val had = if (have == 0 || wanted.size == 1) "" else " (${wanted.take(have).joinToString(", ") { it.name }} picked)"
-        return "${tool.label}: type ${missing.joinToString(", then ") { it.name }} — or click a parameter or measurement in the panel$had"
+        return "${tool.label}: type ${missing.joinToString(", then ") { it.name }}, then click (or press Enter) — " +
+            "or click a parameter or measurement in the panel$had"
     }
 
     /** The structural count [tool] will build with — see [count]. Zero for a tool that needs none. */
@@ -3972,12 +4054,12 @@ class Editor(
                     // Alt has always meant *leave the model as I put it*, and declining the orbit is the same
                     // sentence one level up: this feature is a one-off (a keyway, a single flat).
                     orbitNote = "not replicated: Alt keeps it a one-off on pattern ${plan.pattern.name}"
-                    doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+                    doc.runTool(tool, picks, scalars)
                 } else if (plan?.gesture != null && doc.buildOrbit(plan, tool, scalars) != null) {
                     replicated = true
                     orbitNote = "${tool.label}: ${plan.copies} copies round pattern ${plan.pattern.name}"
                 } else {
-                    doc.recordingTool(tool.id, picks, scalars) { tool.build(doc, picks, scalars.map { it.ref }) }
+                    doc.runTool(tool, picks, scalars)
                 }
             }
         if (refusal != null) {
