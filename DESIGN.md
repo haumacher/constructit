@@ -7922,6 +7922,131 @@ that refusal at all, because the slot places through the snap and makes a rider 
 **empty** spots for the placing kinds, so the sweep covers the new behaviour instead of side-stepping it.
 **1671 → 1687 green**, no new golden, no version bump, no existing golden changed.
 
+### As built: a run's key points, and a point that rides a coil (session 53)
+
+**What was missing, in one sentence each.** `Document.extractPoints` fell through to `emptyList()` for a
+`SPACE_CURVE` and the `EXTRACTABLE` slot's filter did not admit one, so a coil had no end point, no start
+point and no centre — nothing downstream could be built *at* a run's end. And all four rider forms
+(`AXIS_COORD`, `ALONG_LINE`, `CIRCLE_ANGLE`, `ELLIPSE_PARAM`) were 2D, so there was no point on a helix at
+all. Both are now built, as one package, and both are **general from the first slice** in the way the queue
+entry demanded.
+
+**Key points: accessors, and one route for every kind of run.** Three new nodes — `pathStart`, `pathEnd` and
+`helixCentre` — each an ordinary derived node over the curve, so what is materialized *hangs off the curve* and
+follows every edit to it: retype a pitch and the end rises, drag a waypoint and the run's end goes with it,
+tilt the space and the whole triple tilts. That is the same thing `arcStart`/`arcEnd`/`circleCenter` are, one
+dimension up, and it needs no case per producer: a helix, a curve through points, a smooth one, a **connect**,
+a combined view, an intersection curve and an **imported wireframe** all answer through the same two
+accessors. A helix adds its centre, giving it exactly the arc's triple (`centre, start, end`).
+
+Three decisions in it worth stating:
+- **A closed run hands back one point, not two.** Its last piece hands over to its first, so its start and its
+  end are the same place, and two coincident dots would put two elements where the drawing has one
+  distinguished point. The count is read off `Path3.closed` — which is **structure** (OP-21's rule: fixed when
+  the node was built, never derived from the values) — and not from two positions happening to agree. It is
+  **structural per extraction**, exactly as a region's corner count and a Bézier's controls are.
+- **`Element.isCurve` was left alone**, and the `EXTRACTABLE` slot took the coil instead. Every *other* curve
+  slot wants a value stated in some plane's coordinates (that is why `PATH3` exists at all), so widening
+  `isCurve` would have handed an intersection, a trim and a fillet leg something they cannot read. What key
+  points ask of their operand is only that it *have* defining points, which is as true of a coil as of an arc.
+- **`Element.inSpace` is the new field, and it is deliberately not a kind.** The kind says what **role** a
+  point plays (free, derived, riding a curve, lifted off a plane); this says which **frame its value is stated
+  in**. The two are independent — a rider is a rider whether it slides along a segment in the plan or round a
+  coil in space — so every route that asks *is this a point?* keeps reading the kind, and every route that asks
+  *can I read plane coordinates off it?* reads this. A height point (OP-25) sets it too, which is what let
+  `pointInSpace` stop testing for `HEIGHT_POINT` by name.
+
+**The rider: an angle that is not modular.** `pointOnHelix(path, angle)` places a point `θ` **along** the coil
+from its start, and `450°` *is* the second winding — one whole pitch above `90°`, because the rise enters as
+`pitch · θ / 2π` (`Curve3Element.Helix3.atAngle`, added beside `at(t)` for exactly this reason). It is
+**absolute in the coil's own frame**, measured from the stored phase `u` about the axis, so nothing re-anchors
+it when the centre, the radius or the pitch moves — `CIRCLE_ANGLE`'s own argument, with `ELLIPSE_PARAM` as the
+worked precedent for adding a form. The form is `RiderForm.HELIX_ANGLE`, so *which freedom does this element
+own, and of what kind* stays answerable structurally.
+
+**The sign convention, and where it lives.** The stored number is the angle **travelled the way the coil
+turns**, so it runs from `0` to `turns · 360°` for a left-hand coil exactly as for a right-hand one; the
+direction that is *about the axis* is the curve's `Handedness`, which is structural (OP-1) and which
+`Curve3Element.Helix3` already insists nothing else may quietly decide. The alternative — a signed angle in
+the right-hand sense about the axis, negative for a left-hand coil — was rejected because it would put
+chirality into a number a second time, and because it would make "past the end" and "below zero" two
+different sentences per handedness. So the honest range is `[0, turns · 360°]` for both hands, and it is
+stored in the rider's own parameter node, restated by its step as `dofs=…deg` (OP-18) and therefore
+byte-identical across a save.
+
+**An angle off the coil is a value condition** (OP-3): the node goes invalid naming the angle, the turn count
+and the angle the coil ends at, and it **heals** the moment the turn count is raised — the point comes back at
+the very place it named. Never a refused gesture, never a clamp. Below zero is the same sentence about the
+near end.
+
+**The 2D/3D split is in the pick, not in the point** — `HitTest.helixAngleAt`, which is the same split
+`distanceToPath` already makes to *find* the curve:
+- **In the plan** every winding projects onto the same image, so a click can only honestly name a *bearing*:
+  the angle comes back reduced into `[0°, 360°)`, the first winding, and typing reaches any other one
+  afterwards (OP-13).
+- **In the 3D view** the pointer's ray meets the drawn curve on a known winding, so the angle comes back past
+  360° directly.
+Both are measured against the very polyline both views draw (`Curves3.sample`, refined inside the chord the
+pointer is nearest), so what is on screen is what the pointer reaches. The view reaches the build through one
+new field, `Picks.view` — the projection the gesture was made through, null for a replay, which hands the
+resolved angle back instead.
+
+**A drag follows the same asymmetry, as a rule rather than a clamp** (`OnHelixHandle`): in 3D it writes the
+angle the ray found, so the point slides along the whole coil across windings; in the plan it keeps the winding
+the point is on and moves it within that winding (`winding · 360° + bearing`), because the plan has nothing to
+say about which winding the pointer meant. Its drag is also exempt from the axis lock, for the height point's
+reason: the pointer *aims* at an angle rather than stating a position.
+
+**A point in space is drawn and picked in the plan — unlike a height point, and the difference is argued.** A
+height point's plan image is its base's own dot, so drawing it would say nothing and picking it would take the
+grab from the point the plan actually edits (OP-25). A curve's key point and a coil's rider have no such twin:
+they lie on the projection of the curve, which the plan already draws, and the rider's angle is something the
+plan can both show *and* edit. So `HitTest` and `SceneRenderer` gained one value-driven case each (`Point3Value`
+at its projection under a similarity, through the viewing ray otherwise) and the height point's own two cases
+are untouched. What a space point is still **not** is a snap or weld target for a placing click: those callers
+offer no view, and the answer would be a *plane* point at the projection, which is not this point.
+
+***Make absolute* frees the rider into a height point** (OP-4 case b, one dimension up): its published view is
+re-pointed at `heightPoint(space's plane, a new free base point, a new free height)` standing exactly where it
+stood, so nothing moves at the moment of the change and everything built on it keeps working. That is freeing
+it into the pair of freedoms this editor already knows how to edit — drag the base in the plan, drag the height
+in the 3D view, type either — rather than into three bare coordinates with no handle, which would be "free" in
+name only. The base is an ordinary point of the drawing (its `point` step is absorbed into the `absolute` step),
+and the freed position rides the existing `dofs=` seam as three lengths.
+
+**A placed group carries it rigidly.** `freedoms` classifies `HELIX_ANGLE` with `CIRCLE_ANGLE`, because the
+placement question they answer is identical: an angle in the *host's own frame* cannot be re-anchored by a
+frame that moves the host, so it needs no capture at all and the figure is placeable with nothing rebound.
+
+**Deliberately scoped, and each one refuses by name in the app:**
+- **A rider on a non-helix run** is declined, naming the element and the reason — a parameter along a spline
+  through points would re-anchor whenever those points moved, which is `ALONG_LINE`'s anchoring problem one
+  dimension up — and naming the alternative that exists today (a **Station**, which states a position along a
+  run of any shape). A future extension, not a limit: what it needs is an anchoring decision of its own.
+- **A linear dimension between points in space** is declined for the reason its own value gives: the number is
+  a distance in the working plane and the graphic is drawn there, so one of the two would be a lie. The
+  extension it wants is a dimension whose graphic lives in the 3D view, where both of its ends are drawn.
+
+Cut, and named: nothing else. No tool id changed, no file argument was added, no version bump (a new step id
+and a new `dofs=` reading on it are not a changed literal — OP-18), and no existing golden moved.
+
+Tests: `HelixRiderTest` (18) — a right- and a left-hand coil's triple at the exact analytic positions (1e-12
+mm) and each point following a retyped pitch, a retyped turn count and a dragged axis point; start and end for
+a curve through points, a **closed** smooth run (one point, and the status saying why), a **connect** and an
+**imported wireframe** (`JtWireframeTest`'s own contract, updated from *no key points* to *its two ends*, with
+the untouched claim that nothing of the file became a construction **input**); a rider at 90°, 450° and 810° on
+a three-turn coil, with `450° − 90°` asserted to be exactly one pitch of rise; an angle past the end invalid by
+name and healing when the turn count is raised, and the negative case; a plan click bounded to `[0, 360°)` at
+five bearings with typing reaching the third winding; a 3D click on the second and third winding through
+`Editor.pointing`, with the tangential view named as the one honestly ambiguous case; a 3D drag crossing a
+winding and a plan drag staying on its own; `save → load → save` byte-equal with an angle above 360° (the
+fixture a normalization would destroy) and the reloaded rider on the same winding of the same coil; a run in
+space between two key points picked in the 3D view with the nodes **shared**, a tube on the coil still
+watertight, a second coil starting *at the rider* and following it; *Make absolute* keeping the position and
+round-tripping; one undo per gesture; a placed group carrying the coil and its rider rigidly; a delete of the
+coil taking both with it; the plan drawing a dot at every space point's projection (what is drawn is what is
+picked); and both refusals asserted by their words. **1703 → 1721 green.**
+
 **What OP-26 as a whole now is.** A curve in space is a first-class value of the graph (`Path3`, a chain of
 `Seg3`, `Bezier3` and `Helix3`), drawn in the 3D view and projected into the plan, pickable in both. It is
 produced by five constructions and one import: through points in space (straight or smooth), as a **helix**, by
@@ -7930,7 +8055,9 @@ a **projection** onto a face, and as an **imported** literal. It carries a **rot
 with a stated start roll and twist, on which the **sweep** rides (a tube, or any closed profile), refusing a
 bend tighter than the profile by name; a **station** is a stated distance along a run and is an ordinary sketch
 space, so everything drawn on one rides the run; a run is also a **directrix** for the swept cut and split
-(OP-22's extension) and a **carrier** for a wall. Every one of those is parented — a value in world space whose
+(OP-22's extension) and a **carrier** for a wall. It **says what it is defined by** — its start, its end and, for
+a coil, its centre, as accessors that follow it — and a coil **carries a rider**, a point at a stated angle
+along it whose parameter is unbounded, so a winding is a number rather than a picture (session 53, above). Every one of those is parented — a value in world space whose
 construction rides the drawing — except the imported literal, which is frozen by definition and carries a
 parametric placement instead.
 
@@ -12123,7 +12250,24 @@ absent, and independent of everything else here.
    > so does **(c)**: the quadratic guard is a feature-level refusal, so it still runs on every drag frame and
    > is the residual per-frame cost. One constraint slice B inherits: the **station count** may not become a
    > render-time argument, because the plan hint reads it — a picture's quality may not move a pick target.
-2. **The helix's key points, and a point on a helix** (the user's design). Today `Document.extractPoints`
+2. ~~**The helix's key points, and a point on a helix** (the user's design).~~ **Delivered (session 53) — see
+   *As built: a run's key points, and a point that rides a coil* under *Curves in space*.** Both halves shipped
+   as one package: every run hands back its **start** and **end** as accessors on the curve node (a coil its
+   **centre** too, giving it the arc's triple), through one route that serves the helix, the curve through
+   points, the connect, the combined view, the intersection curve and an imported wireframe; and
+   `RiderForm.HELIX_ANGLE` puts a point on a coil at an angle that is **not modular** — 450° is the second
+   winding, one pitch above 90° — absolute in the coil's own frame, with the plan resolving a click to the first
+   winding, the 3D view's ray resolving it to the winding it hit, and a drag following the same asymmetry. A
+   closed run hands back **one** point (its closure is structure, so the count does not wait on two positions
+   agreeing); an angle off the coil is node invalidity that names itself and heals; the stored angle counts the
+   way the coil turns, so a left-hand coil's runs 0 → turns·360° like any other and chirality stays structural.
+   **Scoped out, each refusing in the app by name:** a rider on a **non-helix** run (it would need a parameter
+   anchored to the points the run is built through — `ALONG_LINE`'s problem one dimension up — and the refusal
+   names *Station* as what states a position along a run of any shape), and a **linear dimension between points
+   in space** (its number is measured in the working plane and its graphic drawn there; the extension it wants is
+   a dimension drawn in the 3D view). Both are future extensions and neither is a limit.
+
+   The original entry, kept for the design it states: Today `Document.extractPoints`
    falls through to `emptyList()` for a `SPACE_CURVE` and `Element.isCurve` excludes one, so a coil has no end
    point, no start point and no centre; and the rider forms (`AXIS_COORD`, `ALONG_LINE`, `CIRCLE_ANGLE`,
    `ELLIPSE_PARAM`) are all 2D, so there is no point on a helix at all. **Key points** are general from the

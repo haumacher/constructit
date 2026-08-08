@@ -2619,6 +2619,8 @@ class Editor(
                 pickedClicks.toList(),
                 count = toolCount(tool),
                 landings = pickedLandings.toList(),
+                // which view this gesture was made through — see [Picks.view]
+                view = proj(),
             )
         toolPreview = preview(PreviewContext(doc, ev, picks, previewScalars(tool, ev), world, tolWorld(), justification))
     }
@@ -3174,6 +3176,10 @@ class Editor(
         // pinning that point to an axis would bend the aim rather than restrict the height. The jamb's rule
         // for the same reason — a handle with a single direction of its own has nothing a lock could add.
         if (el.handle is HeightPointHandle) return world
+        // ...and a rider on a coil (OP-26) is aimed too: the pointer names an *angle* along the curve — in the
+        // 3D view through its own viewing ray — so pinning the plane point to an axis would bend the aim
+        // instead of restricting the freedom, which is exactly the height point's case one dimension over.
+        if (el.handle is OnHelixHandle) return world
         return axisLockedFrom(world)
     }
 
@@ -3478,6 +3484,7 @@ class Editor(
                 pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0),
                 pickedClicks.toList(),
                 signs = pickedSides.toList(),
+                view = proj(),
             )
         val scalars = toolScalars(tool)
         when {
@@ -3724,8 +3731,10 @@ class Editor(
                 // both share the node of a point they hit (see the placing route below the `when`)
                 SlotKind.EXISTING_POINT, SlotKind.INPUT_POINT -> pickElement(world) { it.isPoint }
                 SlotKind.CURVE -> pickElement(world) { it.isCurve }
-                // a curve's defining points, or an area's corners (the OP-21 extension's key points)
-                SlotKind.EXTRACTABLE -> pickElement(world) { it.isCurve || it.isArea }
+                // a curve's defining points, an area's corners (the OP-21 extension's key points), or a curve
+                // in space's own start, end and centre (OP-26) — the one slot that reaches across the 2D/3D
+                // partition, for the reason [SlotKind.EXTRACTABLE] states
+                SlotKind.EXTRACTABLE -> pickElement(world) { it.isCurve || it.isArea || it.kind == ElementKind.SPACE_CURVE }
                 SlotKind.LINE -> pickElement(world) { it.isLinear } // a segment or ray also carries a line
                 // ...and an arc also carries a circle: the twin coercion, so a circle slot takes one
                 SlotKind.CIRCLE -> pickElement(world) { it.isCentric }
@@ -3885,6 +3894,8 @@ class Editor(
                 pickedClicks.toList(),
                 count = toolCount(tool),
                 landings = pickedLandings.toList(),
+                // which view this gesture was made through — see [Picks.view]
+                view = proj(),
             )
         // read before [resetPicks] drops it: a group operand is worth reporting, because the one thing the
         // canvas cannot show is *how much* the tool just took (OP-16)

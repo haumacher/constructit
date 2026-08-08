@@ -161,6 +161,34 @@ sealed interface Curve3Element {
         }
 
         /**
+         * The **whole turn the curve travels**, in radians and **unsigned** — `2π · turns`, which is the
+         * domain a point riding this coil states its position in (see [atAngle]).
+         *
+         * Unsigned deliberately, and it is the same decision [Handedness] itself is: chirality is structural,
+         * so it may not also be a sign on a number. The angle a rider carries is *how far along the coil it
+         * has travelled, measured the way the coil turns*, so it runs from 0 to this for a left-hand coil
+         * exactly as it does for a right-hand one, and which way that is about [axis] is [hand]'s to say.
+         */
+        val totalAngle: Double get() = 2.0 * PI * kotlin.math.abs(turns)
+
+        /**
+         * The point [theta] radians **along the coil from its start** — the helix in its own angle rather
+         * than in the normalized parameter [at] takes, and the parameterization a rider on it owns (OP-26).
+         *
+         * The one thing that makes this worth having as a formula of its own: it is **not modular**. `450°`
+         * is a real place on a three-turn coil, one whole pitch above `90°`, because the rise enters as
+         * `pitch · θ / 2π` — a fact about the angle travelled and not about where it lands on a circle. So
+         * this is `at(θ / totalAngle)` in value and *not* in meaning: [at] runs over the curve there is,
+         * while this runs over the angle a user states, and it answers for angles the curve does not reach
+         * (which is where the node built on it goes invalid by name — see
+         * [constructit.dsl.Construction.pointOnHelix]).
+         */
+        fun atAngle(theta: Double): Vec3 {
+            val turned = hand.turnSign * theta
+            return origin + u * (radius * cos(turned)) + bi * (radius * sin(turned)) + axis * (b * theta)
+        }
+
+        /**
          * The derivative at [t] with respect to the parameter — the tangent direction, unnormalized.
          *
          * Constant in magnitude (`|sweepAngle|·sqrt(r² + b²)`, which is [arcLength]), which is the same fact

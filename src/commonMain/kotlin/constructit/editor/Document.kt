@@ -16,6 +16,7 @@ import constructit.core.Node
 import constructit.core.ParameterNode
 import constructit.core.Path3Value
 import constructit.core.PlaneValue
+import constructit.core.Point3Value
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.RayValue
@@ -373,6 +374,19 @@ class Element(
      * since ortho-leg surgery removes and appends elements mid-document.
      */
     var born: Int = 0
+
+    /**
+     * Whether this element's value is a point **in space** (`Point3Value`) rather than one of the working
+     * plane — a height point (OP-25), a key point of a curve in space, or a point riding a coil (OP-26).
+     *
+     * A fact about the *frame the value is stated in*, deliberately kept apart from [kind], which says what
+     * **role** the point plays (free, derived, riding a curve, lifted off a plane). The two are independent:
+     * a rider is a rider whether it slides along a segment in the plan or round a coil in space, and every
+     * route that asks "is this a point?" wants the role while every route that asks "can I read plane
+     * coordinates off it?" wants this. Stamped by the three builders that make one, so no consumer has to
+     * evaluate a node to find out — and a replay stamps it again for exactly the same reason it did first.
+     */
+    var inSpace: Boolean = false
 
     /**
      * Whether grabbing this element can actually move anything. An on-curve point qualifies only
@@ -3434,8 +3448,19 @@ class Document {
             val rel = relativeOf(el)
             val node = literalNode(el)
             when {
-                rec != null && rec.form == RiderForm.CIRCLE_ANGLE ->
-                    out.add(Freedom(el, FreedomKind.ON_CIRCLE, "${nameOf(el)} — on circle ${nameOf(rec.host)}", owned, rider = rec))
+                // an angle in the **host's own frame** — a circle's about its centre, a coil's about its axis
+                // (OP-26). One row, because the placement question they answer is the same: nothing about a
+                // frame that moves the host can re-anchor such an angle, so it is rigid as it stands.
+                rec != null && (rec.form == RiderForm.CIRCLE_ANGLE || rec.form == RiderForm.HELIX_ANGLE) ->
+                    out.add(
+                        Freedom(
+                            el,
+                            FreedomKind.ON_CIRCLE,
+                            "${nameOf(el)} — ${if (rec.form == RiderForm.HELIX_ANGLE) "on coil" else "on circle"} ${nameOf(rec.host)}",
+                            owned,
+                            rider = rec,
+                        ),
+                    )
                 rec != null ->
                     out.add(
                         Freedom(
@@ -4618,6 +4643,11 @@ class Document {
             note =
                 if (node != null) {
                     "${nameOf(pt)} is already a free point"
+                } else if (freedInSpace.containsKey(pt.id)) {
+                    // it *is* free, in the two freedoms a point in space has here (OP-25): saying "derived by
+                    // the construction" would be true of the formula and false about the point
+                    "${nameOf(pt)} is already free of the curve it rode: it is a height point now, so its own " +
+                        "freedoms are its base in ${pt.space} and its height — drag or type either"
                 } else {
                     // a path corner, an intersection: it has no literal of its own to hand back
                     "${nameOf(pt)} is derived by the construction, not a point holding its own coordinates"
@@ -4648,6 +4678,7 @@ class Document {
     ): Boolean {
         val view = pt.ref.node as? IndirectNode ?: return false
         val rec = riderOf(pt) ?: return false
+        if (pt.inSpace) return detachSpaceRider(pt, view, rec, dofs)
         val here = pointOf(view, Evaluator()) ?: return false
         val lengths = dofs.filter { it.dim == Dimension.LENGTH }
         val at = if (lengths.size == 2) Vec2(lengths[0].mm, lengths[1].mm) else here
@@ -4666,6 +4697,59 @@ class Document {
         note = "${nameOf(pt)} keeps its position and is off ${nameOf(rec.host)} — it is an ordinary free point again"
         return true
     }
+
+    /**
+     * Free a rider **in space** (OP-26's coil rider) from its host: its view is re-pointed at a **height
+     * point** standing exactly where it stood — a free base point on the host's own sketch plane, plus a free
+     * height along that plane's normal.
+     *
+     * That is *Make absolute*'s own sentence one dimension up (OP-4 case b): the point stops following the
+     * coil and keeps its position, nothing moves at the moment of the change, and everything built on it
+     * follows the point instead of the curve from here on. What it is freed **into** is the pair of freedoms
+     * this editor already knows how to edit — drag the base in the plan, drag the height in the 3D view, type
+     * either — rather than three bare coordinates with no handle, which would be "free" in name only.
+     *
+     * [dofs] is the freed position as a replay hands it back (OP-18), three lengths: the base's two
+     * coordinates in the plane, then the height. Its own step restates them ([relativeDofs]), because from
+     * this step on they are the point's own state.
+     */
+    private fun detachSpaceRider(
+        pt: Element,
+        view: IndirectNode,
+        rec: RiderRecord,
+        dofs: List<Quantity>,
+    ): Boolean {
+        val ev = Evaluator()
+        val planeRef = planeOfSpace(pt.space)
+        val plane = (ev.valueOf(planeRef) as? PlaneValue)?.plane ?: return false
+        val here = (ev.eval(view) as? EvalResult.Ok)?.let { (it.value as? Point3Value)?.p } ?: return false
+        val lengths = dofs.filter { it.dim == Dimension.LENGTH }
+        val local = if (lengths.size == 3) Vec2(lengths[0].mm, lengths[1].mm) else plane.toLocal(here)
+        val lift = if (lengths.size == 3) lengths[2].mm else plane.distanceTo(here)
+        // through [freePoint], so the base is an ordinary point of the drawing — drawn, pickable, draggable,
+        // shareable. Its `point` step is absorbed into the *absolute* step this runs inside (see [recording]),
+        // so what the file gains is one restated position and not a second step.
+        val base = freePoint(Quantity.mm(local.x), Quantity.mm(local.y))
+        val height = SourceNode(nextId("fh"), ScalarValue(Quantity.mm(lift)))
+        view.boundTo = cx.heightPoint(planeRef, base, Ref<ScalarValue>(height)).node
+        riders.remove(pt.id)
+        carrierRiders.removeAll { it.dof === rec.param }
+        freedInSpace[pt.id] = FreedInSpace(base.node as SourceNode, height)
+        pt.kind = ElementKind.HEIGHT_POINT
+        pt.style = Styles.DERIVED_POINT
+        pt.handle = HeightPointHandle(planeRef, base, height)
+        noteReparam(pt)
+        noteEdit()
+        note =
+            "${nameOf(pt)} keeps its position and is off ${nameOf(rec.host)} — it is a height point on ${pt.space} " +
+            "now: drag its base ${nameOf(elementFor(base) ?: pt)} in the plan, or its height in the 3D view"
+        return true
+    }
+
+    /** The two free literals a rider freed in space owns from then on — see [detachSpaceRider]. */
+    private class FreedInSpace(val base: SourceNode, val height: SourceNode)
+
+    private val freedInSpace = HashMap<String, FreedInSpace>()
 
     /** Riders freed by [detachRider], by element id: the free source their view now points at. */
     private val detached = HashMap<String, SourceNode>()
@@ -4931,7 +5015,10 @@ class Document {
                 RiderForm.AXIS_COORD -> OnAxisHandle(rec.param, rec.axis ?: 0)
                 else -> OnLineHandle(rec.line!!, rec.param)
             }
-        if (rec.form == RiderForm.ALONG_LINE) noteCarrierRider(rec.point, rec.line!!, rec.param)
+        // only a carrier-anchored (2D) rider is registered for compensation, so the cast is the form's own
+        // guarantee rather than a hope about an erased type — see [noteCarrierRider]
+        @Suppress("UNCHECKED_CAST")
+        if (rec.form == RiderForm.ALONG_LINE) noteCarrierRider(rec.point as PointRef, rec.line!!, rec.param)
         return true
     }
 
@@ -4953,6 +5040,14 @@ class Document {
         // placement capture must not make the step describe post-capture geometry
         if (detached.containsKey(el.id)) {
             restatedPosition(el, stepIndex, ev)?.let { return listOf(Quantity.mm(it.x), Quantity.mm(it.y)) }
+        }
+        // ...and a rider freed **in space** (OP-26) owns a base and a height from then on ([detachSpaceRider]).
+        // Read off the two literals rather than off the value, for [unwelded]'s reason: a group placement binds
+        // a captured base, and what this step restored is the literal, not what the capture derives from it.
+        freedInSpace[el.id]?.let { f ->
+            val b = (f.base.value as? PointValue)?.p
+            val h = (f.height.value as? ScalarValue)?.q
+            if (b != null && h != null) return listOf(Quantity.mm(b.x), Quantity.mm(b.y), Quantity.mm(h.mm))
         }
         // an **unlinked** point (a weld or an attach left behind, see [unweld]) owns its coordinates from the
         // moment its step ran, for exactly the same reason — and its step must restate them, or replay would
@@ -5133,7 +5228,7 @@ class Document {
 
     // ---- riding a curve: one DOF along a host, absolute wherever the host offers one (OP-20) ----
 
-    /** Which of [riderOn]'s three parameter forms a rider's single degree of freedom is stated in. */
+    /** Which of the parameter forms a rider's single degree of freedom is stated in — see [riderOn]. */
     enum class RiderForm {
         /** A world coordinate the host leaves free — a host axis-aligned *by construction* (OP-20). */
         AXIS_COORD,
@@ -5150,6 +5245,22 @@ class Document {
          * curve's *extent* can move, because an ellipse has no ends to stretch.
          */
         ELLIPSE_PARAM,
+
+        /**
+         * The **angle along a helix** (OP-26), measured from the coil's start the way it turns — the first
+         * form whose point is not in the working plane, and the first whose parameter is **unbounded**.
+         *
+         * Absolute in the coil's own frame for [CIRCLE_ANGLE]'s exact argument, one dimension up: it is
+         * measured from the stored phase about the axis, and no edit to the centre, the radius or the pitch
+         * can re-anchor it. What is new is that the angle is *not* modular — 450° is the second winding — so
+         * the range it is honest over is `[0, turns · 360°]` and an angle outside that is a **value**
+         * condition, named and healing (OP-3), never clamped.
+         *
+         * The **sign** convention is the curve's, not the number's: the angle counts the way the coil turns,
+         * so a left-hand coil's rider runs 0 → `turns · 360°` exactly as a right-hand one's does and
+         * chirality stays structural ([constructit.geom.Handedness], OP-1).
+         */
+        HELIX_ANGLE,
     }
 
     /**
@@ -5170,8 +5281,14 @@ class Document {
         val param: SourceNode,
         internal val line: LineRef?,
         internal val axis: Int?,
-        /** The constructed point riding the host — the element may be a free point *bound* onto it. */
-        internal val point: PointRef,
+        /**
+         * The constructed point riding the host — the element may be a free point *bound* onto it.
+         *
+         * Untyped, because a rider's point is a point of the **plane** for the three 2D forms and a point in
+         * **space** for [RiderForm.HELIX_ANGLE] (OP-26): what this record answers is *which freedom does this
+         * element own*, and that question is the same one dimension up.
+         */
+        internal val point: Ref<*>,
     ) {
         /** The point of the carrier this rider's position is measured from, once it has been re-anchored. */
         var base: Element? = null
@@ -5202,7 +5319,7 @@ class Document {
     private fun noteRider(
         el: Element,
         host: Element,
-        rider: Rider,
+        rider: Rider<*>,
     ) {
         riders[el.id] = RiderRecord(el, host, rider.form, rider.dof, rider.line, rider.axis, rider.point)
     }
@@ -5211,8 +5328,8 @@ class Document {
      * A point that **rides** a curve: the point itself, the [handle] over its single degree of freedom, and
      * how to [place] that freedom so a wanted world coordinate comes out exactly (see [Junction.place]).
      */
-    private class Rider(
-        val point: PointRef,
+    private class Rider<V : Value>(
+        val point: Ref<V>,
         val handle: Handle,
         /** The single source node carrying this rider's freedom — its parameter, whatever kind it is. */
         val dof: SourceNode,
@@ -5222,6 +5339,8 @@ class Document {
         val line: LineRef? = null,
         val circle: CircleRef? = null,
         val axis: Int? = null,
+        /** Whether [point] is a point in **space** rather than in the plane — see [Element.inSpace]. */
+        val inSpace: Boolean = false,
         /** Which axes [place] has any say over at all — see [Junction.placeable]. */
         val placeable: (axis: Int) -> Boolean,
         val place: (axis: Int, value: Double) -> Boolean,
@@ -5296,7 +5415,7 @@ class Document {
         curve: Element,
         at: Vec2,
         prefix: String,
-    ): Rider? {
+    ): Rider<PointValue>? {
         val ev = Evaluator()
         if (curve.isLinear) {
             val lr = carrierLine(curve)
@@ -5959,19 +6078,23 @@ class Document {
      * parameter, so the step restates the parameter itself rather than leaving the file describing the click
      * that first placed the rider. Given verbatim, so a saved drawing reloads bit for bit.
      */
-    private fun addConstrained(
-        ref: PointRef,
+    private fun <V : Value> addConstrained(
+        ref: Ref<V>,
         handle: Handle,
         dof: SourceNode? = null,
         restated: Quantity? = null,
-    ): PointRef {
+        inSpace: Boolean = false,
+    ): Ref<V> {
         if (dof != null && restated != null && restated.dim == (dof.value as? ScalarValue)?.q?.dim) {
             dof.value = ScalarValue(restated)
         }
         // through [add], because that is where an element's sketch space is stamped (OP-17): building the
         // Element here instead left every constrained point in the **plan** whatever space it was drawn in,
         // and an ortho path drawn on a face came out as legs on the face with their corners in the plan
-        add(ref, ElementKind.ON_CURVE, Styles.ON_CURVE).handle = handle
+        add(ref, ElementKind.ON_CURVE, Styles.ON_CURVE).also {
+            it.handle = handle
+            it.inSpace = inSpace
+        }
         return ref
     }
 
@@ -6008,12 +6131,12 @@ class Document {
      * The single seam through which every rider's stored parameter arrives, which is why the format
      * migration ([migratedRiderDof]) is applied here and not in the two routes that call it.
      */
-    private fun addRider(
+    private fun <V : Value> addRider(
         host: Element,
-        rider: Rider,
+        rider: Rider<V>,
         dof: Quantity?,
         at: Vec2? = null,
-    ): PointRef {
+    ): Ref<V> {
         val (value, finding) = migratedRiderDof(rider, at, dof)
         // Published through a **re-pointable view** ([IndirectNode], OP-16's substrate), never as the derived
         // on-curve node itself. A rider has no literal of its own, so *Make absolute* had nothing to hand back
@@ -6021,7 +6144,7 @@ class Document {
         // because there the element still published its own `SourceNode`. The view is what makes the two
         // uniform: [detachRider] re-points it at a free source and every consumer follows in place, exactly as
         // a welded point's consumers follow its master (OP-5).
-        val ref = addConstrained(cx.indirect(rider.point), rider.handle, rider.dof, value)
+        val ref = addConstrained(cx.indirect(rider.point), rider.handle, rider.dof, value, rider.inSpace)
         elements.lastOrNull()?.let {
             noteRider(it, host, rider)
             if (finding != null) noteLoad("${nameOf(it)} on ${nameOf(host)}: $finding")
@@ -6053,7 +6176,7 @@ class Document {
      * meaning, which is exactly why OP-20 chose them.
      */
     private fun migratedRiderDof(
-        rider: Rider,
+        rider: Rider<*>,
         at: Vec2?,
         dof: Quantity?,
     ): Pair<Quantity?, String?> {
@@ -6142,6 +6265,86 @@ class Document {
     ): PointRef? {
         val rider = riderOn(ellipse, at, "") ?: return null
         return addRider(ellipse, rider, dof)
+    }
+
+    /**
+     * A point that **rides the coil [curve]**, at the angle the click at [at] states (OP-26, the queue's own
+     * design) — the point-on-a-circle gesture one dimension up.
+     *
+     * **The pick resolves the winding; the point does not.** [view] is the projection the click came through,
+     * and it is the whole of the 2D/3D split ([HitTest.helixAngleAt]): in the plan every winding projects onto
+     * the same image, so a click there states an angle in `[0°, 360°)` — the first winding — and typing reaches
+     * any other one afterwards (OP-13); in the 3D view the pointer's ray meets the drawn curve on a known
+     * winding, so the angle comes back past 360° directly. Same rider, two resolutions — the split a `PATH3`
+     * pick already has.
+     *
+     * [dof] is the angle a replay hands back (OP-18) and wins over the click, for the reason every rider's
+     * does: *which* curve is the choice replay repeats, while where the rider sits along it is state — and for
+     * this rider it is state a click could not restate at all, since the plan cannot say which winding.
+     *
+     * Refused **by name**, building nothing, for the two structural things — a pick that is not a curve in
+     * space, and a curve in space that is **not a helix**. The second is the deliberate scope of this rider:
+     * a parameter along a spline through points would re-anchor whenever those points moved (`ALONG_LINE`'s
+     * problem one dimension up), so it is declined with that reason and the alternative named. Everything about
+     * *where* the angle is — past the end of the coil, below zero — is the node's business and comes back as
+     * the reason it is invalid, healing when the number or the turn count moves (OP-3).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun pointOnHelix(
+        curve: Element,
+        at: Vec2,
+        view: PlaneProjection? = null,
+        dof: Quantity? = null,
+    ): Point3Ref? {
+        if (curve.kind != ElementKind.SPACE_CURVE) {
+            note = "Point on helix: ${nameOf(curve)} is ${kindWord(curve)}, not a curve in space — click a coil"
+            return null
+        }
+        val ev = Evaluator()
+        val path = (ev.valueOf(curve.ref) as? Path3Value)?.path
+        val helix = path?.elements?.singleOrNull() as? Curve3Element.Helix3
+        if (helix == null) {
+            note =
+                if (path == null) {
+                    "Point on helix: ${nameOf(curve)} has no value right now, so there is no coil to put a point on — " +
+                        "${(ev.eval(curve.ref.node) as? EvalResult.Invalid)?.reason ?: "fix what it is built from"}"
+                } else {
+                    // the scope, named as a scope rather than as a limit (DESIGN.md records it as a future
+                    // extension): the angle exists because a helix *is* an angle about an axis
+                    "Point on helix: ${nameOf(curve)} is a curve in space but not a coil, and a point on it would " +
+                        "need a parameter measured from the points it is built through — which re-anchors " +
+                        "whenever they move. Use a Station to state a position along a run of any shape"
+                }
+            return null
+        }
+        val plane = planeOfSpace(curve.space)
+        val angle =
+            dof?.takeIf { it.dim == Dimension.ANGLE }?.base
+                ?: (ev.valueOf(plane) as? PlaneValue)?.plane?.let { HitTest.helixAngleAt(helix, it, at, view) }
+                ?: 0.0
+        val aNode = SourceNode(nextId("h"), ScalarValue(Quantity.rad(angle)))
+        val point = cx.pointOnHelix(curve.ref as Path3Ref, Ref<ScalarValue>(aNode))
+        val ref =
+            addRider(
+                curve,
+                Rider(
+                    point,
+                    OnHelixHandle(curve.ref as Path3Ref, plane, aNode),
+                    aNode,
+                    RiderForm.HELIX_ANGLE,
+                    inSpace = true,
+                    // a coil sweeps all three coordinates, and where an angle can put the point is the node's
+                    // own business — a junction has nothing to place on a curve that leaves the plane
+                    placeable = { false },
+                ) { _, _ -> false },
+                dof,
+            )
+        val el = elements.lastOrNull()
+        note =
+            "${el?.let { nameOf(it) }}: ${Format.num(Quantity.rad(angle).deg)}° along ${nameOf(curve)} — " +
+            "winding ${1 + (angle / (2.0 * PI)).toInt()} of ${Format.num(helix.turns)}; drag it in the 3D view to " +
+            "slide it along the whole coil, in the plan to move it round the winding it is on, or type the angle"
+        return ref
     }
 
     /**
@@ -6307,7 +6510,13 @@ class Document {
      * you get the corners there are then, while a surplus accessor goes invalid with a reason (OP-3).
      */
     @Suppress("UNCHECKED_CAST")
-    fun extractPoints(el: Element): List<PointRef> {
+    fun extractPoints(el: Element): List<Ref<*>> {
+        // A **curve in space** (OP-26) hands back the points that define it — the path's start and end, and a
+        // coil's centre, which gives a helix exactly the arc's triple. Accessors, not copies: each one hangs
+        // off the curve node ([Construction.pathStart]), so retyping a pitch or dragging a point the run
+        // passes through moves it, and one route serves the coil, the curve through points, the connect, the
+        // combined view, the intersection curve and the imported wireframe alike.
+        if (el.kind == ElementKind.SPACE_CURVE) return spaceCurveKeyPoints(el)
         if (el.kind == ElementKind.AREA) {
             val region = el.ref as RegionRef
             val n = cx.regionCornerCount(region, Evaluator())
@@ -6341,6 +6550,66 @@ class Document {
             }
         refs.forEach { addDerived(it) }
         return refs
+    }
+
+    /**
+     * The defining points of the curve in space [el]: its **start** and **end**, preceded by the **centre**
+     * when it is a coil — a helix's own triple, which is the arc's (`ARC → centre, start, end`) one dimension
+     * up.
+     *
+     * **A closed run hands back one point, not two.** Its last piece hands over to its first, so start and end
+     * are the same place — and saying that with two coincident dots would put two elements where the drawing
+     * has one distinguished point. The count is read off [Path3.closed], which is *structure* (OP-21's rule:
+     * fixed when the node was built and never derived from the values), so it does not depend on two positions
+     * happening to agree; and it is **structural per extraction**, exactly as a region's corner count and a
+     * Bézier's controls are — extract again after the run is rebuilt and you get the points there are then.
+     *
+     * Refused by name, building nothing, when the run has no value to read that structure from: a curve with no
+     * pieces has neither a start nor an end, and creating accessors regardless would leave permanently invalid
+     * points in the drawing.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun spaceCurveKeyPoints(el: Element): List<Ref<*>> {
+        val ref = el.ref as Path3Ref
+        val ev = Evaluator()
+        val path = (ev.valueOf(ref) as? Path3Value)?.path
+        if (path == null || path.isEmpty) {
+            note =
+                "${nameOf(el)} has no run to take key points from right now" +
+                ((ev.eval(el.ref.node) as? EvalResult.Invalid)?.let { " — ${it.reason}" } ?: "")
+            return emptyList()
+        }
+        val isHelix = path.elements.singleOrNull() is Curve3Element.Helix3
+        val refs =
+            listOfNotNull(
+                if (isHelix) cx.helixCentre(ref) else null,
+                cx.pathStart(ref),
+                if (path.closed) null else cx.pathEnd(ref),
+            )
+        refs.forEach { addSpacePoint(it, el.space) }
+        val what =
+            (if (isHelix) "centre, " else "") + "start" + (if (path.closed) " (it is closed, so its end is its start)" else " and end")
+        note = "${nameOf(el)}: its $what — ${refs.size} point${if (refs.size == 1) "" else "s"} that follow the curve through every edit"
+        return refs
+    }
+
+    /**
+     * Add [ref] as a **derived point in space** (OP-26) — a key point of a curve in space, drawn in the plan
+     * where it projects and in the 3D view where it stands ([Element.inSpace], [HitTest.distanceTo]).
+     *
+     * Stamped with the curve's own [space] rather than the active one: a point of a run belongs where the run
+     * is addressed, which is the same rule a derived point of a 2D curve follows by being created in the space
+     * that curve was drawn in.
+     */
+    private fun addSpacePoint(
+        ref: Point3Ref,
+        space: String,
+    ): Point3Ref {
+        add(ref, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT).also {
+            it.inSpace = true
+            it.space = space
+        }
+        return ref
     }
 
     fun tangentFromPoint(
@@ -8556,6 +8825,9 @@ class Document {
         val plane = activePlane()
         val el = add(cx.heightPoint(plane, base, height, sign), ElementKind.HEIGHT_POINT, Styles.DERIVED_POINT)
         el.handle = HeightPointHandle(plane, base, height.node, sign)
+        // its value is a point in **space**, which is what every consumer reads off the element (OP-26) rather
+        // than off the kind — see [Element.inSpace] and [pointInSpace]
+        el.inSpace = true
         return el
     }
 
@@ -8755,7 +9027,7 @@ class Document {
      */
     @Suppress("UNCHECKED_CAST")
     private fun pointInSpace(el: Element): Point3Ref =
-        if (el.kind == ElementKind.HEIGHT_POINT) {
+        if (el.inSpace) {
             el.ref as Point3Ref
         } else {
             cx.heightPoint(planeOfSpace(el.space), el.ref as PointRef, cx.const(0.0.mm))
@@ -11750,6 +12022,20 @@ class Document {
         dofs: List<Quantity> = emptyList(),
     ): Element? {
         if (!pa.isPoint || !pb.isPoint || pa === pb) return null
+        // A **point in space** (OP-25, OP-26) is refused by name rather than measured: this annotation's value
+        // is the distance between two points *of the working plane* and its graphic is drawn in that plane, so
+        // handing it one would either measure a projection while drawing the number of a distance in space or
+        // the reverse. Named as a scope, and DESIGN.md records the extension it wants — a dimension whose
+        // graphic lives in the 3D view, which is where both of its ends are drawn.
+        for (p in listOf(pa, pb)) {
+            if (p.inSpace) {
+                note =
+                    "${nameOf(p)} is a point in space, and a linear dimension is measured and drawn in the " +
+                    "sketch plane — dimension two points of ${activeSpace.name}, or read this one's own " +
+                    "position in the panel"
+                return null
+            }
+        }
         val a = pa.ref as PointRef
         val b = pb.ref as PointRef
         val ref = cx.measureDistance(a, b)

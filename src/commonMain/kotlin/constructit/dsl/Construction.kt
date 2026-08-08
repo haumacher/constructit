@@ -2972,6 +2972,116 @@ class Construction {
             EvalResult.Ok(Path3Value((it[0] as Path3Value).path.movedBy(placementFrame(p, a, t))))
         }
 
+    // ---- what a curve in space is defined by: its own points, as accessors (OP-26 × the key-point rule) ----
+
+    /**
+     * Where the run [path] **begins** — an accessor on the curve node, not a copy of a position.
+     *
+     * The 3D twin of [segmentStart] and [arcStart], and it exists for their reason: a *key point* is a
+     * derived point that hangs off the geometry it belongs to, so retyping a coil's pitch, dragging a point a
+     * run passes through or tilting the space it was drawn in moves this point too (the OP-21 extension's
+     * *key points*, one dimension up). Nothing about which piece the run starts with is read here — [Path3]
+     * answers that — so this serves a helix, a curve through points, a connect, a combined view, an
+     * intersection curve and an imported wireframe with one node kind and no cases.
+     *
+     * Invalid with a reason that heals (OP-3) for a run with no pieces at all, which is the only way a path
+     * can fail to have a beginning.
+     */
+    fun pathStart(path: Path3Ref): Point3Ref =
+        op(path) {
+            val p = (it[0] as Path3Value).path.start
+            if (p == null) EvalResult.Invalid("this curve has no pieces, so it has no start point") else EvalResult.Ok(Point3Value(p))
+        }
+
+    /**
+     * Where the run [path] **ends** — [pathStart]'s twin, and for a **closed** run the same place it starts,
+     * because that is what closure means (the last piece hands over to the first).
+     */
+    fun pathEnd(path: Path3Ref): Point3Ref =
+        op(path) {
+            val p = (it[0] as Path3Value).path.end
+            if (p == null) EvalResult.Invalid("this curve has no pieces, so it has no end point") else EvalResult.Ok(Point3Value(p))
+        }
+
+    /**
+     * The **axis point of a coil** — [Curve3Element.Helix3.origin], the point the curve starts level with,
+     * which is what gives a helix exactly the arc's triple of key points (centre, start, end).
+     *
+     * Refused as a *value* (OP-3) rather than at build time for a run that is not a single helix: which
+     * pieces a path has is a fact about its own construction, and the honest place to say "this run has no
+     * centre" is where the run's value is. The *gesture* says it too, by name, before it builds anything
+     * (`Document.extractPoints`), so the ordinary case never produces a permanently invalid point.
+     */
+    fun helixCentre(path: Path3Ref): Point3Ref =
+        op(path) {
+            val h =
+                helixPiece(it[0])
+                    ?: return@op EvalResult.Invalid(
+                        "only a helix has a centre: this run is a chain of segments and curves, whose defining " +
+                            "points are its own — take its start and end instead",
+                    )
+            EvalResult.Ok(Point3Value(h.origin))
+        }
+
+    /**
+     * A point **riding the coil [path]**, [angle] along it from its start (the queue's own design) — the
+     * point-on-a-circle one dimension up, and the first rider whose position is not in a plane.
+     *
+     * **The angle is deliberately not modular, and that is the whole content of the parameter**: `450°` *is*
+     * the second winding, one whole pitch above `90°`, because a coil's angle carries the rise with it
+     * ([Curve3Element.Helix3.atAngle]). Reducing it into `[0, 360°)` would throw away the only thing that
+     * distinguishes the fifth turn of a spring from the first, and no other input could put it back.
+     *
+     * **Absolute in the coil's own frame** — measured from the stored phase [Curve3Element.Helix3.u] about
+     * the axis — so nothing re-anchors it when the centre moves, the radius changes or the pitch is retyped:
+     * exactly [pointOnCircle]'s argument (OP-20), and [pointOnEllipse]'s (OP-24). What it *does* follow is
+     * the coil: every one of those edits moves this point, because the coil is its input.
+     *
+     * **The sign convention**: the angle is how far the point has travelled **the way the coil turns**, so it
+     * runs from 0 to `turns · 360°` for a left-hand coil exactly as for a right-hand one, and the direction
+     * that is about the axis is the curve's [Handedness] — structural, never a sign on this number (OP-1, and
+     * [Curve3Element.Helix3]'s own rule that nothing but `hand` decides chirality).
+     *
+     * Invalid with a reason that heals (OP-3), never clamped and never refused at the gesture, for the three
+     * conditions on values:
+     * - a run that is **not a helix** — a spline through points has no angle about anything;
+     * - an angle **past the end** of the coil, which is where the curve stops rather than where the formula
+     *   does: raise the turn count and the point comes back at the very place it named;
+     * - a **negative** angle, which is off the near end for the same reason.
+     */
+    fun pointOnHelix(
+        path: Path3Ref,
+        angle: ScalarRef,
+    ): Point3Ref =
+        op(path, angle) {
+            val h =
+                helixPiece(it[0])
+                    ?: return@op EvalResult.Invalid(
+                        "a point on a helix is stated by an angle about the axis, and this run is not a helix — " +
+                            "state a position along a run of any shape with a Station instead",
+                    )
+            val theta = sc(it[1]).requireDim(Dimension.ANGLE, "helix angle").base
+            val total = h.totalAngle
+            if (theta < 0.0) {
+                return@op EvalResult.Invalid(
+                    "this angle is ${Frames3.deg(theta)}° along the coil, and a coil starts at 0°: " +
+                        "the angle runs the way the curve turns, so a negative one is off its near end",
+                )
+            }
+            if (theta > total) {
+                return@op EvalResult.Invalid(
+                    "this angle is ${Frames3.deg(theta)}° along the coil, which has ${
+                        Frames3.mm(h.turns)
+                    } turns and therefore ends at ${Frames3.deg(total)}° — raise the turn count, or bring the angle back",
+                )
+            }
+            EvalResult.Ok(Point3Value(h.atAngle(theta)))
+        }
+
+    /** The single [Curve3Element.Helix3] a path is, or null — what the two coil accessors above dispatch on. */
+    private fun helixPiece(v: Value): Curve3Element.Helix3? =
+        ((v as? Path3Value)?.path?.elements?.singleOrNull()) as? Curve3Element.Helix3
+
     /**
      * The **plane a flat run lies in** (OP-26, step 9) — the sketch space a wireframe's own geometry states.
      *

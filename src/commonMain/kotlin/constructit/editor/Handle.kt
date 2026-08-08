@@ -8,17 +8,22 @@ import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.Node
 import constructit.core.ParameterNode
+import constructit.core.Path3Value
+import constructit.core.PlaneValue
 import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.core.SourceNode
 import constructit.dsl.CircleRef
 import constructit.dsl.EllipseRef
 import constructit.dsl.LineRef
+import constructit.dsl.Path3Ref
 import constructit.dsl.PlaneRef
 import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.dsl.valueOf
 import constructit.geom.Conics
+import constructit.geom.Curve3Element
+import constructit.geom.Plane3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
 import constructit.units.Dimension
@@ -949,6 +954,71 @@ class OnEllipseHandle(val ellipse: EllipseRef, private val t: SourceNode) : Hand
     }
 
     override fun fields(): List<HandleField> = listOf(angleField("parameter", t))
+}
+
+/**
+ * Point on a **helix** (OP-26): the handle's one DOF is the **angle along the coil**, measured from its start
+ * the way it turns — the on-circle point's freedom one dimension up, and deliberately **not modular**.
+ *
+ * **The two views drag it differently, and that asymmetry is the design rather than a limitation.** Which
+ * winding the pointer means is a question only a view that can see the windings apart may answer
+ * ([HitTest.helixAngleAt]):
+ * - **In the 3D view** the pointer's ray meets the drawn curve on one particular winding, so the drag writes
+ *   the angle it found — the point slides freely along the whole coil, across windings, past 360°.
+ * - **In the plan** every winding projects onto the same image, so a click there states a *bearing* and
+ *   nothing more. The drag therefore keeps the winding the point is already on and moves it within that
+ *   winding: `winding · 360° + bearing`. That is not a clamp that happens to work — it is the only reading
+ *   the plan can honestly give, and the number stays typeable (OP-13), which is how any other winding is
+ *   reached from the 2D canvas.
+ *
+ * The field writes the same node, so what a number does and what a drag does are one operation (OP-13); an
+ * angle past the coil's end is the node's own refusal, which names itself and heals (OP-3,
+ * [constructit.dsl.Construction.pointOnHelix]) — never a clamp here.
+ */
+class OnHelixHandle(
+    val path: Path3Ref,
+    private val plane: PlaneRef,
+    private val angle: SourceNode,
+) : Handle {
+    override val dragNodes: List<SourceNode> get() = listOf(angle)
+
+    /** The coil and the plane this rider is read in, or null while either has no value (OP-3). */
+    private fun geometry(ev: Evaluator): Pair<Curve3Element.Helix3, Plane3>? {
+        val h = (ev.valueOf(path) as? Path3Value)?.path?.elements?.singleOrNull() as? Curve3Element.Helix3 ?: return null
+        val pl = (ev.valueOf(plane) as? PlaneValue)?.plane ?: return null
+        return h to pl
+    }
+
+    /** The plan's drag: the bearing the pointer states, on the winding this point is already on. */
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        val (h, pl) = geometry(ev) ?: return
+        val bearing = HitTest.helixAngleAt(h, pl, world, null) ?: return
+        val turn = 2.0 * kotlin.math.PI
+        val now = baseOf(angle, ev) ?: 0.0
+        // the coil's last winding is the one containing its end, so a point sitting exactly at the top of a
+        // whole-turn coil stays on the winding it is drawn on rather than on the empty one above it
+        val last = kotlin.math.ceil(h.totalAngle / turn) - 1.0
+        val winding = kotlin.math.floor(now / turn).coerceIn(0.0, kotlin.math.max(0.0, last))
+        angle.value = ScalarValue(Quantity.rad(winding * turn + bearing))
+    }
+
+    /** The 3D view's drag: the ray knows the winding, so the angle is written as found — windings and all. */
+    override fun drag(
+        world: Vec2,
+        view: PlaneProjection,
+        held: Double,
+        ev: Evaluator,
+    ) {
+        if (view.similarity) return drag(world, ev)
+        val (h, pl) = geometry(ev) ?: return
+        val along = HitTest.helixAngleAt(h, pl, world, view) ?: return
+        angle.value = ScalarValue(Quantity.rad(along))
+    }
+
+    override fun fields(): List<HandleField> = listOf(angleField("angle", angle))
 }
 
 /**

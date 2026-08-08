@@ -11,6 +11,7 @@ import constructit.core.FrameValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Path3Value
+import constructit.core.Point3Value
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.RayValue
@@ -28,10 +29,12 @@ import constructit.geom.EllipticArc
 import constructit.geom.GeomMath
 import constructit.geom.Line
 import constructit.geom.Path3
+import constructit.geom.Plane3
 import constructit.geom.ProfileElement
 import constructit.geom.Ray
 import constructit.geom.Segment
 import constructit.geom.Vec2
+import constructit.geom.Vec3
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.floor
@@ -199,6 +202,9 @@ object SceneRenderer {
         // input** lands ([Document.sectionCandidateNear]) — one rule: what is visible is pickable. Ghosting
         // the *other* spaces is deliberately not attempted (see DESIGN.md).
         val tip = doc.facePartTip(ev)
+        // ...and the active plane, once: a curve in space and a point in space (OP-26) are both drawn against
+        // the frame this canvas looks along, and resolving it is a node evaluation
+        val plane3 = doc.activePlane3(ev)
         drawChain(doc.spaceContext(doc.activeSpace, ev), proj, target, faceStyle)
         for (el in doc.elements) {
             if (!el.visible) continue
@@ -253,6 +259,10 @@ object SceneRenderer {
                 // A **curve in space** (OP-26) leaves the plan its *projection*, drawn where a curve of this
                 // space would be — see [drawProjectedPath] for why that is exact and why only here.
                 is Path3Value -> if (proj.similarity) drawProjectedPath(v.path, doc, ev, proj, target, style)
+                // A **point in space** (OP-26): a curve's key point, or a point riding a coil. Drawn where the
+                // view can honestly put it — see [drawSpacePoint], and [HitTest.distanceTo] for why this one
+                // *is* drawn in the plan while a height point is not.
+                is Point3Value -> drawSpacePoint(v.p, plane3, proj, target, style)
                 is PointSetValue -> v.set.points.forEach { dot(proj, target, it, style.stroke) }
                 // a dimension's value is a scalar (OP-4), so what is drawn is the graphic it prescribes
                 is ScalarValue -> el.annotation?.let { drawDimension(it, ev, proj, target, style) }
@@ -414,6 +424,38 @@ object SceneRenderer {
         target.dot(top, POINT_PX, style.stroke)
     }
 
+    /**
+     * A **point in space** (OP-26) — a key point of a curve in space, or a point riding a coil.
+     *
+     * Drawn where the view can honestly place it: at its **projection** in the plan, which is where the canvas
+     * already draws the curve it belongs to and where a click reaches it ([HitTest.distanceTo]); at its own
+     * position in the 3D view, through the same [PlaneProjection.toScreenLifted] a height point uses.
+     *
+     * A height point never arrives here — it is drawn by [drawHeightPoint] before the value dispatch — and
+     * that difference is argued where the pick makes it: a height point's plan image is its base's own dot, and
+     * these points have no such twin.
+     */
+    private fun drawSpacePoint(
+        p: Vec3,
+        plane: Plane3?,
+        proj: PlaneProjection,
+        target: DrawTarget,
+        style: Style,
+    ) {
+        spacePointAt(p, plane, proj)?.let { target.dot(it, POINT_PX, style.stroke) }
+    }
+
+    /** Where a point in space is **seen** on the screen — what its dot, its ring and its emphasis share. */
+    private fun spacePointAt(
+        p: Vec3,
+        plane: Plane3?,
+        proj: PlaneProjection,
+    ): Vec2? {
+        val pl = plane ?: return null
+        val local = pl.toLocal(p)
+        return if (proj.similarity) proj.toScreen(local) else proj.toScreenLifted(local, pl.distanceTo(p))
+    }
+
     /** Where a height point is **seen** on the screen — what its selection ring and its emphasis mark. */
     private fun heightPointAt(
         h: HeightPointHandle,
@@ -506,6 +548,8 @@ object SceneRenderer {
             }
             // a curve in space (OP-26), in whichever view is asking — see [emphasizePath]
             is Path3Value -> emphasizePath(v.path, doc, ev, proj, target, style)
+            // ...and a point in space rings where it is drawn, exactly as a plane point does
+            is Point3Value -> spacePointAt(v.p, doc.activePlane3(ev), proj)?.let { target.circle(it, 7.0, ringStyle) }
             else -> {}
         }
     }

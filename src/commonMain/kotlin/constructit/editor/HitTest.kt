@@ -10,6 +10,7 @@ import constructit.core.Evaluator
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Path3Value
+import constructit.core.Point3Value
 import constructit.core.PointSetValue
 import constructit.core.PointValue
 import constructit.core.RayValue
@@ -19,6 +20,7 @@ import constructit.core.SolidValue
 import constructit.dsl.valueOf
 import constructit.geom.Arc
 import constructit.geom.Chain
+import constructit.geom.Curve3Element
 import constructit.geom.Curves3
 import constructit.geom.GeomMath
 import constructit.geom.Path3
@@ -110,7 +112,43 @@ object HitTest {
         el.annotation?.let { a -> return a.graphic(ev)?.let { distanceToGraphic(world, it) } }
         (el.handle as? HeightPointHandle)?.let { h -> return distanceToHeightPoint(h, world, view, ev) }
         (ev.valueOf(el.ref) as? Path3Value)?.let { return distanceToPath(it.path, world, view, plane) }
+        (ev.valueOf(el.ref) as? Point3Value)?.let { return distanceToSpacePoint(it.p, world, view, plane) }
         return distanceToValue(ev, el, world)
+    }
+
+    /**
+     * How near [world] is to the point in space [p] — a **key point** of a curve in space, or a point riding
+     * a coil (OP-26). Each view measures it where it draws it, which is [distanceToPath]'s rule for a point
+     * rather than a chain:
+     * - **in the plan**, its projection onto [plane], which is exactly where the canvas draws its dot;
+     * - **in the 3D view**, the distance from the point to the pointer's viewing ray, in the plane's own
+     *   orthonormal frame and therefore in millimetres — the height point's own measure ([distanceToHeightPoint]).
+     *
+     * **Drawn and picked in the plan, unlike a height point**, and the difference is not an inconsistency: a
+     * height point's plan image is *its base's own dot*, so drawing it would say nothing and picking it would
+     * take the grab from the point the plan actually edits (OP-25). A curve's key point has no such twin — it
+     * lies on the projection of the curve, which the plan already draws — and a rider's angle is something the
+     * plan can both show and edit (within its winding). What is drawn is picked, in both views.
+     *
+     * **Null with no view at all**: the snap resolver and the weld magnet ask a 2D question, and the answer
+     * would be a *plane* point at the projection, which is not this point. A placing click therefore never
+     * snaps onto one — the same refusal a height point makes, for the same reason.
+     */
+    private fun distanceToSpacePoint(
+        p: Vec3,
+        world: Vec2,
+        view: PlaneProjection?,
+        plane: Plane3?,
+    ): Double? {
+        val pl = plane ?: return null
+        if (view == null) return null
+        if (view.similarity) return (pl.toLocal(p) - world).length()
+        val ray = view.viewRay(world)
+        val d = ray.dir
+        val len = d.length()
+        if (len < Vec2.EPS) return null
+        val local = lifted(pl, p)
+        return (local - ray.origin).cross(d).length() / len
     }
 
     /**
@@ -145,6 +183,77 @@ object HitTest {
     }
 
     /**
+     * How far along the coil [h] the pointer at [world] is aiming — the **angle** a click on a helix states,
+     * in the rider's own parameterization (`Curve3Element.Helix3.atAngle`), or null where the view cannot say.
+     *
+     * **The 2D/3D split is here, in the pick, and not in the point** (OP-26, the queue's own design), and it
+     * is the very split [distanceToPath] already makes for the same reason:
+     * - **In the plan** every winding of a coil projects onto the same image, so a click there can only
+     *   honestly name a bearing — the angle comes back reduced into `[0, 360°)`, which is the **first**
+     *   winding. Typing reaches any other one afterwards (OP-13), and a drag keeps the winding it is on
+     *   ([OnHelixHandle]), because the plan has nothing to say about which winding the pointer meant.
+     * - **In the 3D view** the pointer's ray meets the drawn curve on a *known* winding, so the angle comes
+     *   back as it is — past 360° where that is where the curve was hit.
+     *
+     * Measured against the very polyline both views draw ([Curves3.sample], at [Curves3.drawSteps]), refined
+     * within the chord the pointer is nearest: what is on screen is what the pointer reaches, which is the
+     * same rule a Bézier, an ellipse and a curve in space are all picked by.
+     */
+    fun helixAngleAt(
+        h: Curve3Element.Helix3,
+        plane: Plane3,
+        world: Vec2,
+        view: PlaneProjection?,
+    ): Double? {
+        val n = Curves3.drawSteps(h)
+        val plan = view == null || view.similarity
+        val ray = if (plan) null else view!!.viewRay(world)
+        if (ray != null && ray.dir.length() < Vec3.EPS) return null
+        var best = -1.0
+        var bestD = Double.MAX_VALUE
+        // the drawn polyline's own vertices, in the frame the view measures in: plane (u, v) for the plan,
+        // the plane's (u, v, lift) for the ray — [distanceToPath]'s two frames, unchanged
+        var prev = h.at(0.0)
+        for (i in 1..n) {
+            val here = h.at(i.toDouble() / n)
+            val (d, s) =
+                if (ray == null) {
+                    nearestOnSegment(world, plane.toLocal(prev), plane.toLocal(here))
+                } else {
+                    rayToSegment(ray, lifted(plane, prev), lifted(plane, here))
+                }
+            if (d < bestD) {
+                bestD = d
+                best = (i - 1 + s) / n
+            }
+            prev = here
+        }
+        if (best < 0.0) return null
+        val theta = h.totalAngle * best
+        if (!plan) return theta
+        // the first winding, which is all the plan can state: one whole turn taken out as many times as it goes
+        val turn = 2.0 * kotlin.math.PI
+        return theta - turn * kotlin.math.floor(theta / turn)
+    }
+
+    /** A point of space in the plane's own orthonormal (u, v, lift) frame — where a ray pick is measured. */
+    private fun lifted(
+        plane: Plane3,
+        p: Vec3,
+    ): Vec3 = plane.toLocal(p).let { Vec3(it.x, it.y, plane.distanceTo(p)) }
+
+    /** The distance from [p] to the segment `a`..`b`, and the clamped parameter where that happened. */
+    private fun nearestOnSegment(
+        p: Vec2,
+        a: Vec2,
+        b: Vec2,
+    ): Pair<Double, Double> {
+        val ab = b - a
+        val t = if (ab.length() < Vec2.EPS) 0.0 else ((p - a).dot(ab) / ab.dot(ab)).coerceIn(0.0, 1.0)
+        return (p - (a + ab * t)).length() to t
+    }
+
+    /**
      * Closest approach between the ray [r] (`t >= 0`) and the segment `a`..`b` — the standard two-parameter
      * clamp, with the parallel case falling back to the distance from the segment's ends.
      *
@@ -156,7 +265,18 @@ object HitTest {
         r: Ray3,
         a: Vec3,
         b: Vec3,
-    ): Double {
+    ): Double = rayToSegment(r, a, b).first
+
+    /**
+     * [distRayToSegment]'s answer **with the parameter it happened at** — the distance for a pick, the
+     * parameter for a pick that has to say *where along* the thing it hit the pointer was aiming
+     * ([helixAngleAt]). One arithmetic, so the winding a click resolves to is the winding it looks nearest.
+     */
+    private fun rayToSegment(
+        r: Ray3,
+        a: Vec3,
+        b: Vec3,
+    ): Pair<Double, Double> {
         val d1 = r.dir
         val d2 = b - a
         val w = r.origin - a
@@ -173,7 +293,7 @@ object HitTest {
         t = t.coerceIn(0.0, 1.0)
         val s = (if (a11 <= Vec3.EPS) 0.0 else d1.dot(a + d2 * t - r.origin) / a11).coerceAtLeast(0.0)
         if (a22 > Vec3.EPS) t = (d2.dot(r.origin + d1 * s - a) / a22).coerceIn(0.0, 1.0)
-        return (r.origin + d1 * s - (a + d2 * t)).length()
+        return (r.origin + d1 * s - (a + d2 * t)).length() to t
     }
 
     /**
@@ -400,6 +520,15 @@ object HitTest {
                 val at = view.toScreenLifted(pl.toLocal(p), pl.distanceTo(p))?.let { view.toPlane(it) }
                 at != null && inRect(at, lo, hi)
             }
+        }
+        // ...and a **point in space** (OP-26) the same way, in whichever view the band was dragged in: its
+        // projection in the plan, where the canvas draws its dot, and its image in the 3D view
+        (ev.valueOf(el.ref) as? Point3Value)?.let { v ->
+            if (el.handle is HeightPointHandle) return@let
+            val pl = plane ?: return false
+            if (view == null || view.similarity) return inRect(pl.toLocal(v.p), lo, hi)
+            val at = view.toScreenLifted(pl.toLocal(v.p), pl.distanceTo(v.p))?.let { view.toPlane(it) } ?: return false
+            return inRect(at, lo, hi)
         }
         // a height point is met where it is *seen* — its image, mapped back onto the plane the band was
         // dragged on — which is the same "only through a view that can place it" rule the pick follows

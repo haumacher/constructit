@@ -105,8 +105,15 @@ enum class SlotKind {
 
     /**
      * Anything whose **defining points** can be materialized: a curve (its endpoints, its centre, a
-     * spline's controls) **or an area** — whose defining points are its corners (the OP-21 extension's
-     * *key points*, which is how a wall footprint's corners become pickable and snappable).
+     * spline's controls), an **area** — whose defining points are its corners (the OP-21 extension's
+     * *key points*, which is how a wall footprint's corners become pickable and snappable) — or a **curve in
+     * space** (OP-26), whose start and end, plus a coil's centre, are points in space.
+     *
+     * The one slot that reaches across the 2D/3D partition, and deliberately: [Element.isCurve] still excludes
+     * a curve in space, because every *other* curve slot wants a value stated in some plane's coordinates
+     * ([PATH3] exists for that reason). What key points ask of their operand is only that it *have* defining
+     * points, which is as true of a coil as of an arc — so this slot takes both and `Document.extractPoints`
+     * answers in the frame each one lives in.
      */
     EXTRACTABLE,
     AREA,
@@ -245,6 +252,19 @@ class Picks(
      * is the same discipline [signs] follows for a discrete choice.
      */
     val landings: List<SnapResult?> = emptyList(),
+    /**
+     * **Who mapped the pointer onto the plane** when this gesture was made — the 2D canvas's camera (a
+     * similarity) or the working plane seen in the 3D view ([PlanePerspective]), and null for a replay, which
+     * has no cursor at all.
+     *
+     * Here for the one thing a click position cannot say on its own: **which winding of a coil** the pointer
+     * meant (OP-26). In the plan every winding is drawn on the same image, so a click there can only state a
+     * bearing; in the 3D view the pointer's ray meets one particular winding. That is the very split
+     * `HitTest.distanceToPath` already makes to *find* the curve, so the build that puts a rider on it asks the
+     * same question of the same authority rather than a second one — and a replay needs none of it, because
+     * what it hands back is the resolved angle itself ([dofs]).
+     */
+    val view: PlaneProjection? = null,
 )
 
 /**
@@ -512,6 +532,7 @@ object Tools {
     const val INTERSECT = "intersect"
     const val PROJECT = "project"
     const val POINT_ON_CIRCLE = "ptoncircle"
+    const val POINT_ON_HELIX = "ptonhelix"
     const val POINT_ON_ELLIPSE = "ptonellipse"
     const val POINT_ON_LINE = "ptonline"
     const val POINT_AT_DIST = "ptatdist"
@@ -881,7 +902,11 @@ object Tools {
             // dragged in the *3D* view, where its height is read off the pointer's ray.
             ToolDef(HEIGHT_POINT, "Height point", ToolCategory.POINTS, listOf(SlotKind.POINT), scalars = listOf(len("height")), help = "Type a height (or pick a parameter in the panel), then click a base point — an existing one is shared, empty space places a new one: the result is that point lifted off the sketch plane, with the height an ordinary parameter. In the 3D view you can grab it and drag the height; the base stays draggable where it was drawn.", slotNames = listOf("base"), icon = Icons.HEIGHT_POINT) { d, p, s -> d.heightPointAt(p.points[0], s[0]) },
             ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTERED), help = "Click a circle, arc, ellipse or elliptic arc to add its centre point.", slotNames = listOf("circle or ellipse"), icon = Icons.CENTRE) { d, p, _ -> d.centerOf(p.elements[0]) },
-            ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.EXTRACTABLE), help = "Click a curve to add its defining points (endpoints, centre) — or a wall footprint / traced area for its corners, which are then snappable and dimensionable like any point. Works on mirrored and derived geometry too.", slotNames = listOf("curve or area"), icon = Icons.KEY_POINTS) { d, p, _ -> d.extractPoints(p.elements[0]) },
+            // **A point riding a coil** (OP-26, the queue's own design). One PATH3 pick and no number at all,
+            // because the angle *is* what the click states — and which winding that angle is on is what the two
+            // views answer differently (see the help, and `HitTest.helixAngleAt`).
+            ToolDef(POINT_ON_HELIX, "Point on helix", ToolCategory.POINTS, listOf(SlotKind.PATH3), replicates = false, help = "Click a coil to add a point riding it, at an angle measured from where the coil starts, the way it turns. The angle is not modular: 450 deg is the second winding, one pitch above 90 deg, and typing a bigger number walks up the spring. In the plan every winding is drawn on top of the same circle, so a click there can only mean the first winding (0-360 deg) and a drag keeps the winding the point is on; in the 3D view the pointer meets one particular winding, so a click there states the angle straight away and a drag slides the point along the whole coil. Type the angle in the panel to reach any winding from either view. An angle past the end of the coil says so and comes back when you raise the turn count. Left-hand coils count the same way — the angle follows the curve.", slotNames = listOf("coil")) { d, p, _ -> d.pointOnHelix(p.elements[0], p.at, p.view, p.dofs.firstOrNull()) },
+            ToolDef(KEY_POINTS, "Key points", ToolCategory.POINTS, listOf(SlotKind.EXTRACTABLE), help = "Click a curve to add its defining points (endpoints, centre) — or a wall footprint / traced area for its corners, which are then snappable and dimensionable like any point. Works on mirrored and derived geometry too. A curve in space gives its start and its end, and a coil its centre as well: those are points in space, drawn where they project in the plan and where they stand in the 3D view, and they follow the curve through every edit.", slotNames = listOf("curve or area"), icon = Icons.KEY_POINTS) { d, p, _ -> d.extractPoints(p.elements[0]) },
             // both slots are *subjects* (see [SlotKind]): a join takes a degree of freedom away from a point
             // that already stands, so neither click may place one — a point made by this very gesture would
             // be a freedom added and removed in one go, which is a drag and not a join

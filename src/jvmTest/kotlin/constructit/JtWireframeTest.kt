@@ -2,6 +2,7 @@ package constructit
 
 import constructit.core.EvalResult
 import constructit.core.Evaluator
+import constructit.core.Point3Value
 import constructit.core.PointValue
 import constructit.dsl.Path3Ref
 import constructit.dsl.SolidRef
@@ -352,8 +353,19 @@ class JtWireframeTest {
 
         // nothing of the file is a point of the drawing: the only point an import made is the anchor
         assertEquals(1, ed.doc.elements.count { it.kind == ElementKind.POINT }, "one anchor, and not one file vertex")
-        assertEquals(emptyList(), ed.doc.extractPoints(placed), "a run in space offers no key points to extract")
-        assertNull(ed.doc.takeNote())
+        // ...and what it *does* offer is its own two ends (OP-26, session 53's key points): accessors that hang
+        // off the placement node, which is a different thing from a construction input — nothing of the file
+        // became a point the drawing is built *from*, and these two follow the run rather than driving it
+        val keys = ed.doc.extractPoints(placed)
+        assertEquals(2, keys.size, "a run in space offers its start and its end: ${ed.doc.takeNote()}")
+        assertEquals(0, literal.ref.node.inputs.size, "the literal is still a constant")
+        assertEquals(4, placed.ref.node.inputs.size, "and the placement still takes exactly the four it did")
+        val ev = Evaluator()
+        for ((i, key) in keys.withIndex()) {
+            val p = assertNotNull((ev.eval(key.node) as? EvalResult.Ok)?.let { (it.value as? Point3Value)?.p })
+            val want = if (i == 0) bentRun.first() else bentRun.last()
+            assertTrue((p - want).length() <= 1e-9, "key point $i is the run's own ${if (i == 0) "start" else "end"} ($p vs $want)")
+        }
 
         // ...and the contrast: a constructed run *is* its points
         val ed2 = Editor()
