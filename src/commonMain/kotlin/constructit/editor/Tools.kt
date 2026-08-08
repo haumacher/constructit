@@ -32,8 +32,13 @@ import constructit.units.Quantity
  * all of them, because the difference is a coercion the document performs (`Document.regionOf`), not a
  * different pick — see `Document.boundaryPiecesOf`.
  *
- * SOLID is the boolean slot (OP-22). A solid is already pickable in the 2D canvas by its footprint hint,
- * so this needs no new picking machinery — only a filter, which is what a slot kind is.
+ * SOLID is the boolean slot (OP-22). A solid is pickable in the 2D canvas **two ways, and both are
+ * drawings the canvas already makes**: by its footprint hint, in the space its sketch was drawn in
+ * (OP-17), and by its **section**, on a working plane that cuts it (GitHub #9's enumeration, the fifth
+ * reader — `Document.sectionSolidNear`). The footprint is tried first, so the part a face space stands
+ * for is still the tip it always was; the section answers where the body has no footprint here at all,
+ * which is what makes a column sketched in the plan reachable from an upright datum. Neither is new
+ * picking machinery — one filter and one fallback, which is what a slot kind is.
  */
 enum class SlotKind {
     PLACE_POINT,
@@ -1148,9 +1153,9 @@ object Tools {
             // ----- Booleans: exact via the slab algebra for solids extruded along the same axis (OP-22),
             // through the general mesh engine for every other pair (OP-9). Two solid picks and nothing
             // else — the dispatch is the op node's job, so these are data like every other tool.
-            ToolDef(UNION, "Union", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), help = "Click two solids to fuse them into one. Any pair works: solids extruded along the same axis fuse exactly and the result keeps offering section inputs; any other pair — cross-axis, a revolve, a swept body — fuses through the general engine (Manifold) into a watertight body whose sections draw but offer no inputs to build on.", slotNames = listOf("solid", "solid"), icon = Icons.UNION) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.UNION) },
-            ToolDef(SUBTRACT, "Subtract", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), shortcut = 'X', help = "Click the solid to keep, then the one to remove from it (a counterbore, a pocket, an opening).", slotNames = listOf("kept solid", "removed solid"), icon = Icons.SUBTRACT) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.SUBTRACT) },
-            ToolDef(INTERSECT_SOLIDS, "Intersect solids", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), help = "Click two solids to keep only what they have in common.", slotNames = listOf("solid", "solid"), icon = Icons.INTERSECT_SOLIDS) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.INTERSECT) },
+            ToolDef(UNION, "Union", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), crossSpace = true, help = "Click two solids to fuse them into one. Any pair works: solids extruded along the same axis fuse exactly and the result keeps offering section inputs; any other pair — cross-axis, a revolve, a swept body — fuses through the general engine (Manifold) into a watertight body whose sections draw but offer no inputs to build on. Click each solid where the canvas draws it: its footprint in the space its sketch was drawn in, or its section where a working plane cuts it. The two may live in different planes — switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("solid", "solid"), icon = Icons.UNION) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.UNION) },
+            ToolDef(SUBTRACT, "Subtract", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), shortcut = 'X', crossSpace = true, help = "Click the solid to keep, then the one to remove from it (a counterbore, a pocket, an opening). Click each where the canvas draws it: its footprint in the space its sketch was drawn in, or its section where a working plane cuts it. The two may live in different planes — switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("kept solid", "removed solid"), icon = Icons.SUBTRACT) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.SUBTRACT) },
+            ToolDef(INTERSECT_SOLIDS, "Intersect solids", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), crossSpace = true, help = "Click two solids to keep only what they have in common. Click each where the canvas draws it: its footprint in the space its sketch was drawn in, or its section where a working plane cuts it. The two may live in different planes — switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("solid", "solid"), icon = Icons.INTERSECT_SOLIDS) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.INTERSECT) },
             // Placement (the JT-import package, OP-9): a solid, a point in the space you are looking at,
             // and a **defaulted** angle — so the everyday gesture is two clicks and typing a number first
             // turns the body. Every input is a node, which is the whole point: weld the point onto a

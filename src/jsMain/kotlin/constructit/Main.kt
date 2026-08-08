@@ -570,6 +570,9 @@ private fun setupApp() {
             // which is the Editor's decision, not the DOM's
             else -> editor.clickGroup(g)
         }
+        // the actions above change what both views show — a dissolve that waited for the next canvas
+        // click to become visible read as the button doing nothing (a user report, session 55)
+        repaint()
     })
 
     // ---- palette (tool selection via delegation) ----

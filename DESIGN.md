@@ -5570,6 +5570,87 @@ direction it must err: an inscribed bore removes slightly too little, so a bored
   fits behind the same signature; the brute-force one was chosen because the degenerate-case honesty above
   is the part that is hard, and it is much easier to get right without a sweep's status flags.
 
+#### A boolean's two operands may live in two spaces (as built — the user's column and foundation, session 55)
+
+**The report.** A user drew a column — a circle in the plan, extruded 200 mm — and its foundation, a profile
+revolved on an upright datum plane hinged on the column's own centre line, and then could not unite the two.
+Not "it refused": there was no way to make the two picks at all. In the plan the column picked and the
+foundation did not; on the datum *neither* of their clicks landed, and both came back with the generic
+*"That click hit nothing pickable"*. This is session 16's parked cut arriving on a real drawing:
+
+> **a two-operand boolean whose operands live in two different spaces has no gesture**, because one canvas
+> shows one space; *Cut* covers the case that matters by naming the part, and the general case wants 3D
+> picking.
+
+**The engine was never in it.** `Document.combineSolids` on the two elements produces a valid, watertight
+`MeshBoolean` (OP-9's general path, which is what a column and a revolve take — no common axis). What was
+missing was the *gesture*, and the cut's own reasoning is what turned out to be too narrow: the general case
+does not want 3D picking, because **the canvas already draws both bodies** — just not both in the same
+picture.
+
+**The whole fix is that one sentence made into a rule: what is drawn is what is pickable, in both
+directions.** A solid has two drawings and had only ever been reachable through one of them.
+
+1. *The footprint hint*, in the space its own sketch was drawn in (OP-17) — what a `SOLID` slot always used.
+2. *The section*, wherever a working plane cuts it (GitHub #9's enumeration of a plane's context). This was
+   already a pick: `Document.sectionSolidNear` is what an **intersection curve** clicks (OP-26 step 6), and
+   it answers with the solid the section is *of*. So a `SOLID` slot now falls back to it, which is routing
+   and not new geometry — one `||` in the slot router. What makes it *useful* rather than merely legal is
+   the fix that landed one sitting earlier: an axis-parallel cut of a curved side face is now drawn
+   (OP-15's amendment), so a column's section on an upright plane is its full rectangle and there is real
+   geometry to aim at.
+3. And the three boolean rows declare **`crossSpace`** — the loft's and the sweep's own declaration (session
+   54) — so a pick made in one space survives the switch to the other, with the same status sentence those
+   two give: *"1 pick kept across the switch to plane1 — carry on picking here"*. A solid is a **body**, not
+   a drawing; the reason `setActiveSpace` drops picks in the general case (they name elements whose
+   coordinates the new space does not share) simply does not apply to one.
+
+**Footprint first, section second, and the precedence is the load-bearing choice.** Both were rejected in
+turn as "nearest wins over the two together": the footprint is the solid's *own* geometry rather than a
+derivation of it, and — decisively — a **face space's part outline is the tip of its feature chain**
+(`Document.partOutlineOf`, the sequential-feature rule of OP-17). A section pick names whichever ancestor
+the plane cuts nearest, so letting it compete would let a click on a face space's own rectangle come back
+with the plate a pocket was cut from instead of the pocketed part. It is also the precedence the pick
+pipeline already states one line further down — *"a real element on top of the section still wins"* — so
+this is the existing law applied to one more slot rather than a second law. The two candidate sets are in
+fact almost always disjoint: a solid whose footprint is drawn in a space was created **after** that space,
+and a solid the space *sections* was created before it (that is what keeps the graph acyclic), so the
+overlap is exactly the face-space part, which is the case the precedence is chosen for. Where they do meet
+on the canvas — the user's foundation was drawn *against* the column's section, so its profile edge stands
+exactly on it — the footprint takes the click, and `BooleanCrossSpaceTest` asserts that by name.
+
+**A solid picked through its section records the solid.** The step is the ordinary `tool union els=e4,e30`,
+identical to a footprint pick, so replay hands the elements back verbatim and re-picks nothing — there is no
+scored choice here that a later edit could re-decide. That is the contrast with a `sectioninput` step, which
+*materializes* one named member of an ordered set and must therefore record `el=` **and** `edge=n`: the two
+routes differ precisely because one of them names a member and this one names the body. No new step kind, no
+argument gained a meaning, **no version bump** (OP-18).
+
+**The miss speaks.** *"That click hit nothing pickable"* is exactly what left the user with nowhere to go,
+because the one thing a canvas cannot show is *where* a body is clickable. A `SOLID` slot's miss now says
+both routes in the tool's own word for the slot — *"That click hit no kept solid — a solid is clicked by its
+footprint in the space it was sketched in, or by its section where a working plane cuts it"* — and offers
+the plane switch **only** when the armed tool really keeps its picks across one, since promising it to a
+tool that does not (*Extrude on face*, *Section*) would be a lie. Every other slot keeps the generic
+sentence, which is the right answer where nothing better can be said.
+
+**Nothing was cut**, and three things are deliberately unchanged. *Cut* still resolves its operand by naming
+the face space's part rather than by a pick — it is a different operation, not a worse boolean. There is
+still **no 3D picking**: this closes the case the cut said needed it, without it. And the *result* of a
+general boolean still has no plan of its own — `Feature3.MeshBoolean.footprint` is empty by OP-9's sink rule
+and a plane sections only its ancestors, so the fused body is drawn in neither picture and is not a further
+boolean's operand by clicking. That is OP-9's own long-standing open point rather than something this
+package introduced; it is now *pinned by a test* and named in the queue, with the two honest answers to it
+(give a mesh boolean the `Silhouette` plan an imported body already gets, or 3D picking) stated there.
+
+Tests: `BooleanCrossSpaceTest` (12) — the user's script verbatim as a load fixture, then the cross-space
+union (the pick kept, the status asserted, watertight, one undo taking the whole thing), the same union
+built on the datum alone through *either* side of the column's section (the aim point read off the section
+value, not written down), the footprint winning the click it shares with a section, the self-union refusal
+by name across two drawings, both miss sentences by their words, `save → load → save` byte-equal with the
+recorded step naming the two solids in pick order, and the one limit left standing measured rather than
+assumed. **1769 → 1781 green.**
+
 ### The export package (as built — one neutral scene, three writers and a preview)
 
 **The whole package is one seam and four consumers.** GLB, 3MF, binary STL and the in-app three.js preview
@@ -10651,6 +10732,30 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   own package: the union *gesture* cannot collect two solids living in two sketch spaces (session 16's parked
   cut, hit with a real column and foundation), which wants `crossSpace` on the boolean rows plus a solid
   pickable through its drawn section, and a miss that says how a solid is clicked. **1764 → 1767 green.**
+- **Session 55, third sitting — the column that could not be united with its foundation (the user's report,
+  retiring session 16's parked cut).** The report was a drawing rather than a sentence: a column extruded
+  from a circle in the plan, a foundation revolved on an upright datum hinged on the column's own centre
+  line, and no way to click both. In the plan the column picked and the foundation did not; on the datum
+  *neither* click landed, and both answered *"That click hit nothing pickable"*. Session 16 had recorded the
+  case exactly — *"a two-operand boolean whose operands live in two different spaces has no gesture, because
+  one canvas shows one space"* — and had guessed wrong about the way out: it said the general case wants 3D
+  picking, and it does not. **The canvas already draws both bodies, just never both in one picture.** So a
+  solid became pickable through *either* drawing it has — its footprint hint in the space its sketch was
+  drawn in, and, failing that, the **section** a working plane cuts through it, which is the route the
+  intersection-curve tool already took (`Document.sectionSolidNear`); the three boolean rows gained
+  `crossSpace`, the loft's and the sweep's own declaration, so a pick survives the switch between the two
+  spaces; and a `SOLID` slot's miss now says how a solid is clicked instead of shrugging. Footprint before
+  section, so a face space's part pick stays the **tip** of its feature chain. The section route records the
+  *solid* (`els=`), so replay re-picks nothing and no version bump exists to get wrong. What made the second
+  route worth anything is the fix from the sitting before: a vertical plane through a column now draws its
+  sides, so there is real geometry to aim at. **1769 → 1781 green**, nothing cut; the one limit left
+  standing — a mesh boolean's result has no plan of its own (OP-9's open point) — is pinned by a test and
+  queued with its two honest answers. See *A boolean's two operands may live in two spaces* under OP-22.
+  Riding the same commit, one browser-shell line from another report of the sitting: the group panel's
+  action clicks (dissolve, place, visibility) mutated the document without a repaint, so a dissolve showed
+  nothing until the next canvas click forced one — the handler now repaints like every other panel handler.
+  The rest of that report — the placement refusal that prints internal node ids and demands an impossible
+  hand-pick — is queued as its own package (the group-creation UX).
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -12535,6 +12640,22 @@ about the panel and not about reachability. And **a plane's own inspector**: *Sp
 defaulted scalars cannot become freedoms, because its step creates no element to reach a field through — a
 sketch space is not an `Element`, so its `dx`/`dy` (and a datum's angle, which is already a parameter) have no
 selection to hang on.
+
+**Retired in session 55, third sitting: "a two-operand boolean whose operands live in two different spaces
+has no gesture".** A *stated cut* rather than a queue line — session 16's own parting note, quoted above in
+full — and it arrived as a demand, the user's column and its foundation. It is retired rather than repaired,
+and its reasoning is corrected on one point: the cut said "the general case wants 3D picking", and it does
+not. The canvas already draws every body it cuts through, so the answer was to make the second drawing
+pickable (`Document.sectionSolidNear`, the intersection curve's own route, reached from a `SOLID` slot) and
+to let a boolean's picks survive a change of plane (`crossSpace`, the loft's and the sweep's declaration).
+See *A boolean's two operands may live in two spaces* under OP-22. It leaves **one thing parked**, and it is
+OP-9's own open point rather than a new one: the **result** of a general boolean has no plan at all
+(`Feature3.MeshBoolean.footprint` is empty by the sink rule), and a working plane sections only its
+*ancestors* — so a mesh-boolean body created after every plane in the drawing is drawn in neither of the two
+pictures a `SOLID` slot reads and cannot be a further boolean's operand by clicking. Measured, not assumed
+(`BooleanCrossSpaceTest`). Two honest answers exist and neither is this package's: give a mesh boolean the
+**silhouette** plan an imported body already gets (`Silhouette.of`, which would make it drawn *and* picked in
+one stroke), or 3D picking. The miss at least says where to look now.
 
 **Named in session 37 and not yet queued — two gaps a real structural part shows** (from a cast arm looked at
 in the round): **3D edge blends**, which is most of what the eye reads as a casting and is a dimensioned

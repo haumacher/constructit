@@ -1040,10 +1040,12 @@ class Editor(
      * name elements of a space whose coordinates this one does not share — the same reason a canvas shows
      * one space at a time.
      *
-     * **Unless the armed tool spans spaces** ([ToolDef.crossSpace]), which exactly one does: a loft's sections
-     * live on different planes, so its picks are kept and each keeps the space it was made in. The status line
-     * says so, because picks surviving a switch is otherwise invisible — the canvas is showing a different
-     * drawing and the earlier sections are not in it.
+     * **Unless the armed tool spans spaces** ([ToolDef.crossSpace]), which the tools whose operands legitimately
+     * live on different planes declare: a loft's sections, a sweep's run and profile, and — since a solid is a
+     * body rather than a drawing — the two operands of a **boolean** (OP-22), which is the cut session 16 parked
+     * for want of a gesture. Their picks are kept and each keeps the space it was made in. The status line says
+     * so, because picks surviving a switch is otherwise invisible — the canvas is showing a different drawing
+     * and the earlier picks are not in it.
      */
     fun setActiveSpace(name: String): Boolean {
         if (name == doc.activeSpace.name) return true
@@ -3852,8 +3854,15 @@ class Editor(
                 // the seam's slot (OP-17): a traced outline or a thick path's footprint, both of which
                 // bound an area — the coercion between them is the document's, not the pick's
                 SlotKind.AREA -> pickElement(world, doc.areaPickFilter(ev()))
-                // the boolean slot (OP-22): a solid, picked in 2D by the footprint hint it draws
-                SlotKind.SOLID -> pickElement(world) { it.kind == ElementKind.SOLID }
+                // The boolean slot (OP-22): a solid, picked in 2D by **either** drawing the canvas makes of it —
+                // the footprint hint in the space its sketch was drawn in (OP-17), and failing that the
+                // **section** a working plane cuts through it (`pickSectionSolid`, the route [SECTION_CURVE]
+                // already takes). Footprint first, for two reasons that are the same reason: it is the solid's
+                // own geometry rather than a derivation of it, and a face space's part outline is the *tip* of
+                // its feature chain ([Document.partOutlineOf]) — a section pick, which names whichever ancestor
+                // it lands on, must not overrule that. This is what retires session 16's parked cut: one canvas
+                // still shows one space, but a body sketched elsewhere is drawn here and therefore pickable here.
+                SlotKind.SOLID -> pickElement(world) { it.kind == ElementKind.SOLID } || pickSectionSolid(world)
                 // a cutting chain (OP-22's extension), or anything closed — the coercion between them is
                 // the document's (`Document.chainOf`), exactly as it is for an area slot
                 SlotKind.CHAIN -> pickElement(world) { doc.isChainCandidate(it, ev()) }
@@ -3902,6 +3911,18 @@ class Editor(
                     // …in the tool's own word for what it wants, so a curve in space says "hit no point in
                     // space" rather than asking for a curve it does not collect
                     tool.repeating -> "That click hit no ${tool.roleOf(0)} — $filledSlots picked so far. ${tool.help}"
+                    // A **solid** slot's miss has something better to say than "nothing pickable", and it is
+                    // the one thing the canvas cannot show: *where* a body is clickable (OP-22, retiring
+                    // session 16's parked cut). One canvas shows one space, so a solid is reached either by
+                    // its footprint — drawn in the space its sketch was drawn in — or by its section, where a
+                    // working plane cuts it. The generic sentence stays for every slot with nothing better.
+                    slot == SlotKind.SOLID ->
+                        "That click hit no ${tool.roleOf(slotIndex)} — a solid is clicked by its footprint in the " +
+                            "space it was sketched in, or by its section where a working plane cuts it." +
+                            // …and the way out is only offered by a tool that has one: a switch drops the picks
+                            // of every other ([setActiveSpace]), so promising otherwise would be a lie.
+                            (if (tool.crossSpace) " Switch the sketch plane — the picks are kept — and click it there." else "") +
+                            " ${tool.help}"
                     else -> "That click hit nothing pickable — ${tool.help}"
                 }
             onChange()
