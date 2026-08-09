@@ -1516,6 +1516,8 @@ it:
 
 | `tool <id> dofs=` and `orbit … dofs=` — a step's **own scalar freedoms** (OP-13, session 55) | a defaulted scalar slot nobody stated used to be an anonymous constant inside the build and appeared in no file at all; it is now a free node the step restates, appended **after** the rider / dimension / re-parameterization values that already rode `dofs=` | none, and **no version bump**: a step with no such values means every freedom stands at its slot's default, which is what a file written before this build always meant. How many of them a step has is read off the **tool's slots**, never off the file, which is what makes the positional reading safe for a step that ever owns both kinds |
 
+| `tool sweep signs=` — **which crossing of its own plane a section rides** (OP-26, the in-place sweep, session 58) | a new argument on a step that never carried one: a sweep scored no choice before, so no `signs=` was ever written for one | none, and **no version bump**, by the row above's argument. What matters is the *absence*: a `tool sweep` step with no `signs=` is one written before this reading existed and keeps the origin-rides-the-run reading for ever, which is why a step written now **always** records an index — a negative one being the record that the section's own origin rides the run. A load-time migration was rejected outright: the old writer meant the origin, so "migrating" it would be a silent behaviour change on load, not a reproduction of what was meant. `Document.replayingVersion` is what tells a replay from a gesture, so replay never scores and a save never puts a crossing into an older writer's mouth |
+
 Known residual, recorded rather than papered over: the **Outline** tracer still resolves its handovers from
 that tool's own clicks on every replay (`jointBetween`), and a determined ortho meeting still picks its
 circle branch by nearness. Both are re-derived from geometry the same replay rebuilds, so they are stable
@@ -7009,6 +7011,133 @@ being flattened. **1723 → 1744 green** (the review's probe among them), no new
 existing changed except the four refusal assertions' *subject* — which is to say none of them: every substring
 they check is still in the sentence.
 
+### As built: the in-place sweep — a section rides the run where the run goes through it (step 2 extended, session 58)
+
+**The report.** A pillar extruded from an ortho outline; a vertical sketch plane cut through it; a foundation
+profile constructed **in place** in that plane — sitting on the ground, hugging the pillar's wall, and therefore
+drawn 21.68…33.16 mm off the plane's origin, because that is where the material is; the pillar's bottom border
+drawn as a closed curve in the plan; and the profile swept along the border with **no pick**. The body built,
+was valid, and **floated**: `z ∈ [21.68, 33.16]` instead of standing on the ground. Nothing was wrong with the
+drawing. What was wrong was that *"no anchor"* meant *"the plane's origin rides the run"*, so the section's own
+plane coordinates were carried into the moving frame verbatim — the same fault GitHub #15 reported one feature
+earlier, now met by a user who had **already** put the section where it belongs and had nothing left to pick.
+
+**The design is the user's, and it is better than the draft this session started with:** *"Shouldn't the point
+where the space curve intersects the outline plane be used as the anchor point that sweeps the plane? … the
+outline intersects potentially multiple times — what about using the one that is nearest to the constructed
+outline?"* Adopted whole, and it is the honest generalization of the anchor rather than a heuristic beside it:
+**the point of the section that travels is the point the run goes through the section at**, and where a run
+crosses that plane several times, which crossing is a *choice* — one the gesture scores, and one the file keeps.
+
+**It is two statements that are one statement.** The crossing is the **anchor** (the section is read relative
+to it, `Construction.sweep`'s existing shift), *and* it is where the **frame is seeded** from the plane's own
+axes (`FrameSeed`, `Frames3.along`). Either alone is half an answer and the halves are not interchangeable:
+the anchor without the frame puts the section on the run lying the wrong way up — asserted, on this very
+drawing, in `InPlaceSweepTest.aPickedPointSupersedesTheCrossing`, where an anchor placed *at the crossing*
+still stands the foundation on its side, because an anchor states which point travels and says nothing about
+which way is up. The frame without the anchor stands the drawing correctly somewhere it is not. Together, the
+drawn outline **is** the swept body's section there: every corner of it, mapped into the world by its own
+plane, lies on the body's surface to 1e-9 mm on this fixture (the run is a polyline and the section a polygon,
+so the band is flat and the landing is exact; the assertion is also made at the 0.5 mm a mesh tolerance lives
+at, so both the promise and the achievement are on the record).
+
+**Seeding a rotation-minimizing frame part-way along costs nothing, and that is why it is allowed.** Transport
+is reversible, so the seeded span takes the stated direction and the spans after it are carried forward while
+the spans before it are carried **backward**, by the same rotation read the other way — one forward pass
+becomes one outward pass. Which span the seed falls in is matched in the path's own `(piece, parameter)`
+vocabulary and never in an arc length, because a chord sum and a curve length disagree by exactly the amount
+that would land a coarse piece's seed on the wrong span. `MovingFrame` reports the direction the **first** span
+ended up with, and the sweep feature stores *that* as its `up` — so `(path, profile, up, roll, twist)` is still
+enough to rebuild the identical body (`startReference` of an already-perpendicular direction is that direction),
+and neither `sweptPlan`, nor a placement's re-projection, nor `Xform3` learned a new field. Roll and twist mean
+exactly what they meant: roll turns the section about the run everywhere, twist is the end-to-end turn spread
+linearly in arc length, and a closed run's **seam** is untouched — holonomy plus twist does not depend on where
+the one stated direction was stated, so a closed run still refuses a twist that will not close it, in the same
+words.
+
+**The mirror, which is not a choice and is the subtlest thing here.** A moving frame is right-handed by
+construction (`bi = tangent × ref`), so a frame whose reference is the plane's own x axis has the plane's own y
+axis for its second **only where the run crosses the way the plane faces**. A closed run round a body crosses a
+plane through it once each way — so this is *half* of all crossings, and the user's own drawing is one of them.
+The two cannot both hold, and the reading that puts the drawing where it is drawn is the one that reads the
+section **from its other side**: reflected, and re-wound so it is still an area (`GeomMath.transform` keeps a
+loop's orientation under a reflection — OP-14's rule, doing exactly the work it was written for). Taking the
+crossing's own sense into account has a second, larger benefit: the seed rotation is then always the *least*
+one, at most a quarter turn, so the antiparallel degeneracy the draft design expected **cannot arise**. What is
+left is a run that lies **in** the plane where it crosses it, which is a named node invalidity and not a guess.
+The mirror is **derived, never recorded**, and the argument is the same one that makes `bi` derived: it is a
+consequence of the geometry, and freezing it would mirror a section that had merely been turned round.
+
+**Which crossing is recorded — and so is *not* riding one.** The index is scored once, at the gesture, as the
+crossing nearest the drawn outline in the plane's own coordinates (the user's own criterion), and written into
+the step's `signs=`. Replay takes it verbatim; a re-scored nearness would move the body to the other side of
+the drawing the first time an edit slid the section past the middle, which is OP-18's own catalogue of that
+defect. The **position** of that crossing stays a live value: move the run or the plane and the body follows,
+and when the crossing it rides ceases to exist the node goes invalid with a reason that names what it was
+riding, how many crossings there are now and how to get another — and heals the moment the run crosses there
+again (OP-3). Never a silent re-choice.
+
+**A negative index is the record that the section's own origin rides the run**, and it is what makes the old
+files safe. A step with *no* index is one written before this reading existed and keeps the origin reading for
+ever; a step written now always carries one, so absence is a fact about the writer rather than an ambiguity.
+The distinction is drawn where every other one like it is drawn — `Document.replayingVersion`, non-null exactly
+during a load — so a replay never scores and a save never puts a crossing into an older writer's mouth.
+
+**No version bump** (OP-18), by the row's own argument: `signs=` on a `tool sweep` step is an argument that
+never existed there (a sweep scored nothing before), so no stored literal changes meaning and there is no
+migration to get wrong. A **load-time migration** was considered and rejected: the doctrine's own rule is that
+a migration reproduces *what the old writer meant*, and the old writer meant the origin — so a migration here
+would not be a migration, it would be a silent behaviour change on load, which is the one thing the versioning
+rule forbids outright. The cost is stated plainly: the user's existing file still floats until they sweep it
+again, one gesture, and the status line then tells them what it chose.
+
+**The tube deliberately gained nothing, again.** A round section is centred on the run *by definition* — its
+radius is its reach — so the crossing would shift it by nothing and the seed would only roll a shape that is
+rotationally symmetric. There is no drawn section to be *in place*, either: a tube's profile is a typed number,
+not a drawing with a position. So `tubeAlongCurve` is untouched, and the decision is asserted rather than
+assumed (`InPlaceSweepTest.theTubeGainsNothingFromACrossing`), exactly as the anchored sweep asserted its own.
+
+**A stated anchor still wins, and keeps its exact meaning** — including the meaning that it says nothing about
+the frame. The three readings are ordered by how explicit they are: a picked point, then the crossing, then the
+section's own origin. And a run that crosses the section's plane **nowhere** keeps the origin reading and says
+so in the status line, with the reason: *"…does not cross plane1, so there is no point of the section for the
+run to go through."* That is the everyday plan sweep — a plan curve lies *in* the plan, so it crosses it at no
+point and pierces nothing — which is why the commonest gesture in the tool is untouched by any of this.
+
+**One behaviour deliberately reversed, and it is GitHub #15's own drawing.** The worm thread's coil is parented
+to a vertical datum and winds about an axis lying *in* the plan, so it goes through the plan — the plane the
+thread form is drawn in — twice per turn. A picked-nothing sweep of it therefore now rides the nearer of those
+two crossings instead of the section's origin. That crossing stands 0.287 mm past the top of the section, so
+the form reaches 0.688 mm from the run there and a 1 mm pitch has no room for two of them: the node refuses
+**globally** (the run passes within its own clearance) where it used to refuse **locally** (the section
+outgrows the bend). Both refusals are correct and the drawing still wants its one pick, so nothing regressed —
+but the old sentence is no longer what that gesture produces, and the two tests that pinned it now state the
+origin reading explicitly (`pierce = -1`) and keep every assertion, with a third test pinning what the gesture
+does now. It is also the honest boundary of the default: the reading is *where the run goes through the
+drawing*, wherever that is, and a proximity gate ("only if the crossing is near enough the outline") was
+rejected as measuring what the pick already states.
+
+Nothing was cut. `InPlaceSweepTest` (16): the user's script verbatim as a load fixture (floating, byte-equal,
+no recorded crossing); the same drawing swept again standing on the ground with every bound named; the status
+line's four claims; the drawn outline a section of the body, mid-run, at 1e-9 mm; the choice in the step with a
+byte-equal round trip; the other crossing stated by hand and building a different body; a picked point
+superseding and meaning what it always meant; a roll turning the section about the run there; a twist still
+having to close a closed run; one undo taking the body and the choice with it; a run that crosses nothing
+keeping the origin reading and saying so; a single crossing named without a count; a tube gaining nothing; the
+nearest crossing taken once and **not** re-taken when the drawing is dragged past the middle; and the crossing
+going away being named invalidity that heals. Plus `SweepAnchorTest` gains the reversal's own test. **1815 →
+1832 green**, no new golden, no version bump.
+
+**Found on the way, not fixed, and recorded rather than papered over** (see the queue): a closed **polyline**
+run whose section stands further *inside* the loop than the loop's own inradius sweeps to an **inside-out
+shell** with no refusal — `Geom3.volume` negative, `assertManifold` failing on orientation. It is pre-existing
+and has nothing to do with this reading (reproduced on the plain origin reading: a 100 × 60 closed plan
+polyline with a plain circular section drawn 100 mm off the plan's origin, volume −13458 mm³). The cause is a
+blind spot in `Embedding`'s global term: two antiparallel legs have a degenerate closest-point solve, the
+clamped answer lands on the loop's **corner**, and the normal-cone test then rejects the pair — so the one
+bottleneck that matters is never offered. *Watertight or refused* says this must refuse; closing it is a
+change to OP-26's own double-normal derivation and is queued rather than smuggled into this package.
+
 ### As built: the projected point (OP-17 / OP-26 extended — GitHub issue #14, session 57)
 
 **The demand.** *"A plane already displays the outline of geometries constructed on its ancestor panes. However,
@@ -11014,6 +11143,34 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   full tool gesture across a switch, and a `projectplane` file round-tripping with empty load notes. **1800 →
   1813 green**, nothing cut. See *the projected point* under OP-26.
 
+- **Session 58 — a section is swept from where it is drawn (the user's design, extending GitHub #15).** A
+  foundation built **in place** in a plane cut through a pillar — on the ground, against the wall, and so
+  drawn 21…33 mm off that plane's origin — swept along the pillar's own border and came out **floating**,
+  because *"no anchor"* still meant *"the plane's origin rides the run"*. The user supplied the answer:
+  *"Shouldn't the point where the space curve intersects the outline plane be used as the anchor point that
+  sweeps the plane? … the outline intersects potentially multiple times — what about using the one that is
+  nearest to the constructed outline?"* Adopted whole. The crossing is **both** the anchor and where the frame
+  is **seeded** from the plane's own axes, and the halves are not interchangeable — an anchor placed exactly at
+  the crossing still lays the foundation on its side, because an anchor states which point travels and nothing
+  about which way is up. Seeding a rotation-minimizing frame mid-run costs nothing (transport is reversible:
+  forward from the seed, backward before it), and the feature stores the direction the **first** span ended up
+  with, so `(path, profile, up, roll, twist)` still rebuilds the identical body and no consumer learned a
+  field. The subtle half is the **mirror**: a right-handed frame cannot both follow the run's direction and see
+  the drawing from the front, and a closed run crosses a plane through it once each way — so a crossing that
+  runs against the plane's normal reads the section from its other side, reflected and re-wound, which is the
+  only reading that puts the drawing where it is drawn. Taking the crossing's sense into account also makes the
+  seed rotation at most a quarter turn, so the antiparallel degeneracy the draft feared cannot happen and only
+  *a run lying in the plane* is refused. **Which** crossing is scored once and recorded (`signs=`), never
+  re-scored; where it *is* stays live and heals; a **negative** index is the record that the origin rides the
+  run, which is what makes an old step — carrying no index at all — mean what it always meant, for ever. No
+  version bump, and a load-time migration was rejected as a silent behaviour change rather than a
+  reproduction. The tube gained nothing, again, and for the same reason. One behaviour deliberately reversed
+  and re-pinned: #15's own worm now rides where its coil goes through the plan and refuses *globally* instead
+  of locally — still a refusal, still wanting its one pick. **1815 → 1832 green**, nothing cut; one
+  pre-existing defect found and queued (a closed polyline run with a section further inside than the loop's
+  inradius sweeps to an inside-out shell, `Embedding`'s antiparallel-legs blind spot). See *the in-place
+  sweep* under OP-26.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -13070,7 +13227,24 @@ splits in three, and only the first is small.
    value, ordered 3D intersection sets, branch by sign, and the same rule that governs every scored choice
    (scored once at creation, stored, never re-scored on replay).
 
-**Beyond those five, the rest of the numbered queue is empty.** What remains is the parked list below, each
+**Queued in session 58 (found, not reported): a closed run can sweep to an inside-out shell without
+refusing.** *Watertight or refused* (OP-9) says a sweep that folds through itself must refuse; `Embedding`'s
+**global** term misses the one case that matters on a closed **polyline** loop. Two antiparallel legs make the
+segment-to-segment closest-point solve degenerate (`den = 1 − b²` is zero), the clamped answer lands on the
+loop's own **corner**, and the normal-cone test then rejects the pair as "not a bottleneck" — so a section
+standing further *inside* the loop than its inradius produces a ring turned inside out, silently. Reproduced
+headlessly on the **plain origin reading**, so it predates and is independent of session 58's in-place sweep: a
+100 × 60 closed plan polyline, a circular section drawn 100 mm off the plan's origin, `Geom3.volume` =
+−13458 mm³ with the node valid and nothing refused. (The same drawing offset *outward* by 100
+is a perfectly good ring, +31402 mm³ — the sign of the offset is the whole difference.) The fix is a change to
+OP-26's own double-normal derivation: the parallel/antiparallel case wants the **overlap interval** of the two
+segments rather than a clamped endpoint, so that two legs running side by side are compared where they are
+actually side by side. It touches every existing embedding assertion (`SweepEmbeddingTest`), which is why it is
+queued whole rather than smuggled into the package that found it. A cheaper interim — checking the emitted
+shell's signed volume and refusing a negative one by name — is worth considering as the *guard* even after the
+criterion is fixed, since it is the property `assertManifold` already tests for in every test.
+
+**Beyond those six, the rest of the numbered queue is empty.** What remains is the parked list below, each
 item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**

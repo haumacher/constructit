@@ -462,7 +462,7 @@ object Chains {
         val length = run.last().s - run.first().s
         val report =
             Embedding.check(
-                MovingFrame(run, length, closed = false, seam = 0.0),
+                MovingFrame(run, length, closed = false, seam = 0.0, startRef = run.first().ref),
                 reach,
                 "the cut's reach across this solid (${Frames3.mm(reach)} mm)",
                 subject = "the cutting surface",

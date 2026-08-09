@@ -113,6 +113,29 @@ data class Frame3(
 }
 
 /**
+ * **Where the frame is stated from**, when it is not started at the run's beginning (OP-26, the in-place
+ * sweep).
+ *
+ * A rotation-minimizing frame is one stated direction carried along the whole run, and *where* it is stated is
+ * free: transport is reversible, so seeding the frame at a crossing part-way along and carrying it **both
+ * ways** is the same rule, read from a different place. That is what lets a section drawn in a plane the run
+ * pierces come out as the run's own section *there* — the drawing is the statement, and the rest of the run
+ * follows it.
+ *
+ * [piece] and [t] say where along the path the seed stands, in the path's own vocabulary rather than in an arc
+ * length, so nothing has to agree about how the spine was sampled. [tangent] is the **analytic** direction
+ * there — the reference is carried across one last step from it onto the chord the spine actually walks, which
+ * is [Stations3]'s rule, reached rather than re-derived. [ref] is the direction that is to stand as the
+ * frame's reference at that point.
+ */
+data class FrameSeed(
+    val piece: Int,
+    val t: Double,
+    val tangent: Vec3,
+    val ref: Vec3,
+)
+
+/**
  * The **moving frame along a path** (OP-26): the stations, how long the path is, and — for a closed path —
  * how far the frame is from coming back to itself.
  */
@@ -126,6 +149,16 @@ class MovingFrame(
      * planar closed one (see [Frames3.along]).
      */
     val seam: Double,
+    /**
+     * The reference direction the first span was carried with — what [Frames3.startReference] returned, or,
+     * where the frame was **seeded** part-way along ([FrameSeed]), the seed carried back to the start.
+     *
+     * Reported rather than kept private because it is what keeps a swept feature self-contained (OP-9,
+     * [Feature3.Sweep]): `startReference(firstChord, this)` is this direction again, so a body rebuilt from
+     * `(path, profile, up, roll, twist)` alone rebuilds the identical frame — seeded or not — and neither a
+     * placement's re-projection nor a plan hint needs to know where the statement was made.
+     */
+    val startRef: Vec3,
 )
 
 /**
@@ -233,6 +266,15 @@ object Frames3 {
      * **The twist is distributed linearly in arc length** — the only distribution that is stateable ("so
      * many degrees per metre") and the only one that does not need a second parameter to describe.
      *
+     * **[seed] states the frame part-way along instead of at the start** (the in-place sweep). The transport
+     * rule is unchanged and so is everything read off it — what changes is only *where* the one stated
+     * direction is stated: the seeded span takes it, the spans after it are carried forward and the spans
+     * before it are carried **backward**, by the same rotation read the other way. A frame is one direction
+     * carried along a run, and a run has no preferred end to state it from; what the seed buys is that the
+     * section can be stated where the drawing is (see [FrameSeed]). [MovingFrame.startRef] then reports the
+     * direction the first span ended up with, which is the seed expressed at the start and hence what makes a
+     * seeded sweep still a pure function of `(path, up, roll, twist)`.
+     *
      * Refused, by name and healing (OP-3): a path with no pieces, a path with no length, and a path that
      * doubles back on itself so sharply that no mitre exists there.
      */
@@ -243,9 +285,10 @@ object Frames3 {
         twistRad: Double = 0.0,
         reach: Double = 0.0,
         tolMm: Double = GeomMath.TESS_TOL_MM,
+        seed: FrameSeed? = null,
     ): Pair<MovingFrame?, String?> {
         if (path.elements.isEmpty()) return null to "this curve has no pieces, so there is nothing to sweep along"
-        val (points, curvatures) = spine(path, reach, twistRad, tolMm)
+        val (points, curvatures, params) = spine(path, reach, twistRad, tolMm)
         val n = points.size
         if (n < 2) return null to "this curve has no length, so there is nothing to sweep along"
 
@@ -262,14 +305,21 @@ object Frames3 {
         val length = cum[spans]
         if (length <= Geom3.WELD_TOL) return null to "this curve has no length, so there is nothing to sweep along"
 
-        // the transport: one reference per span, carried forward introducing no rotation about the tangent
-        val refs = ArrayList<Vec3>(spans)
-        refs.add(startReference(dirs[0], up))
-        for (k in 1 until spans) {
-            val carried =
-                transport(refs[k - 1], dirs[k - 1], dirs[k])
-                    ?: return null to reversalRefusal(cum[k])
-            refs.add(carried)
+        // the transport: one reference per span, carried away from where it is stated, introducing no rotation
+        // about the tangent — forward from the start, or both ways from a seed part-way along
+        val seedSpan = if (seed == null) 0 else spanOf(params, seed, spans)
+        val refs = MutableList(spans) { Vec3(0.0, 0.0, 0.0) }
+        refs[seedSpan] =
+            if (seed == null) {
+                startReference(dirs[0], up)
+            } else {
+                transport(seed.ref, seed.tangent.normalized(), dirs[seedSpan]) ?: return null to reversalRefusal(cum[seedSpan])
+            }
+        for (k in seedSpan + 1 until spans) {
+            refs[k] = transport(refs[k - 1], dirs[k - 1], dirs[k]) ?: return null to reversalRefusal(cum[k])
+        }
+        for (k in seedSpan - 1 downTo 0) {
+            refs[k] = transport(refs[k + 1], dirs[k + 1], dirs[k]) ?: return null to reversalRefusal(cum[k + 1])
         }
 
         // the seam: for a closed path, how far the frame is from coming back to itself after the loop
@@ -302,7 +352,29 @@ object Frames3 {
             val turned = rotate(refs[inIdx], a, rollRad + twistRad * (sTwist / length))
             stations.add(Frame3(cum[k], points[k], a, (turned - a * turned.dot(a)).normalized(), mitre, curvatures[k]))
         }
-        return MovingFrame(stations, length, path.closed, seam) to null
+        return MovingFrame(stations, length, path.closed, seam, refs[0]) to null
+    }
+
+    /**
+     * Which span of the sampled spine the [seed] falls in — the last one that starts at or before it, in the
+     * path's own `(piece, parameter)` order rather than in an arc length.
+     *
+     * In the path's vocabulary because nothing then has to agree about the sampling: [params] is the very list
+     * the spine was built from, so the comparison is exact and a reload lands on the same span to the bit. A
+     * seed sitting **exactly** on a sample point rides the span *leaving* it, which is the only tie there is and
+     * matters to nothing — the two spans meet there, and a station's own frame is the arriving span's.
+     */
+    private fun spanOf(
+        params: List<Pair<Int, Double>>,
+        seed: FrameSeed,
+        spans: Int,
+    ): Int {
+        var found = 0
+        for (k in params.indices) {
+            val (piece, t) = params[k]
+            if (piece < seed.piece || (piece == seed.piece && t <= seed.t)) found = k else break
+        }
+        return found.coerceIn(0, spans - 1)
     }
 
     private fun reversalRefusal(s: Double): String =
@@ -342,18 +414,24 @@ object Frames3 {
     }
 
     /**
-     * The sampled spine: the path's points in order (a closed path's returning duplicate dropped) and, per
-     * point, the **analytic** curvature of the piece it came from.
+     * The sampled spine: the path's points in order (a closed path's returning duplicate dropped), per point
+     * the **analytic** curvature of the piece it came from, and per point the `(piece, parameter)` it was
+     * sampled at.
      *
      * A point that two pieces hand over at gets the **larger** of their two curvatures, so a station on the
      * join of a straight run and a bend is judged by the bend — the answer that cannot let a fold through.
+     *
+     * The parameters are carried because a **seeded** frame has to say which span it is stated on
+     * ([FrameSeed], [spanOf]), and the only honest answer is the one the sampling itself used: matching a seed
+     * to an arc length would compare a chord sum against a curve length and land a span out at the wrong end
+     * of a coarse piece.
      */
     private fun spine(
         path: Path3,
         reach: Double,
         twistRad: Double,
         tolMm: Double,
-    ): Pair<List<Vec3>, List<Double>> {
+    ): Triple<List<Vec3>, List<Double>, List<Pair<Int, Double>>> {
         // pass one: how long each piece is, at its own base sampling — needed before the twist can say how
         // finely any of them has to be cut, since the twist is distributed in arc length
         val base = path.elements.map { baseSteps(it, tolMm) }
@@ -372,6 +450,7 @@ object Frames3 {
 
         val points = ArrayList<Vec3>()
         val curvature = ArrayList<Double>()
+        val params = ArrayList<Pair<Int, Double>>()
         for ((i, el) in path.elements.withIndex()) {
             val share = if (total > Geom3.WELD_TOL) lengths[i] / total else 0.0
             val steps = max(base[i], GeomMath.chordSteps(reach, abs(twistRad) * share, tolMm))
@@ -386,6 +465,7 @@ object Frames3 {
                 }
                 points.add(p)
                 curvature.add(k)
+                params.add(i to t)
             }
         }
         // a closed path's last piece ends where the first began: the ring closes through the span list, so
@@ -394,8 +474,9 @@ object Frames3 {
             curvature[0] = max(curvature[0], curvature.last())
             points.removeAt(points.size - 1)
             curvature.removeAt(curvature.size - 1)
+            params.removeAt(params.size - 1)
         }
-        return points to curvature
+        return Triple(points, curvature, params)
     }
 
     /**

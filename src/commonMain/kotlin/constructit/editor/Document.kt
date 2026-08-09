@@ -79,6 +79,8 @@ import constructit.geom.IntersectionCurve
 import constructit.geom.Justification
 import constructit.geom.Mesh3
 import constructit.geom.Path3
+import constructit.geom.Pierce
+import constructit.geom.Pierce3
 import constructit.geom.Plane3
 import constructit.geom.PlaneSection
 import constructit.geom.ProfileElement
@@ -9849,9 +9851,20 @@ class Document {
      * The area [profile] **swept along the curve in space** [el] (OP-26's step 2) — the general form, of
      * which [tubeAlongCurve] is the circular case.
      *
-     * The profile is read in the moving frame's own coordinates, by default **with its own origin on the
-     * path**, so a section drawn 20 mm off its space's origin runs 20 mm off the route — a construction
-     * rather than an argument.
+     * **With no pick and a run that pierces the section's own plane, the section is swept from where it is
+     * drawn** (the in-place sweep — the user's design, GitHub issue #15 read one step further). The point of it
+     * that travels is then *the point the run goes through the drawing at*, and the frame there is the
+     * drawing's own plane, so the outline is literally the swept body's section at that place: a foundation
+     * drawn in a section through the building, against the wall it sits by, sweeps round the wall's own
+     * outline sitting on the ground rather than floating at the height its plane coordinates happen to be.
+     * Which crossing is a **choice scored once, from the drawing, and recorded** — the one nearest the
+     * section — and never re-scored on a later load (OP-1/OP-18), while *where* that crossing is stays a live
+     * value that the body follows (OP-3).
+     *
+     * Failing all of that the profile is read in the moving frame's own coordinates **with its own origin on
+     * the path**, so a section drawn 20 mm off its space's origin runs 20 mm off the route — a construction
+     * rather than an argument. That is what a run which crosses nothing gets, and what every drawing written
+     * before this reading keeps for ever.
      *
      * **[anchor] is the point of the section that rides the run** (GitHub issue #15), and it is what makes a
      * section drawn *in place* sweepable: a worm thread drawn at the shaft's surface stands 5 mm off the
@@ -9882,6 +9895,7 @@ class Document {
         roll: ScalarRef? = null,
         twist: ScalarRef? = null,
         anchor: PointRef? = null,
+        pierce: Int? = null,
     ): Element? {
         val path = spaceCurveRef(el, "Sweep") ?: return null
         val region =
@@ -9914,19 +9928,115 @@ class Document {
                 "area's own origin rides the run)"
             return null
         }
+        // Which crossing of the section's own plane the run is ridden at: **taken verbatim** when the step
+        // recorded one, scored once here when this is the gesture (OP-1, OP-18). Only ever asked when no point
+        // was picked — a stated anchor is the more explicit statement and supersedes everything.
+        //
+        // A **negative** recorded index is the statement that the section's own origin rides the run, and it
+        // is why the reading is recorded even when there is nothing to choose: a step written before this
+        // reading existed carries no index at all, and *that* is what keeps it meaning what it always meant
+        // (OP-18 — a stored literal's semantics are frozen). Absence is the old file; a number is a choice.
+        val sectionPlane = if (anchor == null) planeOfSpace(profile.space) else null
+        val hits = if (sectionPlane == null) emptyList() else crossingsOf(path, sectionPlane)
+        val chosen =
+            when {
+                sectionPlane == null -> null
+                pierce != null -> if (pierce < 0) null else pierce
+                // …and a step being **replayed** with no recorded reading was written before this reading
+                // existed, so it keeps the one it was written with, for ever ([replayingVersion])
+                replayingVersion != null -> null
+                else -> nearestCrossing(hits, sectionPlane, region)
+            }
         val solid =
             add(
-                cx.sweep(path, planeOfSpace(el.space), region, noTurn(roll), noTurn(twist), anchor),
+                cx.sweep(
+                    path,
+                    planeOfSpace(el.space),
+                    region,
+                    noTurn(roll),
+                    noTurn(twist),
+                    anchor,
+                    if (chosen == null) null else sectionPlane,
+                    chosen ?: 0,
+                ),
                 ElementKind.SOLID,
                 Styles.SOLID,
             )
         solid.space = el.space
+        // The reading is recorded whenever there was one to make — a picked anchor is its own record and is
+        // named by `pts=` instead, and a step replayed from a file that recorded none must write none back,
+        // or a load followed by a save would put words in an older writer's mouth.
+        if (anchor == null && (pierce != null || replayingVersion == null)) registerSigns(solid, listOf(chosen ?: -1))
         madeSolid(
             solid,
             "${nameOf(profile)} swept along ${nameOf(el)}" +
-                (anchorEl?.let { ", riding on ${nameOf(it)}" } ?: ""),
+                (anchorEl?.let { ", riding on ${nameOf(it)}" } ?: ridingNote(el, profile, sectionPlane, chosen, hits.size)),
         )
         return solid
+    }
+
+    /** Where [path] crosses [plane], or nothing when either has no value right now. */
+    private fun crossingsOf(
+        path: Path3Ref,
+        plane: PlaneRef,
+    ): List<Pierce> {
+        val ev = Evaluator()
+        val run = (ev.valueOf(path) as? Path3Value)?.path ?: return emptyList()
+        val at = (ev.valueOf(plane) as? PlaneValue)?.plane ?: return emptyList()
+        return Pierce3.crossings(run, at)
+    }
+
+    /**
+     * Which crossing of [plane] by [path] a section shaped like [region] rides — **the one nearest the
+     * drawing**, or null where the run crosses that plane nowhere.
+     *
+     * Nearness is measured in the plane's own coordinates, from the crossing to the section's outline, because
+     * that is the question the user is answering by having drawn the section where they drew it: a foundation
+     * hugging one wall of a pillar means *this* wall, and the plan's outline crosses the plane through it once
+     * at each wall. Scored **here**, once, at the click — the index is then written into the step and every
+     * replay takes it verbatim, since a re-scored nearness moves the body to the other side of the drawing the
+     * first time an edit slides the section past the middle (OP-18's own catalogue of that defect).
+     */
+    private fun nearestCrossing(
+        hits: List<Pierce>,
+        plane: PlaneRef,
+        region: RegionRef,
+    ): Int? {
+        if (hits.isEmpty()) return null
+        val ev = Evaluator()
+        val at = (ev.valueOf(plane) as? PlaneValue)?.plane ?: return null
+        val outline = ((ev.valueOf(region) as? RegionValue)?.region ?: return null).outer.elements
+        return hits.indices.minByOrNull { i ->
+            val p = at.toLocal(hits[i].at)
+            outline.minOfOrNull { HitTest.distanceToPiece(p, it) } ?: Double.MAX_VALUE
+        }
+    }
+
+    /**
+     * What the status line says about how a picked-nothing sweep rides its run — the choice speaking for
+     * itself, and naming the other way of stating it (*refusals speak*, and so do choices made for the user).
+     */
+    private fun ridingNote(
+        el: Element,
+        profile: Element,
+        sectionPlane: PlaneRef?,
+        chosen: Int?,
+        count: Int,
+    ): String {
+        if (sectionPlane == null) return ""
+        val where = spaceLabel(spaceOf(profile))
+        if (chosen == null) {
+            return if (count == 0) {
+                ", with ${nameOf(profile)}'s own origin riding the run — ${nameOf(el)} does not cross $where, " +
+                    "so there is no point of the section for the run to go through"
+            } else {
+                ", with ${nameOf(profile)}'s own origin riding the run — sweep it again to ride where " +
+                    "${nameOf(el)} pierces $where, or pick the point of the section that is to ride it"
+            }
+        }
+        return ", riding where ${nameOf(el)} pierces $where" +
+            (if (count > 1) " (crossing ${chosen + 1} of $count, the one nearest the section)" else "") +
+            " — pick a point of the section to ride it elsewhere"
     }
 
     /** [el] as the curve in space it is, or null with the reason it is not one — [what] names the tool. */

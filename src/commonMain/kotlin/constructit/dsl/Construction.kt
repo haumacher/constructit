@@ -54,6 +54,7 @@ import constructit.geom.Direction
 import constructit.geom.Ellipse
 import constructit.geom.EllipticArc
 import constructit.geom.Feature3
+import constructit.geom.FrameSeed
 import constructit.geom.Frames3
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
@@ -68,6 +69,7 @@ import constructit.geom.Loop
 import constructit.geom.Mesh3
 import constructit.geom.MeshBool
 import constructit.geom.Path3
+import constructit.geom.Pierce3
 import constructit.geom.Plane3
 import constructit.geom.Profile
 import constructit.geom.ProfileElement
@@ -2524,6 +2526,19 @@ class Construction {
      * nothing to restate (OP-21). What it is *not* is a compensation the tool works out for the user:
      * DESIGN.md's *"explicit anchors beat compensation"*, said one feature further.
      *
+     * **[section] is the *in-place* reading, and [pierce] is which crossing of it the section rides.** Where a
+     * section is drawn in a plane the run goes **through** — a foundation drawn against the wall it sits by, in
+     * a plane cut through the building — the point of it that travels is not something the user should have to
+     * pick either: it is the point the run passes through the drawing at, and the frame there is the drawing's
+     * own. So [section] is the *profile's* plane (never the run's), [pierce] the index of its crossing in
+     * arc-length order, and what comes out is the section swept from exactly where it is drawn ([inPlace]).
+     * The index is a **recorded** choice — scored once from the gesture and taken verbatim ever after — while
+     * the crossing's *position* stays a live value, so the body follows the run and the plane and the node says
+     * so by name when the crossing it rides goes away (OP-1, OP-3, OP-18).
+     *
+     * The three readings are exclusive and ordered by how explicit they are: a stated [anchor] wins, then the
+     * in-place crossing, then the profile's own origin — the reading every drawing written before either had.
+     *
      * Invalid with a reason that heals (OP-3) for everything geometric — see [Geom3.sweep] for the list, of
      * which the two that matter are the profile outgrowing the path's bend and a closed path whose frame
      * does not come back to itself.
@@ -2535,14 +2550,49 @@ class Construction {
         roll: ScalarRef,
         twist: ScalarRef,
         anchor: PointRef? = null,
-    ): SolidRef =
-        // the anchor is an input **only when there is one**, so an unanchored sweep is the node it always
-        // was — same inputs, same arity, same value (OP-18's rule one level down: nothing changes meaning)
-        op(*listOfNotNull<Ref<*>>(path, space, profile, roll, twist, anchor).toTypedArray()) {
+        section: PlaneRef? = null,
+        pierce: Int = 0,
+    ): SolidRef {
+        require(anchor == null || section == null) { "a section rides a stated point or the run's own crossing, never both" }
+        // What the section rides on is **one** input, in one slot, because it is one statement: a point the
+        // user picked, the plane the run pierces, or — with neither — the profile's own origin, which is the
+        // node this always was, arity and value alike (OP-18's rule one level down: nothing changes meaning).
+        return op(*listOfNotNull<Ref<*>>(path, space, profile, roll, twist, anchor ?: section).toTypedArray()) {
             val region = (it[2] as RegionValue).region
-            val at = (it.getOrNull(5) as? PointValue)?.p
-            sweptSolid(it, SweepProfile.Section(if (at == null) region else movedBy(region, -at)))
+            val rides = it.getOrNull(5)
+            when (rides) {
+                is PointValue -> sweptSolid(it, SweepProfile.Section(movedBy(region, -rides.p)))
+                is PlaneValue -> inPlace(it, region, rides.plane, pierce)
+                else -> sweptSolid(it, SweepProfile.Section(region))
+            }
         }
+    }
+
+    /**
+     * The **in-place** reading of a sweep: the section carried by the point the run goes through its own plane
+     * at, in the frame that plane's axes state there (OP-26, the in-place sweep — the user's own design).
+     *
+     * Two things, and they are one statement rather than two: the crossing is the *anchor* (so a section drawn
+     * where the material is rides the run from there, with nothing moved and nothing picked), and it is where
+     * the frame is *seeded* (so the drawing is literally the run's section there, standing the way it was
+     * drawn). Either alone would be half an answer — the anchor without the frame puts the section on the run
+     * lying the wrong way up, and the frame without the anchor stands the drawing correctly somewhere it is not.
+     *
+     * Everything about *where* the run and the plane are is a **value**, so it is reported as node invalidity
+     * that heals (OP-3): the crossing the section rides can go away when the run is dragged clear of the plane,
+     * and it comes back the moment the run does. What is never re-decided is *which* crossing — that is a
+     * recorded choice ([Pierce3.readingAt]).
+     */
+    private fun inPlace(
+        args: List<Value>,
+        region: Region,
+        section: Plane3,
+        pierce: Int,
+    ): EvalResult {
+        val (reading, why) = Pierce3.readingAt((args[0] as Path3Value).path, section, pierce)
+        if (reading == null) return EvalResult.Invalid(why ?: "this section does not cross the run's own plane")
+        return sweptSolid(args, SweepProfile.Section(readFrom(region, reading.anchor, reading.fromBehind)), reading.seed)
+    }
 
     /** [region] with [d] added to every one of its coordinates — how an anchored [sweep] reads its section. */
     private fun movedBy(
@@ -2554,10 +2604,32 @@ class Construction {
         return Region(GeomMath.transform(region.outer, t), region.holes.map { GeomMath.transform(it, t) })
     }
 
+    /**
+     * [region] read from [anchor], and — when the run crosses the plane the other way ([fromBehind]) — from
+     * the drawing's other side.
+     *
+     * The mirror is not a decoration: a right-handed moving frame whose reference is the plane's x axis has
+     * the plane's y axis for its second **only** where the run crosses the way the plane faces, so on the
+     * other kind of crossing reading the drawing straight would stand it upside down about the crossing. The
+     * reflection is what puts every point of it back exactly where it was drawn (see [Pierce3.InPlaceReading]),
+     * and the loop is re-wound with it — `GeomMath.transform` keeps the orientation a loop had, which is what
+     * keeps a reflected area an area (OP-14).
+     */
+    private fun readFrom(
+        region: Region,
+        anchor: Vec2,
+        fromBehind: Boolean,
+    ): Region {
+        if (!fromBehind) return movedBy(region, -anchor)
+        val t = Affine(1.0, 0.0, 0.0, -1.0, -anchor.x, anchor.y)
+        return Region(GeomMath.transform(region.outer, t), region.holes.map { GeomMath.transform(it, t) })
+    }
+
     /** The half [tube] and [sweep] share: the frame's inputs read, and the solid or the reason it is not one. */
     private fun sweptSolid(
         args: List<Value>,
         profile: SweepProfile,
+        seed: FrameSeed? = null,
     ): EvalResult {
         val plane = (args[1] as PlaneValue).plane
         val roll = sc(args[3]).requireDim(Dimension.ANGLE, "sweep roll").base
@@ -2570,6 +2642,7 @@ class Construction {
                 roll,
                 twist,
                 plane,
+                seed = seed,
             )
         return if (solid == null) EvalResult.Invalid(why ?: "cannot sweep along this curve") else EvalResult.Ok(SolidValue(solid))
     }

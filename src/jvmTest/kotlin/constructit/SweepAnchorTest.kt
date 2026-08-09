@@ -175,15 +175,22 @@ class SweepAnchorTest {
     }
 
     /**
-     * **…and without it the drawing still means what it always meant**: the same two picks, the same refusal,
-     * in the same words — reach against bend, both figures named.
+     * **…and with the section's own origin riding the run, the drawing still means what it always meant**: the
+     * same two picks, the same refusal, in the same words — reach against bend, both figures named.
+     *
+     * The origin reading is *stated* here (`pierce = -1`) because since the **in-place** sweep it is no longer
+     * what a picked-nothing gesture on this drawing gets: this coil goes through the plan the section is drawn
+     * in, so a fresh gesture now rides that crossing instead (see
+     * [theSameWormWithNoPickNowRidesWhereTheCoilGoesThroughTheDrawing]). What the origin reading *means* is
+     * untouched, which is what this pins — and every file that ever recorded it keeps it
+     * ([aFileWithNoAnchorLoadsWithTheOldReading]).
      */
     @Test
     fun theSameWormWithNoAnchorStillRefusesByReachAgainstTheBend() {
         val doc = DocumentFormat.load(WORM_CIT)
         val solid =
             assertNotNull(
-                doc.sweepAlongCurve(named(doc, "thread"), named(doc, "worm")),
+                doc.sweepAlongCurve(named(doc, "thread"), named(doc, "worm"), pierce = -1),
                 "the sweep is built and refuses as a value, not as a gesture: ${doc.note}",
             )
         val why = assertNotNull(whyInvalid(solid), "it is invalid")
@@ -203,11 +210,39 @@ class SweepAnchorTest {
     @Test
     fun theRefusalNamesWhichBendItIs() {
         val doc = DocumentFormat.load(WORM_CIT)
-        val solid = assertNotNull(doc.sweepAlongCurve(named(doc, "thread"), named(doc, "worm")))
+        val solid = assertNotNull(doc.sweepAlongCurve(named(doc, "thread"), named(doc, "worm"), pierce = -1))
         val why = assertNotNull(whyInvalid(solid))
         assertTrue(why.contains("the bend the run starts with"), "the place is named readably: $why")
         assertTrue(why.contains("0 mm along the path"), "with the measurement kept beside the radius: $why")
         assertTrue(!why.contains("the bend 0 mm along"), "and the old unreadable lead is gone: $why")
+    }
+
+    /**
+     * **What a picked-nothing gesture on the user's own drawing does now** — the in-place sweep, and the honest
+     * consequence of it on a drawing that was not drawn in the plane's crossing.
+     *
+     * The coil is parented to a vertical datum and winds about an axis lying **in** the plan, so it goes
+     * through the plan — the plane the thread form is drawn in — twice per turn. With nothing picked the
+     * section therefore rides the nearer of those two crossings, and the status line says which one. That
+     * crossing stands 0.287 mm past the top of the section, so the form reaches 0.688 mm from the run there and
+     * a 1 mm pitch has no room for two of them: the node refuses, **globally** (the run passes within its own
+     * clearance) rather than locally, and names both figures.
+     *
+     * Which is the whole argument for keeping the pick: a default that reads *where the run goes through the
+     * drawing* is right whenever the drawing is at the crossing, and a stated anchor is what says so when it is
+     * not ([theUsersWormRidesItsCoilOnceTheAnchorIsStated] — the same drawing, valid, by one click).
+     */
+    @Test
+    fun theSameWormWithNoPickNowRidesWhereTheCoilGoesThroughTheDrawing() {
+        val doc = DocumentFormat.load(WORM_CIT)
+        val solid = assertNotNull(doc.sweepAlongCurve(named(doc, "thread"), named(doc, "worm")))
+        val note = assertNotNull(doc.note)
+        assertTrue(note.contains("riding where"), "the choice speaks: $note")
+        assertTrue(note.contains("crossing 1 of 2, the one nearest the section"), "and says which crossing: $note")
+        assertTrue(note.contains("pick a point of the section"), "and names the alternative: $note")
+        val why = assertNotNull(whyInvalid(solid), "the thread form is wider than half this coil's pitch")
+        assertTrue(why.contains("the run passes within 1 mm of itself"), "refused globally, by the run's own clearance: $why")
+        assertTrue(why.contains("0.688 mm"), "with the reach it measured from the crossing: $why")
     }
 
     // ---- 2. the analytic case: a stated corner, and the shell it must lie in ----
@@ -575,7 +610,8 @@ class SweepAnchorTest {
         assertEquals(listOf(SlotKind.PATH3, SlotKind.OPTIONAL_POINT, SlotKind.AREA), sweep.slots, "and the sweep's optional pick sits between its two")
         assertTrue(sweep.crossSpace, "which may be picked in another plane than the run")
         assertTrue(sweep.help.contains("ride the run"), "and the help says what the point is: ${sweep.help}")
-        assertTrue(sweep.help.contains("area's own origin to ride the run"), "and what leaving it out means: ${sweep.help}")
+        assertTrue(sweep.help.contains("from where it is drawn"), "and what leaving it out means now: ${sweep.help}")
+        assertTrue(sweep.help.contains("area's own origin rides the run"), "…and when that is all it can mean: ${sweep.help}")
         // the one structural promise [SlotKind.OPTIONAL_POINT] makes: never last, or nothing could skip it
         for (def in Tools.all) {
             assertTrue(

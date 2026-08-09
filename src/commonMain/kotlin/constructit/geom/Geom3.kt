@@ -1123,6 +1123,7 @@ object Geom3 {
         twistRad: Double = 0.0,
         plan: Plane3? = null,
         tolMm: Double = GeomMath.TESS_TOL_MM,
+        seed: FrameSeed? = null,
     ): Pair<Solid3?, String?> {
         if (profile is SweepProfile.Round && profile.radius <= WELD_TOL) {
             return null to "a tube needs a positive radius — this one is ${Frames3.mm(profile.radius)} mm"
@@ -1137,7 +1138,7 @@ object Geom3 {
         val reach = tess.outer.maxOf { it.length() }
         if (reach <= WELD_TOL) return null to "the profile has no size, so there is nothing to sweep"
 
-        val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, reach, tolMm)
+        val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, reach, tolMm, seed)
         if (frame == null) return null to (noFrame ?: "cannot build a moving frame along this curve")
 
         // **The self-intersection criterion: the spine's reach**, both terms of it ([Embedding]). Locally, a
@@ -1172,7 +1173,13 @@ object Geom3 {
             } else {
                 Silhouette.ofSwept(frame.stations, tess.outer, roundRadius(profile), frame.closed, plan)
             }
-        return Solid3.derived(Feature3.Sweep(path, profile, up, rollRad, twistRad, outline), shells) to null
+        // **The feature records the direction the frame actually started with**, not the one that was asked
+        // for — [MovingFrame.startRef]. For a frame started at the run's beginning the two are the same
+        // statement (`startReference` of an already-perpendicular direction is that direction), and for a
+        // **seeded** one this is what keeps `(path, profile, up, roll, twist)` enough to rebuild the identical
+        // body: where the section was stated is a fact about the *gesture*, and the frame it produced is a
+        // direction like any other (OP-9's self-contained feature, OP-26's stated start frame).
+        return Solid3.derived(Feature3.Sweep(path, profile, frame.startRef, rollRad, twistRad, outline), shells) to null
     }
 
     /**
