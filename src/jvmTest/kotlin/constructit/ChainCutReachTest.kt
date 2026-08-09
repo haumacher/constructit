@@ -199,12 +199,22 @@ class ChainCutReachTest {
      * within four. That is a property of the *drawing* this fixture happens to contain and not of anything
      * this package touches, and it is asserted rather than papered over: every other line, including every
      * step this test builds, is byte-identical on the first pass.
+     *
+     * The **second** named exception is the revolve step, and it is a property of this build rather than of
+     * the drawing (session 63): a partial revolve now carries an *offset* freedom its step restates
+     * (`dofs=0deg`), so this pre-package file gains that argument the first time it is written back. Nothing
+     * it already said changed meaning — the offset was zero before it could be stated, which is what an
+     * absent `dofs=` still means (OP-18) — and the file is a fixed point from that first save onwards.
      */
     private fun assertRoundTrips(text: String) {
         val once = DocumentFormat.save(DocumentFormat.load(text))
         val differing = text.lines().zip(once.lines()).filter { it.first != it.second }
         assertEquals(text.lines().size, once.lines().size, "no step is added or lost")
         for (d in differing) {
+            if (d.first.startsWith("tool revolve ")) {
+                assertEquals(d.first.replace(" -> ", " dofs=0deg -> "), d.second, "the revolve gains its offset freedom and nothing else")
+                continue
+            }
             assertTrue(d.first.endsWith("-> e40"), "only the attached point's restated position moves, not ${d.first}")
             val a = d.first.removePrefix("point ").removeSuffix(" -> e40").split(",").map { it.toDouble() }
             val b = d.second.removePrefix("point ").removeSuffix(" -> e40").split(",").map { it.toDouble() }

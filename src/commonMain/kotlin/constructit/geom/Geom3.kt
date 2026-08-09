@@ -173,6 +173,44 @@ data class Slab(val regions: List<Region>, val z0: Double, val z1: Double) {
 }
 
 /**
+ * **How far a revolution goes round** (OP-17 slice 2, session 63) — and it is a *kind*, not a number.
+ *
+ * A complete revolution and a partial one are different structure, for the reason OP-14 gives one dimension
+ * down: *"a circle is not faked as a full-turn arc whose 0-vs-2π sweep is ambiguous — it carries its own
+ * ccw"*. A body swept the whole way round has **no start and no end**, hence no caps and a welded seam; a
+ * partial body has two caps and a stated interval. Deciding between them from the *value* of a live
+ * parameter — which is what `abs(angle − 2π) ≤ ε` used to do, alone — makes watertightness something a drag
+ * can switch on and off, so the graph itself says which one this is: a [Full] revolution has no angle node
+ * at all, and no edit of any parameter can open it.
+ *
+ * The reading of the interval is [Geom3.revolve]'s: the profile is the generator at angle 0, and the body
+ * occupies the angles between [Arc.start] and [Arc.end] about the axis.
+ */
+sealed interface Turn3 {
+    /** The whole way round: no start, no end, no caps — and therefore no offset either. */
+    data object Full : Turn3
+
+    /**
+     * The body between [start] and [end] rad about the axis, **ordered** so that `start <= end`.
+     *
+     * Ordered because a negative sweep and a positive one over the same two angles are the *same point
+     * set walked the other way* — normalizing here is what lets one cap-winding rule serve every
+     * combination of signs (see [Geom3.revolve]). Build one with [of], which does the ordering.
+     */
+    data class Arc(val start: Double, val end: Double) : Turn3 {
+        val sweep: Double get() = end - start
+
+        companion object {
+            /** The interval a stated [offset] and [angle] mean: `[offset, offset + angle]`, either sign. */
+            fun of(
+                offset: Double,
+                angle: Double,
+            ): Arc = Arc(min(offset, offset + angle), max(offset, offset + angle))
+        }
+    }
+}
+
+/**
  * The analytic description of a solid: which feature made it, from which sketch, with which
  * parameters (OP-9 — the analytic layer is the source of truth).
  *
@@ -193,12 +231,12 @@ sealed interface Feature3 {
         override val footprint: List<Region> get() = sketch.regions
     }
 
-    /** [sketch] swept [angle] rad about the in-plane axis through [axisOrigin] along [axisDir]. */
+    /** [sketch] swept [turn] about the in-plane axis through [axisOrigin] along [axisDir]. */
     data class Revolution(
         val sketch: Sketch3,
         val axisOrigin: Vec2,
         val axisDir: Vec2,
-        val angle: Double,
+        val turn: Turn3,
     ) : Feature3 {
         override val footprint: List<Region> get() = sketch.regions
     }
@@ -1037,31 +1075,80 @@ object Geom3 {
     }
 
     /**
-     * A solid of revolution: [sketch] swept [angle] rad about the axis through [axisOrigin] along
-     * [axisDir], **in the sketch plane** (OP-17 slice 2).
+     * A **complete** solid of revolution: [sketch] taken the whole way round the axis through
+     * [axisOrigin] along [axisDir], **in the sketch plane** (OP-17 slice 2).
      *
-     * The profile may *touch* the axis — that is the normal case for a turned part, and the collapsed
-     * quads are simply dropped — but a profile **crossing** the axis is refused with a reason and heals
-     * when it is dragged back (OP-3): revolving through the axis would fold the shell through itself,
-     * and a solid that is quietly self-intersecting is worse than one that is visibly absent.
+     * A kind of its own rather than an angle of 360° ([Turn3]): the body has no start and no end, so it
+     * has no caps, no seam and no offset, and no parameter edit anywhere can open it.
+     */
+    fun revolveFull(
+        sketch: Sketch3,
+        axisOrigin: Vec2,
+        axisDir: Vec2,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<Solid3?, String?> = revolve(sketch, axisOrigin, axisDir, Turn3.Full, tolMm)
+
+    /**
+     * A **partial** solid of revolution: [sketch] swept [angle] rad about the axis through [axisOrigin]
+     * along [axisDir], starting [offset] rad from the sketch plane (OP-17 slice 2).
      *
-     * A full turn closes the shell and gets no caps; a partial turn is capped at both ends by the
-     * triangulated region, which is also what puts a profile with holes (a revolved slot) on the same
-     * footing as a solid one.
+     * The profile is the generator at angle 0 and the body occupies `[offset, offset + angle]`, so with a
+     * non-zero offset the drawn profile is deliberately **not** a section of the body — the tool says where
+     * the body starts and ends so nobody hunts for a solid 30° away from its drawing.
+     *
+     * **Either sign** of [angle] is legal. A positive sweep turns the profile toward its sketch plane's own
+     * **normal** and a negative one away from it — the axis is canonicalized so the profile lies on `+P`,
+     * which negates `A` and `P` together and therefore leaves `N = A x P` alone, so which way is positive is
+     * a property of the *plane*, never of how the axis happened to be drawn. Whichever way a given plane
+     * faces, the other way is now one minus sign away.
      */
     fun revolve(
         sketch: Sketch3,
         axisOrigin: Vec2,
         axisDir: Vec2,
         angle: Double,
+        offset: Double = 0.0,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Pair<Solid3?, String?> = revolve(sketch, axisOrigin, axisDir, Turn3.Arc.of(offset, angle), tolMm)
+
+    /**
+     * The one revolve, over the interval [turn] describes (OP-17 slice 2).
+     *
+     * The profile may *touch* the axis — that is the normal case for a turned part, and the collapsed
+     * quads are simply dropped — but a profile **crossing** the axis is refused with a reason and heals
+     * when it is dragged back (OP-3): revolving through the axis would fold the shell through itself,
+     * and a solid that is quietly self-intersecting is worse than one that is visibly absent.
+     *
+     * **The interval, normalized, is what makes one winding rule serve every sign.** [Turn3.Arc] is
+     * ordered (`start <= end`), so the stations always run from the low angle to the high one whatever
+     * signs the offset and the angle were stated with — a negative sweep is the same set of points walked
+     * the other way, and nothing below it ever sees a negative step. The caps then keep the rule they
+     * always had: the one at the **low** end faces backwards out of the sweep, the one at the **high** end
+     * forwards, which is the extrude's reversed-bottom / upright-top rule read on the angle.
+     *
+     * A [Turn3.Full] turn closes the shell and gets no caps. So does a *stated* interval that happens to
+     * measure a full turn, which is what every file written before the two became different kinds means by
+     * `360°` — the value-level closure is kept for exactly that reason, and the structural one is what a
+     * new drawing gets when no angle is stated at all.
+     */
+    fun revolve(
+        sketch: Sketch3,
+        axisOrigin: Vec2,
+        axisDir: Vec2,
+        turn: Turn3,
         tolMm: Double = GeomMath.TESS_TOL_MM,
     ): Pair<Solid3?, String?> {
         if (sketch.regions.isEmpty()) return null to "a sketch with no region cannot be revolved"
         if (axisDir.length() < Vec2.EPS) return null to "the axis of revolution has no direction"
         val twoPi = 2.0 * PI
-        if (angle <= WELD_TOL) return null to "revolve angle must be positive"
-        if (angle > twoPi + 1e-9) return null to "revolve angle must not exceed a full turn"
-        val full = abs(angle - twoPi) <= 1e-9
+        val arc = turn as? Turn3.Arc
+        if (arc != null && arc.sweep <= WELD_TOL) {
+            return null to "a revolve needs an angle to sweep through — this one sweeps none"
+        }
+        if (arc != null && arc.sweep > twoPi + 1e-9) return null to "revolve angle must not exceed a full turn"
+        val start = arc?.start ?: 0.0
+        val angle = arc?.sweep ?: twoPi
+        val full = arc == null || abs(angle - twoPi) <= 1e-9
 
         val tessellated = ArrayList<TessRegion>(sketch.regions.size)
         for (region in sketch.regions) {
@@ -1106,7 +1193,7 @@ object Geom3 {
             step: Int,
         ): Vec3 {
             val (s, r) = sr(p)
-            val th = angle * step / steps
+            val th = start + angle * step / steps
             return originWorld + axisWorld * s + radialWorld * (r * cos(th)) + normalWorld * (r * sin(th))
         }
 
@@ -1121,7 +1208,7 @@ object Geom3 {
                 caps.add(tris)
             }
         }
-        return Solid3.derived(Feature3.Revolution(sketch, axisOrigin, axis, angle)) {
+        return Solid3.derived(Feature3.Revolution(sketch, axisOrigin, axis, turn)) {
             val mb = MeshBuilder()
             for ((ti, tess) in tessellated.withIndex()) {
                 for (poly in listOf(tess.outer) + tess.holes) {
@@ -1136,8 +1223,10 @@ object Geom3 {
                 }
                 if (!full) {
                     for (t in caps[ti]) {
-                        // The start cap faces backwards out of the sweep, the end cap forwards — the same
-                        // reversed-bottom / upright-top rule the extrude uses.
+                        // The cap at the interval's **low** angle faces backwards out of the sweep, the one
+                        // at its high angle forwards — the same reversed-bottom / upright-top rule the
+                        // extrude uses, and it serves a negative sweep too because the interval was ordered
+                        // before any station was computed ([Turn3.Arc]).
                         mb.triangle(at(t.a, 0), at(t.c, 0), at(t.b, 0))
                         mb.triangle(at(t.a, steps), at(t.b, steps), at(t.c, steps))
                     }

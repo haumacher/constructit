@@ -250,6 +250,17 @@ class ScalarSlot(
      * table says which kind of default this is rather than the runner guessing from the number.
      */
     val structural: Boolean = false,
+    /**
+     * Whether this slot accepts **only a value typed for this gesture** — never a parameter left in the
+     * panel by an earlier one.
+     *
+     * [ToolDef.scalarsTypedOnly]'s reason, said per slot instead of per tool, and for the case that tool-wide
+     * flag cannot serve: a *Revolve* takes an angle **and** an offset, both angles, so the picks cannot be
+     * told apart by dimension — but its angle must stay pickable from the panel, because sharing a parameter
+     * node is how this program says "the same angle" (OP-5). Marking the *offset* alone is what keeps a stray
+     * angle from a previous gesture out of it: an unstated offset then means zero, which is what it says.
+     */
+    val typedOnly: Boolean = false,
 ) {
     /**
      * Whether a *step* can own this slot's value as a freedom when nobody stated one: it has a default to
@@ -587,11 +598,28 @@ object Tools {
 
     private fun ang(name: String) = ScalarSlot(name, Dimension.ANGLE)
 
-    /** An angle slot the tool can do without: [deg] is what it means with nothing typed. */
+    /**
+     * An angle slot the tool can do without: [deg] is what it means with nothing typed.
+     *
+     * [typedOnly] for a slot that cannot be told apart from the one before it by dimension — see
+     * [ScalarSlot.typedOnly].
+     */
     private fun ang(
         name: String,
         deg: Double,
-    ) = ScalarSlot(name, Dimension.ANGLE, Quantity.deg(deg))
+        typedOnly: Boolean = false,
+    ) = ScalarSlot(name, Dimension.ANGLE, Quantity.deg(deg), typedOnly = typedOnly)
+
+    /**
+     * An angle slot whose default names **which construction** the tool builds rather than a value it uses
+     * — see [ScalarSlot.structural]. A *Revolve* with no angle is a complete revolution, a body with no
+     * ends at all; a stated angle is a partial one with two caps. Two different solids, and 360° is the
+     * name of the first rather than a value of the second.
+     */
+    private fun angChoice(
+        name: String,
+        deg: Double,
+    ) = ScalarSlot(name, Dimension.ANGLE, Quantity.deg(deg), structural = true)
 
     private fun num(name: String) = ScalarSlot(name, Dimension.NONE)
 
@@ -1145,7 +1173,13 @@ object Tools {
             // slice; the depth/angle is a panel parameter, which is where the feature's DOF is edited
             // (OP-13) since the 3D view has no picking yet.
             ToolDef(EXTRUDE, "Extrude", ToolCategory.SOLIDS, listOf(SlotKind.AREA), scalars = listOf(len("depth")), shortcut = 'E', help = "Type a depth (or pick a parameter in the panel), then click an outline or wall footprint: it becomes a solid, shown in the 3D view.", slotNames = listOf("profile"), icon = Icons.EXTRUDE) { d, p, s -> d.extrudeSolid(p.elements[0], s[0]) },
-            ToolDef(REVOLVE, "Revolve", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.LINE), scalars = listOf(ang("angle")), help = "Type a angle (or pick a parameter in the panel), click an outline or footprint, then a line to spin it about (the profile must not cross the axis).", slotNames = listOf("profile", "axis"), icon = Icons.REVOLVE) { d, p, s -> d.revolveSolid(p.elements[0], p.elements[1], s[0]) },
+            // **Full is the default, and it is structural** (session 63): with nothing typed the angle slot
+            // names a *complete* revolution — a body with no ends, whose watertightness no later edit can
+            // switch off, because the graph holds no angle node at all (OP-14's circle-vs-arc rule one
+            // dimension up; see [constructit.geom.Turn3]). A typed angle builds the partial, and the offset
+            // beside it says where about the axis that partial starts — `typedOnly`, because two angle slots
+            // cannot be told apart by dimension and a stray angle must never become an offset nobody stated.
+            ToolDef(REVOLVE, "Revolve", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.LINE), scalars = listOf(angChoice("angle", 360.0), ang("offset", 0.0, typedOnly = true)), help = "Click an outline or footprint, then a line to spin it about (the profile must not cross the axis): with no angle typed it goes the whole way round, a closed body with no ends. Type an angle first (or pick a parameter in the panel) for a partial turn — negative to sweep the other way — and a second number for the offset it starts at, so the body can straddle the drawing or stand clear of it.", slotNames = listOf("profile", "axis"), icon = Icons.REVOLVE) { d, p, s -> d.revolveSolid(p.elements[0], p.elements[1], s.getOrNull(0), s.getOrNull(1)) },
             // ----- the loft (OP-17): the one solid whose cross-section changes along the run. Two tools, one
             // feature: *Extrude to point* is the pyramid/cone gesture (an area, a height, an apex position, and
             // the apex is a real point element so it stays draggable), and *Loft* is the general one — a

@@ -634,6 +634,7 @@ class TypedScalarTest {
             listOf(
                 "helixpt.turns", "helixptleft.turns", "helix.turns", "helixleft.turns",
                 "connect.tension", "connect.far tension", "connectg2.tension", "connectg2.far tension",
+                "revolve.offset",
                 "tube.roll", "tube.twist", "sweep.roll", "sweep.twist",
                 "placesolid.angle", "placecurve.angle", "spaceorigin.dx", "spaceorigin.dy",
             ),
@@ -641,7 +642,7 @@ class TypedScalarTest {
             "the freedoms a step owns",
         )
         assertEquals(
-            listOf("midpoint.factor", "polygon.corner radius", "sketchplane.angle", "sketchplane.offset", "perpbis.factor"),
+            listOf("midpoint.factor", "polygon.corner radius", "revolve.angle", "sketchplane.angle", "sketchplane.offset", "perpbis.factor"),
             excused,
             "and the ones that cannot, each for a stated reason",
         )

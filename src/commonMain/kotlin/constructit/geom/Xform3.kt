@@ -182,7 +182,7 @@ fun Path3.movedBy(x: Xform3): Path3 =
 fun Feature3.movedBy(x: Xform3): Feature3 =
     when (this) {
         is Feature3.Extrusion -> Feature3.Extrusion(sketch.movedBy(x), depth)
-        is Feature3.Revolution -> Feature3.Revolution(sketch.movedBy(x), axisOrigin, axisDir, angle)
+        is Feature3.Revolution -> Feature3.Revolution(sketch.movedBy(x), axisOrigin, axisDir, turn)
         is Feature3.Prism -> Feature3.Prism(plane.movedBy(x), slabs)
         is Feature3.Loft ->
             Feature3.Loft(

@@ -10405,31 +10405,65 @@ class Document {
     }
 
     /**
-     * Revolve the area [el] through [angle] about the axis carried by the line element [axis] (OP-17
-     * slice 2).
+     * Revolve the area [el] about the axis carried by the line element [axis] (OP-17 slice 2): the whole way
+     * round when no [angle] is stated, otherwise through [angle] starting [offset] from the sketch plane.
      *
      * The axis is the picked line's own origin and direction as *derived nodes*, so the axis moves with
      * the line: drag the centreline and the turned part follows. A profile touching the axis is legal, one
      * crossing it makes the node invalid with a reason and heals when it is dragged back (OP-3) — all of
      * that is [constructit.geom.Geom3.revolve]'s, unchanged.
      *
-     * **Stated limit in a face space:** a partial turn sweeps toward the space's normal, i.e. *into* the
-     * material, where [extrudeSolid]'s boss now goes outward. An extrude can be turned round by moving its
-     * start plane, which changes no coordinate; a sweep cannot — reversing it means a negative angle, and the
-     * kernel ties its cap winding to a positive sweep (the same rule that refuses a negative extrude depth).
-     * So the honest answer here is a `dir` argument on the feature, and it is not built (DESIGN.md, OP-17).
+     * **Full is structural, and it is the default** (session 63, the user's design): with nothing typed this
+     * builds a complete revolution — a body with no start, no end, no caps and no offset — and there is no
+     * angle node in it for any later edit to open ([constructit.geom.Turn3]). A typed angle builds the
+     * partial, whose interval `[offset, offset + angle]` both ends of is a live parameter.
+     *
+     * **Either sign sweeps**, which is what retires the stated limit this route used to carry (*"a partial
+     * Revolve in a face space still sweeps inward … the honest fix is a `dir` argument on the feature"*). A
+     * positive sweep turns toward the sketch plane's own normal — on a face space that is out of the material,
+     * since session 32 stopped flipping the frame — and a negative one turns the other way. A `dir` argument
+     * would be a second way to say what a sign says, so the direction is stated where every other freedom in
+     * this program is stated: as a number in the panel.
      */
     fun revolveSolid(
         el: Element,
         axis: Element,
-        angle: ScalarRef,
+        angle: ScalarRef?,
+        offset: ScalarRef? = null,
     ): Element? {
         val region = regionOf(el) ?: return null
         if (!axis.isLinear) return null
         val line = carrierLine(axis)
-        val ref = cx.revolve(cx.sketchOn(activePlane(), region), cx.lineOrigin(line), cx.lineDirection(line), angle)
+        val sketch = cx.sketchOn(activePlane(), region)
+        val origin = cx.lineOrigin(line)
+        val dir = cx.lineDirection(line)
+        val ref =
+            if (angle == null) {
+                cx.revolveFull(sketch, origin, dir)
+            } else {
+                cx.revolve(sketch, origin, dir, angle, offset)
+            }
         return add(ref, ElementKind.SOLID, Styles.SOLID)
-            .also { madeSolid(it, "${nameOf(el)} turned about ${nameOf(axis)}") }
+            .also { madeSolid(it, "${nameOf(el)} turned about ${nameOf(axis)}${turnWord(angle, offset)}") }
+    }
+
+    /**
+     * Where a revolved body **starts and ends** about its axis, for the note the tool leaves.
+     *
+     * Said out loud because with a non-zero offset the drawn profile is deliberately not a section of the
+     * body, and a solid standing 30° away from its own drawing is exactly the kind of thing somebody goes
+     * hunting for. A complete revolution has no interval to state.
+     */
+    private fun turnWord(
+        angle: ScalarRef?,
+        offset: ScalarRef?,
+    ): String {
+        if (angle == null) return " — a complete revolution, so it has no ends"
+        val a = evalQuantity(angle)?.takeIf { it.dim == Dimension.ANGLE } ?: return ""
+        val o = offset?.let { evalQuantity(it) }?.takeIf { it.dim == Dimension.ANGLE } ?: Quantity.deg(0.0)
+        val from = o.deg
+        val to = from + a.deg
+        return " from ${Format.num(minOf(from, to))}° to ${Format.num(maxOf(from, to))}° about it"
     }
 
     // ---- booleans between solids (OP-22) ----

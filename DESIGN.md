@@ -1522,6 +1522,8 @@ it:
 
 | `tool cutbychain` / `tool splitbychain` (and the four swept rows) — **the two picks may now span sketch spaces** (OP-22's extension, session 63) | no argument changes at all: the rows gained `crossSpace`, so the *gesture* can collect a solid in one space and its chain in another. What that makes visible is the reading of a `chainbychain` step's own plane, which is and always was `planeOfSpace(chainEl.space)` — the fence stands normal to the plane **the chain is drawn in**, never to the active one | none, and **no version bump**. Nothing is carried and nothing is reinterpreted: the step names the *chain element*, and which space an element was drawn in is a fact of the drawing rather than of the step. Before this build a chain was only pickable in the active space (`addressableIn`), so *the chain's space* and *the active space* coincided on every file any build could have written — the two readings were one reading, and this is the one that goes on being true once they can differ. Nothing here is a scored choice, so there is no index that could renumber (contrast the sweep's `signs=` row above) |
 
+| `tool revolve` with **no `scalar=`** — the *complete revolution*, and `dofs=` on a partial one (OP-17, session 63) | a new **spelling** rather than a new argument: the angle slot used to be required, so no build could write a `tool revolve` step without a `scalar=`, and the slot owned nothing, so none ever wrote a `dofs=` for one. A step with no scalar now names the complete revolution — a construction with no angle node — and a partial one carries its offset freedom in `dofs=`, appended by the rule the `dofs=` row above states. The **offset never became an argument of its own**: `scalar=` is already an ordered list, so a two-scalar revolve writes `scalar="angle","offset"` exactly as any other two-scalar tool does | none, and **no version bump**. Every revolve any earlier build wrote recorded an angle, and that angle still means what it meant — including `360°`, which still closes the body at the *value* level for exactly that reason (the structural form is what a **new** drawing gets when nothing is typed, never a reinterpretation of an old file). An absent `dofs=` still means "every freedom stands at its default", which for the offset is the zero it always was; the one visible consequence is that a pre-package file **gains** `dofs=0deg` on its first re-save, which is asserted rather than hidden (`ChainCutReachTest.assertRoundTrips`) |
+
 Known residual, recorded rather than papered over: the **Outline** tracer still resolves its handovers from
 that tool's own clicks on every replay (`jointBetween`), and a determined ortho meeting still picks its
 circle branch by nearness. Both are re-derived from geometry the same replay rebuilds, so they are stable
@@ -4575,10 +4577,95 @@ reachable. The rule now stated: **Cut goes in, Extrude goes out**, and a face-sp
   *Extrude* + *Subtract* by hand no longer drills a face — an outward boss subtracted removes nothing — and the
   operation for that is *Cut*, which is what it was built for. Said in the tool help, the space's own note and
   the status line.
-- **Stated limit: a partial *Revolve* in a face space still sweeps inward.** An extrude can be turned round by
+- ~~**Stated limit: a partial *Revolve* in a face space still sweeps inward.** An extrude can be turned round by
   moving its start plane, which changes no coordinate; a sweep cannot — reversing it means a negative angle, and
   the kernel ties its cap winding to a positive sweep (the same rule that refuses a negative extrude depth). The
-  honest fix is a `dir` argument on the feature, which is not built. A full turn is unaffected.
+  honest fix is a `dir` argument on the feature, which is not built. A full turn is unaffected.~~
+  — **retired in session 63; see *The revolution's interval* below.** Two things were wrong with it by the time
+  it was read again. The premise had already expired: since session 32 stopped flipping the face frame, a
+  positive sweep turns toward the plane's normal, which on a face points *out* of the material — so a
+  face-space partial revolve bosses outward and always did after that change. And the fix it named was the
+  wrong shape: a `dir` argument would be a second way to say what a sign says. **The angle is signed now**, so
+  whichever way a given profile and axis happen to turn, the other way is one minus sign away — and the
+  direction is stated where every freedom in this program is stated, as a number in the panel.
+  `RevolveIntervalTest.aPartialRevolveInAFaceSpaceGoesEitherWayNow` is the record, on this note's own scenario.
+
+#### The revolution's interval — full is a kind, the sweep is signed, the start is stated (as built, session 63)
+
+The user's design, adopted whole, after asking why their handle swept away from the line they had rotated to
+meet it. The answer was mechanical (below), and the completion they wrote is three sentences long:
+
+> *"By default the revolution could be complete 360° — which produces a 3D object without the start and end
+> sides — maybe worth a separate flag for the revolution result 'full'?"*
+
+> *"add an offset for the revolution … you could produce the same effect by giving −30° offset and revolving
+> 30°. But this would also allow the revolution to go from one side of the construction plane to the other
+> (e.g. −15° offset)."*
+
+**The body occupies `[offset, offset + angle]` about the axis, and the profile is the generator at angle 0.**
+That one sentence carries all three parts. `Geom3.revolve` takes a `Turn3` — `Full`, or an `Arc(start, end)`
+that is **ordered at construction** (`Arc.of(offset, angle)` sorts the two ends) — and `Feature3.Revolution`
+carries it in place of the bare angle it used to.
+
+- **Why full is *structure* and not a flag over a value.** The kernel decided watertightness with
+  `abs(angle − 2π) ≤ 1e-9`: a live parameter drifting onto 360° closed the shell, and drifting off it opened
+  two caps. That is precisely the fake OP-14 refuses one dimension down — *"a circle is not faked as a
+  full-turn arc whose 0-vs-2π sweep is ambiguous — it carries its own ccw"* — so the answer is the same one:
+  a **kind**. A complete revolution's graph holds **no angle node at all** (`Construction.revolveFull`, three
+  inputs instead of five), so no edit of anything can open it, and it has no start, hence nowhere to put an
+  offset. The two are mutually exclusive **by construction**, not by a validation: the tool's angle slot is a
+  `structural` default (`ScalarSlot.structural`, the same declaration *Midpoint*'s 0.5 and the polygon's 0
+  corner radius carry), so with nothing stated it is not ownable, `ToolDef.ownedSlots` stops there, and the
+  offset freedom behind it is never created. `RevolveIntervalTest` asserts the topology rather than a triangle
+  count: a complete revolution of a profile clear of its axis is a **torus** (χ = 0 — welded seam, no caps),
+  a partial one a **ball** (χ = 2).
+- **A stated 360° still closes**, and must: every revolve written before this package recorded an angle, and
+  `360°` in one of those files means the closed body it always built (OP-18 — a stored literal's meaning is
+  frozen). So the value-level closure survives *for stated intervals*, and the structural form is what a new
+  drawing gets when nothing is typed. The difference is what an edit can do: drag the stated one to 350° and
+  it opens; the complete one has no such value to drag. Both are recorded and tested.
+- **The cap winding, derived for either sign, in one line: the interval is ordered before any station is
+  computed.** Stations then always run from the low angle to the high one, whatever signs the offset and the
+  angle were stated with — a negative sweep is *the same set of points walked the other way* — so nothing
+  below the normalization ever sees a negative step and the rule the extrude gave is unchanged: the cap at the
+  interval's **low** end faces backwards out of the sweep, the one at its **high** end forwards. That is why
+  there is no second winding rule for negative sweeps, and why `assertManifold` holds across `+sweep`,
+  `−sweep`, `±offset`, an interval straddling zero, and full.
+- **Which way is positive — the answer to the user's question.** The frame is `A` along the axis, `P` radial,
+  `N = A × P`, and the sweep is `P·cos θ + N·sin θ`. The axis is canonicalized so the profile lies on `+P`,
+  which negates `A` **and** `P` together and therefore leaves `N` alone: `N` is nothing other than **the
+  sketch plane's own normal**. So a positive angle always turns the profile toward the front of the plane it
+  was drawn on, whatever direction the axis was drawn in and whichever side of it the profile sits. The
+  user's `plane1` stands on a plan line with `v = +z`, so its normal is that line turned −90° about the plan's
+  `+z` — one degree of revolve is one degree of plan *Rotate* the other way round, which is exactly what they
+  saw. Nothing is changed about that (the canonicalization is what keeps the winding independent of how the
+  axis was drawn); what is added is that the sign is now theirs to state.
+- **The drawing is not the section any more, and the tool says so.** With a non-zero offset the profile is
+  deliberately *not* a face of the body, so `Document.revolveSolid`'s note names the interval — *"…turned
+  about e29 from −30° to 0° about it"* — rather than leaving somebody to hunt for a solid 30° away from its
+  drawing. The plan hint stays the sketch (that is what a click reaches the feature by, and what every other
+  reader of a `Revolution` already used); nothing reads the angle, so `Silhouette`, the plan hints and the
+  section machinery are untouched, and a revolve's section keeps its own refusal.
+- **Refusals, each named rather than healed by guessing.** A zero-length interval builds nothing (*"a revolve
+  needs an angle to sweep through — this one sweeps none"*) and heals when an angle is given (OP-3); more than
+  a full turn is refused either way round, as before; an **offset** beyond a full turn is *not* refused,
+  because 400° about an axis is 40° about it and nothing folds.
+- **A negative number is stated where every negative number in this program is stated.** The keypad takes
+  digits and a dot — nowhere in the tool can a minus be typed — so a negative angle comes from a panel
+  parameter (which is how the user's own `angle4 = −15°` was made) and a negative offset from the step's own
+  offset field or from that parameter after the gesture. Making the pad take a sign is a program-wide question
+  about every scalar slot and is **not** in this package; it is named here rather than half-done.
+- **The offset is a freedom the step owns** (OP-13) when nobody states one: an ordinary defaulted slot at 0°,
+  restated as `dofs=`, editable for ever through the body's own fields. Typing a second number in the gesture
+  makes it a named parameter instead, wireable and shareable like any other (OP-5). The slot is marked
+  `typedOnly` — a new, per-slot form of the tool-wide `scalarsTypedOnly` — because the angle and the offset
+  cannot be told apart by dimension and the angle must stay pickable from the panel: without it, a second
+  revolve in the same drawing would silently swallow the first one's angle as its offset.
+
+`RevolveIntervalTest` (24 tests) is the record, including the user's own plate: an interval stated by an offset
+lands its end section, to the micrometre, in the vertical plane of a base line rotated by the matching plan
+angle, and `offset −15°, sweep 30°` straddles `plane1` symmetrically — proved by reflecting the mesh in that
+plane and finding every reflected vertex back in the body.
 
 #### Datum planes — any line, any angle (as built, on GitHub #6)
 
@@ -11815,6 +11902,37 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   browser E2E included: seventeen headless tests, the review's probe, and one in Chrome.
   See *Show hidden — a hidden element has to be findable* under OP-18.
 
+- **Turn 63 — a revolution states where it starts, and a complete one has no ends.** The user asked why their
+  revolve swept *away* from the line they had rotated to meet it. The answer is mechanical and now written
+  down: a positive sweep turns toward the sketch plane's own normal (the axis canonicalization negates `A` and
+  `P` together, so `N = A × P` is the plane's normal whatever the drawing did), and their upright plane faced
+  the other way from the plan's `+z` — so one degree of revolve was one degree of plan *Rotate* backwards. The
+  freedom that was missing was the ability to *say* the direction and the placement, and the user designed the
+  completion in three sentences, adopted whole: *"By default the revolution could be complete 360° … maybe
+  worth a separate flag for the revolution result 'full'?"* and *"add an offset for the revolution … you could
+  produce the same effect by giving −30° offset and revolving 30°. But this would also allow the revolution to
+  go from one side of the construction plane to the other (e.g. −15° offset)."* One sentence carries all of
+  it: **the body occupies `[offset, offset + angle]` and the profile is the generator at 0**. Two decisions
+  made it cheap. **Full is structure, not a flag over a value** — the kernel used to decide watertightness
+  with `abs(angle − 2π) ≤ 1e-9`, which is exactly the fake OP-14 refuses one dimension down, so a complete
+  revolution is now a *kind* whose graph holds no angle node at all and which therefore has no start to put an
+  offset on: the flag and the offset are mutually exclusive **by construction**, falling out of the
+  `ScalarSlot.structural` declaration *Midpoint* has carried since session 55, with no validation anywhere.
+  And **the interval is ordered before any station is computed**, which is the whole of the signed-sweep
+  work: a negative sweep is the same points walked the other way, so nothing below the normalization sees a
+  negative step and the cap rule is unchanged for every combination of signs. A stated `360°` still closes,
+  because that is what every file written before this means (OP-18), and the difference between the two forms
+  is what an edit can do to them — the stated one opens at 350°, the kind cannot be opened at all. The format
+  takes **no bump and gains no argument**: the complete revolution is the *absence* of `scalar=` on a step
+  whose slot used to be required, and the offset rides the ordered `scalar=` list or the step's own `dofs=`.
+  The stated limit OP-17 carried — *"a partial Revolve in a face space still sweeps inward … the honest fix is
+  a `dir` argument on the feature, which is not built"* — is **retired**, twice over: its premise expired when
+  session 32 stopped flipping the face frame, and a `dir` argument would have been a second way to say what a
+  sign says. One thing is deliberately **not** built and is named rather than half-done: the number pad takes
+  digits and a dot, so a negative angle is stated as a panel parameter (as the user's own `angle4 = −15°`
+  already was) — teaching the pad a sign is a question about every scalar slot in the program. **1919 → 1943
+  green.** See *The revolution's interval* under OP-17.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -14022,7 +14140,11 @@ splits in three, and only the first is small.
 3. **The gesture (small).** *Sphere (centre, radius)* and *Sphere (centre, surface point)* — two rows that
    build the half-disc profile and the full revolve **by construction**, a macro over primitives that already
    exist, so the DAG is ordinary: the radius is a parameter, the arc and the axis stay live, and dragging the
-   centre moves the ball. Nothing new in the kernel. The help says plainly that the body is a revolve and that
+   centre moves the ball. Nothing new in the kernel. *(Session 63 supplies the half this item leaned on: the
+   full revolve is now a **kind** (`Turn3.Full`, `Construction.revolveFull`) and not a 360° parameter, so the
+   ball a sphere macro builds is watertight **structurally** — there is no angle node in it for a later edit,
+   or a drifting shared parameter, to crack it open with. The macro should call `revolveFull` and state no
+   angle at all.)* The help says plainly that the body is a revolve and that
    its section is chorded until item 4 — the same honesty *Tube*'s help now carries about its plan hint. The
    pairing with *Circle (centre, radius)* / *(centre, point)* is deliberate: a ball is what a circle says one
    dimension up, and the two spellings are the same two the circle has.

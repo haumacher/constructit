@@ -2320,10 +2320,17 @@ class Editor(
                 ""
             } else {
                 val entries = toolScalars(tool).orEmpty()
+                // **A structural default silences the slots behind it** ([ScalarSlot.structural]): an
+                // unstated one names a *different construction*, and that construction has no inputs for
+                // them — a *Revolve* with no angle is a complete revolution, which has no start, so it never
+                // receives the offset slot at all. Naming a value the build will never see would be a promise
+                // the tool cannot keep, which is the same reason a refusal has to name its own reason.
+                val silent = tool.scalars.indices.firstOrNull { tool.scalars[it].structural && entries.getOrNull(it) == null }
+                val named = if (silent == null) tool.scalars else tool.scalars.take(silent + 1)
                 // a defaulted slot with nothing picked names the **default**, because that is what the tool
                 // will use — the same promise as naming a picked parameter (see [ScalarSlot.default])
                 " Using " +
-                    tool.scalars.mapIndexed { i, s ->
+                    named.mapIndexed { i, s ->
                         val e = entries.getOrNull(i)
                         "${s.name} = " + (e?.name ?: s.default?.let { "${Format.quantity(it)} (default)" } ?: "?")
                     }.joinToString(", ") +
@@ -4102,13 +4109,23 @@ class Editor(
         // the tool is actually waiting for, since those have no default to fall back on.
         for (k in minOf(need, picks.size) downTo required) {
             val tail = picks.takeLast(k)
-            if (tail.indices.all { dimensionOf(tail[it].ref) == tool.scalars[it].dim }) return tail
+            if (tail.indices.all { dimensionOf(tail[it].ref) == tool.scalars[it].dim && statedFor(tool.scalars[it], tail[it]) }) return tail
         }
         // Nothing fits, and the tool still has slots it cannot do without: it gets what it was given and the
         // dimension error lands where it belongs, in the node (OP-7) — the same answer an all-required tool
         // has always given a pick of the wrong dimension.
         return picks.takeLast(required)
     }
+
+    /**
+     * Whether [e] may fill [slot] — always, unless the slot takes only what was **typed for this gesture**
+     * ([ScalarSlot.typedOnly]), in which case a parameter left in the panel by an earlier one may not drift
+     * into it. Its default then applies, which is what an unstated value means everywhere else.
+     */
+    private fun statedFor(
+        slot: ScalarSlot,
+        e: ScalarEntry,
+    ): Boolean = !slot.typedOnly || pendingTypedParams.any { it === e }
 
     /** What is still missing for [tool]'s scalar inputs, in the user's terms. */
     private fun scalarPrompt(tool: ToolDef): String {

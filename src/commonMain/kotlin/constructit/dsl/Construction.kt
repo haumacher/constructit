@@ -2064,26 +2064,60 @@ class Construction {
 
     /**
      * Revolve [sketch] through [angle] about the axis through [axisOrigin] in direction [axisDir] —
-     * both **in the sketch plane** (OP-17 slice 2).
+     * both **in the sketch plane** (OP-17 slice 2) — starting [offset] from the sketch plane.
      *
      * The axis is given by ordinary 2D nodes, so it can be *constructed* (a symmetry line, a
      * centreline through two key points) and moves with the profile. A profile touching the axis is
      * legal, a profile crossing it is invalid with a reason and heals (OP-3) — see [Geom3.revolve].
+     *
+     * The body occupies `[offset, offset + angle]` about the axis, with the profile as the generator at
+     * angle 0 and **either sign** allowed for both. A stated [offset] is a node like the angle, so it is a
+     * live parameter that can be shared, wired and dragged; no offset at all is the same construction with
+     * one node fewer, standing at zero.
+     *
+     * A **complete** revolution is [revolveFull], not an angle of 360°, and it takes no offset — a body
+     * with no start has nowhere to put one ([Turn3]).
      */
     fun revolve(
         sketch: SketchRef,
         axisOrigin: PointRef,
         axisDir: DirectionRef,
         angle: ScalarRef,
+        offset: ScalarRef? = null,
     ): SolidRef =
-        op(sketch, axisOrigin, axisDir, angle) {
+        op(*listOfNotNull(sketch, axisOrigin, axisDir, angle, offset).toTypedArray()) {
             val a = sc(it[3]).requireDim(Dimension.ANGLE, "revolve angle").base
+            val o = if (it.size > 4) sc(it[4]).requireDim(Dimension.ANGLE, "revolve offset").base else 0.0
             val (solid, why) =
                 Geom3.revolve(
                     (it[0] as SketchValue).sketch,
                     pt(it[1]),
                     (it[2] as DirectionValue).dir.v,
                     a,
+                    o,
+                )
+            if (solid == null) EvalResult.Invalid(why ?: "cannot revolve") else EvalResult.Ok(SolidValue(solid))
+        }
+
+    /**
+     * Take [sketch] the **whole way round** the axis through [axisOrigin] in direction [axisDir] (OP-17
+     * slice 2).
+     *
+     * A construction of its own rather than [revolve] at 360°, and the graph is what says so: there is no
+     * angle input here, so the body is watertight by *structure* and no parameter edit can open it — the
+     * statement OP-14 makes about a circle against a full-turn arc, one dimension up ([Turn3]).
+     */
+    fun revolveFull(
+        sketch: SketchRef,
+        axisOrigin: PointRef,
+        axisDir: DirectionRef,
+    ): SolidRef =
+        op(sketch, axisOrigin, axisDir) {
+            val (solid, why) =
+                Geom3.revolveFull(
+                    (it[0] as SketchValue).sketch,
+                    pt(it[1]),
+                    (it[2] as DirectionValue).dir.v,
                 )
             if (solid == null) EvalResult.Invalid(why ?: "cannot revolve") else EvalResult.Ok(SolidValue(solid))
         }
