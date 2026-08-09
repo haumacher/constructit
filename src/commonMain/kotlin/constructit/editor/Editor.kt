@@ -12,6 +12,7 @@ import constructit.exchange.Imports
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
+import constructit.geom.MeshQuality
 import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.Quantity
@@ -642,6 +643,39 @@ class Editor(
         } else {
             doc.elements.filterTo(HashSet()) { !it.visible && !doc.hiddenByConstruction(it) }
         }
+
+    /**
+     * **An interaction is live** — the pointer is moving or the wheel is turning — so the 3D picture may be
+     * drawn coarsely until it settles ([viewQuality], slice B of the responsiveness item).
+     *
+     * **The policy is here and the scheduling is not**, which is the same split `showGrid` and the repaint
+     * coalescing already make (OP-12). *What* a live interaction means for the picture is a decision about
+     * the drawing, so it belongs in the pure controller where the headless suite drives it: this flag, and
+     * the one line below that reads it. *When* an interaction has settled, and on which callback the fine
+     * mesh is then built, is a platform question — `requestAnimationFrame` and `requestIdleCallback` are the
+     * shell's, exactly as they are for the paint itself — so the shell raises this flag around the two events
+     * that outrun the display and lowers it when they stop coming.
+     *
+     * It is deliberately **not** a gesture flag (`dragging`), because a wheel notch has no release and is
+     * every bit as streaming as a drag; and deliberately not something the [Editor] sets for itself on
+     * `pointerMove`, because then a headless test could not tell the two states apart and nothing would ever
+     * settle in a suite that never idles.
+     *
+     * A drag that never involves the 3D view builds nothing either way: the plan asks for no triangles at
+     * all, so the promise slice A made is untouched by this flag rather than restated by it.
+     */
+    var interacting: Boolean = false
+
+    /**
+     * The quality the 3D picture is drawn at right now — **coarse while an interaction is live, fine the
+     * moment it settles** ([MeshQuality]).
+     *
+     * The whole of the policy, in one line, and it reaches nothing but the picture: `Scene3.extract` takes
+     * it, and every other consumer of triangles takes the fine mesh by not asking. In particular a **volume
+     * readout during a gesture shows the stale fine number** rather than a fresh coarse one — that is the law
+     * choosing which kind of wrong it prefers, and it prefers late to false.
+     */
+    val viewQuality: MeshQuality get() = if (interacting) MeshQuality.COARSE else MeshQuality.FINE
 
     /**
      * Which side of its carrier a new thick path's material sits on (OP-21). A property of the *tool*
@@ -4672,6 +4706,22 @@ class Editor(
      *
      * **Nearest wins**, which is the whole reason a ray is better evidence here than a distance: two bodies
      * one behind the other are told apart by depth, which is exactly what the flat pictures cannot do.
+     *
+     * **The ray consults the FINE mesh, and the cost is accepted with the reason** (slice B). The tempting
+     * answer was *whatever the picture shows*, since that is the sentence the paragraph above makes law — but
+     * a pick is a **choice with consequences the fine body has to agree with**, and the two are not the same
+     * kind of thing. A picked body becomes a tool's operand, a boolean's material, a selection something is
+     * then built on; a picture is looked at. Three things settle it and they all point one way. First, a
+     * **press is not a streaming event**: the two events the coarse picture exists for are a pointer *move*
+     * and a wheel notch, and picking happens on press, when the interaction has settled and the fine mesh is
+     * what is on screen anyway — so this costs nothing that the very next frame was not going to pay. Second,
+     * the coarse shell is *inscribed* in the fine one, so a coarse ray is wrong in both directions near a
+     * silhouette — it can miss a body the fine picture does contain, and on the inside of a chorded bore it
+     * can hit one the fine picture does not. Third, the **2D** pick target for a swept body
+     * ([constructit.geom.Silhouette.ofSwept]) is exact and quality-free, so a coarse ray would put the two
+     * views' answers about where a tube's edge is a chord apart. Session 55's law is therefore kept where it
+     * was made — *what is drawn is what is pickable* is about **which bodies** are offered, and they still
+     * come from [Scene3.extract] itself, one line, no list to keep in step.
      */
     private fun solidUnderRay(
         world: Vec2,

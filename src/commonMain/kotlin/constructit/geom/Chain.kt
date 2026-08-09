@@ -872,14 +872,16 @@ object Chains {
             if (t == null) return null to (why ?: "cannot tessellate the cutting chain's own side")
             tess.add(t)
         }
+        // No [Region]s handed over, so this body has one level (see [Geom3.sweptShells]): a cutting tool's
+        // triangles feed a boolean and are never a picture, so a coarse statement of them would be a coarser
+        // *cut* — which is a number the drawing reports, not a picture of one.
         val (shell, whyMesh) =
             Geom3.sweptShells(tess, run, closed = false, reversed = reversed) { st, p -> carry.place(st, p) }
         if (shell == null) return null to whyMesh
         val spine = Path3(run.zipWithNext().map { (a, b) -> Curve3Element.Seg3(a.at, b.at) })
-        return Solid3.derived(
+        return Solid3.derivedFine(
             Feature3.Sweep(spine, SweepProfile.Section(regions.first()), up, 0.0, 0.0, emptyList(), carry.mode),
-            shell,
-        ) to null
+        ) { shell(MeshQuality.FINE) } to null
     }
 
     /**

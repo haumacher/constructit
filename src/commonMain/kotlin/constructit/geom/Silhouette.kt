@@ -82,8 +82,15 @@ object Silhouette {
      *
      * It stays a **pure function of the feature and the plane** — no quality argument, no mesh, no
      * tessellation of a round section — so the pick target cannot drift with a rendering choice and comes back
-     * identical after a save and a reload. (That is a constraint on any later tessellation-quality work: the
-     * *station count* may not become a render-time argument, because this outline reads it.)
+     * identical after a save and a reload.
+     *
+     * **And that constraint is what slice B was written around, kept structurally rather than by audit**
+     * ([MeshQuality]). The rule it stated — *the station count may not become a render-time argument, because
+     * this outline reads it* — needed no enforcement in the end: a picture's quality enters through the single
+     * door `Solid3.meshAt`, and this function is reached from the *feature*, at evaluation time, before any
+     * triangle exists. So nothing a picture asks for can reach these stations, and the coarse mesh of a swept
+     * body is deliberately the **same run** with a cheaper ring — see the table at [Solid3.meshAt] for which
+     * counts each feature does let a picture move.
      *
      * Loops, never an area — [Silhouette]'s own word: a run that comes back alongside itself in projection
      * (a coil) draws each pass's own rails rather than the boundary of their union, and every line drawn is a

@@ -454,10 +454,50 @@ class Solid3 private constructor(
      * would be a monitor paid on every read for a race that cannot happen. The JVM suite is
      * single-threaded per document for the same reason [constructit.core.Node]'s memo is.
      */
-    val mesh: Mesh3 get() = cell.mesh()
+    val mesh: Mesh3 get() = meshAt(MeshQuality.FINE)
+
+    /**
+     * The triangles **at [quality]** — the one door a picture's fineness can enter by (slice B).
+     *
+     * Two memoized levels, not a continuum, because a gesture has two states: running, and settled. Asking
+     * twice at one level builds once; asking at the other level does not disturb the first. `Solid3.mesh` is
+     * `meshAt(FINE)`, so every consumer that says nothing gets the fine mesh — **the law is the default**,
+     * and a coarse triangle can reach a volume, a section, a boolean, an export or `assertManifold` only
+     * through a call that no such consumer makes (see [MeshQuality]).
+     *
+     * **What varies with quality, and what may not.** Coarse multiplies the chord tolerance
+     * ([GeomMath.effectiveTol]) of the curves a body's *surface* is made of — a section's or a profile's
+     * boundary, and a revolution's angular step count. What it never varies is the **run stations of a
+     * sweep**. Those are computed eagerly, from the feature, before any triangle exists, and three separate
+     * things already read them: the plan hint and therefore the 2D pick target ([Silhouette.ofSwept]), a
+     * station plane's transported frame ([Frames3.baseSteps], `internal` for exactly that reason), and the
+     * self-intersection refusals. Coarsening them would move a pick target with a rendering choice, roll a
+     * datum plane the user built on, and let the picture show a fold the refusal said was not there — and it
+     * would cost a second transport walk, which is the expensive half of a sweep in the first place. So the
+     * coarse sweep is the *same run* with a cheaper ring, which is also why it is recognisably the same body.
+     *
+     * **Where COARSE simply is FINE**, deliberately and at no cost (the same `Mesh3` object, so the identity
+     * swap in `SceneSync` sees nothing change): a body whose triangles came out of a file or out of the
+     * general boolean engine ([of] — there is no coarser statement of triangles one already holds); a
+     * **prism**, whose cost is its region algebra and the global corner set every ring is conformed to
+     * rather than its chords, so a coarse level would have to redo all of the expensive part to save the
+     * cheap one; and a **loft**, whose row count comes from its guides' own sampled polylines inside the
+     * correspondence plan, so the same applies. Each is stated rather than silently fine.
+     */
+    fun meshAt(quality: MeshQuality): Mesh3 = cell.mesh(quality)
 
     /** Whether the triangles are already in hand — what the mesh-build instrument reads (see [meterTo]). */
-    val meshBuilt: Boolean get() = cell.built != null
+    val meshBuilt: Boolean get() = meshBuiltAt(MeshQuality.FINE)
+
+    /** Whether the triangles **at [quality]** are already in hand. */
+    fun meshBuiltAt(quality: MeshQuality): Boolean = cell.builtAt(quality) != null
+
+    /**
+     * Whether this body's triangles **coarsen at all** — false for the bodies where COARSE *is* FINE, listed
+     * at [meshAt]. Asked by a placement, so that moving a one-level body into a space does not invent a
+     * second level for it and pay for the same triangles twice.
+     */
+    val coarsens: Boolean get() = cell.coarsens
 
     /**
      * This solid's mesh under a **different feature**, sharing the very same derivation.
@@ -478,24 +518,38 @@ class Solid3 private constructor(
      * whether anybody is listening. First caller wins, so a value handed on unchanged (an identity
      * placement) keeps counting against the node that actually built it.
      */
-    fun meterTo(count: () -> Unit) {
+    fun meterTo(count: (MeshQuality) -> Unit) {
         if (cell.meter == null) cell.meter = count
     }
 
     override fun toString(): String = "Solid3($feature)"
 
-    /** The one mutable thing here: the memo cell, shared by every restatement of one body. */
+    /**
+     * The one mutable thing here: the memo cell, shared by every restatement of one body — now with **one
+     * slot per quality** ([MeshQuality]), since a picture and a number want different triangles of the same
+     * value and neither may evict the other.
+     */
     private class MeshCell(
-        var built: Mesh3?,
-        private val derive: (() -> Mesh3)?,
+        var fine: Mesh3?,
+        private val derive: ((MeshQuality) -> Mesh3)?,
+        /** Whether this body has two levels at all — see [Solid3.coarsens]. */
+        val coarsens: Boolean,
     ) {
-        var meter: (() -> Unit)? = null
+        var coarse: Mesh3? = null
+        var meter: ((MeshQuality) -> Unit)? = null
 
-        fun mesh(): Mesh3 {
-            built?.let { return it }
-            val m = derive!!()
-            built = m
-            meter?.invoke()
+        /** The level a given ask really lands on: a one-level body answers every ask with its fine mesh. */
+        private fun level(quality: MeshQuality): MeshQuality = if (coarsens) quality else MeshQuality.FINE
+
+        fun builtAt(quality: MeshQuality): Mesh3? = if (level(quality) == MeshQuality.FINE) fine else coarse
+
+        fun mesh(quality: MeshQuality): Mesh3 {
+            val q = level(quality)
+            builtAt(q)?.let { return it }
+            val d = derive ?: return fine!!
+            val m = d(q)
+            if (q == MeshQuality.FINE) fine = m else coarse = m
+            meter?.invoke(q)
             return m
         }
     }
@@ -509,7 +563,7 @@ class Solid3 private constructor(
         fun of(
             feature: Feature3,
             mesh: Mesh3,
-        ): Solid3 = Solid3(feature, MeshCell(mesh, null))
+        ): Solid3 = Solid3(feature, MeshCell(mesh, null, coarsens = false))
 
         /**
          * A solid whose mesh is **derived from its feature on demand** — every constructed one.
@@ -518,11 +572,31 @@ class Solid3 private constructor(
          * is called, so the node is invalid with a reason at evaluation time and nothing is ever half-built
          * (OP-3, OP-9). That is a real constraint on every op above, and the audit of it is this slice's
          * substance — see the refusal table in the design record.
+         *
+         * It takes the [MeshQuality] it is being asked at (slice B) and **must be refusal-free at both** —
+         * which is why an op that coarsens by re-tessellating its own section falls back to the fine work it
+         * already holds if the coarser tessellation cannot be triangulated. A picture may not refuse: every
+         * refusal is the feature's and was decided above, at the fine rule, so the worst a coarse ask can do
+         * is get the fine answer.
          */
         fun derived(
             feature: Feature3,
+            mesh: (MeshQuality) -> Mesh3,
+        ): Solid3 = Solid3(feature, MeshCell(null, mesh, coarsens = true))
+
+        /**
+         * A solid derived on demand that has **one** level: a coarse ask gets the fine mesh, the same object,
+         * and nothing is built twice ([Solid3.meshAt] lists which bodies these are and why).
+         *
+         * Stating it here rather than letting a two-level provider quietly return the same triangles twice is
+         * the whole difference between "this body does not coarsen" and "this body coarsens to itself": the
+         * second builds a second identical mesh on every coarse ask, charges the instrument for it, and hands
+         * `SceneSync` a new object to re-upload.
+         */
+        fun derivedFine(
+            feature: Feature3,
             mesh: () -> Mesh3,
-        ): Solid3 = Solid3(feature, MeshCell(null, mesh))
+        ): Solid3 = Solid3(feature, MeshCell(null, { mesh() }, coarsens = false))
     }
 }
 
@@ -717,10 +791,11 @@ object Geom3 {
     fun tessellateLoop(
         loop: Loop,
         tolMm: Double = GeomMath.TESS_TOL_MM,
+        quality: MeshQuality = MeshQuality.FINE,
     ): List<Vec2> {
         val pts = ArrayList<Vec2>()
         for (e in loop.elements) {
-            val piece = GeomMath.tessellatePiece(e, tolMm)
+            val piece = GeomMath.tessellatePiece(e, tolMm, quality)
             for (p in piece) {
                 if (pts.isEmpty() || (p - pts.last()).length() > WELD_TOL) pts.add(p)
             }
@@ -732,12 +807,13 @@ object Geom3 {
     fun tessellateRegion(
         region: Region,
         tolMm: Double = GeomMath.TESS_TOL_MM,
+        quality: MeshQuality = MeshQuality.FINE,
     ): Pair<TessRegion?, String?> {
-        val outer = tessellateLoop(region.outer, tolMm)
+        val outer = tessellateLoop(region.outer, tolMm, quality)
         if (outer.size < 3) return null to "the outer boundary tessellates to fewer than three corners"
         val holes = ArrayList<List<Vec2>>(region.holes.size)
         for (h in region.holes) {
-            val poly = tessellateLoop(h, tolMm)
+            val poly = tessellateLoop(h, tolMm, quality)
             if (poly.size < 3) return null to "a hole tessellates to fewer than three corners"
             holes.add(poly)
         }
@@ -745,6 +821,37 @@ object Geom3 {
         val o = if (polygonArea(outer) >= 0.0) outer else outer.reversed()
         val hs = holes.map { if (polygonArea(it) <= 0.0) it else it.reversed() }
         return TessRegion(o, hs) to null
+    }
+
+    /**
+     * [regions] tessellated at [quality] — or **null** where any of them cannot be tessellated that coarsely.
+     *
+     * The coarse half of a provider ([Solid3.derived]), and null is not a refusal: every refusal about these
+     * regions was decided at the fine rule, before the solid existed. A coarser polygon with fewer than three
+     * corners is a statement about the *picture* being asked for, so the caller keeps the fine tessellation it
+     * already holds and the body is drawn exactly as it settles. Nothing downstream can tell, and nothing
+     * upstream is consulted twice.
+     */
+    internal fun tessAt(
+        regions: List<Region>,
+        tolMm: Double,
+        quality: MeshQuality,
+    ): List<TessRegion>? {
+        val out = ArrayList<TessRegion>(regions.size)
+        for (r in regions) out.add(tessellateRegion(r, tolMm, quality).first ?: return null)
+        return out
+    }
+
+    /** [tessAt] with each region's cap triangles too — null where either step will not go through. */
+    internal fun preparedAt(
+        regions: List<Region>,
+        tolMm: Double,
+        quality: MeshQuality,
+    ): List<Pair<TessRegion, List<Tri3>>>? {
+        val tess = tessAt(regions, tolMm, quality) ?: return null
+        val out = ArrayList<Pair<TessRegion, List<Tri3>>>(tess.size)
+        for (t in tess) out.add(t to (triangulate(t).first ?: return null))
+        return out
     }
 
     fun polygonArea(poly: List<Vec2>): Double {
@@ -1051,9 +1158,18 @@ object Geom3 {
             if (tris == null) return null to (reason ?: "cannot triangulate the sketch")
             prepared.add(tess to tris)
         }
-        return Solid3.derived(Feature3.Extrusion(sketch, depth)) {
+        return Solid3.derived(Feature3.Extrusion(sketch, depth)) { quality ->
+            // The coarse picture is the same prism over a coarser outline of the same sketch — derived here,
+            // inside the provider, so a body nobody is looking at pays for neither level (slice B). The fine
+            // work already in hand is the fallback, because a picture may not refuse.
+            val use =
+                if (quality == MeshQuality.FINE) {
+                    prepared
+                } else {
+                    preparedAt(sketch.regions, tolMm, quality) ?: prepared
+                }
             val mb = MeshBuilder()
-            for ((tess, tris) in prepared) {
+            for ((tess, tris) in use) {
                 fun bottom(p: Vec2) = plane.toWorld(p)
 
                 fun top(p: Vec2) = plane.toWorld(p) + n * depth
@@ -1191,9 +1307,10 @@ object Geom3 {
         fun at(
             p: Vec2,
             step: Int,
+            rings: Int,
         ): Vec3 {
             val (s, r) = sr(p)
-            val th = start + angle * step / steps
+            val th = start + angle * step / rings
             return originWorld + axisWorld * s + radialWorld * (r * cos(th)) + normalWorld * (r * sin(th))
         }
 
@@ -1208,27 +1325,47 @@ object Geom3 {
                 caps.add(tris)
             }
         }
-        return Solid3.derived(Feature3.Revolution(sketch, axisOrigin, axis, turn)) {
+        return Solid3.derived(Feature3.Revolution(sketch, axisOrigin, axis, turn)) { quality ->
+            // **A revolution coarsens on both of its axes**, and may: the rings round the axis are this
+            // body's own surface and nothing outside the mesh reads their count (its plan hint is its sketch,
+            // and its section is cut from a mesh, which is the fine one by law) — unlike a *sweep's* run
+            // stations, which three things read (see [Solid3.meshAt]). The profile's own chords coarsen with
+            // them, off the same chokepoint. The ring count keeps the **fine** greatest radius as its basis,
+            // so the two levels are the same body seen at two fineness, not two measurements of it.
+            var use = tessellated as List<TessRegion>
+            var useCaps = caps as List<List<Tri3>>
+            var rings = steps
+            if (quality != MeshQuality.FINE) {
+                rings = max(3, GeomMath.chordSteps(maxR, angle, tolMm, quality))
+                if (full) {
+                    tessAt(sketch.regions, tolMm, quality)?.let { use = it }
+                } else {
+                    preparedAt(sketch.regions, tolMm, quality)?.let { prep ->
+                        use = prep.map { it.first }
+                        useCaps = prep.map { it.second }
+                    }
+                }
+            }
             val mb = MeshBuilder()
-            for ((ti, tess) in tessellated.withIndex()) {
+            for ((ti, tess) in use.withIndex()) {
                 for (poly in listOf(tess.outer) + tess.holes) {
                     for (i in poly.indices) {
                         val p = poly[i]
                         val q = poly[(i + 1) % poly.size]
-                        for (j in 0 until steps) {
-                            mb.triangle(at(p, j), at(q, j), at(q, j + 1))
-                            mb.triangle(at(p, j), at(q, j + 1), at(p, j + 1))
+                        for (j in 0 until rings) {
+                            mb.triangle(at(p, j, rings), at(q, j, rings), at(q, j + 1, rings))
+                            mb.triangle(at(p, j, rings), at(q, j + 1, rings), at(p, j + 1, rings))
                         }
                     }
                 }
                 if (!full) {
-                    for (t in caps[ti]) {
+                    for (t in useCaps[ti]) {
                         // The cap at the interval's **low** angle faces backwards out of the sweep, the one
                         // at its high angle forwards — the same reversed-bottom / upright-top rule the
                         // extrude uses, and it serves a negative sweep too because the interval was ordered
                         // before any station was computed ([Turn3.Arc]).
-                        mb.triangle(at(t.a, 0), at(t.c, 0), at(t.b, 0))
-                        mb.triangle(at(t.a, steps), at(t.b, steps), at(t.c, steps))
+                        mb.triangle(at(t.a, 0, rings), at(t.c, 0, rings), at(t.b, 0, rings))
+                        mb.triangle(at(t.a, rings, rings), at(t.b, rings, rings), at(t.c, rings, rings))
                     }
                 }
             }
@@ -1330,7 +1467,10 @@ object Geom3 {
                 "of ${Frames3.deg(twistRad - frame.seam)}° (or that plus any whole number of turns) to close it"
         }
 
-        val (shells, noMesh) = sweptShells(listOf(tess), frame.stations, frame.closed) { st, p -> st.place(p) }
+        val (shells, noMesh) =
+            sweptShells(listOf(tess), frame.stations, frame.closed, regions = listOf(region), tolMm = tolMm) { st, p ->
+                st.place(p)
+            }
         if (shells == null) return null to (noMesh ?: "cannot build this sweep")
         // **The plan comes off the run, not off the triangles** ([Silhouette.ofSwept]). It used to be
         // `Silhouette.of(mesh, plan)`, which made the 2D view the one consumer that could not avoid meshing —
@@ -1403,14 +1543,25 @@ object Geom3 {
      * the caller has its refusal at evaluation time, and the function handed back cannot fail. Every station
      * ring, and therefore every triangle, is computed inside it, which is the whole of what a plan drag now
      * skips.
+     *
+     * **What a coarse ask changes here, and what it must not** (slice B). Given [regions] — the sections'
+     * own boundaries, which only a caller that has them can supply — a coarse picture carries a coarser
+     * *section* through the very same [stations]. The run is deliberately untouched: its station count is
+     * read by the plan hint ([Silhouette.ofSwept]), by a station plane's transported frame and by the
+     * self-intersection refusals, all of them outside any mesh, and it is the expensive half of a sweep
+     * besides — so the coarse body is the same run with a cheaper ring, and the two levels stay the same
+     * body. Without [regions] both levels are the fine mesh, which is what the swept **cut** takes: its
+     * triangles feed a boolean and are never a picture at all.
      */
     internal fun sweptShells(
         sections: List<TessRegion>,
         stations: List<Frame3>,
         closed: Boolean,
         reversed: Boolean = false,
+        regions: List<Region>? = null,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
         place: (Frame3, Vec2) -> Vec3,
-    ): Pair<(() -> Mesh3)?, String?> {
+    ): Pair<((MeshQuality) -> Mesh3)?, String?> {
         if (stations.size < 2) return null to "a sweep needs at least two stations along its run"
         val caps = ArrayList<List<Tri3>>(if (closed) 0 else sections.size)
         if (!closed) {
@@ -1420,7 +1571,19 @@ object Geom3 {
                 caps.add(tris)
             }
         }
-        return {
+        return { quality: MeshQuality ->
+            var use = sections
+            var useCaps = caps as List<List<Tri3>>
+            if (quality != MeshQuality.FINE && regions != null) {
+                if (closed) {
+                    tessAt(regions, tolMm, quality)?.let { use = it }
+                } else {
+                    preparedAt(regions, tolMm, quality)?.let { prep ->
+                        use = prep.map { it.first }
+                        useCaps = prep.map { it.second }
+                    }
+                }
+            }
             val mb = MeshBuilder()
 
             fun tri(
@@ -1428,7 +1591,7 @@ object Geom3 {
                 b: Vec3,
                 c: Vec3,
             ) = if (reversed) mb.triangle(a, c, b) else mb.triangle(a, b, c)
-            for ((si, tess) in sections.withIndex()) {
+            for ((si, tess) in use.withIndex()) {
                 val polys = listOf(tess.outer) + tess.holes
                 val rings = stations.map { st -> polys.map { poly -> poly.map { place(st, it) } } }
                 val bands = if (closed) stations.size else stations.size - 1
@@ -1450,7 +1613,7 @@ object Geom3 {
                     // cap reversed — the extrude's own top/bottom rule, one dimension round.
                     val first = stations.first()
                     val last = stations.last()
-                    for (t in caps[si]) {
+                    for (t in useCaps[si]) {
                         tri(place(first, t.a), place(first, t.c), place(first, t.b))
                         tri(place(last, t.a), place(last, t.b), place(last, t.c))
                     }
@@ -1793,7 +1956,10 @@ object Geom3 {
         }
 
         // ---- the shell ----
-        return Solid3.derived(Feature3.Loft(sections, seams, guides)) {
+        // **One level** ([Solid3.meshAt]): a loft's row count comes from its guides' own sampled polylines,
+        // which live inside the correspondence plan along with the global boundary parameter set every ring
+        // is built on — so coarsening it would mean redoing the expensive half to save the cheap one.
+        return Solid3.derivedFine(Feature3.Loft(sections, seams, guides)) {
             val mb = MeshBuilder()
             for (k in 0 until sections.size - 1) {
                 val here = rails.filter { it.touch.containsKey(k) && it.touch.containsKey(k + 1) }
@@ -2319,7 +2485,10 @@ object Geom3 {
         // for the general engine, which does and therefore cannot wait).
         val (shell, whyMesh) = prismShell(prism, tolMm)
         if (shell == null) return null to (whyMesh ?: "cannot build the boolean's mesh")
-        return Solid3.derived(prism, shell) to null
+        // **One level** ([Solid3.meshAt]): a prism's cost is its region algebra and the one global corner set
+        // every ring is conformed to, not its chords — so a coarse level would redo all of the expensive part
+        // to save the cheap one, and a body whose walls are flat has nothing to gain by it anyway.
+        return Solid3.derivedFine(prism, shell) to null
     }
 
     /**

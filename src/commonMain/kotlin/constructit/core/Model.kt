@@ -236,8 +236,25 @@ abstract class Node(val id: String) {
      * *tell me when you build*, and the consumer that forces the mesh — the 3D scene, a volume, an export —
      * is charged against the node that owns the body. A value handed straight on (an identity placement) keeps
      * counting against the node that made it, since the note is set once.
+     *
+     * **This one counts the FINE builds**, which is to say the meshes every number the drawing reports is
+     * read from ([constructit.geom.MeshQuality]). Its coarse twin is [coarseMeshCount] and it is deliberately
+     * a separate number rather than a total: the acceptance of slice B is a statement about *which* mesh a
+     * gesture built, and a sum could not tell "a drag that measured a volume" from "a drag that drew a
+     * picture".
      */
     var meshCount: Int = 0
+        private set
+
+    /**
+     * How often a **coarse** mesh was derived from a solid this node produced — the picture-only half of the
+     * instrument ([constructit.geom.MeshQuality.COARSE]).
+     *
+     * Nothing but a live 3D interaction ever makes this move, which is exactly what makes it worth counting
+     * separately: a non-zero coarse count on a pass that reports a number would mean the law had been broken,
+     * and a zero one during a drag would mean the policy was not reaching the picture.
+     */
+    var coarseMeshCount: Int = 0
         private set
 
     /**
@@ -276,7 +293,9 @@ abstract class Node(val id: String) {
         val result = compute(args)
         // The mesh half of the instrument: a solid this node just produced counts its derivation here, if it
         // is not already counting it somewhere upstream (see [meshCount] and [constructit.geom.Solid3.meterTo]).
-        ((result as? EvalResult.Ok)?.value as? SolidValue)?.solid?.meterTo { meshCount++ }
+        ((result as? EvalResult.Ok)?.value as? SolidValue)?.solid?.meterTo { quality ->
+            if (quality == constructit.geom.MeshQuality.FINE) meshCount++ else coarseMeshCount++
+        }
         if (cacheable && result is EvalResult.Ok) {
             memoArgs = args
             memoResult = result

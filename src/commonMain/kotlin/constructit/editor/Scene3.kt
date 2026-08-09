@@ -7,6 +7,7 @@ import constructit.dsl.valueOf
 import constructit.geom.Curves3
 import constructit.geom.Geom3
 import constructit.geom.Mesh3
+import constructit.geom.MeshQuality
 import constructit.geom.Path3
 import constructit.geom.Vec3
 import kotlin.math.PI
@@ -431,11 +432,19 @@ class Scene3(
          * Each solid's colour is read from the document here, per extraction ([colorOf]), so an assigned
          * material shows up on the very next repaint with no cache in between — the same *value, not state*
          * discipline the rest of this scene follows.
+         *
+         * **[quality] is where a picture's fineness enters the engine, and it enters nowhere else** (slice B,
+         * [MeshQuality]). This is the 3D *view*: it is a picture and only ever a picture, so while an
+         * interaction is live the shell asks it for the coarse mesh and the moment the gesture settles it asks
+         * again for the fine one. It defaults to fine, so every other caller — the framing, the double-click
+         * reframe, the ray pick, and the whole headless suite — is exactly what it was. The **export** scene
+         * has no such argument at all, by design: `ExportScene` is what a written file contains.
          */
         fun extract(
             doc: Document,
             ev: Evaluator = Evaluator(),
             ghosts: Set<Element> = emptySet(),
+            quality: MeshQuality = MeshQuality.FINE,
         ): Scene3 {
             val candidates = doc.elements.filter { (it.visible || it in ghosts) && ev.valueOf(it.ref) is SolidValue }
             // A solid another visible solid is made OF is that solid's construction material —
@@ -470,8 +479,9 @@ class Scene3(
             for (el in candidates) {
                 if (el.ref.node.id in consumedIds) continue
                 val v = ev.valueOf(el.ref) as? SolidValue ?: continue
-                if (v.solid.mesh.triangles.isEmpty()) continue
-                solids.add(SolidItem(el.id, v.solid.mesh, colorOf(doc, el), ghost = !el.visible))
+                val mesh = v.solid.meshAt(quality)
+                if (mesh.triangles.isEmpty()) continue
+                solids.add(SolidItem(el.id, mesh, colorOf(doc, el), ghost = !el.visible))
             }
             // ...and the curves in space (OP-26), by the same rules throughout: every visible element whose
             // value is one, an invalid curve contributing nothing (OP-3), and no space filter — a curve's

@@ -24,6 +24,7 @@ import constructit.exchange.ExportScene
 import constructit.exchange.Exports
 import constructit.geom.Justification
 import constructit.geom.MeshBool
+import constructit.geom.MeshQuality
 import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.Quantity
@@ -94,6 +95,22 @@ private fun setupApp() {
     val glSync = Scene3Sync()
     var glCheck = true
 
+    /**
+     * Whether the picture on the GPU right now is a **coarse** one ([MeshQuality]), and therefore whether a
+     * settle owes the view a repaint at all.
+     *
+     * Kept because an **orbit** must not pay for slice B: an orbit re-issues the draw call with a new matrix
+     * and never re-extracts the scene, so it puts no coarse mesh on screen and the settle below has nothing
+     * to correct. Without this, every flick of the camera would have ended in a full `repaint` — the panel's
+     * six lists included — which is exactly the cost `viewport.onChange` was separated from the document path
+     * to avoid.
+     */
+    var showingCoarse = false
+
+    /** How many 3D pictures have been drawn at each quality — the hook the browser flow reads (see below). */
+    var coarsePictures = 0
+    var finePictures = 0
+
     fun draw3d() {
         // Resizing the drawing buffer deliberately does *not* invalidate the geometry: a vertex buffer has
         // nothing to do with how many pixels it is rasterized into, and only the viewport and the matrix —
@@ -102,8 +119,18 @@ private fun setupApp() {
         viewport.widthPx = canvas3.width.toDouble()
         viewport.heightPx = canvas3.height.toDouble()
         if (glCheck) {
-            glSync.update(Scene3.extract(editor.doc, ghosts = editor.ghostElements())) { gl.upload(it) }
+            // **The one place a picture's fineness enters** (slice B): coarse while the pointer or the wheel
+            // is still moving, fine the moment the gesture settles. The policy is [Editor.viewQuality]'s, in
+            // the pure controller; what the shell contributes is the flag's timing and the callback below.
+            val quality = editor.viewQuality
+            glSync.update(Scene3.extract(editor.doc, ghosts = editor.ghostElements(), quality = quality)) { gl.upload(it) }
             glCheck = false
+            showingCoarse = quality == MeshQuality.COARSE
+            if (showingCoarse) coarsePictures++ else finePictures++
+            val hook = window.asDynamic()
+            hook.constructitPictures = js("({})")
+            hook.constructitPictures.coarse = coarsePictures
+            hook.constructitPictures.fine = finePictures
         }
         gl.draw(viewport.camera)
         // The working plane's sketch, over the shaded solids: the *same* renderer and the same document as
@@ -203,14 +230,80 @@ private fun setupApp() {
     /** Whether the change being handled comes from one of the two events that outrun the display. */
     var streaming = false
 
-    /** [body] handled as a *streaming* event: its document change becomes at most one paint per frame. */
+    /**
+     * The pending **settle**: the callback that will lower [Editor.interacting] once the streaming events
+     * stop coming, and repaint the 3D view at full quality if a coarse picture is on screen.
+     */
+    var settleHandle: Int? = null
+
+    /**
+     * Run [body] when the browser is next **idle** — the scheduling half of slice B, and the shell's, for
+     * `requestAnimationFrame`'s own reason (OP-12): it is a platform API, and the *policy* it serves lives in
+     * [Editor.viewQuality] where the headless suite drives it.
+     *
+     * An idle callback rather than a frame, because the fine mesh of a heavy body is exactly the work that
+     * must not land in the frame the user's finger just let go of: the release is drawn from the coarse mesh
+     * already in hand — instantly — and the fine one is built when there is nothing better to do, arriving a
+     * beat later through `Scene3Sync`'s identity swap. `setTimeout` where `requestIdleCallback` is missing
+     * (Safari): the same shape, one turn of the event loop instead of a measured idle period.
+     */
+    fun whenIdle(body: () -> Unit): Int {
+        val w = window.asDynamic()
+        return if (w.requestIdleCallback != undefined) {
+            w.requestIdleCallback({ _: dynamic -> body() }) as Int
+        } else {
+            window.setTimeout({ body() }, 0)
+        }
+    }
+
+    fun cancelIdle(handle: Int) {
+        val w = window.asDynamic()
+        if (w.cancelIdleCallback != undefined) w.cancelIdleCallback(handle) else window.clearTimeout(handle)
+    }
+
+    /**
+     * Arm the settle, cancelling any settle the previous streaming event armed.
+     *
+     * Re-arming is what makes "the interaction has ended" mean *the events stopped* rather than *the button
+     * came up*: a wheel notch has no release, and a drag is nothing but moves, so one rule covers both and
+     * the fine mesh is built **once**, after the last of them, however many there were.
+     */
+    fun settleSoon() {
+        settleHandle?.let { cancelIdle(it) }
+        settleHandle =
+            whenIdle {
+                settleHandle = null
+                editor.interacting = false
+                // exactly when there is a coarse picture to replace: an orbit re-extracted nothing and owes
+                // nothing, and a plan drag never asked for a triangle in the first place
+                if (showingCoarse) {
+                    glCheck = true
+                    repaint()
+                }
+            }
+    }
+
+    /**
+     * [body] handled as a *streaming* event: its document change becomes at most one paint per frame, and —
+     * while the 3D view is the one on screen — that paint is drawn from the **coarse** mesh until the events
+     * stop coming ([Editor.interacting]).
+     *
+     * The quality half is armed only for the 3D view, and the two views it leaves out are left out for
+     * reasons rather than by omission. The **plan** builds no triangles at all (slice A), so there is nothing
+     * for a quality to be about. The **realistic preview** goes through `ExportScene` — it shows what an
+     * exported file shows, by construction — and a preview drawn from a mesh no file would contain would stop
+     * being that; so it stays fine, and a drag with it open still meshes per frame, which is stated rather
+     * than hidden.
+     */
     fun streamed(body: () -> Unit) {
         streaming = true
+        if (view3d) editor.interacting = true
         try {
             body()
         } finally {
             streaming = false
         }
+        if (view3d) settleSoon()
     }
     editor.onChange = { if (streaming) frameSoon(wholeDocument = true) else repaint() }
     // **A camera move is not a document change.** An orbit writes one of the camera's four numbers and
@@ -222,6 +315,10 @@ private fun setupApp() {
 
     fun setView3d(on: Boolean) {
         view3d = on
+        // A view switch is a human act, not a streaming one: whatever gesture was live belongs to the view
+        // being left, so the one being entered starts at full quality (slice B).
+        editor.interacting = false
+        showingCoarse = false
         // the 2D canvas stays *shown* in the 3D view — as the transparent sketch layer over the GL canvas —
         // but stops taking the pointer, since the 3D canvas is the one that routes gestures there
         viewport.shown = on

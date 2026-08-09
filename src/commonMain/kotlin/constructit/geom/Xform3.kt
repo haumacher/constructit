@@ -225,5 +225,12 @@ fun Solid3.movedBy(x: Xform3): Pair<Solid3?, String?> {
         return null to
             "a solid can only be placed by a rigid motion (a turn and a shift); this frame scales, shears or mirrors it"
     }
-    return Solid3.derived(feature.movedBy(x)) { mesh.movedBy(x) } to null
+    // The placement mirrors its source's levels: a body that coarsens is turned at whichever quality is
+    // asked for (and its own derivation stays deferred through this), while a one-level body stays one
+    // level here too, so the same triangles are never turned twice ([Solid3.coarsens]).
+    return if (coarsens) {
+        Solid3.derived(feature.movedBy(x)) { quality -> meshAt(quality).movedBy(x) } to null
+    } else {
+        Solid3.derivedFine(feature.movedBy(x)) { mesh.movedBy(x) } to null
+    }
 }

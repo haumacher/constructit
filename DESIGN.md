@@ -307,6 +307,127 @@ Chosen over both "single-output + selector-on-node" and "multi-output ports":
 > that yields) are not started and no stub of them exists. `prismMesh` is kept as a public function over the
 > new `prismShell`, so nothing outside had to change.
 
+> **As-built note — two levels of picture, and one law about which is which (turn 67, slice B of the
+> responsiveness item).** Slice A stopped a body meshing for a picture nobody was looking at. This is the
+> other half of the same report: the body somebody *is* looking at, while they drag it. With the 3D view open
+> the coil's 21-frame drag still built 21 full meshes, one per frame, and what a gesture needs from the 3D
+> view is a picture of **where the body is**, not of its surface. So `Solid3.meshAt(quality)` keeps **two**
+> memoized levels, and the whole of slice B is which consumer may ask for which.
+>
+> **Quality enters through exactly one door, and that is what makes the law enforceable rather than merely
+> stated.** `Solid3.meshAt` is the only function anywhere that takes a `MeshQuality`, and `Solid3.mesh` *is*
+> `meshAt(FINE)` — so every consumer that says nothing gets the fine mesh and **the law is the default**. A
+> volume, an extent, a section, a boolean, an export, `assertManifold`, the chain cut's own volume
+> comparisons: none of them changed by a character, and none of them has a way to ask for a coarse triangle.
+> The audit that slice A had to perform by hand is here a type: the 22 reads of `Solid3.mesh` in the engine
+> are still 22 reads of the fine mesh, and exactly **one** call site anywhere passes a quality
+> (`Scene3.extract`, from the shell). A volume readout during a gesture therefore shows the **stale fine**
+> number rather than a fresh coarse one — the law choosing which kind of wrong it prefers, and it prefers late
+> to false, asserted as an export written mid-gesture coming out **byte-identical** to one written at rest.
+>
+> **What coarse means geometrically: ten times the chord tolerance, at the one chokepoint.**
+> `GeomMath.effectiveTol(radius, floor, quality)` multiplies its answer by `MeshQuality.coarsen`, so session
+> 56's scale-relative rule is not spent — floor and relative part are scaled alike, and a coarse mesh of a
+> body still has the chord counts of a coarse mesh of its scaled twin. **Ten is pinned by an argument rather
+> than guessed**, in REL_TOL's own spirit: a chord count goes as `1/sqrt(tol)`, so one order of magnitude is
+> very nearly a **third** of the chords on every curve and about a **tenth** of the triangles on a body curved
+> in two directions. Less does not pay for a second mesh; much more stops being the same body's picture. It is
+> deliberately **not** derived from the camera — a tolerance varying with the zoom would be a third quality on
+> every frame, and the memo has two levels because a gesture has two states, running and settled. And coarse
+> is honest about what it is: at ten times the tolerance a 3 mm tube is a nine-sided prism rather than a
+> twenty-eight-sided one, which is recognisably faceted and is on screen only while the pointer is moving.
+>
+> **The station-count boundary, and where it actually landed.** Slice A left the constraint *the station count
+> may not become a render-time argument, because the plan hint reads it*. It is kept, and kept **structurally**
+> rather than by audit, because the door rule already does it: a swept body's plan hint (`Silhouette.ofSwept`),
+> a station plane's transported frame (`Frames3.baseSteps`, `internal` for exactly that reason) and every
+> refusal are computed at evaluation time **from the feature**, before a triangle exists, and none of them
+> passes through `meshAt`. So nothing a picture asks for can reach them, whatever a provider does inside.
+> That freed the question the constraint had been standing in for, which is *which counts are honestly a
+> picture's* — and the answer is not the same for every feature:
+>
+> | body | what coarsens | what does not, and why |
+> |---|---|---|
+> | `Sweep` | the **section's** chords (the ring carried along the run), and its caps | the **run's stations**. Three things read them outside any mesh (the plan hint and therefore the 2D pick target, a station plane's roll, the self-intersection refusals), and they are the expensive half of a sweep besides — a coarser run would cost a second transport walk to save the cheap part, and could show a fold the refusal said was not there. So the coarse tube is the **same run** with a cheaper ring, asserted by every coarse vertex standing on a station of the one run. |
+> | `Revolution` | the **rings round the axis** *and* the profile's own chords — both axes | nothing. A revolution's plan hint is its own sketch and its section is cut from a mesh (the fine one, by law), so no consumer outside `meshAt` reads its ring count at all. This is why the session-56 body pays off best: a torus at r = 200 goes **10082 → 1058** triangles. |
+> | `Extrusion` | the profile's chords | the depth: a coarse prism is a coarser *outline* of the same body, never a shorter one (asserted). |
+> | `Prism` (and the analytic boolean, whose result is one) | **nothing — one level** | its cost is the region algebra and the one global corner set every ring is conformed to, not its chords; a coarse level would redo all of the expensive part to save the cheap one. |
+> | `Loft` | **nothing — one level** | its row count comes from its guides' own sampled polylines, inside the correspondence plan along with the global boundary parameter set — the same argument. |
+> | `Imported`, `MeshBoolean` | **nothing — one level** | there is no coarser statement of triangles one already holds. |
+> | placement (`movedBy`) | whatever its source does | it mirrors its source's levels (`Solid3.coarsens`), so the same triangles are never turned twice. |
+>
+> "One level" is *stated* rather than silently fine, and it is free: `Solid3.derivedFine` makes a coarse ask
+> hand back the very same `Mesh3` object, so nothing is built twice, nothing is charged to the instrument, and
+> `SceneSync`'s identity swap sees no change. The alternative — a two-level provider quietly returning the
+> same triangles twice — would have done all three.
+>
+> **The provider is refusal-free at both levels, which is a real constraint and is met by a fallback.** The 2D
+> work is still eager and still *what the refusal is about*, so the coarse half re-tessellates the same
+> regions inside the provider (lazily, so a body nobody looks at pays for neither level) and, if that coarser
+> polygon will not tessellate or triangulate, **keeps the fine work it already holds**. A picture may not
+> refuse: every refusal is the feature's and was decided above at the fine rule, so the worst a coarse ask can
+> do is get the fine answer.
+>
+> **The policy is the editor's, the scheduling is the shell's.** `Editor.interacting` is one flag and
+> `Editor.viewQuality` is one line reading it — that is the whole policy, in the pure controller where the
+> headless suite drives it. *When* an interaction has settled, and on which callback the fine mesh is then
+> built, is a platform question, so the shell raises the flag inside the same `streamed { }` that slice A
+> already marks (a pointer move and a wheel notch — the two events that outrun the display; a wheel has no
+> release, which is why the settle is *the events stopping* and not *the button coming up*) and lowers it on a
+> `requestIdleCallback` that each streaming event re-arms. The release itself is drawn from the coarse mesh
+> already in hand — instantly — and the fine one is built when there is nothing better to do, arriving a beat
+> later through `SceneSync`'s existing identity swap. Two guards, both for reasons: the flag is raised only
+> while the **3D view** is the one on screen (the plan builds no triangles at all, so there is nothing for a
+> quality to be about), and the settle repaints only if a coarse picture is actually on screen — an **orbit**
+> re-issues the draw call with a new matrix and never re-extracts, so it owes nothing, and without that guard
+> every flick of the camera would have ended in a full `repaint` with the panel's six lists in it.
+>
+> **The realistic preview stays fine, and that is a decision.** It goes through `ExportScene` — it shows what
+> an exported file shows, by construction — and a preview drawn from a mesh no file would contain would stop
+> being that. So a drag with the preview open still meshes per frame, stated rather than hidden.
+>
+> **The ray pick reads FINE, and the cost is accepted with the reason.** The tempting answer was *whatever
+> the picture shows*, since session 55 made that law — but a pick is a **choice with consequences the fine
+> body has to agree with** (a picked body becomes a tool's operand, a boolean's material), and a picture is
+> looked at. Three things settle it. A **press is not a streaming event**: picking happens where the
+> interaction has settled and the fine mesh is what is on screen anyway, so it costs nothing the next frame
+> was not going to pay. The coarse shell is **inscribed** in the fine one, so a coarse ray is wrong in *both*
+> directions near a silhouette — it can miss a body the fine picture does contain, and inside a chorded bore
+> it can hit one it does not. And the **2D** pick target for a swept body is exact and quality-free, so a
+> coarse ray would put the two views a chord apart about where a tube's edge is. Session 55's law is kept
+> where it was made: *what is drawn is what is pickable* is about **which bodies** are offered, and they still
+> come from `Scene3.extract` itself, one line, no list to keep in step.
+>
+> **The instrument, and the numbers.** `Node.coarseMeshCount` sits beside `Node.meshCount`, and they are
+> deliberately two numbers rather than a total: the acceptance is a statement about *which* mesh a gesture
+> built, and a sum could not tell "a drag that measured a volume" from "a drag that drew a picture". On the
+> queue entry's own body — a tube of radius 3 on a three-turn coil:
+>
+> - **11868 → 3812 triangles** (×3.11), which is the ring's third of the chords with the run's stations held
+>   fixed, exactly as the boundary above predicts;
+> - a 20-frame 3D drag: **20 coarse meshes and not one fine one**, then **exactly one fine mesh** when it
+>   settles — and the release frame, which moves nothing new, costs none at either level (OP-5's memo at work
+>   on both);
+> - wall-clock for those 20 frames, JVM: **213–336 ms fine → 81–114 ms coarse** (×2.5), against a **14–24 ms**
+>   floor for the same drag in the plan, which is cause (c) and the recompute;
+> - a plan-only drag still builds **zero** of both — slice A's promise unmoved;
+> - 100 static frames build nothing at either level, and neither level's memo disturbs the other;
+> - and a torus at r = 200 / 40, where both axes coarsen: **10082 → 1058** triangles (×9.5), the tenth the
+>   factor is pinned to.
+>
+> **Slice C is therefore not needed, and the measurement that says so is the one the queue entry gates it
+> on.** A coarse 3D frame of the report's body costs about **4–6 ms** on the JVM against a 60 Hz budget of
+> 16.7 ms, and roughly **1–2 ms** of that is the feature-level floor a picture may not touch. What would
+> change the answer is a body an order of magnitude heavier, or a document whose body is a **general (mesh)
+> boolean** — the one op that stays eager (slice A's stated exception) and therefore meshes fully on every
+> drag frame regardless of quality. C is not started and no stub of it exists.
+>
+> **What slice B did not do**, so it is not looked for: cause **(c)** is still untouched and is now the whole
+> of the residual per-frame cost; a **loft** and a **prism** have one level (with the reason above, not as an
+> oversight); the preview is always fine; and the fine build is scheduled but not **interruptible** — an idle
+> callback that starts meshing a very heavy body will finish it before the next frame, which is precisely what
+> a yielding mesher (slice C) would answer.
+
 ### How the coupled points attach (details deferred to their own OPs)
 - **OP-4 (measurements):** `Measure.Distance(P1, P2) → Scalar` is an ordinary node; its
   `Scalar` output feeds any `Scalar` input. Graph stays acyclic.
@@ -12386,6 +12507,38 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   moves the line saying which version it is and nothing else. See *a closed run's seam is a crossing* under
   OP-26 and the second `tool sweep signs=` row under OP-18.
 
+- **Turn 67 — a picture may be coarse, a number never (slice B of the responsiveness item).** The queued
+  half of the report *"a tube along a helix … the UI becomes incredibly laggy"* that slice A left standing:
+  with the 3D view open, the coil's drag still built a full mesh per frame, and what a gesture needs from
+  that view is a picture of **where the body is**, not of its surface. `Solid3.meshAt(quality)` now keeps two
+  memoized levels. The load-bearing move is not the second mesh but the **door**: `meshAt` is the only
+  function anywhere that takes a quality, `Solid3.mesh` *is* `meshAt(FINE)`, and exactly one call site in the
+  program passes one — so every number the drawing reports is fine **by not asking**, and the audit slice A
+  had to do by hand became a type. The inherited constraint (*the station count may not become a render-time
+  argument*) is kept for free by the same rule, since a plan hint, a station plane's roll and every refusal
+  are computed from the *feature* at eval and never pass through the door — which freed the question it had
+  been standing in for, and the answer turned out to differ per feature: a **sweep** coarsens its section and
+  never its run (a coarser run would cost a second transport walk to save the cheap part, and could show a
+  fold the refusal said was not there), a **revolution** coarsens both of its axes because nothing outside its
+  mesh reads either, and a **prism** and a **loft** have *one level* with their reasons stated rather than
+  being silently fine. Coarse means **ten times the chord tolerance** at session 56's own chokepoint, pinned
+  by an argument — a chord count goes as `1/sqrt(tol)`, so an order of magnitude is a third of the chords and
+  a tenth of the triangles on a doubly-curved body — and deliberately not derived from the camera, because a
+  tolerance that varied with the zoom would be a third quality on every frame. The **policy** is
+  `Editor.interacting` plus one line reading it, in the pure controller; the **scheduling** is the shell's
+  `requestIdleCallback`, re-armed by each streaming event so the settle means *the events stopped* rather than
+  *the button came up* (a wheel notch has no release). The **ray pick reads FINE**, against the tempting
+  inheritance from *what is drawn is what is pickable*: a press is not a streaming event, the coarse shell is
+  inscribed so a coarse ray is wrong in both directions near a silhouette, and the 2D pick target for a sweep
+  is exact — all three recorded at the call site. Numbers, on the entry's own body: **11868 → 3812** triangles,
+  20 coarse meshes and **one** fine one across a 20-frame 3D drag, **zero of both** for a plan drag,
+  213–336 ms → 81–114 ms wall-clock against a 14–24 ms plan floor, and a torus at r = 200 going
+  **10082 → 1058**. **Slice C is measured and not needed** — ~4–6 ms a frame against 16.7 — and stays
+  unstarted, which is what the queue entry gates it on. **1986 → 2000 green** (fourteen in `MeshQualityTest`,
+  plus the browser flow that vouches for the idle callback actually landing), no golden moved, nothing cut
+  beyond the one-level bodies named above. See *two levels of picture, and one law about which is which* under
+  *Evaluation*.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -14560,6 +14713,24 @@ absent, and independent of everything else here.
    > single tessellation tolerance is now **scale-relative** (`effectiveTol(r) = max(TESS_TOL_MM, r·REL_TOL)`),
    > so a large body meshes ~10× smaller than before while staying one deterministic, per-radius rule (not a
    > per-solid or render-time *quality* knob — slice B remains its own package). See the session-56 entry.
+   >
+   > **Slice B is delivered (turn 67) — see *two levels of picture, and one law about which is which* under
+   > *Evaluation*.** `Solid3.meshAt(quality)` keeps two memoized levels; the 3D view asks for the coarse one
+   > while an interaction is live and for the fine one on a `requestIdleCallback` the moment it settles, with
+   > `SceneSync`'s identity swap carrying the late arrival exactly as the entry predicted. The law is enforced
+   > **structurally rather than by audit**: quality enters through the one door `meshAt`, `Solid3.mesh` *is*
+   > `meshAt(FINE)`, and one call site in the whole program passes a quality — so volume, extent, section,
+   > booleans, exports and `assertManifold` are fine by not asking, and an export written mid-gesture is
+   > **byte-identical** to one at rest. The inherited constraint is kept for free by that same rule (a plan
+   > hint and a station plane are computed from the *feature*, at eval, and never pass through the door), and
+   > what it was standing in for is now answered per feature: a sweep coarsens its section and never its run
+   > stations, a revolution coarsens both of its axes, a prism and a loft have **one level** with stated
+   > reasons. **The ray pick reads FINE**, recorded with its three reasons at `Editor.solidUnderRay`. The
+   > acceptance holds as numbers: 11868 → 3812 triangles on the report's body, 20 coarse meshes and one fine
+   > one across a 20-frame 3D drag, zero of both for a plan drag, and 213–336 ms → 81–114 ms wall-clock.
+   > **(C) is measured and not needed** — a coarse frame is ~4–6 ms against a 16.7 ms budget — so it stays
+   > unstarted, as the entry gates it. **What remains of this item is (c)**: the quadratic self-intersection
+   > guard is a feature-level refusal, still runs on every drag frame, and is now the whole residual cost.
 2. ~~**The helix's key points, and a point on a helix** (the user's design).~~ **Delivered (session 53) — see
    *As built: a run's key points, and a point that rides a coil* under *Curves in space*.** Both halves shipped
    as one package: every run hands back its **start** and **end** as accessors on the curve node (a coil its

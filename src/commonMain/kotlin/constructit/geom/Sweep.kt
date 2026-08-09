@@ -613,7 +613,10 @@ object Frames3 {
      * twist refinement's rule — used for the third time and still not re-derived.
      *
      * `internal` for [Stations3]'s sake — see [transport]: one sampling rule, so the station's transport walks
-     * the chords the sweep's frame walks.
+     * the chords the sweep's frame walks. Which is also why **no tessellation quality reaches this count**
+     * ([MeshQuality]): a station plane is geometry the user builds on, so where it lands is a modelling fact
+     * and not a picture's business — and a swept body's plan hint reads the same stations
+     * ([Silhouette.ofSwept]). A coarse sweep is the same run with a cheaper ring.
      */
     internal fun baseSteps(
         el: Curve3Element,

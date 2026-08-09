@@ -282,7 +282,8 @@ object Conics {
         e: Ellipse,
         sweep: Double,
         tolMm: Double,
-    ): Int = GeomMath.chordSteps(e.major, sweep, tolMm)
+        quality: MeshQuality = MeshQuality.FINE,
+    ): Int = GeomMath.chordSteps(e.major, sweep, tolMm, quality)
 
     /** Points along [arc] at [steps] equal **parametric** steps, both ends included. */
     fun sample(

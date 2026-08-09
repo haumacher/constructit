@@ -321,6 +321,7 @@ class BrowserE2ETest {
             page.keyboard().up("Control")
             val orbited = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String
             assertTrue(blank != orbited, "Ctrl+drag in the 3D view should orbit the camera and redraw")
+
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/06-solid-3d.png")))
             page.click("#v-2d")
             page.waitForSelector("#canvas:visible")
@@ -1325,6 +1326,31 @@ class BrowserE2ETest {
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/21-drawing-in-3d.png")))
             val previewing = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
             assertTrue(previewing != emptyOverlay, "the sketch layer over the 3D canvas should be painting the preview")
+
+            // ---- slice B: coarse while the gesture runs, fine the moment it settles ----
+            //
+            // The one thing only a browser can vouch for: that `requestIdleCallback` really lands and really
+            // repaints. The evidence is the shell's own record of what it asked `Scene3.extract` for
+            // (`window.constructitPictures`, Main.kt) and deliberately **not** pixels — a coarse frame and the
+            // settled one differ by a few chords, and a pixel comparison of that is a flake rather than a
+            // test. What the *engine* does with the two levels is asserted headlessly in `MeshQualityTest`;
+            // this is the wiring, which is the half that has no headless seam (`requestAnimationFrame`'s own
+            // argument, OP-12).
+            fun pictures(): Pair<Int, Int> {
+                val c = page.evaluate("() => (window.constructitPictures || {coarse: 0}).coarse") as Number
+                val f = page.evaluate("() => (window.constructitPictures || {fine: 0}).fine") as Number
+                return c.toInt() to f.toInt()
+            }
+            val (coarse0, fine0) = pictures()
+            page.mouse().move(cx + 20.0, cy - 40.0)
+            page.mouse().move(cx - 30.0, cy + 10.0)
+            val (coarseDuring, _) = pictures()
+            assertTrue(coarseDuring > coarse0, "a live 3D gesture draws the coarse picture; got $coarseDuring after $coarse0")
+            page.waitForFunction("f => (window.constructitPictures || {fine: 0}).fine > f", fine0)
+            val (coarseAfter, fineAfter) = pictures()
+            assertTrue(fineAfter > fine0, "…and the settle repaints it fine: $fineAfter after $fine0")
+            assertTrue(coarseAfter == coarseDuring, "the settle asks for no further coarse picture")
+            page.mouse().move(cx + 60.0, cy - 20.0)
 
             // ---- Ctrl+drag orbits mid-gesture, and the tool is still armed afterwards ----
             val posed = page.evaluate("() => document.querySelector('#canvas3').toDataURL()") as String

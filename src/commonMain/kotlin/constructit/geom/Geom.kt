@@ -755,11 +755,18 @@ object GeomMath {
      * radius always yields equal chords. (If a future export path wants a finer mesh, it threads a smaller
      * [floorMm] through here — this single chokepoint is the seam, deliberately left honest but unbuilt,
      * formats being queued last.)
+     *
+     * **[quality] is the one and only render-time input to this rule** (slice B). It multiplies the answer
+     * — floor and relative part alike, so the scale invariance above survives it: a coarse tolerance is the
+     * fine one times [MeshQuality.coarsen] at *every* radius, hence a coarse mesh of a body and a coarse
+     * mesh of its scaled twin still have the same chord counts. It defaults to [MeshQuality.FINE], which is
+     * what makes every existing caller — the 2D canvas's arc projection included — exactly what it was.
      */
     fun effectiveTol(
         radius: Double,
         floorMm: Double = TESS_TOL_MM,
-    ): Double = max(floorMm, abs(radius) * REL_TOL)
+        quality: MeshQuality = MeshQuality.FINE,
+    ): Double = quality.coarsen * max(floorMm, abs(radius) * REL_TOL)
 
     /** The angular step at which a circle of [radius] deviates from its chord by at most [tolMm]. */
     private fun chordStepAngle(
@@ -779,8 +786,9 @@ object GeomMath {
         radius: Double,
         sweep: Double,
         tolMm: Double,
+        quality: MeshQuality = MeshQuality.FINE,
     ): Int {
-        val step = chordStepAngle(radius, effectiveTol(radius, tolMm))
+        val step = chordStepAngle(radius, effectiveTol(radius, tolMm, quality))
         if (step <= 0.0) return 1
         return max(1, ceil(abs(sweep) / step).toInt())
     }
@@ -822,12 +830,14 @@ object GeomMath {
     fun bezierSteps(
         b: Bezier,
         tolMm: Double,
+        quality: MeshQuality = MeshQuality.FINE,
     ): Int {
         val d0 = b.p0 - b.p1 * 2.0 + b.p2
         val d1 = b.p1 - b.p2 * 2.0 + b.p3
         val second = 6.0 * max(d0.length(), d1.length())
-        if (second <= 0.0 || tolMm <= 0.0) return 1
-        return max(1, min(1024, ceil(sqrt(second / (8.0 * tolMm))).toInt()))
+        val tol = tolMm * quality.coarsen
+        if (second <= 0.0 || tol <= 0.0) return 1
+        return max(1, min(1024, ceil(sqrt(second / (8.0 * tol))).toInt()))
     }
 
     /**
@@ -840,17 +850,18 @@ object GeomMath {
     fun tessellatePiece(
         e: ProfileElement,
         tolMm: Double = TESS_TOL_MM,
+        quality: MeshQuality = MeshQuality.FINE,
     ): List<Vec2> =
         when (e) {
             is ProfileElement.Seg -> listOf(e.segment.a, e.segment.b)
-            is ProfileElement.ArcE -> sampleArc(e.arc, chordSteps(e.arc.radius, sweep(e.arc), tolMm))
+            is ProfileElement.ArcE -> sampleArc(e.arc, chordSteps(e.arc.radius, sweep(e.arc), tolMm, quality))
             is ProfileElement.CircleE ->
-                sampleCircle(e.circle, max(3, chordSteps(e.circle.radius, 2.0 * PI, tolMm)), e.ccw)
-            is ProfileElement.BezierE -> tessellateBezier(e.bezier, bezierSteps(e.bezier, tolMm))
+                sampleCircle(e.circle, max(3, chordSteps(e.circle.radius, 2.0 * PI, tolMm, quality)), e.ccw)
+            is ProfileElement.BezierE -> tessellateBezier(e.bezier, bezierSteps(e.bezier, tolMm, quality))
             is ProfileElement.EllipticArcE ->
-                Conics.sample(e.arc, Conics.chordSteps(e.arc.ellipse, Conics.sweep(e.arc), tolMm))
+                Conics.sample(e.arc, Conics.chordSteps(e.arc.ellipse, Conics.sweep(e.arc), tolMm, quality))
             is ProfileElement.EllipseE ->
-                Conics.sampleWhole(e.ellipse, max(3, Conics.chordSteps(e.ellipse, 2.0 * PI, tolMm)), e.ccw)
+                Conics.sampleWhole(e.ellipse, max(3, Conics.chordSteps(e.ellipse, 2.0 * PI, tolMm, quality)), e.ccw)
         }
 
     /**
