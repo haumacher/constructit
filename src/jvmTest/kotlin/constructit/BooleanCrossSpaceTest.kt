@@ -389,7 +389,7 @@ tool revolve els=e28,e29 clicks=50.410797908588975,18.74032756933117;-14.5810454
         val volume = Geom3.volume(meshOf(union))
 
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.startsWith("constructit 2\n"), "the header is untouched: ${once.lines().first()}")
+        assertTrue(once.startsWith("${DocumentFormat.HEADER}\n"), "the cross-space union owes no bump of its own: ${once.lines().first()}")
         val step = assertNotNull(once.lines().firstOrNull { it.startsWith("tool union ") }, "the union is one step")
         assertTrue(
             step.contains("els=${ed.doc.nameOf(column(ed.doc))},${ed.doc.nameOf(foundation(ed.doc))}"),

@@ -76,12 +76,12 @@ class FormatVersionTest {
     fun aSaveNamesTheVersionItWrites() {
         val doc = Document()
         doc.freePoint(0.0.mm, 0.0.mm)
-        assertEquals("constructit 2", DocumentFormat.save(doc).lineSequence().first(), "the file says what it is")
+        assertEquals("constructit 3", DocumentFormat.save(doc).lineSequence().first(), "the file says what it is")
     }
 
     @Test
     fun aNewerFileSaysItIsNewerRatherThanBeingMisread() {
-        val newer = runCatching { DocumentFormat.load("constructit 3\npoint 0,0 -> e1\n") }.exceptionOrNull()
+        val newer = runCatching { DocumentFormat.load("constructit 4\npoint 0,0 -> e1\n") }.exceptionOrNull()
         assertTrue(newer is DocumentFormat.LoadError, "got: $newer")
         assertTrue(newer.message!!.contains("newer version"), "got: ${newer.message}")
         val alien = runCatching { DocumentFormat.load("sketchup 1\n") }.exceptionOrNull()
@@ -89,11 +89,11 @@ class FormatVersionTest {
     }
 
     @Test
-    fun aFormatOneFileStillLoadsAndIsSavedAsFormatTwo() {
+    fun aFormatOneFileStillLoadsAndIsSavedAtTheCurrentVersion() {
         val doc = DocumentFormat.load("constructit 1\npoint 10,20 -> e1\n")
         assertEquals(Vec2(10.0, 20.0), pos(doc.elements[0]))
         val saved = DocumentFormat.save(doc)
-        assertTrue(saved.startsWith("constructit 2\n"), saved)
+        assertTrue(saved.startsWith("${DocumentFormat.HEADER}\n"), saved)
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "and the migrated file is stable")
     }
 
@@ -375,7 +375,7 @@ group "hole" els=e43,e26,e33,e25,e44,e34,e45,e35,e1,e3,e18
     fun theReportedWheelIsSavedWithItsFilletVariantsAndIsThenStable() {
         val doc = DocumentFormat.load(wheel)
         val saved = DocumentFormat.save(doc)
-        assertTrue(saved.startsWith("constructit 2\n"), saved.lineSequence().first())
+        assertTrue(saved.startsWith("${DocumentFormat.HEADER}\n"), saved.lineSequence().first())
         assertEquals(4, Regex("tool fillet [^\n]*signs=").findAll(saved).count(), "every fillet now states its variant:\n$saved")
         val reloaded = DocumentFormat.load(saved)
         assertTrue(reloaded.loadNotes.isEmpty(), "nothing left to decide: ${reloaded.loadNotes}")

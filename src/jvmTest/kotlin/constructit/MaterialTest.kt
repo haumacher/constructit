@@ -85,7 +85,7 @@ class MaterialTest {
         assertEquals(Appearance("#c8c8c8", 0.6, 0.1), Appearance.DEFAULT, "...and the default is what it always was")
         assertTrue(doc.loadNotes.isEmpty(), "a drawing that predates a feature has nothing to be told: ${doc.loadNotes}")
         // ...and it saves back byte-identically, which is what "the reader was not edited" means
-        assertEquals(preMaterials, DocumentFormat.save(doc), "save -> load -> save on a pre-materials file")
+        assertEquals(atThisVersion(preMaterials), DocumentFormat.save(doc), "save -> load -> save on a pre-materials file")
     }
 
     /** Assigning through the panel route: one step, one undo, and the row shows what it actually took. */

@@ -57,7 +57,7 @@ class FaceExtrudeOutwardTest {
         assertTrue(drawn.contains(plate.id) && drawn.contains(wart.id), "the plate and its boss: $drawn")
 
         // …and the file is unchanged by the fix: the direction was never in it
-        assertEquals(ISSUE1, DocumentFormat.save(doc), "the reported file re-saves byte for byte")
+        assertEquals(atThisVersion(ISSUE1), DocumentFormat.save(doc), "the reported file re-saves byte for byte")
     }
 
     /**

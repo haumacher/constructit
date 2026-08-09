@@ -10043,7 +10043,7 @@ class Document {
         val chosen =
             when {
                 sectionPlane == null -> null
-                pierce != null -> if (pierce < 0) null else pierce
+                pierce != null -> if (pierce < 0) null else migratedPierce(pierce, path, sectionPlane, profile)
                 // …and a step being **replayed** with no recorded reading was written before this reading
                 // existed, so it keeps the one it was written with, for ever ([replayingVersion])
                 replayingVersion != null -> null
@@ -10075,6 +10075,53 @@ class Document {
                 (anchorEl?.let { ", riding on ${nameOf(it)}" } ?: ridingNote(el, profile, sectionPlane, chosen, hits.size)),
         )
         return solid
+    }
+
+    /**
+     * The recorded crossing index [recorded], read the way the build that **wrote** it meant it (OP-18).
+     *
+     * Format 2 numbered a run's crossings by a walk that could not see a change of side across a closed run's
+     * own seam, so this build's set has one more crossing than that build's — inserted at index **0**, because
+     * the seam stands at no arc length at all. Every index a format-2 file recorded therefore names the
+     * crossing one place further along, and reading it verbatim would silently ride the neighbour. That is a
+     * stored literal changing meaning, so it is a version bump plus a migration
+     * ([DocumentFormat.SEAM_ORDERED_VERSION]) rather than an edit to the reader.
+     *
+     * **The migration is exact, and that is the whole reason it is a migration at all.** The new set is the old
+     * set with at most one crossing put in front of it, so what the old build would have shown for *this file
+     * at this load* is `all[recorded]` of the seam-blind walk, and the very same crossing is
+     * `all[recorded + 1]` of this one whenever the run crosses at its seam
+     * ([constructit.geom.Pierce3.crossesAtSeam]) and `all[recorded]` whenever it does not. Nothing is guessed
+     * and nothing is re-scored: the shift is read off the geometry the file itself rebuilds, which is the same
+     * geometry the old reader would have measured. An index that had already outrun its set stays out of it,
+     * and the node goes on refusing with the reason it always gave (OP-3).
+     *
+     * **Where it cannot arbitrate it says so** rather than assuming: with no value for the run or for the
+     * section's plane there is no way to tell whether the numbering has moved for this drawing, so the number
+     * is kept exactly as written — what the last writer meant — and the load **names the element**
+     * ([loadNotes]), which is the rule the v1 rider migration already follows.
+     */
+    private fun migratedPierce(
+        recorded: Int,
+        path: Path3Ref,
+        plane: PlaneRef,
+        profile: Element,
+    ): Int {
+        val version = replayingVersion ?: return recorded
+        if (version >= DocumentFormat.SEAM_ORDERED_VERSION) return recorded
+        val ev = Evaluator()
+        val run = (ev.valueOf(path) as? Path3Value)?.path
+        val at = (ev.valueOf(plane) as? PlaneValue)?.plane
+        if (run == null || at == null) {
+            noteLoad(
+                "${nameOf(profile)} rides a recorded crossing of its own plane, and the run has no value right " +
+                    "now — so this load cannot tell whether that numbering has moved (a closed run's seam counts " +
+                    "as a crossing from format ${DocumentFormat.SEAM_ORDERED_VERSION} on). The number is kept as " +
+                    "it was written; sweep the section again if it rides the wrong crossing",
+            )
+            return recorded
+        }
+        return if (Pierce3.crossesAtSeam(run, at)) recorded + 1 else recorded
     }
 
     /** Where [path] crosses [plane], or nothing when either has no value right now. */

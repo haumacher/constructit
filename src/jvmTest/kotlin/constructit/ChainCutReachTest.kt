@@ -205,12 +205,20 @@ class ChainCutReachTest {
      * (`dofs=0deg`), so this pre-package file gains that argument the first time it is written back. Nothing
      * it already said changed meaning — the offset was zero before it could be stated, which is what an
      * absent `dofs=` still means (OP-18) — and the file is a fixed point from that first save onwards.
+     *
+     * The **third** is the header itself: this fixture was written at format 2 and is kept that way, because a
+     * fixture edited to say the current version stops being a test of anything. A save brings it up to what
+     * this build writes (format 3, the closed-run seam's own bump) and touches no other line.
      */
     private fun assertRoundTrips(text: String) {
         val once = DocumentFormat.save(DocumentFormat.load(text))
         val differing = text.lines().zip(once.lines()).filter { it.first != it.second }
         assertEquals(text.lines().size, once.lines().size, "no step is added or lost")
         for (d in differing) {
+            if (d.first.startsWith("constructit ")) {
+                assertEquals(DocumentFormat.HEADER, d.second, "the header comes up to the version this build writes and nothing else does")
+                continue
+            }
             if (d.first.startsWith("tool revolve ")) {
                 assertEquals(d.first.replace(" -> ", " dofs=0deg -> "), d.second, "the revolve gains its offset freedom and nothing else")
                 continue

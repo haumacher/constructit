@@ -600,7 +600,7 @@ class SweepAnchorTest {
         val ed = coilAndSquare()
         anchoredSweep(ed)
         val once = DocumentFormat.save(ed.doc)
-        assertTrue(once.startsWith("constructit 2\n"), "the header is untouched: ${once.lines().first()}")
+        assertTrue(once.startsWith("${DocumentFormat.HEADER}\n"), "the anchored sweep owes no bump of its own: ${once.lines().first()}")
         val again = DocumentFormat.save(DocumentFormat.load(once))
         assertEquals(once, again, "save -> load -> save is byte-equal")
         val back = DocumentFormat.load(once)

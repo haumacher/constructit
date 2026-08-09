@@ -388,13 +388,14 @@ class TypedScalarTest {
      * **An old file gains the freedom and means what it always meant.** Hand-written in the shape a build
      * *before* this package wrote it — a `tool helix` step with no `dofs=` at all — because an in-build round
      * trip proves nothing across builds (OP-18). It loads with one turn, silently (a new `dofs=` reading is
-     * not a changed literal, so no version bump is owed), and the coil is editable from that moment on.
+     * not a changed literal, so no version bump is owed *for this*), and the coil is editable from that moment
+     * on. The header it is written back with is whatever the build writes — format 3 since the closed-run seam
+     * bump — and the file's own steps are untouched by that, which is the claim being made here.
      */
     @Test
     fun aFileWrittenBeforeTheFreedomExistedLoadsAtTheDefaultAndGainsIt() {
         val doc = DocumentFormat.load(OLD_HELIX_CIT)
         assertTrue(doc.loadNotes.isEmpty(), "no note, because nothing about it is ambiguous: ${doc.loadNotes}")
-        assertEquals(2, DocumentFormat.VERSION, "and the format is the version it was: no bump is owed")
         val el = assertNotNull(doc.elements.lastOrNull { it.kind == ElementKind.SPACE_CURVE }, "the coil loaded")
         assertClose(helixOf(el).turns, 1.0, 1e-12, "at one turn, which is what that file always meant")
 

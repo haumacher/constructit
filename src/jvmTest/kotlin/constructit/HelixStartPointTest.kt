@@ -276,7 +276,7 @@ class HelixStartPointTest {
         assertEquals(3.0, h.turns)
         assertEquals(Handedness.RIGHT, h.hand, "and the handedness its tool id states")
         assertVec(h.at(0.0), Vec3(20.0, 0.0, 0.0), "and it still starts along the space's own x — the phase-free spelling")
-        assertEquals(text, DocumentFormat.save(doc), "and it saves back byte for byte")
+        assertEquals(atThisVersion(text), DocumentFormat.save(doc), "and it saves back byte for byte")
     }
 
     /** The old gesture builds exactly the same curve it always did, beside the new one in one drawing. */

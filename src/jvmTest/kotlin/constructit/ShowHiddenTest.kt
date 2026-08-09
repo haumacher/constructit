@@ -310,7 +310,7 @@ class ShowHiddenTest {
     fun theUsersPillarFindsItsHiddenConstructionAgain() {
         val ed = Editor()
         ed.replaceDocument(DocumentFormat.load(LiftedRunTest.ROUND_PILLAR_CIT))
-        assertEquals(LiftedRunTest.ROUND_PILLAR_CIT, DocumentFormat.save(ed.doc), "the fixture round trips as it came")
+        assertEquals(atThisVersion(LiftedRunTest.ROUND_PILLAR_CIT), DocumentFormat.save(ed.doc), "the fixture round trips as it came")
 
         ed.showHidden = true
         val ghosts = ed.ghostElements()

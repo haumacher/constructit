@@ -41,6 +41,16 @@ data class Pierce(
  * That is the honest reading of *"the curve pierces this plane"*, and it is what keeps a run drawn **in** a
  * plane — a plan curve against the plan, the everyday sweep — from claiming to cross it at every point.
  *
+ * **On a closed run the seam is not an end**, so the comparison wraps ([Path3.closed], which is *structure* and
+ * never inferred from coincident endpoints). The seam is the one place a linear walk cannot see a change of
+ * side: the run's last sample and its first are the same point, so where that point lies exactly *on* the plane
+ * both carry no side and the walk hands over from one to the other without ever comparing them. A ring whose
+ * start sits on the plane and passes through it therefore used to report one crossing where it plainly has two.
+ * The wrap comparison is the same rule read round the corner — the last sample that was on a side against the
+ * first one that was — so a run that comes down to the plane **at** the seam and turns back still crosses
+ * nothing, and a seam crossing is attributed to the run's own start (piece 0, `t = 0`, `s = 0`) exactly as a
+ * crossing at a piece hand-over is attributed to the piece that begins there.
+ *
  * **Where the exactness lies** (OP-15). The samples only *bracket* a root; the root itself is bisected on the
  * analytic piece to the last bits of its parameter, and the point and the tangent are then read off that piece.
  * So the crossing is as exact as the curve's own formula, and only the *finding* of it is sampled: a crossing
@@ -74,8 +84,35 @@ object Pierce3 {
         path: Path3,
         plane: Plane3,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): List<Pierce> {
-        if (path.elements.isEmpty()) return emptyList()
+    ): List<Pierce> = walk(path, plane, tolMm).first
+
+    /**
+     * Whether the first of [crossings] is the run's own **seam** — the crossing a walk that stopped at the last
+     * piece could not see.
+     *
+     * Geometry answering one question the *format* asks, and nothing more (OP-18): a `tool sweep` step written
+     * before format 3 recorded an index into the seam-blind set, and this says by how much that numbering has
+     * moved for this drawing — one, exactly, when the run crosses at its seam, and nothing otherwise. Stated
+     * here rather than derived at the call site because the answer is a property of the walk, not of the list.
+     */
+    fun crossesAtSeam(
+        path: Path3,
+        plane: Plane3,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+    ): Boolean = walk(path, plane, tolMm).second
+
+    /**
+     * The ordered crossings, together with whether the first of them is the **seam** one.
+     *
+     * One walk answering both, because the second fact is only knowable while walking: once the list exists,
+     * a crossing standing at `s = 0` is indistinguishable from one the sampling happened to bisect there.
+     */
+    private fun walk(
+        path: Path3,
+        plane: Plane3,
+        tolMm: Double,
+    ): Pair<List<Pierce>, Boolean> {
+        if (path.elements.isEmpty()) return emptyList<Pierce>() to false
         val n = plane.normal.normalized()
 
         fun side(
@@ -90,6 +127,8 @@ object Pierce3 {
         var lastSign = 0
         var lastPiece = 0
         var lastT = 0.0
+        // the *first* sample that was on a side, kept for the wrap comparison a closed run's seam needs
+        var firstSign = 0
         for ((i, el) in path.elements.withIndex()) {
             val steps = max(Frames3.baseSteps(el, tolMm), MIN_SAMPLES)
             for (j in 0..steps) {
@@ -114,13 +153,29 @@ object Pierce3 {
                         out.add(Pierce(i, root, before + Curves3.lengthTo(el, root), Frames3.pointAt(el, root), tangent))
                     }
                 }
+                if (firstSign == 0) firstSign = sg
                 lastSign = sg
                 lastPiece = i
                 lastT = t
             }
             before += Curves3.arcLength(el)
         }
-        return out
+        // **The seam** (OP-26): on a closed run the walk above compares every pair of samples except the one
+        // that spans the run's own start, because the last piece hands over to the first there and the loop has
+        // ended. Where the two sides lie either side of that hand-over the run crosses at the seam, and the
+        // crossing is the seam itself — the run's start, at no arc length at all, which is why it takes index 0
+        // of an arc-length-ordered set. Both signs must be *sides*: a run that touches the plane at its seam and
+        // turns back leaves `firstSign == lastSign` and crosses nothing, exactly as a touch anywhere else does.
+        var seam = false
+        if (path.closed && firstSign != 0 && lastSign != 0 && firstSign != lastSign) {
+            val first = path.elements[0]
+            val tangent = Curves3.tangentAt(first, 0.0)
+            if (tangent != null) {
+                out.add(0, Pierce(0, 0.0, 0.0, Frames3.pointAt(first, 0.0), tangent))
+                seam = true
+            }
+        }
+        return out to seam
     }
 
     /**

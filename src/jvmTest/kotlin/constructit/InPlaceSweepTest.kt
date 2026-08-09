@@ -169,7 +169,7 @@ class InPlaceSweepTest {
     @Test
     fun theUsersFileRoundTripsByteEqualWithNoRecordedCrossing() {
         val once = DocumentFormat.save(DocumentFormat.load(PILLAR_CIT))
-        assertEquals(PILLAR_CIT, once, "the file is written back exactly as it came")
+        assertEquals(atThisVersion(PILLAR_CIT), once, "the file is written back exactly as it came")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and again")
         assertTrue(
             once.lineSequence().first { it.startsWith("tool sweep") }.let { !it.contains("signs=") },

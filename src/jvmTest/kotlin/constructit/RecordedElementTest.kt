@@ -184,7 +184,7 @@ class RecordedElementTest {
             doc.elements.map { it.kind },
             "the coil, the welded ortho run and the wall it carries",
         )
-        assertEquals(usersScript, DocumentFormat.save(doc), "and it is written back exactly as it was sent")
+        assertEquals(atThisVersion(usersScript), DocumentFormat.save(doc), "and it is written back exactly as it was sent")
 
         // the wall's thickness is `cnt`, a *dimensionless* parameter — drawing it must not throw either
         val ed = Editor()

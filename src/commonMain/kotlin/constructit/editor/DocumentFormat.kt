@@ -115,10 +115,21 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 2
+    const val VERSION = 3
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
+
+    /**
+     * The first version whose `tool sweep signs=` counts a **closed run's seam** among the crossings.
+     *
+     * Format 2 numbered the crossings of a run by a walk that could not see a change of side across the run's
+     * own start ([constructit.geom.Pierce3.crossesAtSeam]), so a drawing whose plane crosses there has one more
+     * crossing under this build than under the one that wrote the file, inserted at index 0. That renumbers a
+     * stored literal, which is a version bump plus a migration and never an edit to the reader — see
+     * *Versioning & migration* in DESIGN.md, and `Document.migratedPierce` for the migration itself.
+     */
+    const val SEAM_ORDERED_VERSION = 3
 
     const val HEADER = "constructit $VERSION"
 

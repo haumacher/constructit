@@ -77,7 +77,7 @@ class EmbeddingDirectionProbeTest {
         assertManifold(mesh, "the taller foundation")
         assertTrue(Geom3.volume(mesh) > 0.0, "…the right way out")
         assertClose(mesh.vertices.minOf { it.z }, 0.0, 1e-9, "sitting on the ground, where it was drawn")
-        assertEquals(TALLER_CIT, DocumentFormat.save(doc), "save -> load -> save is byte-equal")
+        assertEquals(atThisVersion(TALLER_CIT), DocumentFormat.save(doc), "save -> load -> save is byte-equal")
     }
 
     // ---- 2. the criterion reads the section as swept, not as drawn ----

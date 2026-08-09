@@ -163,7 +163,7 @@ class LiftedRunTest {
         val doc = DocumentFormat.load(ROUND_PILLAR_CIT)
         assertTrue(doc.loadNotes.isEmpty(), "nothing about this file is ambiguous: ${doc.loadNotes}")
         val once = DocumentFormat.save(doc)
-        assertEquals(ROUND_PILLAR_CIT, once, "the file is written back exactly as it came")
+        assertEquals(atThisVersion(ROUND_PILLAR_CIT), once, "the file is written back exactly as it came")
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and again")
     }
 

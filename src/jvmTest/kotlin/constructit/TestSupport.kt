@@ -1,5 +1,6 @@
 package constructit
 
+import constructit.editor.DocumentFormat
 import constructit.geom.Frames3
 import constructit.geom.Geom3
 import constructit.geom.Mesh3
@@ -107,6 +108,18 @@ fun assertSameConstruction(
     assertEquals(want.size, got.size, "the same numbers in the same places")
     for (i in want.indices) assertClose(got[i], want[i], tol, "number $i of the script")
 }
+
+/**
+ * An **older file** as this build writes it back: byte-identical but for the header line, which a save brings
+ * up to [DocumentFormat.VERSION] (OP-18, *Versioning & migration*).
+ *
+ * Every fixture written by an earlier build is kept verbatim — that is what makes it a load test at all, and an
+ * in-build round trip proves nothing across builds. So a re-save is asserted against *this*, not against a
+ * fixture edited to say the current version: what is being pinned is that the only thing a version bump changes
+ * about an old drawing is the line that says which version it is.
+ */
+fun atThisVersion(text: String): String =
+    text.replaceFirst(Regex("^constructit \\d+"), "constructit ${DocumentFormat.VERSION}")
 
 /**
  * SVG golden support. On first run (file missing) the golden is written and the check passes;

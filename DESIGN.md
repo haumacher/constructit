@@ -1468,7 +1468,7 @@ members are all gone leaves no step at all.
 
 #### Versioning & migration — a stored literal's meaning is frozen (as built, on a data-loss report)
 
-The header is `constructit <version>`; this build writes **2** and reads **1 and 2**. A file that claims a
+The header is `constructit <version>`; this build writes **3** and reads **1, 2 and 3**. A file that claims a
 higher version is refused as *written by a newer version*, which is a fact the user can act on, where the old
 whole-line comparison could only say "unsupported format".
 
@@ -1523,6 +1523,45 @@ it:
 | `tool cutbychain` / `tool splitbychain` (and the four swept rows) — **the two picks may now span sketch spaces** (OP-22's extension, session 63) | no argument changes at all: the rows gained `crossSpace`, so the *gesture* can collect a solid in one space and its chain in another. What that makes visible is the reading of a `chainbychain` step's own plane, which is and always was `planeOfSpace(chainEl.space)` — the fence stands normal to the plane **the chain is drawn in**, never to the active one | none, and **no version bump**. Nothing is carried and nothing is reinterpreted: the step names the *chain element*, and which space an element was drawn in is a fact of the drawing rather than of the step. Before this build a chain was only pickable in the active space (`addressableIn`), so *the chain's space* and *the active space* coincided on every file any build could have written — the two readings were one reading, and this is the one that goes on being true once they can differ. Nothing here is a scored choice, so there is no index that could renumber (contrast the sweep's `signs=` row above) |
 
 | `tool revolve` with **no `scalar=`** — the *complete revolution*, and `dofs=` on a partial one (OP-17, session 63) | a new **spelling** rather than a new argument: the angle slot used to be required, so no build could write a `tool revolve` step without a `scalar=`, and the slot owned nothing, so none ever wrote a `dofs=` for one. A step with no scalar now names the complete revolution — a construction with no angle node — and a partial one carries its offset freedom in `dofs=`, appended by the rule the `dofs=` row above states. The **offset never became an argument of its own**: `scalar=` is already an ordered list, so a two-scalar revolve writes `scalar="angle","offset"` exactly as any other two-scalar tool does | none, and **no version bump**. Every revolve any earlier build wrote recorded an angle, and that angle still means what it meant — including `360°`, which still closes the body at the *value* level for exactly that reason (the structural form is what a **new** drawing gets when nothing is typed, never a reinterpretation of an old file). An absent `dofs=` still means "every freedom stands at its default", which for the offset is the zero it always was; the one visible consequence is that a pre-package file **gains** `dofs=0deg` on its first re-save, which is asserted rather than hidden (`ChainCutReachTest.assertRoundTrips`) |
+
+| `tool sweep signs=` again — **a closed run's seam counts among the crossings** (OP-26, session 66) | **v2 → v3, the format's second bump.** `Pierce3.crossings` could not see a change of side across a closed run's own start, so a ring whose seam lies exactly in the section's plane reported one crossing where it has two. Correcting the walk inserts that crossing at index **0** (its arc length is nothing), so every index a v2 file recorded on such a drawing now names the crossing one place further along | **the recorded index is shifted on load by exactly the crossing that was inserted in front of it** — one where the run crosses at its seam right now (`Pierce3.crossesAtSeam`), nothing otherwise (`Document.migratedPierce`). The migration is *exact*, which is the whole reason it is one: the new set is the old set with at most one crossing put in front, so what a v2 reader would have shown for this file at this load is `all[k]` of the seam-blind walk and the very same crossing is `all[k + δ]` of this one. A **negative** index is the origin reading and is never shifted; an index that had already outrun its set stays out of it, refusing in the words it always used. Where the run or the plane has **no value** the shift cannot be measured, so the number is kept exactly as written and the load **names the element** (`loadNotes`) |
+
+**Why a bump, and what was rejected** — the two rows above both argued their way *out* of one, so the argument
+for this one has to be made rather than assumed. Three options were weighed:
+
+- **Append the seam crossing to the end of the set** so no old index moves. Rejected on the recorded rationale:
+  *"the order is arc length along the run, which is the only order that is a property of the drawing rather
+  than of the arithmetic"*. An appended crossing makes the set an order of *when the walk happened to find
+  things*, which is the arithmetic. It is also unstable in a way the true order is not: slide the plane a hair
+  off the seam and the very same crossing reappears at index 0 by the ordinary walk, so the cheap option buys
+  no-renumbering-today at the price of renumbering under a drag.
+- **Arbitrate by recorded position, the OP-20 precedent** — re-anchor a recorded index to the nearest crossing
+  to the position its body was last saved at. **Unavailable here, as a matter of fact rather than of taste**: a
+  `tool sweep` step records `els=`, `clicks=`, `signs=` and its `dofs=`, and *none of them restates the
+  crossing or the body's position*. The clicks pick the run and the area, and re-scoring nearness against the
+  section is the very thing OP-18 forbids. Adding a restated arc length to the step was rejected with it: it
+  would arbitrate nothing for files already written, and it would put a derived position into the format,
+  which is the drift the session-63 queue entry is about.
+- **Two numbering semantics forever** — pre-bump files keep the seam-blind walk, replicated by the reader.
+  Rejected because the crossing set is a **live value**, not a load-time literal: honouring it would mean
+  carrying "compute this the old way" on the node, through every recompute, and into the file on the next
+  save — a stored literal that says *be wrong*. The bump avoids exactly that, because the old reading is
+  reproducible **once**, at load, and never needed again.
+
+**The blast radius, stated and then not leaned on.** A seam crossing needs the section's plane through the
+run's start point *exactly* — the signed distance at that sample must be `0.0`, not merely small, since a seam
+sample a ULP off the plane carries a side and the ordinary walk already finds two crossings beside it. That is
+a coincidence users make on purpose and never by accident: the lift starts a conic at its plane's own **+u**,
+so a datum on the x axis through a circle hits it every time, while the user's own drawings do not (the
+border's seam is at an ortho corner, and a perpendicular-bisector plane through the bottom edge misses it). So
+the number of files in the world that this renumbers is probably zero — which is an argument for the migration
+being cheap, and no argument at all for reading a stored number differently from the build that wrote it.
+
+**What the bump does *not* fix, said plainly.** Arc length on a closed run is a cyclic order cut at the seam,
+so a crossing that slides *across* the seam still moves from one end of the ordered set to the other — index 0
+becomes index n−1 — under an ordinary drag. That is a property of ordering a cyclic set at all, it was true
+before this change and is true after it, and it is the recorded-choice bargain OP-1 already makes: the index is
+what the drawing says today, and what it names is reported rather than silently re-chosen.
 
 Known residual, recorded rather than papered over: the **Outline** tracer still resolves its handovers from
 that tool's own clicks on every replay (`jointBetween`), and a determined ortho meeting still picks its
@@ -8424,6 +8463,60 @@ Four existing tests that asserted the *old* boundary now assert the new one
 (`SweepToolTest`, `StationToolTest`, `ConnectToolTest` — each keeping the line refusal that is still real — and
 `IntersectionCurveTest`'s fitted circle, which is exact). No new golden, no golden changed, no version bump.
 
+### As built: a closed run's seam is a crossing, and what that costs the format (session 66)
+
+The defect session 61's probe queued, closed as the entry framed it: **the fix is a wrap comparison and about
+eight lines; the decision is the format**, and the decision was taken first.
+
+**Why the seam was invisible.** `Pierce3.crossings` walks the pieces in order, comparing each sample's signed
+distance to the last one that was *on a side* — zeros carry no side and are skipped, which is what keeps a run
+touching the plane and turning back from claiming to pierce it. The walk therefore compares every consecutive
+pair **except one**: the pair spanning the run's own start, where the last piece hands over to the first. On an
+open run that is right — a start is an end, and there is nothing on the other side of it. On a **closed** run
+it is a hole, and it is a hole exactly where a seam sample lands on the plane: a seam a ULP off the plane
+carries a definite side, the same side at both readings of that one point, so the ordinary walk already finds
+the two crossings beside it. The bug needs the sample to be `0.0` — which the lift makes routine, because a
+lifted conic starts at its plane's own **+u**, so a datum on the x axis through a circle is exactly that.
+
+**The wrap comparison, in the same rule read round the corner.** The walk now keeps the *first* sample that was
+on a side as well as the last, and after the loop, on a `Path3.closed` run whose two are both sides and
+disagree, emits one crossing at the run's own start — piece 0, `t = 0`, `s = 0`. Closedness is `Path3.closed`
+— *structure*, fixed when the node is built (OP-21's rule) — and never a second predicate inferred from
+endpoints meeting, so a chain whose ends happen to coincide is unchanged. Three properties fall out rather than being
+arranged: a run that **touches** the plane at its seam and turns back leaves the two signs equal and crosses
+nothing, exactly as a touch anywhere else does; a seam sample sitting on the plane is skipped by the walk at
+both ends and attributed **once**, by the wrap; and the crossing lands at `s = 0`, so an arc-length-ordered set
+puts it first with no tie to break — nothing else can have zero arc length, since the walk cannot emit at the
+first piece's start (it has no previous side to disagree with).
+
+**The format is the expensive half, and it is the format's second version bump.** A crossing at `s = 0` enters
+the ordered set at index **0**, so every `tool sweep signs=` recorded against such a drawing names the crossing
+one place further along — a stored literal changing meaning, which OP-18 answers with a bump and a migration
+rather than an edit to the reader. `DocumentFormat.VERSION` is **3**; the reader takes 1, 2 and 3; a v2 index
+is shifted on load by exactly the crossing this build sees and the writing build did not. **The migration is
+exact**, which is why it is a migration at all and not a guess: the new set is the old set with at most one
+crossing put in front of it, so the crossing a v2 reader would have shown for this file *at this load* is the
+one the shifted index names. Nothing is re-scored, and the two things that could go wrong are handled by the
+same arithmetic — a negative index is the origin reading and is not an index at all, and an index that had
+already outrun its set stays out of it and goes on refusing in the words it always used. The one case that
+cannot be measured is a run with no value, and there the number is kept verbatim and the load **names the
+element**. The three options and why the other two lost — append-at-the-end, arbitrate-by-recorded-position
+(unavailable: a sweep step restates *nothing* about the crossing), and two-numberings-forever (a live value
+cannot carry a load-time version without freezing "be wrong" onto the node) — are in the versioning catalogue
+under OP-18, with the blast radius stated and deliberately not leaned on.
+
+Nothing was cut. `SeamCrossingTest` (12): the queue entry's own reproduction, both crossings exact at the two
+ends of a diameter; the status line's *"crossing 2 of 2"*; a closed square cut through two opposite corners,
+where the answer is arithmetic; the **same four pieces** read as an open run, which must not wrap; a ring
+standing tangent to the plane at its seam, and a polyline resting on it at its seam, both crossing nothing; and
+six on the format — an old file goes on riding the crossing it rode (pinned by the body's own extent), reading
+its number verbatim is a *different drawing* (here, no body at all), the migrated file states the new number
+and is a fixed point from its first save, a v3 number is never shifted again, the origin reading is never
+shifted, and a run with no value keeps its number with the load saying so. **1968 → 1980 green.** Twenty
+existing assertions changed and every one of them is the header line: an old fixture is kept at the version it
+was written at — that is what makes it a load test — and re-saved through `atThisVersion`, which asserts that a
+version bump moves the line saying which version it is and no other.
+
 ### Implementation status (as built — step 4: the station, a plane stated by a distance along a run)
 
 Step 4 of the order above, whole and nothing else: **`station(path, distance)` is a sketch space**, and the
@@ -12257,6 +12350,42 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   changed**: nothing green was pinning a folded body this time. See *the sweep's refusals speak about the
   curve* and *a corner mitres away only as much run as there is* under OP-26.
 
+- **Turn 66 — a closed run has no beginning, and a number in a file means what the build that wrote it meant.**
+  The defect session 61's probe queued and refused to smuggle into the package that found it: `Pierce3` walked
+  the pieces comparing consecutive signed distances, so on a **closed** run the one pair it never compared was
+  the one spanning the run's own start — and a ring whose seam sits exactly on the cutting plane reported one
+  crossing where it plainly has two. The geometry is eight lines and reads as the same rule round the corner:
+  keep the *first* sample that was on a side as well as the last, and where the two disagree on a
+  `Path3.closed` run the run crossed at its seam, at `s = 0`. The three things that could have been fudged fell
+  out instead — a **touch** at the seam leaves the two signs equal and crosses nothing, a seam sample lying on
+  the plane is skipped at both ends and counted **once** by the wrap, and closedness is `Path3.closed`
+  (structure, OP-21) rather than a second predicate about endpoints meeting. **The work was the format, and it
+  was decided before a line was written.** A crossing at no arc length enters an arc-length-ordered set at
+  index 0, so every recorded `tool sweep signs=` on such a drawing would silently ride its neighbour — OP-18's
+  frozen literal, exactly. **Appending** the seam crossing to the end was rejected on the recorded rationale
+  (*the order is arc length … the only order that is a property of the drawing*) and on a second count the
+  draft had not seen: slide the plane a hair off the seam and the same crossing reappears at index 0 anyway, so
+  the cheap option renumbers under a drag instead of under an upgrade. **Arbitrating by recorded position** —
+  the OP-20 precedent the entry named — turned out to be unavailable **as a matter of fact**: a sweep step
+  records `els=`, `clicks=`, `signs=` and `dofs=`, and none of them restates the crossing or the body, so there
+  is nothing to anchor to and re-scoring nearness is the very defect being avoided. **Two numberings forever**
+  lost to the sharpest argument of the three: the crossing set is a *live value*, not a load-time literal, so
+  honouring an old file's numbering would mean carrying "compute this the old way" on the node and writing it
+  back into the file — a stored literal that says *be wrong*. So: **format 3**, the format's second bump, with
+  a migration that is **exact** rather than a guess, because the new set is provably the old set with at most
+  one crossing put in front of it. An old file goes on riding the crossing it rode; reading its number verbatim
+  is a different drawing, and on the fixture it is no body at all, which is what makes the bump worth its cost.
+  The blast radius is stated and then not leaned on — a seam crossing needs the plane through the run's start
+  point *exactly*, which the lift makes routine and a real floor plan never does — because rare is a reason the
+  migration is cheap and no reason at all to read a number differently from the build that wrote it. What the
+  bump does **not** fix is stated too: arc length on a closed run is a cyclic order cut at the seam, so a
+  crossing sliding across the seam still moves end to end of the set under an ordinary drag, which was true
+  before and is the recorded-choice bargain OP-1 already makes. **1968 → 1980 green**, nothing cut, no golden;
+  twenty existing assertions changed and every one is the header line — old fixtures stay at the version they
+  were written at, which is what makes them load tests, and re-save through one helper that asserts a bump
+  moves the line saying which version it is and nothing else. See *a closed run's seam is a crossing* under
+  OP-26 and the second `tool sweep signs=` row under OP-18.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -14567,8 +14696,21 @@ curve in space"* while the alternative it named could not follow an arc. Closed 
 condition attached. It left nothing parked, and it took one thing off the list of things this kernel cannot do
 that it plainly should: a footprint's own border is now a route for a sweep, a tube, a station and a swept cut.
 
-**Queued in session 61 (found by a probe, not reported): a closed run whose seam lies *in* the cutting plane
-crosses it once too few.** `Pierce3.crossings` follows the signed distance along the sampled parameter and
+~~**Queued in session 61 (found by a probe, not reported): a closed run whose seam lies *in* the cutting plane
+crosses it once too few.**~~ — **closed in session 66**, and the entry's own framing held: the patch is a wrap
+comparison and about eight lines, and the work was the format. The walk now keeps the first sample that was on
+a side as well as the last and compares them across the seam on a `Path3.closed` run, so a touch at the seam
+still crosses nothing and a seam sample on the plane is attributed once, at `s = 0`. The renumbering the entry
+refused to smuggle was paid for properly: **format 3**, with a load-time migration that shifts a v2 index by
+exactly the crossing this build sees and the writing build did not — *exact*, because the new set is the old
+set with at most one crossing put in front of it, so an old file goes on riding the crossing it rode. Append
+semantics and arbitration-by-recorded-position were both weighed and rejected in writing (a sweep step
+restates nothing that could arbitrate), and the blast radius is stated without being leaned on. **1968 → 1980
+green**, nothing cut; the twenty existing assertions that changed are all the header line. See *a closed run's
+seam is a crossing, and what that costs the format* under OP-26, and the `tool sweep signs=` row under OP-18.
+`LiftedRunProbeTest.theInPlaceSweepCanBeSeededInTheMiddleOfAnArc` keeps its datum on the y axis and its comment
+now records that the x-axis case is a test of its own. The original entry, kept:
+`Pierce3.crossings` follows the signed distance along the sampled parameter and
 emits a crossing where its **sign changes**; a sample exactly on the plane carries no side and is skipped,
 which is right for a run that touches and turns back. For a **closed** run the seam is not an end — the run
 goes on through it — so a loop whose start point sits on the plane and passes through it *does* change side

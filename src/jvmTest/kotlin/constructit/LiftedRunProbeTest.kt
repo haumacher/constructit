@@ -118,10 +118,10 @@ class LiftedRunProbeTest {
         assertTrue(pathOf(run).elements.single() is Curve3Element.Arc3, "the run is one arc")
 
         // a vertical plane on the **y** axis: the ring crosses it at (0, ±50, 0), both strictly inside the
-        // one arc. Deliberately not the x axis, where the lifted circle's own **seam** would sit exactly on
-        // the plane — a closed run whose seam lies in the cutting plane is a crossing `Pierce3` does not see,
-        // which this probe found and which is queued rather than patched here (it would renumber a *recorded*
-        // crossing index, which is a stored literal's meaning: see the queue entry).
+        // one arc — which is what this probe is about, a frame seeded in the *middle* of a piece. Deliberately
+        // not the x axis, where the lifted circle's own **seam** sits exactly on the plane: that is the case
+        // this probe found `Pierce3` blind to, and it is now a crossing at the seam with a test of its own
+        // (`SeamCrossingTest`, and the format 3 bump its renumbering owed — OP-18).
         val hinge = doc.line(doc.freePoint(0.0.mm, (-80.0).mm), doc.freePoint(0.0.mm, 80.0.mm))
         assertNotNull(doc.createDatumSpace(hinge, null, "cut"), "the datum stands on the line")
         doc.activeSpace = assertNotNull(doc.spaceNamed("cut"))
