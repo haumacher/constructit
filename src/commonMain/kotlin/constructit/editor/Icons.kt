@@ -227,6 +227,18 @@ object Icons {
     val REVOLVE =
         dashed("M6 2.5 L6 21.5") + """<ellipse cx="6" cy="17" rx="12" ry="3.4" opacity=".45"/>""" + rect(10.0, 8.0, 8.0, 9.0)
 
+    /** The ball itself: an outline and the equator that turns a flat disc into a sphere at 24 pixels. */
+    private val BALL = ring(12.0, 12.0, 8.0) + """<ellipse cx="12" cy="12" rx="8" ry="3" opacity=".4"/>"""
+
+    /**
+     * The two ball rows are [CIRCLE_R] and [CIRCLE] with that equator drawn through them, because what
+     * distinguishes them from each other is exactly what distinguishes the two circle rows: a typed radius
+     * against a second click.
+     */
+    val SPHERE_R = BALL + path("M12 12 L20 12") + dot(12.0, 12.0, 2.0) + letter(13.5, 9.8, "r")
+
+    val SPHERE = BALL + ghost("M12 12 L20 12") + dot(12.0, 12.0, 2.0) + dot(20.0, 12.0, 2.0)
+
     /** Extrude to a point: a base, and every corner of it rising to one dot — the pyramid, as a gesture. */
     val EXTRUDE_TO_POINT =
         path("M4 18 L12 21.5 L20 18 L12 14.5 Z", """opacity=".5"""") + path("M4 18 L12 3") + path("M20 18 L12 3") +

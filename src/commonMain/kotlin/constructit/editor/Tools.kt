@@ -851,6 +851,18 @@ object Tools {
     const val REVOLVE = "revolve"
 
     /**
+     * **The ball** (DESIGN.md's session-52 sphere queue, item 3): the half-disc profile and the complete
+     * revolve, built as a compound gesture over primitives that already exist (`Document.ball`).
+     *
+     * Two ids for exactly the reason [CIRCLE] and [CIRCLE_R] are two ids for one shape — which inputs a
+     * gesture stated is not a value that may drift, and a tool id is what the file records (OP-18) — and
+     * that pairing is the point rather than a coincidence: *a ball is what a circle says one dimension up*,
+     * so it is spelled the two ways the circle is spelled, in the same slot order and the same words.
+     */
+    const val SPHERE_R = "sphereR"
+    const val SPHERE = "sphere"
+
+    /**
      * The **loft**: a run of sections on their own sketch planes (OP-17's third feature), and its everyday
      * special case — an area run to a **point**, which is a pyramid or a cone.
      */
@@ -1188,6 +1200,14 @@ object Tools {
             // beside it says where about the axis that partial starts — `typedOnly`, because two angle slots
             // cannot be told apart by dimension and a stray angle must never become an offset nobody stated.
             ToolDef(REVOLVE, "Revolve", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.LINE), scalars = listOf(angChoice("angle", 360.0), ang("offset", 0.0, typedOnly = true)), help = "Click an outline or footprint, then a line to spin it about (the profile must not cross the axis): with no angle typed it goes the whole way round, a closed body with no ends. Type an angle first (or pick a parameter in the panel) for a partial turn — a positive one turns toward this plane's front, the way the tick at its origin points, and a negative one sweeps the other way — and a second number for the offset it starts at, so the body can straddle the drawing or stand clear of it.", slotNames = listOf("profile", "axis"), icon = Icons.REVOLVE) { d, p, s -> d.revolveSolid(p.elements[0], p.elements[1], s.getOrNull(0), s.getOrNull(1)) },
+            // ----- the ball (the sphere queue, item 3). Two rows beside the revolve they *are*: each builds a
+            // pole-to-pole arc, the diameter that closes it and the structural full turn about that diameter, in
+            // the active sketch plane — so on a face or a datum it just works, the revolve being plane-anchored.
+            // No kernel change, no `Sphere3`, no new refusal: the radius is a parameter (or, in the second
+            // spelling, the derived centre-to-point distance), the arc and the axis stay live and draggable, and
+            // the body is watertight *structurally* because a full turn is a kind (`Turn3.Full`).
+            ToolDef(SPHERE_R, "Sphere (centre, radius)", ToolCategory.SOLIDS, listOf(SlotKind.POINT), scalars = listOf(len("radius")), help = "Type a radius (or pick a parameter in the panel), then click the centre: a ball, built the way you would build one by hand — a pole-to-pole arc, the diameter that closes it, and that half-disc turned the whole way round its own diameter. It is a revolve, so it has no ends and no caps, and its surface is chorded: a working plane through the centre sections it as a chorded circle and its volume reads a shade under the exact ball's, until surfaces of revolution gain analytic faces. The centre and the radius stay live — drag the centre and the ball follows, retype the radius and it resizes — and the arc and the axis are ordinary curves you can dimension, hide or build on. It lands in the plane you are drawing on, so its equator lies there.", slotNames = listOf("centre"), icon = Icons.SPHERE_R) { d, p, s -> d.sphereCR(p.points[0], s[0]) },
+            ToolDef(SPHERE, "Sphere (centre, surface point)", ToolCategory.SOLIDS, listOf(SlotKind.POINT, SlotKind.POINT), preview = Previews::circleCentrePoint, help = "Click the centre, then a point the surface passes through — the ball's spelling of Circle (centre, point). The radius is the distance between the two clicks rather than a number, so dragging the surface point resizes the ball; click an existing point and that point is shared, so the ball follows whatever moves it. It is the same body the radius spelling builds: a half-disc turned the whole way round its own diameter, a revolve with no ends, chorded until surfaces of revolution gain analytic faces — so a plane through the centre sections it as a chorded circle.", slotNames = listOf("centre", "surface point"), icon = Icons.SPHERE) { d, p, _ -> d.sphereCP(p.points[0], p.points[1]) },
             // ----- the loft (OP-17): the one solid whose cross-section changes along the run. Two tools, one
             // feature: *Extrude to point* is the pyramid/cone gesture (an area, a height, an apex position, and
             // the apex is a real point element so it stays draggable), and *Loft* is the general one — a

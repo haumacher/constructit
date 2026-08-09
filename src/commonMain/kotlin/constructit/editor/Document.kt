@@ -10549,18 +10549,31 @@ class Document {
     ): Element? {
         val region = regionOf(el) ?: return null
         if (!axis.isLinear) return null
-        val line = carrierLine(axis)
-        val sketch = cx.sketchOn(activePlane(), region)
-        val origin = cx.lineOrigin(line)
-        val dir = cx.lineDirection(line)
         val ref =
             if (angle == null) {
-                cx.revolveFull(sketch, origin, dir)
+                fullTurnAbout(region, axis)
             } else {
-                cx.revolve(sketch, origin, dir, angle, offset)
+                val line = carrierLine(axis)
+                cx.revolve(cx.sketchOn(activePlane(), region), cx.lineOrigin(line), cx.lineDirection(line), angle, offset)
             }
         return add(ref, ElementKind.SOLID, Styles.SOLID)
             .also { madeSolid(it, "${nameOf(el)} turned about ${nameOf(axis)}${turnWord(angle, offset)}") }
+    }
+
+    /**
+     * [region] taken **the whole way round** the line [axis] carries — the structural full turn, as a node.
+     *
+     * Factored out of [revolveSolid] because a second gesture builds exactly this body and must be the same
+     * body: the ball ([ball]) is a half-disc given a complete revolution, and a sphere that went round through
+     * some *other* route would be a second meaning for "closed" (`Turn3.Full` — session 63). One node kind,
+     * one watertightness argument, two ways of asking for it.
+     */
+    private fun fullTurnAbout(
+        region: RegionRef,
+        axis: Element,
+    ): SolidRef {
+        val line = carrierLine(axis)
+        return cx.revolveFull(cx.sketchOn(activePlane(), region), cx.lineOrigin(line), cx.lineDirection(line))
     }
 
     /**
@@ -10581,6 +10594,90 @@ class Document {
         val to = from + a.deg
         return " from ${Format.num(minOf(from, to))}° to ${Format.num(maxOf(from, to))}° about it"
     }
+
+    // ---- the ball: what a circle says one dimension up (session 52's queue, item 3) ----
+
+    /**
+     * The **sphere**, built out of primitives that already existed: the half-disc of [meridian] — a pole-to-pole
+     * arc and the diameter that closes it — given a **complete revolution** about that diameter ([fullTurnAbout]).
+     *
+     * The kernel gains nothing. There is no `Sphere3` feature, no new node kind and no new refusal: what comes
+     * out is an ordinary `Revolution` retaining its own exact profile sketch, and every property a ball needs is
+     * a property the revolve already has. In particular it is watertight **structurally** rather than by value —
+     * `Turn3.Full` is a kind, so this graph holds no angle node for a later edit or a drifting shared parameter
+     * to crack the shell open with (session 63; [constructit.geom.Turn3]).
+     *
+     * **Every step is by construction, and each one removes the freedom that could break it** (OP-5, OP-14's
+     * rule that a structural intent gets its own spelling):
+     *
+     * - the poles are a point *on* [meridian] and that point's **point reflection** through the centre, so the
+     *   two are exactly antipodal — [Construction.pointReflect] carries no angle, so nothing can drift it to
+     *   179° and leave the "diameter" a chord;
+     * - the arc is `arcCenterStartEnd(centre, south, north)`, whose radius *is* the distance from the centre, so
+     *   the profile is a true half-disc rather than two ends that happen to line up;
+     * - the axis is the segment between the poles, so it is the diameter itself — the revolve spins the profile
+     *   about its own closing edge and the body closes on the axis at both poles.
+     *
+     * **[meridian] is where the two spellings differ, and it is also where they refuse.** *(centre, radius)*
+     * hands in `circleCR`, *(centre, surface point)* hands in `circleCP` — the very nodes the two circle tools
+     * build — so a ball declines a non-positive radius in the same words its circle does, and a surface point
+     * dragged onto the centre says "zero-radius circle" exactly as the compass does. That is the pairing being
+     * honest all the way down: the sphere is what the circle says one dimension up, refusals included. The
+     * circle itself is a **coercion node with no element**, like the region [regionOf] wraps a loop in.
+     *
+     * The pole phase is a structural constant (90°, this sketch plane's own +v), not a freedom: a ball has no
+     * orientation to state, so an angle node here would be a degree of freedom that changes nothing — the same
+     * argument [regularPolygon] makes about `360°/count`.
+     *
+     * **Chorded, and the help says so.** A revolution has no named faces yet (`Section3` answers `REVOLVE_ONLY`),
+     * so this body's section is cut from its mesh: a working plane through the centre gives a chorded circle, not
+     * an exact one, and the volume comes out a fraction short of `4/3·π·r³` because the shell is inscribed twice
+     * over — a chorded meridian carried on chorded parallels. That is a *Revolution* gap, shared by every turned
+     * part in the tool, and closing it is item 4 of the sphere queue in DESIGN.md, not this gesture's business.
+     */
+    private fun ball(
+        center: PointRef,
+        meridian: CircleRef,
+        radiusWord: String,
+    ): Element? {
+        val north = addDerived(cx.pointOnCircle(meridian, cx.const(90.0.deg)))
+        val south = addDerived(cx.pointReflect(north, center))
+        val arc = add(cx.arcCenterStartEnd(center, south, north), ElementKind.ARC, Styles.CONSTRUCT)
+        val diameter = add(cx.segment(north, south), ElementKind.SEGMENT, Styles.CONSTRUCT)
+        val half = cx.region(cx.loop(arc.ref, diameter.ref))
+        val solid = add(fullTurnAbout(half, diameter), ElementKind.SOLID, Styles.SOLID)
+        val about = elementFor(center)?.let { " round ${nameOf(it)}" } ?: ""
+        madeSolid(
+            solid,
+            "a ball$radiusWord$about — the half-disc of ${nameOf(arc)} and ${nameOf(diameter)} turned a complete " +
+                "revolution about that diameter, so it has no ends and, being a revolve, a chorded surface",
+        )
+        return solid
+    }
+
+    /**
+     * *Sphere (centre, radius)*: type a radius, click the centre — the twin of `Circle (centre, radius)`, and
+     * it hands [ball] the very circle that tool builds, so the radius is an ordinary parameter that resizes the
+     * body when it is retyped and refuses a non-positive value in the circle's own words.
+     */
+    fun sphereCR(
+        center: PointRef,
+        radius: ScalarRef,
+    ): Element? = ball(center, cx.circleCR(center, radius), " of radius ${lengthWord(radius)}")
+
+    /**
+     * *Sphere (centre, surface point)*: click the centre, then a point the surface passes through — the twin of
+     * `Circle (centre, point)`.
+     *
+     * The radius is a **derived distance** and never a free parameter: [surface] is an ordinary point pick, so a
+     * click on an existing point shares its node (OP-5) and dragging it resizes the ball, exactly as it resizes
+     * the circle. The pole phase stays this plane's own +v rather than following [surface], so dragging that
+     * point is pure resizing — a ball has no orientation for it to state.
+     */
+    fun sphereCP(
+        center: PointRef,
+        surface: PointRef,
+    ): Element? = ball(center, cx.circleCP(center, surface), "")
 
     // ---- booleans between solids (OP-22) ----
 

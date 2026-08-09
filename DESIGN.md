@@ -4865,6 +4865,75 @@ lands its end section, to the micrometre, in the vertical plane of a base line r
 angle, and `offset −15°, sweep 30°` straddles `plane1` symmetrically — proved by reflecting the mesh in that
 plane and finding every reflected vertex back in the body.
 
+#### The ball — a circle, one dimension up (as built, session 68; the sphere queue's item 3)
+
+The gesture the sphere entry called *the small one*, and it stayed small: **two rows in the solids palette and
+one private builder**, with nothing added to the kernel. *Sphere (centre, radius)* takes a typed radius and a
+click; *Sphere (centre, surface point)* takes two clicks. Both build the same body by the construction anybody
+would draw by hand — a pole-to-pole arc, the diameter that closes it, and that half-disc given a **complete
+revolution** about the diameter (`Document.ball`, `Document.sphereCR`, `Document.sphereCP`). There is no
+`Sphere3` feature and no new refusal; what comes out is an ordinary `Feature3.Revolution` retaining its own
+exact profile sketch, so every property a ball needs is a property the revolve already had.
+
+- **Watertight by structure, because the turn is a kind.** The macro calls `revolveFull` and states no angle at
+  all, exactly as the queue entry directed after session 63 supplied `Turn3.Full` — so the ball's graph holds
+  **no angle node**, and neither a later edit nor a shared parameter drifting off 360° can crack it open. Read
+  from the step's side: the tool owns no angle freedom, so there is nothing in the panel to type either.
+- **Each step removes the freedom that could break the next one.** The poles are a point *on* the meridian
+  circle and that point's **point reflection** through the centre (`Construction.pointReflect`, session 64's
+  own spelling) — which carries no angle, so nothing can drift the "diameter" into a chord. The arc is
+  `arcCenterStartEnd(centre, south, north)`, whose radius *is* the distance from the centre, so the profile is
+  a true half-disc rather than two ends that happen to line up. The axis is the segment between the poles, so
+  the revolve spins the profile about its own closing edge and the shell closes on the axis at both poles. The
+  pole phase is a structural constant (90°, the sketch plane's own +v), not a freedom: a ball has no
+  orientation to state, and an angle node here would be a degree of freedom that changes nothing — the same
+  argument `regularPolygon` makes about `360°/count`.
+- **The two spellings differ in exactly one node, and that is also where they refuse.** *(centre, radius)*
+  hands `ball` a `circleCR`, *(centre, surface point)* hands it a `circleCP` — the very nodes the two circle
+  tools build — so a ball declines a non-positive radius in the words its circle uses (*"non-positive radius"*)
+  and a surface point dragged onto the centre says *"zero-radius circle"*, both healing the moment the number
+  does (OP-3). The pairing is honest all the way down, refusals included, which is what *a ball is what a circle
+  says one dimension up* has to mean if it means anything. The circle itself is a **coercion node with no
+  element**, like the region `regionOf` wraps a loop in, so the step still accounts for exactly the elements it
+  creates. The second spelling's radius is therefore a **derived distance** and never a free parameter, and a
+  click on an existing point shares its node (OP-5) — drag that point and the ball resizes.
+- **How it records: one `tool` step, several elements — the rounded rectangle's precedent, and not a macro
+  scope.** `roundedRectangle` is the closest existing compound tool and it does exactly this: one `ToolDef`
+  whose build creates several ordinary elements, wrapped in the one `tool` step `Document.runTool` records, so
+  replay re-runs the same build and the loader's element-count check vouches for it. A macro scope (`M/nk` path
+  ids, OP-6) was considered and rejected: a scope buys *reuse under a name* — a shape the user instantiates
+  several times and edits as one — and the ball has nothing to instantiate, since its whole content is five
+  elements that must stay individually clickable. One checkpoint covers the gesture, so one undo takes the
+  whole ball: body, profile, poles, and the centre the click placed.
+- **Visible construction, in the construction style.** The arc and the diameter are ordinary `Styles.CONSTRUCT`
+  elements — the queue entry's *"the arc and the axis stay live"* — so the radius can be re-grabbed,
+  dimensioned, hidden or built on; and because they are ancestors of a result, `scaffoldingElements` finds them
+  and the dim toggle quiets them (OP-14). A ball whose scaffolding shouted would be wrong; so would one whose
+  radius could not be reached. The **poles** are ordinary derived points for the same reason. No outline
+  element is published: the loop is a node, so the picture is drawn once rather than three times.
+- **The plane it lands on is the plane you are drawing on**, because the revolve is plane-anchored — so on a
+  face or a datum it simply works, and the ball's equator lies in that space.
+- **Chorded, and both helps say so.** A revolution still has no named faces (`Section3` answers
+  `REVOLVE_ONLY`), so the ball's section is cut from its mesh: a working plane through the centre gives a
+  **chorded** great circle, and the volume comes out a fraction short of `4/3·π·r³` because the shell is
+  inscribed twice over — a chorded meridian carried on chorded parallels. Measured, and it is the queue
+  entry's own number: at r = 20 and the default tolerance, 4970 triangles enclosing **33402.9 mm³ against
+  33510.3 analytic — 0.32 % short**. `SphereTest` asserts a one-sided band under the exact volume rather than a
+  count, because *being over it* would mean the shell is not inscribed at all. Closing that gap is **item 4 of
+  the sphere queue** (analytic faces for surfaces of revolution) and it is a *Revolution* gap shared by every
+  turned part in the tool, not a sphere gap — and **item 5** (the sphere as a distance *locus*: sphere ∩ sphere,
+  trilateration, sphere ∩ curve) is untouched by this package. Both remain queued.
+- **Free, off the revolve: the picture coarsens on both axes.** Session 67's rule gives a revolution two mesh
+  levels because nothing outside its mesh reads either count, so the ball's 3D drag is cheap without one line
+  about spheres anywhere.
+
+`SphereTest` (16 tests) is the record: both gestures watertight and inscribed; `Turn3.Full` by kind; the centre
+dragged, the radius retyped, the surface point dragged and shared; union and subtraction with a prism, by
+volume; a datum through the centre sectioning it as an approximated great circle 40 mm across; a camera ray
+hitting the near surface exactly a radius in front of the centre; an STL whose size is the facet count's own
+formula; one undo taking all six elements; byte-equal round trips replaying to the same volume; and the palette
+pairing asserted against the circle rows themselves.
+
 #### Datum planes — any line, any angle (as built, on GitHub #6)
 
 The general form of a sketch space, and the request that named it: *"in general it should be possible to define
@@ -12538,6 +12607,29 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   plus the browser flow that vouches for the idle callback actually landing), no golden moved, nothing cut
   beyond the one-level bodies named above. See *two levels of picture, and one law about which is which* under
   *Evaluation*.
+- **Turn 68 — a ball is what a circle says one dimension up.** The user's question opened the whole entry:
+  *"spheres — a missed concept so far, right?"* — and the honest answer had been *yes as a concept, no as a
+  capability*, since a ball already built out of an arc, a diameter and a full revolve while the word appeared
+  nowhere in the engine. This session builds the **gesture** half of that (item 3 of the queue it opened), and
+  its result is that the concept needed no kernel at all: *Sphere (centre, radius)* and *Sphere (centre,
+  surface point)* are two rows and one private builder, and what they make is an ordinary `Feature3.Revolution`.
+  The design's whole content is that **each step removes the freedom that could break the next**: the two poles
+  are a point on a meridian circle and that point's **point reflection**, so the diameter cannot drift into a
+  chord; the arc takes its radius *from* the centre, so the profile is a true half-disc; the axis is the
+  diameter itself; and `revolveFull` states no angle, so the shell is watertight **structurally** — session
+  63's `Turn3.Full` doing exactly the job the queue entry predicted it would. The pairing with the circle is
+  carried all the way down to the **refusals**: the two spellings differ in exactly one node — `circleCR`
+  against `circleCP` — so a ball declines a non-positive radius, or a surface point dragged onto its centre,
+  in the very words the circle uses, and heals the same way. Recorded as **one `tool` step creating several
+  elements**, following the rounded rectangle rather than opening a macro scope (there is nothing here to
+  instantiate under a name), so one undo takes body, profile, poles and centre together. The scaffolding is
+  visible and in the construction style — *the arc and the axis stay live* — and it is scaffolding to the
+  graph, so the dim toggle already knows about it. Measured and honest, with the queue entry's own numbers:
+  4970 triangles, **33402.9 mm³ against 33510.3 analytic at r = 20, 0.32 % short**, because the shell is
+  inscribed twice over; the help of both rows says the body is a revolve and that its section is chorded until
+  item 4. **2001 → 2017 green**, no golden moved, nothing cut. **Items 4 and 5 of the sphere queue remain
+  open** — analytic faces for surfaces of revolution, and the sphere as a distance *locus* — and neither was
+  started. See *The ball — a circle, one dimension up* under *Going to 3D*.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -14778,7 +14870,16 @@ because it is inscribed twice over (a chorded meridian carried on chorded parall
 new `Feature3` kind**: `Revolution` already retains its exact profile sketch, arcs included. What is missing
 splits in three, and only the first is small.
 
-3. **The gesture (small).** *Sphere (centre, radius)* and *Sphere (centre, surface point)* — two rows that
+3. ~~**The gesture (small).**~~ — **built in session 68**; see *The ball — a circle, one dimension up* under
+   *Going to 3D*. Two rows, one private builder, nothing in the kernel: the poles are a point on the meridian
+   circle and its **point reflection**, the profile is the arc plus the diameter, and `revolveFull` states no
+   angle at all, so the ball is watertight structurally. The two spellings differ in exactly one node —
+   `circleCR` against `circleCP` — which is also where they refuse, in the circle tools' own words. Recorded as
+   **one `tool` step creating several elements** (the rounded rectangle's precedent; a macro scope was
+   considered and rejected — there is nothing here to instantiate under a name), so one undo takes the whole
+   ball. The measured volume is this entry's own: 33402.9 mm³ against 33510.3 for r = 20. **Items 4 and 5 below
+   remain open** — the chorded section and the missing distance locus are untouched by it. The original entry,
+   kept: *Sphere (centre, radius)* and *Sphere (centre, surface point)* — two rows that
    build the half-disc profile and the full revolve **by construction**, a macro over primitives that already
    exist, so the DAG is ordinary: the radius is a parameter, the arc and the axis stay live, and dragging the
    centre moves the ball. Nothing new in the kernel. *(Session 63 supplies the half this item leaned on: the
