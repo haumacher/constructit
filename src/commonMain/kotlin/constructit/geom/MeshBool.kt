@@ -1,5 +1,8 @@
 package constructit.geom
 
+import kotlin.math.abs
+import kotlin.math.floor
+
 /**
  * **The general boolean engine seam** (OP-9) — one expect/actual declaration, so which engine computes a
  * boolean is *a deployment toggle, not a rewrite*.
@@ -60,24 +63,92 @@ fun meshBoolUnavailable(status: String): String =
  * "provably stable" — the same property the 2D kernel gets from [RegionBool.canonical].
  *
  * Three passes, each order-independent so the output does not depend on the input's order:
- * 1. **Weld** vertices with *identical* coordinates — the only duplicates a mesh engine produces are
- *    bit-identical copies of one position (a seam between two property runs), and welding on a tolerance
- *    would instead risk merging two genuinely distinct points. `-0.0` is normalised to `0.0` first, since
- *    the two are equal as numbers but not as keys.
+ * 1. **Weld** vertices that are the same point **at the engine's own resolution** ([weldTol]) — see below;
+ *    `-0.0` is normalised to `0.0` first, since the two are equal as numbers but not as keys.
  * 2. **Sort** the surviving positions lexicographically and renumber.
  * 3. **Rotate** every triangle so its smallest index comes first — winding-preserving, which is the whole
  *    reason it is a rotation and not a sort — drop the degenerate ones, then sort the triangles.
+ *
+ * **Why the weld is a tolerance and not bit-identity** (found by the user's plate-and-handle drawing,
+ * session 63). It used to be bit-identity, on the argument that *"the only duplicates a mesh engine produces
+ * are bit-identical copies of one position, and welding on a tolerance would risk merging two genuinely
+ * distinct points"*. The first half of that is false where a cut passes exactly through an **edge** of the
+ * body — the user's chain runs through a point their handle stands on, which is a perfectly ordinary thing
+ * to draw — and there the engine hands back one point as two, a fraction of a float32 ULP apart. The
+ * triangles between them are collinear and have **zero area**: not a crack (every edge still has its two
+ * faces, so [fault] passes it), but a sliver that no exporter should ever be handed, and the thing this
+ * project asserts of every solid it builds.
+ *
+ * The second half is answered by *which* tolerance. This is not a modelling tolerance: it is the general
+ * engine's own **representation** resolution, whose mesh positions are float32 (~1.2e-7 *relative*, OP-9,
+ * the number [Chains.margin] already argues against). Two positions closer than a few ULPs of that are not
+ * two points that this engine could tell apart — they are one point it failed to spell once. And the exact
+ * path has always welded on a lattice ([Geom3.MeshBuilder], `Geom3.WELD_TOL`), so this makes *"one vertex
+ * per position"* mean the same thing on both paths, which is what that sentence claimed all along.
  */
 object MeshCanon {
+    /**
+     * One float32 ULP, the resolution of the general engine's vertex positions (OP-9) — the unit the weld
+     * tolerance is counted in.
+     */
+    const val F32_ULP = 1.1920929e-7
+
+    /**
+     * How many ULPs apart two positions may be and still be one point — see the object note.
+     *
+     * **One**, deliberately, and the margin is measured rather than assumed: the splits this exists to close
+     * are a *fraction* of a ULP at the mesh's own scale (the case that found it was 2.4e-7 mm on a 84 mm
+     * part, i.e. 0.02 ULP), so one ULP is already two orders of headroom. Every ULP above that is a merge
+     * radius spent on nothing, and it is not free: two vertices that are *genuinely* distinct — the two sides
+     * of a knife edge, a near-tangent contact — merged here become a non-manifold vertex, which [fault]
+     * catches and turns into a refusal. A refusal is honest but it is still a boolean the user cannot have,
+     * so this number is kept at the smallest value that does the job.
+     */
+    const val WELD_ULPS = 1.0
+
+    /**
+     * How far apart two of [positions] may be and still be the same point: [WELD_ULPS] of float32 at the
+     * mesh's own scale, floored at the exact path's absolute lattice (`Geom3.WELD_TOL`).
+     *
+     * **The scale is the mesh's, not each coordinate's**, and both terms are needed: a part far from the
+     * origin has its resolution set by the size of its *coordinates*, while a part at the origin has it set
+     * by its own *extent* (the engine works in a normalized box). Taking the larger of the two answers both
+     * without a case. At drawing sizes this is tens of nanometres — six orders below any feature and five
+     * above the noise it exists to absorb.
+     */
+    fun weldTol(positions: List<Vec3>): Double {
+        // Only ever asked of the general engine's own output ([canonical] has no other caller): the number
+        // below is that engine's representation resolution, not a modelling tolerance, and it would be the
+        // wrong number to apply to a mesh this project built in double precision.
+        var scale = 0.0
+        for (v in positions) {
+            scale = maxOf(scale, abs(v.x), abs(v.y), abs(v.z))
+        }
+        return maxOf(Geom3.WELD_TOL, WELD_ULPS * F32_ULP * scale)
+    }
+
     fun canonical(mesh: Mesh3): Mesh3 {
         val normalized = mesh.vertices.map { Vec3(zero(it.x), zero(it.y), zero(it.z)) }
-        val order =
-            normalized
-                .distinct()
-                .sortedWith(compareBy({ it.x }, { it.y }, { it.z }))
+        val distinct = normalized.distinct().sortedWith(compareBy({ it.x }, { it.y }, { it.z }))
+        // The lattice the exact path already welds on, walked in the canonical order above so that which
+        // position survives a merge is a function of the *set* of positions and never of the input's order.
+        val tol = weldTol(distinct)
+        val buckets = HashMap<Long, MutableList<Vec3>>()
+        val order = ArrayList<Vec3>(distinct.size)
+        val repOf = HashMap<Vec3, Vec3>(distinct.size * 2)
+        for (v in distinct) {
+            val rep = nearby(buckets, v, tol)
+            if (rep != null) {
+                repOf[v] = rep
+                continue
+            }
+            order.add(v)
+            repOf[v] = v
+            buckets.getOrPut(cellOf(v, tol)) { ArrayList() }.add(v)
+        }
         val indexOf = HashMap<Vec3, Int>(order.size * 2)
         for ((i, v) in order.withIndex()) indexOf[v] = i
-        val remap = IntArray(normalized.size) { indexOf.getValue(normalized[it]) }
+        val remap = IntArray(normalized.size) { indexOf.getValue(repOf.getValue(normalized[it])) }
 
         val tris = ArrayList<Tri>(mesh.triangles.size)
         for (t in mesh.triangles) {
@@ -152,4 +223,38 @@ object MeshCanon {
 
     /** `-0.0` mapped onto `0.0`: equal as numbers, different as hash keys, so a sign of zero could split a vertex. */
     private fun zero(v: Double): Double = if (v == 0.0) 0.0 else v
+
+    /** Which [tol]-sized box of the weld lattice [v] falls in — the exact path's own scheme (`Geom3`). */
+    private fun cellOf(
+        v: Vec3,
+        tol: Double,
+    ): Long {
+        val x = floor(v.x / tol).toLong()
+        val y = floor(v.y / tol).toLong()
+        val z = floor(v.z / tol).toLong()
+        return (x * 73_856_093L) xor (y * 19_349_663L) xor (z * 83_492_791L)
+    }
+
+    /**
+     * A position already kept that [v] is within [tol] of, or null — searched over the 27 boxes round its
+     * own, so a coordinate landing just across a box boundary still finds its twin.
+     */
+    private fun nearby(
+        buckets: Map<Long, MutableList<Vec3>>,
+        v: Vec3,
+        tol: Double,
+    ): Vec3? {
+        for (dx in -1..1) {
+            for (dy in -1..1) {
+                for (dz in -1..1) {
+                    val probe = Vec3(v.x + dx * tol, v.y + dy * tol, v.z + dz * tol)
+                    val here = buckets[cellOf(probe, tol)] ?: continue
+                    for (w in here) {
+                        if (abs(w.x - v.x) <= tol && abs(w.y - v.y) <= tol && abs(w.z - v.z) <= tol) return w
+                    }
+                }
+            }
+        }
+        return null
+    }
 }

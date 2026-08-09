@@ -107,6 +107,26 @@ interface PlaneProjection {
     fun viewRay(p: Vec2): Ray3 = Ray3(Vec3(p.x, p.y, 0.0), Vec3(0.0, 0.0, 1.0))
 
     /**
+     * The pointer's own ray through plane point [p], in **world** coordinates — or null where this
+     * projection has no eye to shoot it from.
+     *
+     * The seam that makes a **body clickable in the 3D view** (OP-13's 2D/3D split, the helix rider's rule
+     * generalized: the ray answers what the plan cannot). It grows here rather than on [Editor] for the
+     * reason [viewRay] does — this interface is already the one authority the event path and the rendering
+     * path share — and it is stated in the world rather than in the plane's frame because what it is
+     * measured against is a **mesh**, which has no plane and belongs to no space.
+     *
+     * **Null is the 2D canvas's honest answer, not a stub.** A plan looks along its plane's normal, so
+     * *every* body over the drawing lies on the same ray and depth decides nothing; the plan already has its
+     * own answer — the footprint hint — and the one thing it must not do is invent a third. So the 2D canvas
+     * keeps exactly the picking it had, and 3D picking is precisely what the 3D view adds.
+     *
+     * The direction is a unit vector, as [Camera3.unproject]'s is, so the parameter it comes back with is
+     * millimetres and two hits compare directly.
+     */
+    fun eyeRay(p: Vec2): Ray3? = null
+
+    /**
      * Whether this projection is a **similarity**: uniform scale and no perspective, so a length in
      * pixels means the same thing everywhere on the plane.
      *
@@ -223,6 +243,14 @@ class PlanePerspective(
         val d = plane.toWorld(p) - camera.eye
         return Ray3(Vec3(eye.x, eye.y, plane.distanceTo(camera.eye)), Vec3(d.dot(plane.u), d.dot(plane.v), d.dot(n)))
     }
+
+    /**
+     * The very ray the pointer cast to reach [p] — from the eye, through the point on the working plane the
+     * cursor landed on. Reconstructed rather than remembered, and it is exact: the editor's plane
+     * coordinates come from [toPlane], which is [Camera3.unproject] met with this plane, so shooting back
+     * out through the meeting point retraces the same line.
+     */
+    override fun eyeRay(p: Vec2): Ray3? = Ray3(camera.eye, (plane.toWorld(p) - camera.eye).normalized())
 
     /**
      * The perspective scale at [p], in closed form (checked against finite differences of [toScreen] in

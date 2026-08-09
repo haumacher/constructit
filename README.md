@@ -194,9 +194,19 @@ curve: click the points it runs through and press Enter, and the first and last 
 runs to infinity at both ends and genuinely divides the drawing into two. Two clicks give an infinite line, a
 third bends it into a step, and the points stay live like everything else — drag one and every cut made with
 it follows. Then *Cut by chain* takes the solid, the chain and a click on **the side to keep**, and *Split by
-chain* keeps both halves as two solids. A **closed** curve you have already drawn — a circle, a traced
-outline, a rectangle, a wall footprint — fills the same slot and needs no chain at all: it separates the plane
-just as well, so a circle cuts a through-bore through the very same tool.
+chain* keeps both halves as two solids. You need not draw a chain at all where the drawing already holds a
+curve that separates the plane: an **infinite line** *is* the two-click chain — including a **mirrored** one,
+so a symmetric pair of cuts costs no second line aimed by eye — and any **closed** curve — a circle, a traced
+outline, a rectangle, a wall footprint — fills the same slot too, so a circle cuts a through-bore through the
+very same tool. (A *ray* does not: it stops, so the plane closes round its end and there are not two sides to
+choose between. It says so, and names the line it is one click from being.)
+
+**The cut runs square to the plane the chain is drawn in**, whichever view you are in — so a line drawn in
+the plan trims a body sketched on an upright plane vertically, which is usually what you want and is the one
+sentence worth knowing. Because a solid is a *body* rather than a drawing, the picks may be made in different
+spaces: click the solid, switch the sketch plane, click the chain there. And a solid is clicked wherever the
+app draws it — its footprint in the space it was sketched in, its section where a working plane cuts it, or
+**the body itself in the 3D view**, where the click goes to whatever is actually under the cursor.
 
 The side you clicked is **remembered**, not re-decided: move the chain across the body afterwards and the
 same half survives, because which side to keep belongs to the gesture that said it rather than to the

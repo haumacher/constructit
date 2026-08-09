@@ -126,6 +126,45 @@ object Chains {
         return Chain.Open(start, pieces, end) to null
     }
 
+    /**
+     * An **infinite line** as a chain — the two-point chain, said the other way round.
+     *
+     * A line separates its plane exactly as [through] does with two clicks; the *Chain* tool's own help has
+     * always said so (*"two clicks give an infinite line"*), so a line the drawing already holds is not a
+     * lesser cutting curve, it is the same one reached without drawing it again. That matters because a line
+     * is what the ordinary construction tools produce and transform: the **mirror image of a line is a
+     * line**, so a cut that has to be symmetric about something is one mirror away rather than a second
+     * chain drawn by eye.
+     *
+     * **Which span of the line becomes the finite run is arbitrary, and it does not change the answer** —
+     * which is why this needs no input beyond the line. The value is a point set, and every choice of span
+     * gives the same one: the two rays continue whatever is left. The only thing the span reaches at all is
+     * the box [tools] derives, and a bound may be enlarged freely — every face of the closure still lies
+     * strictly outside the target, so the boolean's result cannot move (the margin argument, unaltered). The
+     * line's own origin and one millimetre along its direction are taken.
+     *
+     * What that costs, stated rather than hidden: [tools] unions the finite run into the box it clips the
+     * rays to, so where a line is *defined* by a point far from the body it cuts — a mirror axis across a
+     * large plan, say — the box, the margin and hence the tool prism grow by that distance. The answer is
+     * unchanged; the **precision** is not, because the general engine works in float32 relative to the
+     * operand box (OP-9). At any ordinary drawing size this is nothing (the reporting drawing's box grew from
+     * 17 mm to 56 mm); the clean fix is for [tools] to shrink a *straight* chain's run against the target
+     * before unioning it, since a straight run carries nothing its rays do not, and that is recorded in the
+     * queue rather than smuggled in here.
+     *
+     * Invalid with a reason that heals (OP-3) only for a line with no direction, which is a degenerate value
+     * rather than a shape of chain.
+     */
+    fun ofLine(line: Line): Pair<Chain.Open?, String?> {
+        if (line.dir.length() <= EPS) {
+            return null to "this line has no direction, so there is nothing for a cut to run along — move the points that define it"
+        }
+        val d = line.dir.normalized()
+        val a = line.origin
+        val b = a + d
+        return Chain.Open(Ray(a, -d), listOf(ProfileElement.Seg(Segment(a, b))), Ray(b, d)) to null
+    }
+
     /** An affine image of a chain — a chain, since an affine map takes rays to rays and areas to areas. */
     fun transform(
         chain: Chain,

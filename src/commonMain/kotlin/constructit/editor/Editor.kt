@@ -9,6 +9,7 @@ import constructit.dsl.PointRef
 import constructit.dsl.valueOf
 import constructit.exchange.ImportResult
 import constructit.exchange.Imports
+import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.Vec2
@@ -272,8 +273,37 @@ class Editor(
             } catch (t: Throwable) {
                 "could not be built: ${t.message ?: t.toString()}"
             } ?: return null
-        adopt(DocumentFormat.load(lastCommitted))
+        restore(lastCommitted)
         return "$what $failure"
+    }
+
+    /**
+     * Go back to the committed snapshot [text] — and **re-derive the baseline from the document that comes
+     * back**, which is the whole of it.
+     *
+     * `lastCommitted` answers one question, asked at the top of [undo]: *is there uncommitted work in the
+     * document right now?* It answers it by comparing the document's serialization against a stored string,
+     * so the string has to be **what this document serializes to**, not merely the text it was built from.
+     * Those are the same thing only while `save ∘ load` is the identity, and it is not: a derived position
+     * that the file **restates** — a point `attach`ed to a curve writes the current foot of the perpendicular
+     * — is re-derived on load and can come back a ULP away (recorded in the queue, ~1e-13 mm, settling in
+     * four passes).
+     *
+     * Storing the *input* text made that tiny drift fatal to a mechanism that has nothing to do with
+     * geometry. After one restore the baseline disagreed with its own document for ever, so every later undo
+     * took the "discard uncommitted work" branch — restoring the same state, popping nothing, reporting
+     * success. **The undo stack wedged permanently after the first undo**, on any drawing containing such a
+     * position, whatever the gestures were (two segments on a ten-line drawing do it). Re-deriving here makes
+     * the invariant structural instead of arithmetic: *the baseline is a property of the document, never of
+     * the text that produced it*, so no future restatement can reach undo at all.
+     *
+     * Not folded into [adopt], deliberately: the other callers adopt a **new** state and then [checkpoint] it,
+     * and a baseline moved under them would make that checkpoint a no-op — an undo layer lost instead of a
+     * spurious one. This is the restore path only.
+     */
+    private fun restore(text: String) {
+        adopt(DocumentFormat.load(text))
+        lastCommitted = DocumentFormat.save(doc)
     }
 
     fun undo(): Boolean {
@@ -282,11 +312,11 @@ class Editor(
             // uncommitted work in progress — a half-drawn path, a cancelled tool's stray points —
             // is discarded as the first undo, not popped past: it was never a step, so it has no
             // snapshot of its own and cannot be redone
-            adopt(DocumentFormat.load(lastCommitted))
+            restore(lastCommitted)
         } else {
             redoStack.add(lastCommitted)
             lastCommitted = undoStack.removeLast()
-            adopt(DocumentFormat.load(lastCommitted))
+            restore(lastCommitted)
         }
         statusHint = "Undone"
         changed()
@@ -297,7 +327,7 @@ class Editor(
         if (redoStack.isEmpty()) return false
         undoStack.add(lastCommitted)
         lastCommitted = redoStack.removeLast()
-        adopt(DocumentFormat.load(lastCommitted))
+        restore(lastCommitted)
         statusHint = "Redone"
         changed()
         return true
@@ -1257,12 +1287,24 @@ class Editor(
      * for want of a gesture. Their picks are kept and each keeps the space it was made in. The status line says
      * so, because picks surviving a switch is otherwise invisible — the canvas is showing a different drawing
      * and the earlier picks are not in it.
+     *
+     * **And the drop says so too, for exactly the same reason the keep does.** Half a gesture vanishing was the
+     * one event here that changed the editor's state and left nothing on screen to show it: the canvas was
+     * going to look different anyway, so the user read a new drawing rather than a lost pick, and the next
+     * click landed in a slot they thought was the second one. So a switch that drops picks now names the tool,
+     * says that its picks do not span planes, and says the gesture starts over here — composed with the space
+     * note, which is the sentence that was standing alone before (OP-3's discipline for a *value*, applied to
+     * the one piece of gesture state that could disappear without a word).
      */
     fun setActiveSpace(name: String): Boolean {
         if (name == doc.activeSpace.name) return true
         val target = doc.spaceNamed(name) ?: return false
         val tool = doc.toolDef(toolId)
         val spanning = tool != null && tool.crossSpace && filledSlots > 0
+        // …and what a drop costs: the picks, and the **typed scalars** that belong to them ([resetPicks]
+        // retracts those too). A depth typed for an Extrude and then abandoned by a space switch vanished with
+        // no pick to speak for it, which is the same silence one slot earlier.
+        val keptTyped = pendingTypedParams.size
         val keptPoints = pickedPoints.toList()
         val keptElements = pickedElements.toList()
         val keptClicks = pickedClicks.toList()
@@ -1275,6 +1317,17 @@ class Editor(
         resetPicks()
         camera = spaceCameras[name] ?: cameraFor(target)
         statusHint = spaceNote(target)
+        if (!spanning && tool != null && (keptSlots > 0 || keptTyped > 0)) {
+            val what =
+                when {
+                    keptSlots == 0 -> "the number you typed was dropped"
+                    keptTyped == 0 -> "$keptSlots pick${if (keptSlots == 1) "" else "s"} dropped"
+                    else -> "$keptSlots pick${if (keptSlots == 1) "" else "s"} and the number you typed dropped"
+                }
+            statusHint =
+                "${tool.label}: $what — its picks do not span planes, so the gesture starts over here. " +
+                spaceNote(target)
+        }
         if (spanning) {
             pickedPoints.addAll(keptPoints)
             pickedElements.addAll(keptElements)
@@ -3189,11 +3242,29 @@ class Editor(
             doc.groupOf(el)?.let { out.add(Candidate.Whole(it, el)) }
             out.add(Candidate.One(el))
         }
+        // **The body the pointer is on in the 3D view** ([solidUnderRay]) — the same route the `SOLID` slot
+        // takes, and ranked *exactly where a body was already ranked*: in front of the other solids and behind
+        // everything else. A point still cannot dodge, a curve still outranks what it lies on, and a curve in
+        // space is still nearer the click than the body it runs over; all that changes is **which** solid
+        // "that solid" means, which is the one question depth is better evidence for than distance. Slotted in
+        // at the first solid rather than at the head, because taking a rank the ray never held would make this
+        // a new precedence instead of a better answer inside the old one.
+        //
+        // …with one exception, which is the ghost rule read the other way (OP-18's *Show hidden*): where the
+        // live search came back empty, everything above is a **ghost**, and a body that is really there may
+        // never rank behind a picture of something that is not. Then the ray hit goes first outright.
+        val rayed = solidUnderRay(world, ev)
+        val liveBodyOverGhosts = rayed != null && ghosts.isNotEmpty()
+        val tail = if (rayed == null || liveBodyOverGhosts) rest else rankedAmongSolids(rest, rayed)
+        if (liveBodyOverGhosts) offer(rayed!!)
         ranked.forEach { offer(it) }
         if (jamb != null) out.add(Candidate.Opening(jamb))
-        rest.forEach { offer(it) }
-        // what the press addresses is what the first candidate names; what it *drags* may be something else
-        return PickPile(out, movable, if (movable == null) jamb else null, ranked.firstOrNull() ?: rest.firstOrNull())
+        tail.forEach { offer(it) }
+        // what the press addresses is what the first candidate names; what it *drags* may be something else —
+        // and never a solid: a body has no freedom of its own here, exactly as in the plan ([movable] is
+        // untouched, so a ray hit is selected and never grabbed)
+        val primary = if (liveBodyOverGhosts) rayed else (ranked.firstOrNull() ?: tail.firstOrNull())
+        return PickPile(out, movable, if (movable == null) jamb else null, primary)
     }
 
     /**
@@ -4163,7 +4234,18 @@ class Editor(
                 // its feature chain ([Document.partOutlineOf]) — a section pick, which names whichever ancestor
                 // it lands on, must not overrule that. This is what retires session 16's parked cut: one canvas
                 // still shows one space, but a body sketched elsewhere is drawn here and therefore pickable here.
-                SlotKind.SOLID -> pickElement(world) { it.kind == ElementKind.SOLID } || pickSectionSolid(world)
+                //
+                // …and **ahead of both of them, the body itself where a 3D view is driving** ([pickSolidRay]).
+                // That precedence is the user's own case rather than a preference: a handle standing on the rim
+                // of a plate is within a pick tolerance of the *plate's* footprint circle, so footprint-first
+                // answered a click aimed squarely at the handle with the plate. Both flat drawings are pictures
+                // of a body taken in a plane the user is not looking through; the ray is the one route that
+                // uses depth, so where it lands on a body that is the body meant, and the flat pictures answer
+                // where it misses — a silhouette edge, or a click beside the part. In the 2D canvas
+                // [PlaneProjection.eyeRay] is null and this route does not exist, so the plan's own picking is
+                // untouched, to the click.
+                SlotKind.SOLID ->
+                    pickSolidRay(world) || pickElement(world) { it.kind == ElementKind.SOLID } || pickSectionSolid(world)
                 // a cutting chain (OP-22's extension), or anything closed — the coercion between them is
                 // the document's (`Document.chainOf`), exactly as it is for an area slot
                 SlotKind.CHAIN -> pickElement(world) { doc.isChainCandidate(it, ev()) }
@@ -4232,7 +4314,8 @@ class Editor(
                     // working plane cuts it. The generic sentence stays for every slot with nothing better.
                     slot == SlotKind.SOLID ->
                         "That click hit no ${tool.roleOf(slotIndex)} — a solid is clicked by its footprint in the " +
-                            "space it was sketched in, or by its section where a working plane cuts it." +
+                            "space it was sketched in, by its section where a working plane cuts it, or on the body " +
+                            "itself in the 3D view." +
                             // …and the way out is only offered by a tool that has one: a switch drops the picks
                             // of every other ([setActiveSpace]), so promising otherwise would be a lie.
                             (if (tool.crossSpace) " Switch the sketch plane — the picks are kept — and click it there." else "") +
@@ -4524,6 +4607,86 @@ class Editor(
      */
     private fun pickSectionSolid(world: Vec2): Boolean {
         val el = doc.sectionSolidNear(doc.activeSpace, world, tolWorld(), ev()) ?: return false
+        pickedElements.add(el)
+        return true
+    }
+
+    /**
+     * The solid the pointer is **actually pointing at in the 3D view** — ray ∩ mesh, nearest hit — or null:
+     * no 3D view is driving, or the ray passes everything by (`Geom3.rayMesh`).
+     *
+     * This is 3D picking, and it is the *picking* half only: what comes back is the **body**, never a face of
+     * it. Naming a face durably is Manifold's face-ID provenance, which stays parked exactly where it was —
+     * so nothing here has to invent an identity that could not survive a recompute.
+     *
+     * **What it may offer is what the 3D view draws, and that is one line of code rather than a rule to keep
+     * in step**: the candidates come from [Scene3.extract] itself, with no ghosts. So a hidden solid is never
+     * offered whether the *Show hidden* toggle is on or off (a ghost contributes no faces at all — OP-18's
+     * *Show hidden* — and a ray must not hit a picture of something the user took out of the drawing); an
+     * **invalid** solid has no value and therefore no mesh, so it is not there to be hit (OP-3); and a solid
+     * already consumed as another feature's material is not offered either, because it is not on screen. The
+     * same sentence session 55 made law — *what is drawn is what is pickable* — applied to the one picture a
+     * body has that the 2D canvas cannot show.
+     *
+     * **Nearest wins**, which is the whole reason a ray is better evidence here than a distance: two bodies
+     * one behind the other are told apart by depth, which is exactly what the flat pictures cannot do.
+     */
+    private fun solidUnderRay(
+        world: Vec2,
+        ev: Evaluator = ev(),
+    ): Element? {
+        val ray = pointing?.eyeRay(world) ?: return null
+        // the caller's own memo pass where there is one ([pickAt] already holds one): a fresh [Evaluator] here
+        // would re-evaluate every solid in the drawing on every press, which is a cost the triangle loop's own
+        // argument does not cover
+        val drawn = Scene3.extract(doc, ev).solids.associateBy { it.elementId }
+        if (drawn.isEmpty()) return null
+        var best: Element? = null
+        var bestT = Double.POSITIVE_INFINITY
+        for (el in doc.elements) {
+            val item = drawn[el.id] ?: continue
+            val t = Geom3.rayMesh(ray, item.mesh) ?: continue
+            if (t < bestT) {
+                bestT = t
+                best = el
+            }
+        }
+        return best
+    }
+
+    /**
+     * [rest] with [solid] put where the solids are: ahead of the first of them, or last where there are none.
+     *
+     * The one line that keeps a ray hit a *better answer to the same question* rather than a new precedence —
+     * see the call site in [pickAt].
+     */
+    private fun rankedAmongSolids(
+        rest: List<Element>,
+        solid: Element,
+    ): List<Element> {
+        val others = rest.filter { it !== solid }
+        val at = others.indexOfFirst { it.kind == ElementKind.SOLID }
+        if (at < 0) return others + solid
+        return others.subList(0, at) + solid + others.subList(at, others.size)
+    }
+
+    /**
+     * A `SOLID` slot's **third route, and the first one tried where a 3D view is driving**: the body the
+     * pointer is actually on.
+     *
+     * OP-13's split, said for solids: *the ray answers what the plan cannot* — and in the 3D view what the
+     * plan cannot answer includes the questions it answers **wrongly**. The two flat routes are pictures of a
+     * body taken in a plane the user is not looking through, and the user's own drawing is the proof: a handle
+     * standing on the rim of a plate lies within a pick tolerance of the *plate's* footprint circle, so
+     * footprint-first came back with the plate for a click aimed squarely at the handle. Depth is the evidence
+     * the flat pictures do not have, so where a ray lands on a body that is the body meant.
+     *
+     * **It takes nothing away from the 2D canvas.** [PlaneProjection.eyeRay] is null there — a plan looks
+     * along its own normal, where every body over the drawing is on one ray and depth decides nothing — so
+     * this route does not exist in the plan and the footprint keeps every click it ever had.
+     */
+    private fun pickSolidRay(world: Vec2): Boolean {
+        val el = solidUnderRay(world, ev()) ?: return false
         pickedElements.add(el)
         return true
     }

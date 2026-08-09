@@ -1237,6 +1237,22 @@ class BrowserE2ETest {
                 ) as String
             assertTrue(drawn != blank, "the 3D view should have drawn the tilted feature")
 
+            // ---- a solid picked by clicking the body itself, in the 3D view (session 63) ----
+            //
+            // What only a browser can answer here is the link the headless suite has to stand in for: that the
+            // *shell's own* viewport — its real size, its real camera after an orbit — reaches
+            // `PlaneProjection.eyeRay`, and that a `SOLID` slot filled by ray ∩ mesh runs through WebGL and the
+            // DOM without throwing. Which of the three routes answered a given click is asserted headlessly
+            // (`ChainCutReachTest`), where the geometry can be aimed exactly; here the claim is that the pick
+            // lands at all, in the one view where it was impossible before.
+            page.click("#tool-${Tools.SPLIT_BY_CHAIN}")
+            page.mouse().click(cx, cy)
+            assertTrue(
+                status().endsWith("(1 more)"),
+                "clicking the body in the 3D view should fill the first of Split by chain's two slots; got: ${status()}",
+            )
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/18-solid-picked-in-3d.png")))
+
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()
         }

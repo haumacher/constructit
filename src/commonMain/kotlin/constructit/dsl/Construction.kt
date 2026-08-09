@@ -2931,6 +2931,22 @@ class Construction {
         }
 
     /**
+     * A **line as a chain**: the degenerate open case, and hence again the same operator (see
+     * [Chains.ofLine]).
+     *
+     * A coercion node exactly like [closedChain] is: the drawing already holds infinite lines — drawn,
+     * constructed as a perpendicular or a bisector, *mirrored* — and every one of them separates its plane,
+     * so nothing has to be drawn a second time to cut with one. Live like everything else: move a point the
+     * line is built on and every cut made with it recomputes.
+     */
+    fun lineChain(line: LineRef): ChainRef =
+        op(line) { args ->
+            val (chain, why) = Chains.ofLine((args[0] as LineValue).line)
+            if (chain == null) return@op EvalResult.Invalid(why ?: "cannot read this line as a cutting chain")
+            EvalResult.Ok(ChainValue(chain))
+        }
+
+    /**
      * An area's boundary **as a chain**: the closed case of the same value, and hence of the same operator.
      *
      * A closed loop separates its plane too — a bounded inside, an unbounded outside — so a cut by one is the

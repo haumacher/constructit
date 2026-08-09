@@ -336,9 +336,9 @@ tool revolve els=e28,e29 clicks=50.410797908588975,18.74032756933117;-14.5810454
         assertTrue(
             ed.statusHint.contains(
                 "a solid is clicked by its footprint in the space it was sketched in, " +
-                    "or by its section where a working plane cuts it",
+                    "by its section where a working plane cuts it, or on the body itself in the 3D view",
             ),
-            "and says both routes into a body: ${ed.statusHint}",
+            "and says all three routes into a body: ${ed.statusHint}",
         )
         assertTrue(
             ed.statusHint.contains("Switch the sketch plane — the picks are kept — and click it there."),

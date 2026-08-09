@@ -251,4 +251,103 @@ class UndoRedoTest {
         assertFalse(ed.canRedo)
         assertFalse(ed.redo())
     }
+
+    /**
+     * A drawing whose file **restates a derived position**: `e6` is `attach`ed to the rotated line `e5`, so
+     * the file writes the current foot of the perpendicular and re-deriving it on load can land a ULP away.
+     * Ten lines, no solid, no tool of any interest — the point is only that `save ∘ load` is not the identity
+     * here, which is the condition the tests below are about.
+     */
+    private val RESTATED_POSITION_CIT =
+        """constructit 2
+point -13.75,5.75 -> e1
+point 75.75,13.25 -> e2
+tool line pts=e1,e2 clicks=-14.25,6.25;75.5,11.75 -> e3
+param "angle4" = -14.999999999999998deg
+point -13.75,5.75 -> e4
+tool rotate pts=e4 els=e3 clicks=-133.90595700511545,-4.165800667679536;-13.510957005115916,5.816699332320425 scalar="angle4" -> e5
+weld e4 e1
+point 123.67935077443067,-19.001882628748298 -> e6
+attach e6 e5
+"""
+
+    /**
+     * **The committed baseline is a property of the document, never of the text that produced it** — and
+     * before this was so, one drift of one ULP wedged undo for ever.
+     *
+     * `undo` asks *"is there uncommitted work right now?"* by comparing the document's serialization against
+     * `lastCommitted`. That string used to be the text a restore had been *loaded from*, which equals what the
+     * restored document *saves to* only while `save ∘ load` is the identity. It is not: a restated derived
+     * position ([RESTATED_POSITION_CIT]) comes back a ULP away. So after the very first undo the baseline
+     * disagreed with its own document permanently, every later undo took the *discard-uncommitted-work* branch
+     * — restoring the same state, popping nothing, and returning `true` — and the stack was dead while
+     * `canUndo` still said yes.
+     *
+     * The regression is stated on **plain segments**, because the defect never had anything to do with which
+     * tool ran: what it needed was a drawing that restates a position, and any gesture at all.
+     */
+    @Test
+    fun everyGesturePeelsInItsOwnUndoOnADrawingThatRestatesAPosition() {
+        val ed = Editor(DocumentFormat.load(RESTATED_POSITION_CIT))
+        assertTrue(
+            DocumentFormat.save(ed.doc) != DocumentFormat.save(DocumentFormat.load(DocumentFormat.save(ed.doc))),
+            "this drawing is the interesting kind: its save is not a fixed point",
+        )
+        val segments = { ed.doc.elements.count { it.kind == ElementKind.SEGMENT } }
+        val journal = { ed.doc.journal.size }
+
+        val layers = ArrayList<Int>()
+        ed.setTool(Tools.SEGMENT)
+        for (y in listOf(-200.0, -180.0, -160.0)) {
+            layers.add(journal())
+            ed.click(Vec2(-200.0, y))
+            ed.click(Vec2(-150.0, y))
+        }
+        assertEquals(3, segments(), "three gestures, three segments")
+        assertEquals(listOf(0, 3, 6), layers.map { it - layers[0] }, "each gesture added the same three steps")
+        val top = journal()
+
+        // three gestures, three undos — each peeling exactly one layer, with the journal checked at each
+        for ((i, expected) in layers.reversed().withIndex()) {
+            assertTrue(ed.canUndo, "undo ${i + 1} of 3 is still offered")
+            assertTrue(ed.undo(), "…and taken")
+            assertEquals(expected, journal(), "undo ${i + 1} peels exactly one gesture")
+            assertEquals(2 - i, segments(), "…and one segment with it")
+        }
+        assertFalse(ed.canUndo, "the drawing's own load is the floor, not an extra layer")
+        assertFalse(ed.undo(), "…and undo says so instead of reporting a success that changed nothing")
+
+        // …and forward again, which is the same invariant read the other way
+        for (expected in layers.drop(1) + top) {
+            assertTrue(ed.redo(), "redo replays the gesture")
+            assertEquals(expected, journal(), "…layer for layer")
+        }
+        assertEquals(3, segments(), "all three are back")
+        assertFalse(ed.canRedo)
+    }
+
+    /**
+     * The same drawing, and the branch that used to swallow the rest: **discarding uncommitted work must not
+     * cost the stack a layer.** A half-drawn path is thrown away by the first undo (that is
+     * [undoMidPathDiscardsOnlyTheUncommittedPath]'s rule); what broke here is what came *after* it, because
+     * the discard left the baseline disagreeing with the document it had just restored.
+     */
+    @Test
+    fun discardingUncommittedWorkStillLeavesTheStackWalkable() {
+        val ed = Editor(DocumentFormat.load(RESTATED_POSITION_CIT))
+        val journal = { ed.doc.journal.size }
+        val floor = journal()
+        ed.setTool(Tools.SEGMENT)
+        ed.click(Vec2(-200.0, -200.0))
+        ed.click(Vec2(-150.0, -200.0))
+        val committed = journal()
+
+        // a second gesture left half-made: one click in, nothing committed
+        ed.click(Vec2(-200.0, -180.0))
+        assertTrue(ed.undo(), "the first undo discards the half-made gesture")
+        assertEquals(committed, journal(), "…back to the committed segment, no snapshot popped")
+        assertTrue(ed.undo(), "and the next one still reaches the committed gesture")
+        assertEquals(floor, journal(), "…peeling it")
+        assertFalse(ed.canUndo)
+    }
 }

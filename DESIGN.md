@@ -1520,6 +1520,8 @@ it:
 
 | `tool lift` — **a drawing read as the run it already is** (OP-26, step 1's missing source, session 61), and a drawn pick in any `PATH3` slot (`tool sweep els=<an outline>`) | a new tool id, and a new *kind* of argument value for slots that already existed: `els=` on a sweep, a tube, a station, a connect or a swept cut may now name a drawn curve where it could only name a curve in space | none, and **no version bump**. Nothing a file ever stored changes meaning: an element id in `els=` is read by the element's **kind**, which is a fact of the drawing rather than of the step, and no build before this one could write a step naming a drawing there — it refused the pick. A new tool id is the format's ordinary extension point (a file containing one cannot be read by a build that predates it, exactly as every tool added since v2), and the lift carries **no argument of its own** because there is no discrete choice in it: what is lifted is what was picked, how it closes is its kind's business, and where the run starts is the drawing's own order |
 
+| `tool cutbychain` / `tool splitbychain` (and the four swept rows) — **the two picks may now span sketch spaces** (OP-22's extension, session 63) | no argument changes at all: the rows gained `crossSpace`, so the *gesture* can collect a solid in one space and its chain in another. What that makes visible is the reading of a `chainbychain` step's own plane, which is and always was `planeOfSpace(chainEl.space)` — the fence stands normal to the plane **the chain is drawn in**, never to the active one | none, and **no version bump**. Nothing is carried and nothing is reinterpreted: the step names the *chain element*, and which space an element was drawn in is a fact of the drawing rather than of the step. Before this build a chain was only pickable in the active space (`addressableIn`), so *the chain's space* and *the active space* coincided on every file any build could have written — the two readings were one reading, and this is the one that goes on being true once they can differ. Nothing here is a scored choice, so there is no index that could renumber (contrast the sweep's `signs=` row above) |
+
 Known residual, recorded rather than papered over: the **Outline** tracer still resolves its handovers from
 that tool's own clicks on every replay (`jointBetween`), and a determined ortho meeting still picks its
 circle branch by nearness. Both are re-derived from geometry the same replay rebuilds, so they are stable
@@ -1807,6 +1809,41 @@ test, which is where every one of them is called from today.
    is not written without it: the save declines and says which elements and why. `DocumentFormat.save` itself
    does **not** check and must not — it is also the undo substrate, and a snapshot that could refuse would
    break an editing session rather than an editing step.
+
+#### The committed baseline is a property of the document, not of the text that produced it (as built, session 63)
+
+Found by a probe review of the chain cut, and it is nothing to do with cuts. `Editor` keeps `lastCommitted` to
+answer one question at the top of `undo`: *is there uncommitted work in the document right now?* — a half-drawn
+path, a cancelled tool's stray points, which are discarded rather than popped past. It answered by comparing
+the document's serialization against a stored string, and that string was **the text a restore had been loaded
+from**. Those two are the same thing only while `save ∘ load` is the identity.
+
+It is not. A file **restates** derived positions — a point `attach`ed to a curve is written as the current foot
+of the perpendicular — and re-deriving one on load can land a ULP away (the creep queued below, ~1e-13 mm,
+settling in four passes). So after the very first undo the baseline disagreed with its own document *for
+ever*: every later undo took the discard-uncommitted-work branch, restored the same state, popped nothing and
+returned `true`. **The undo stack wedged permanently after one undo**, while `canUndo` still said yes — on any
+drawing containing such a position, whatever the gestures were. Two plain segments on a ten-line drawing
+reproduce it, which is how it was told apart from the three things it looked like (the cut, the ray pick, and
+re-arming the tool between gestures — none of them involved).
+
+The fix is one line in the right place: a new `Editor.restore` adopts the snapshot **and re-derives
+`lastCommitted` from the document that came back**. That makes the invariant structural rather than
+arithmetic, so no future restatement can reach undo at all — which matters more than the drift that exposed
+it, because the drift is a bug and this was a mechanism resting on its absence.
+
+**Which routes shared it, and which deliberately do not.** Every path that *returns to* a committed state went
+through the same two lines and is now the one call: `undo`'s pop branch, `undo`'s discard branch, `redo`, and
+`Editor.transacted`'s restore after a refused or throwing gesture — so a refused tool also used to poison the
+next undo. `replaceDocument` was always right and is the pattern this generalizes (it re-derives from the
+document it adopted). The four `adopt(fresh)` sites that *advance* to a new state — delete, break, and two
+others — are deliberately untouched and must be: each is followed by `checkpoint()`, which re-derives the
+baseline anyway, and moving it underneath them would make that checkpoint a no-op and **lose** an undo layer
+instead of gaining one. Asserted as a rule, not as an outcome:
+`UndoRedoTest.everyGesturePeelsInItsOwnUndoOnADrawingThatRestatesAPosition` drives three gestures on a drawing
+whose save is not a fixed point and checks the journal at every layer down *and* back up, with
+`discardingUncommittedWorkStillLeavesTheStackWalkable` beside it for the branch that swallowed the rest, and
+`ChainCutSecondCutProbeTest.threeCutGesturesPeelInThreeUndos` keeping the flow that exposed it.
 
 The related lesson, cheap and worth stating: **nothing on the way to a result may throw.** A dimension
 mismatch is a *value* being wrong, which OP-7 says the node reports and OP-3 says heals; a status note that
@@ -12213,6 +12250,164 @@ larger than a coil's own radius of curvature, so a helical groove is refused by 
 a swept **solid** subtracted instead, which is already built (OP-26, step 2). That the refusal is the honest
 one is the point; it is not a gap this step left open.
 
+### Implementation status (as built — the cut you could not reach, session 63)
+
+**The report was about the gesture, not the operator.** A user built a plate — a circle in the plan extruded
+2 mm — with a handle revolved on an upright sketch space `plane1`, drew two lines back in the plan to trim
+the handle with, and could not make the cut at all: *"I'm not able to select the required inputs in a way the
+tool requires. Selecting a solid is complete pain, because it cannot simply be selected in 3D by 'clicking on
+it'. It simply does not work."* The engine was never in it — `Document.cutByChain` on those two elements
+produces exactly the body they wanted. Three independent walls stood between the drawing and the cut, and
+each of them is a *reachability* fault of the kind session 55 diagnosed one operator along.
+
+**1. A line is a legal cutting chain, and the refusal already conceded it.** *Chain*'s own help has always
+said *"two clicks give an infinite line"* — so the chain the tool would have drawn *was* a line, and refusing
+the line already in the drawing was refusing the thing itself. `Chain.Open` gains no case: `Chains.ofLine`
+builds the degenerate open chain and `Construction.lineChain` is a coercion node exactly as `closedChain` is,
+so `Document.chainOf` now has three ways in and one operator. **Which span of the line becomes the finite run
+is arbitrary and immaterial** — the value is a point set and every choice gives the same one; the only thing
+the span reaches is the derived box, and a bound may be enlarged freely because every face of the closure
+still lies strictly outside the target (the margin argument, unaltered). That this composes is the point
+rather than a bonus: the **mirror image of a line is a line**, so the user's `chain1` — `chain2` mirrored —
+cuts by construction, and a symmetric pair of cuts costs no second drawing aimed by eye.
+
+A **ray** is refused, and the reason is the operator's rather than taste: a ray *stops*, so the plane flows
+round its end, its complement is one region and *"which side"* has no referent. It says exactly that, and
+names the line it is one click from being. A segment is refused as before, with the alternative now naming a
+line as well as a closed curve.
+
+**2. The two picks go cross-space, and the fence stands in the chain's own plane.** All six chain-cut rows
+declare `crossSpace` for the boolean's own reason (session 55): *a solid is a body, not a drawing*, so the
+reason a switch drops picks — they name elements whose coordinates the new space does not share — simply does
+not apply to one. The semantics that makes this safe was already the code's: `Document.cutByChain` computes
+`planeOfSpace(chainEl.space)`, so the cutting fence is the prism of the chain **normal to the plane the chain
+is drawn in**, whichever space happens to be showing. A chain drawn in the plan therefore cuts *vertically*
+through a body sketched on an upright datum — which is what the user's trim is — and the reading is stated
+here rather than left to be inferred.
+
+**The format story, and why there is no version bump.** The step already names the **chain element**, and
+which space an element was drawn in is a fact of the *drawing* rather than of the step, so nothing has to be
+carried in a new argument or in the gesture's context. Nor is any stored literal reinterpreted: before the
+picks could span spaces a chain was only pickable in the active space (`Document.addressableIn`), so
+`chainEl.space` and *the active space* coincided on every file any build could have written. The two readings
+were the same reading; this is the one that goes on being true once they can differ. **No new argument, no
+migration, no version bump** (OP-18) — and, unlike the swept sweep's crossing index, nothing here is a scored
+choice that could renumber.
+
+**3. A solid is clicked in the 3D view.** A `SOLID` slot resolves by **ray ∩ mesh** over the bodies the 3D
+view draws, nearest hit first — `Geom3.rayMesh` (Möller–Trumbore, brute force over the triangles, because
+this runs once per *click* and an acceleration structure would be state to keep in step with a model that
+changes under every edit). The ray reaches the editor core through the seam the height point and the helix
+rider already use: `PlaneProjection.eyeRay` is `viewRay` in world coordinates, overridden by
+`PlanePerspective` and **null** on the 2D `Camera` — which is the plan's honest answer, since a plan looks
+along its own normal, every body over the drawing is on one ray and depth decides nothing there. So the
+browser shell wires nothing new (it already hands the editor a `PlanePerspective` through `Editor.pointing`),
+and the whole of it is driven headlessly by setting `pointing` and clicking, exactly as `HelixRiderTest`
+does.
+
+**What may be hit is what the 3D view draws, and that is one line rather than a rule to keep in step**: the
+candidates come from `Scene3.extract` itself. So a **hidden** solid is never offered whether *Show hidden* is
+on or off — a ghost contributes no faces at all, and a ray must not hit a picture of something the user took
+out of the drawing (session 62's rule, composed rather than restated); an **invalid** solid has no mesh to
+hit (OP-3); and a solid already consumed as another feature's material is not offered, because it is not on
+screen. Session 55's law — *what is drawn is what is pickable* — applied to the one picture a body has that
+the 2D canvas cannot show.
+
+**The side to keep must be clicked where the chain is drawn, and that is the trap `crossSpace` opened.** A
+click is a bare position and `Chains.sideAt` reads it in the **chain's** plane; while the picks could not span
+spaces the two frames were necessarily one, and the help now *invites* a user to switch between picks. A side
+clicked on `plane1` against a chain drawn in the plan would be scored against a line whose coordinates it
+does not share — the wrong half, kept silently, and then frozen into `signs=` where OP-1 guarantees it is
+never reconsidered. So it is a **gesture refusal**, by name, with the way back; and because a replay is handed
+its sign and never scores, every recorded `clicks=` position stays in one stated frame, which is the other
+half of the format story above.
+
+**And the ray goes *first* among the three routes, which the user's own drawing forced.** The conservative
+ordering was tried and is wrong: a handle standing on the rim of a plate lies within a pick tolerance of the
+**plate's** footprint circle, so footprint-first answered a click aimed squarely at the handle with the
+plate — silently building the wrong cut. Both flat routes are pictures of a body taken in a plane the user is
+not looking through; the ray is the only one that uses depth, so where it lands on a body that is the body
+meant, and the flat pictures answer where it misses (a silhouette edge, a click beside the part). In plain
+**selection** the ray takes the rank a body already had — ahead of the other solids and behind everything
+else — so a point still cannot dodge, a curve still outranks what it lies on, and a curve in space is still
+nearer the click than the body it runs over. All that changes is *which* solid "that solid" means.
+
+One rule composes with session 62's rather than restating it, and it runs **both ways**: a ghost may never
+take a click from geometry that is there, so where the live search came back empty and the whole pile is
+ghosts, a body the ray really hit is offered *outright* rather than behind them.
+
+Two numbers in `Geom3.rayMesh` are worth naming because an absolute one would have been wrong twice over.
+The barycentric slack is **dimensionless**, so a ray through a shared edge hits both triangles at any drawing
+size. The parallel cull is **relative** — `|det| ≤ ε·|e1||e2||d|`, i.e. the sine of an angle — because an
+absolute threshold means two different things at two scales: it culls every small triangle outright (a sliver
+is a legal `Mesh3`, and culling it is how a ray invents the gap this promises not to leave), and at building
+scale it sits *below* the cancellation noise in `det`, accepting a grazing triangle whose `t` is arithmetic
+dust — worse than a miss, because a spurious small `t` wins the nearest-hit comparison and steals the pick.
+
+This **retires the picking half** of the parked *"Manifold face-ID provenance and 3D picking"* item.
+Face-ID provenance stays parked exactly where it was, and deliberately: what a ray comes back with is the
+**body**, never a face of it, so nothing here has to invent an identity that could not survive a recompute.
+
+**4. A drop speaks.** `setActiveSpace` dropping half a gesture was the one event here that changed the
+editor's state and left nothing on screen to show it — the canvas was going to look different anyway, so the
+user read a new drawing rather than a lost pick and the next click landed in a slot they thought was the
+second. It now names the tool, says that its picks do not span planes, and says the gesture starts over here,
+composed with the space note that used to stand alone. It counts the **typed scalars** with the picks, because
+`resetPicks` retracts those too and a depth typed for an *Extrude* and abandoned by a switch vanished with no
+pick to speak for it — the same silence one slot earlier. With item 2 done the chain cut no longer triggers
+the sentence; it is for every other tool, which is the point.
+
+**One defect found on the way, and fixed at its source** (`MeshCanon`). The user's chain runs through a point
+their handle stands on — an ordinary thing to draw, and a perfectly degenerate one: the cutting fence then
+contains an **edge** of the body exactly. There the general engine hands back one point as two, a fraction of
+a float32 ULP apart, and the triangles between them are collinear and have **zero area**. Not a crack —
+`MeshCanon.fault` passes them, every edge has its two faces — but a sliver no exporter should ever be handed,
+and the thing this project asserts of every solid it builds. The cause was that `MeshCanon.canonical` welded
+on **bit-identity**, on the argument that *"the only duplicates a mesh engine produces are bit-identical
+copies of one position"*, which is false exactly here. It now welds on a lattice like the exact path always
+has (`Geom3.MeshBuilder`), at a tolerance that is **not a modelling tolerance but the engine's own
+representation resolution**: **one** float32 ULP at the mesh's scale, floored at `Geom3.WELD_TOL`, taking the
+larger of the mesh's extent and its coordinates so that a part far from the origin and a part at it are both
+answered without a case. One, and the margin is measured rather than assumed — the splits this closes are a
+*fraction* of a ULP at the mesh's own scale (0.02 of one, in the case that found it), so one is already two
+orders of headroom, and every ULP above that is merge radius spent on nothing. It is not free either: two
+vertices that are genuinely distinct — the two sides of a knife edge — merged here become a non-manifold
+vertex that `fault` turns into a refusal, which is honest but is still a boolean the user cannot have. At
+drawing sizes the tolerance is tens of nanometres — six orders below any feature and five above the noise it
+exists to absorb — and it makes *"one vertex per position"* mean the same thing on both
+boolean paths, which is what that sentence claimed all along. The user's cut goes from 84 triangles with two
+slivers to 80 clean ones, at the same volume to 1e-8 mm³.
+
+**One thing found and *not* fixed, recorded where it belongs.** The user's file is not a fixed point of
+`save → load → save` on the first pass: `e40` is `attach`ed to `e32`, so the file states it as the current
+foot of the perpendicular rather than as a click, and re-deriving that foot moves its last digit — about
+1e-13 mm per pass, settling after four. Every other line, including every step these gestures build, is
+byte-identical immediately. It is a property of the restatement rule (a derived position restates its
+*current value*) rather than of anything this package touches, it is far below any tolerance in the system,
+and `ChainCutReachTest.assertRoundTrips` pins both halves — that only that line ever moves, and that the text
+settles — so it cannot grow unnoticed. Queued below rather than smuggled in here.
+
+**It was not harmless, and what it broke has been fixed at the other end.** A probe review found sequential
+undo wedging on this drawing, and the cause was that `Editor` compared a document's serialization against the
+text a restore had been *loaded from* — so a ULP of drift disabled the undo stack permanently. That is fixed
+generally (see *The committed baseline is a property of the document* under OP-27 above): undo no longer rests
+on `save ∘ load` being the identity. The creep stays queued as the arithmetic bug it is, but nothing now
+depends on its absence.
+
+Tests: `ChainCutReachTest` (21) — the user's script verbatim as a load fixture, then the cut end to end
+**both ways in** (the 3D ray then the chain in the plan; the footprint on `plane1` then the switch, asserted
+to build the same body vertex for vertex), the mirrored line cutting identically, the fence proved **vertical**
+by every vertex of the kept half lying on the kept side of the plan line at every height and by the kept
+half stopping exactly at the point the chain runs through, split's two halves summing to the whole handle,
+the kept side surviving a swing of the chain that carries the recorded click across it, the ray refusal and
+the segment refusal by their words, the chain slot taking a line, all six rows spanning spaces, the drop
+sentence and its absence when nothing was collected, the nearer of two overlapping bodies taking the ray, a
+hidden solid never taken whether ghosted or not, a ray that misses falling through to the footprint, the plan
+having no ray at all, the side-click refusal in both directions with a replay sailing past it, a body
+selected by clicking it in 3D, and a point of the drawing still outranking the body behind it with the body
+one cycle step away. **1894 → 1919 green** (four of them the undo regression the probe review turned up), no new golden, no
+existing golden changed, no version bump.
+
 ## A wall is an output feature (OP-21 — RESOLVED)
 
 A wall is the first thing in this model that is **not** construction geometry: nobody wants a wall's
@@ -13929,7 +14124,49 @@ whose seam lies in a section's plane rides the crossings it *does* report, and t
 otherwise untouched. `LiftedRunProbeTest.theInPlaceSweepCanBeSeededInTheMiddleOfAnArc` deliberately stands its
 datum on the y axis and says why at the call site.
 
-**Beyond those, the rest of the numbered queue is empty** (the session-59 entry above is closed; session 61's is the newest). What remains is the parked
+**Retired in session 63 (user-reported): the chain cut had no gesture that reached its own inputs.** Not a
+queue line but three separate reachability faults meeting on one drawing — a plate in the plan, a handle
+revolved on an upright space, two lines drawn back in the plan to trim it: *"I'm not able to select the
+required inputs in a way the tool requires. Selecting a solid is complete pain, because it cannot simply be
+selected in 3D by 'clicking on it'."* A **line** was not accepted as a cutting chain although the tool's own
+help conceded it is one; the solid's pick and the chain's pick could not **span sketch spaces** although a
+solid is a body rather than a drawing; and a solid could not be **clicked in 3D** at all. All three closed
+together, because any one of them left the user exactly where they were. See *Implementation status (as built
+— the cut you could not reach)* under OP-22's extension for the whole of it: the fence's plane settled and
+recorded (the chain's own space, no version bump), the ray seam grown on `PlaneProjection` beside `viewRay`,
+and the ray ranked **ahead** of the two flat routes because the user's own drawing proves the conservative
+order silently builds the wrong cut. It retires the **picking half** of the parked *Manifold face-ID
+provenance and 3D picking* item — picking only, and that is stated where the item is: what a ray answers with
+is a body, and naming a **face** durably is the half every other consumer waits on. It also made
+`setActiveSpace`'s silent drop speak, which is not part of the cut at all and is the general half of the same
+complaint.
+
+**Queued in session 63 (found while building it, not reported): a straight chain's arbitrary finite run
+inflates the derived bound.** `Chains.tools` unions the chain's finite pieces into the box it clips the rays
+to — it must, because the closure walk needs the run inside — and a **line** read as a chain has no run the
+user chose: `Chains.ofLine` takes the line's own origin, which is whatever point the construction happens to
+hold. Where that point is far from the body being cut (a mirror axis across a large plan), the box, the
+margin and the tool prism all grow by that distance. The *answer* is unchanged — enlarging a bound cannot
+move a boolean's result, which is the margin argument unaltered — but the **precision** is, because the
+general engine works in float32 relative to the operand box (OP-9). The fix is one predicate and is clean: a
+**straight** chain's finite run carries nothing its two rays do not, so `tools` should shrink it against the
+target instead of unioning it. Not done here because it is a change to the bound every chain cut takes, which
+deserves its own assertion that the swept and bent cases are untouched, and because at every drawing size
+reached so far it is worth nothing (the reporting drawing's box grew from 17 mm to 56 mm). Stated at the call
+site in `Chains.ofLine`.
+
+**Queued in session 63 (found while building it, not reported): a restated derived position creeps by a ULP
+per save.** A point `attach`ed to a curve is written to the file as its **current value** — the foot of the
+perpendicular — and re-deriving that foot on load moves its last digit, so `save → load → save` is not a
+fixed point on the first pass. The drift is about 1e-13 mm and settles in four passes, and it touches nothing
+but that one line; but it is a restatement that does not reproduce itself exactly, which is a smaller cousin
+of the frozen-literal rule (OP-18) and worth closing rather than tolerating. Reproduced by
+`ChainCutReachTest.assertRoundTrips`, which pins both halves — only that line ever moves, and the text
+settles — so it cannot grow unnoticed. Not fixed here because the fix is in the projection's own conditioning
+rather than in anything this package touches, and a package that changes how a derived position is written is
+a format question of its own.
+
+**Beyond those, the rest of the numbered queue is empty** (the session-59 entry above is closed; session 63's is the newest). What remains is the parked
 list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
@@ -13938,8 +14175,11 @@ would be silently wrong under any affine map that is not one; session 47's proje
 `Conics` instead and says so at the call site, but the assumption is unguarded and the next non-similarity
 transform will meet it. Then: grouping-per-copy for group arrays and
 Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
-convention (fillet note), drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), Manifold
-face-ID provenance and 3D picking, the mesh-only footprint **for a general boolean's result only** (the
+convention (fillet note), drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), **Manifold
+face-ID provenance** — whose *3D picking* half is retired in session 63: a `SOLID` slot and a plain selection
+now resolve by ray ∩ mesh over the bodies the 3D view draws (`Geom3.rayMesh`, `PlaneProjection.eyeRay`), so
+what is left parked is naming a **face** durably, which is the hard half and the one every other consumer of
+this item (click-a-working-plane, a boolean operand named by its face) actually waits on. Then: the mesh-only footprint **for a general boolean's result only** (the
 imported-body half is delivered in session 30 — see the JT import note under OP-9; what is left is a
 decision about which *space* a mesh boolean belongs to, not a geometric one), MeshGL64,
 **silhouette edges in the 3D view** (the view-dependent half of the feature-edge work — see the viewport

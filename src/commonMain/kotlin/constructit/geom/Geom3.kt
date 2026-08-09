@@ -536,6 +536,64 @@ object Geom3 {
     /** Below this |cos| between a ray and a plane, the two count as parallel (see [rayPlane]). */
     const val PARALLEL_EPS = 1e-9
 
+    /**
+     * How far along [ray] it first meets [mesh], or **null** when it misses it altogether — the ray seam one
+     * operand up, and what makes a body **clickable in the 3D view** (OP-13's 2D/3D split: the ray answers
+     * what the plan cannot).
+     *
+     * Möller–Trumbore per triangle, nearest positive hit wins. Brute force over the triangles, deliberately:
+     * this runs **once per click**, not per frame, so the acceleration structure a renderer would want here
+     * would be state to keep in step with a model that changes under every edit — the same argument
+     * `PlanePerspective` makes for building its matrix per projection rather than caching it beside a mutable
+     * camera. A part of a hundred thousand triangles costs under a millisecond of a gesture nobody can make
+     * twice in that time.
+     *
+     * The barycentric tests are slack by [BARY_EPS] so that a ray through an **edge** shared by two
+     * triangles hits both rather than slipping between them. A watertight mesh has no gaps; a strict test
+     * would invent some, and a click that fell through the middle of a body would be the one failure the
+     * user cannot explain. Barycentric coordinates are dimensionless, so that slack is scale-free — it is
+     * worth about a billionth of an edge, whatever the drawing's size.
+     *
+     * **The parallel cull is relative, and it has to be.** `det` is `|e1||e2||d|·sinθ`, so an absolute
+     * threshold would mean two different things at two scales: it would cull every small triangle outright
+     * (a sliver is a legal `Mesh3`, and culling it is how a ray invents the gap this promises not to), and
+     * at building scale it would sit *below* the cancellation noise in `det` and accept a grazing triangle
+     * whose `u`, `v` and `t` are then arithmetic dust — which is worse than a miss, because a spurious small
+     * `t` wins the nearest-hit comparison and steals the pick from the body really under the cursor.
+     * Dividing by the three lengths makes the test what it always meant: the sine of an angle.
+     */
+    fun rayMesh(
+        ray: Ray3,
+        mesh: Mesh3,
+    ): Double? {
+        val d = ray.dir
+        val dLen = d.length()
+        if (dLen <= Vec3.EPS) return null
+        var best: Double? = null
+        for (tri in mesh.triangles) {
+            val a = mesh.vertices[tri.a]
+            val e1 = mesh.vertices[tri.b] - a
+            val e2 = mesh.vertices[tri.c] - a
+            val h = d.cross(e2)
+            val det = e1.dot(h)
+            val scale = e1.length() * e2.length() * dLen
+            if (scale <= 0.0 || abs(det) <= PARALLEL_EPS * scale) continue
+            val inv = 1.0 / det
+            val s = ray.origin - a
+            val u = inv * s.dot(h)
+            if (u < -BARY_EPS || u > 1.0 + BARY_EPS) continue
+            val q = s.cross(e1)
+            val v = inv * d.dot(q)
+            if (v < -BARY_EPS || u + v > 1.0 + BARY_EPS) continue
+            val t = inv * e2.dot(q)
+            if (t > 0.0 && (best == null || t < best)) best = t
+        }
+        return best
+    }
+
+    /** How far outside a triangle a ray may land and still count as hitting it — see [rayMesh]. */
+    const val BARY_EPS = 1e-9
+
     // ---- vertex welding: an indexed mesh, in deterministic insertion order ----
 
     /**

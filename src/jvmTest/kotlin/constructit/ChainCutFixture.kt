@@ -1,0 +1,65 @@
+package constructit
+
+/**
+ * The user's drawing as pasted (session 63): a plate — a circle in the plan extruded 2 mm — with a handle
+ * revolved 30 degrees on the upright sketch space `plane1`, and two lines drawn back in the plan to trim
+ * the handle with: `chain2` (e42) and `chain1` (e43), which is `chain2` mirrored.
+ */
+object ChainCutFixture {
+    val CIT =
+        """constructit 2
+point -13.75,5.75 -> e1
+point 75.75,13.25 -> e2
+tool circle pts=e1,e2 clicks=-13.75,5.75;75.75,13.25 -> e3
+tool line pts=e1,e2 clicks=-14.25,6.25;75.5,11.75 -> e4
+param "depth" = 2mm
+tool extrude els=e3 clicks=-100.25,31 scalar="depth" -> e5
+param "angle" = 90deg
+sketchspace "plane1" line=e4 angle="angle"
+sectioninput "plane1" el=e5 edge=1 -> e6
+tool keypoints els=e6 clicks=74.56508845689615,-0.007531045408567847 -> e7,e8
+sectioninput "plane1" el=e5 edge=2 -> e9
+tool keypoints els=e9 clicks=73.50302366390054,1.9940526029293129 -> e10,e11
+point 85,1 -> e12
+tool segment pts=e7,e12 clicks=76.60752075111847,-0.007531045408567847;85.34913097039004,1.1362310393559354 -> e13
+point 85,9 -> e14
+tool segment pts=e12,e14 clicks=85.10403909508335,1.2587769770092752;85.02234180331446,8.734079173862993 -> e15
+point 83,9 -> e16
+tool segment pts=e14,e16 clicks=84.89979586566112,8.938322403285225;82.89821221732323,8.938322403285225 -> e17
+point 83,3 -> e18
+tool segment pts=e16,e18 clicks=83.02075815497658,8.938322403285225;83.02075815497658,3.0152687500404767 -> e19
+tool segment pts=e18,e11 clicks=83.02075815497658,2.9335714582715835;76.56667210523402,2.0349012488137594 -> e20
+tool segment pts=e11,e7 clicks=76.56667210523402,2.0349012488137594;76.64836939700292,-0.08922833717746094 -> e21
+tool outline els=e13,e15,e17,e19,e20,e21 clicks=82.36717982082544,0.72774458051147;84.98149315743001,4.159030834804979;84,9;83,6;79.795940940826,2.5;76.48497481346513,1.0136851017025958 -> e22,e23,e24,e25,e26,e27,e28
+tool perpbis pts=e8,e7 clicks=-103.54532101554757,-0.8040621090643842;75.89437268055092,-0.8040621090643842 -> e29
+param "angle2" = 29.999999999999996deg
+tool revolve els=e28,e29 clicks=84.9038970502295,4.076096924511516;-13.262378894393418,27.726098394917802 scalar="angle2" -> e30
+hide els=e9
+hide els=e6
+hide els=e8,e10
+space "plan"
+param "angle3" = -14.999999999999998deg
+param "angle4" = -14.999999999999998deg
+point -13.75,5.75 -> e31
+tool rotate pts=e31 els=e4 clicks=-133.90595700511545,-4.165800667679536;-13.510957005115916,5.816699332320425 scalar="angle4" -> e32
+weld e31 e1
+tool intersect els=e4,e3 clicks=-100.91482229371266,-1.3993767240241755;-103.66482229371265,7.125623275975783 -> e33,e34
+point -103.25,-1.75 -> e35
+weld e35 e33
+hide els=e33
+tool intersect els=e32,e3 clicks=98.65790497901362,-15.051649451296834;71.83972316083195,-23.688013087660426 -> e36,e37
+point 160.70335952446786,20.630168730521163 -> e38
+point 74.64150429114052,-10.169860839507594 -> e39
+weld e39 e37
+point 123.67935077443067,-19.001882628748298 -> e40
+point 75.75,13.25 -> e41
+tool line pts=e40,e41 clicks=143.6579049790134,-22.551649451296797;75.93063225174102,13.357441457793929 -> e42
+weld e41 e34
+attach e40 e32
+tool mirror els=e42,e32 clicks=128.12558872582179,-11.384151951019657;123.93436979517251,-19.145668489259048 -> e43
+space "plane1"
+space "plan"
+name e43 "chain1"
+name e42 "chain2"
+"""
+}

@@ -10616,25 +10616,40 @@ class Document {
     }
 
     /**
-     * [el] as a chain to cut with, or null when it is neither one nor a closed boundary.
+     * [el] as a chain to cut with, or null when it does not separate its plane at all.
      *
-     * The **closed case falls out of the same slot**, which is the whole of "one operator, not a ladder": a
-     * circle, a traced outline, a rectangle or a wall footprint already separates the plane, so it is coerced
-     * ([Construction.closedChain]) exactly as a curve that bounds an area is coerced into a region for the
-     * seam ([regionOf]) — a node, no element, and the through-bore is then the ordinary cut.
+     * **Three ways in, one operator** — which is the whole of "one operator, not a ladder": what the slot
+     * takes is anything that *is* a proper curve in the sense [Chain] states, however the drawing came to
+     * hold it.
+     *
+     * - a drawn **chain**, the value itself;
+     * - an infinite **line** ([Construction.lineChain]), which is the two-point chain said the other way
+     *   round — the *Chain* tool's own help has always conceded it (*"two clicks give an infinite line"*), so
+     *   refusing the line already in the drawing was refusing the very curve the tool would have drawn. And a
+     *   line is what the construction tools *produce*: the **mirror image of a line is a line**, so a
+     *   symmetric pair of cuts is one mirror rather than a second chain aimed by eye;
+     * - anything **closed** ([Construction.closedChain]) — a circle, a traced outline, a rectangle, a wall
+     *   footprint — coerced exactly as a curve that bounds an area is coerced into a region for the seam
+     *   ([regionOf]), so the through-bore is the ordinary cut.
+     *
+     * A **ray** is deliberately not among them, and the reason is the operator's own well-formedness rather
+     * than taste: a ray *stops*, and the plane flows round its end, so its complement is one region and
+     * "which side" has no referent (see [Chain]). It is refused by name in [chainRefFor], with the line it is
+     * one click away from being.
      */
     @Suppress("UNCHECKED_CAST")
     private fun chainOf(el: Element): ChainRef? =
         when (el.kind) {
             ElementKind.CHAIN -> el.ref as ChainRef
+            ElementKind.LINE -> cx.lineChain(el.ref as LineRef)
             else -> regionOf(el)?.let { cx.closedChain(it) }
         }
 
-    /** Whether [el] can fill a chain slot: a drawn chain, or anything closed enough to bound an area. */
+    /** Whether [el] can fill a chain slot: a drawn chain, an infinite line, or anything closed enough to bound an area. */
     fun isChainCandidate(
         el: Element,
         ev: Evaluator,
-    ): Boolean = el.kind == ElementKind.CHAIN || areaPickFilter(ev)(el)
+    ): Boolean = el.kind == ElementKind.CHAIN || el.kind == ElementKind.LINE || areaPickFilter(ev)(el)
 
     /**
      * **Cut** the solid [solidEl] with the chain [chainEl], keeping the side the click at [at] is on — and,
@@ -10651,6 +10666,19 @@ class Document {
      * The **mode is structural and it is the tool row that states it** — two rows, as a helix's two
      * handednesses are two rows (OP-18) — so the file records it by recording which tool ran, replay never
      * infers it from geometry, and there is no number anywhere that could drift into the other answer.
+     *
+     * **Which plane the cutting fence stands normal to is the *chain's own space*, never the active one** —
+     * `planeOfSpace(chainEl.space)`, which is what this has always computed and is now what the gesture can
+     * actually reach. A chain is a curve drawn *in a plane*; the fence is its prism along that plane's
+     * normal, so a chain drawn in the plan cuts vertically whichever space happens to be showing when the
+     * solid is picked. That is what lets the two picks span spaces at all (the row declares
+     * [ToolDef.crossSpace] for OP-22's own reason — a solid is a **body**, not a drawing), and it is stable
+     * under replay for the reason it needs no argument of its own: the step names the **chain element**, and
+     * which space an element was drawn in is a fact of the drawing rather than of the step. No file changes
+     * meaning, because before the picks could span spaces a chain was only pickable in the active space
+     * ([addressableIn]) — so the two readings coincided on every file any build could have written, and this
+     * one is the reading that goes on being true once they can differ. No new argument, **no version bump**
+     * (OP-18).
      */
     @Suppress("UNCHECKED_CAST")
     fun cutByChain(
@@ -10663,6 +10691,21 @@ class Document {
     ): Element? {
         val chain = chainRefFor(solidEl, chainEl) ?: return null
         val along = if (alongEl == null) null else (spaceCurveRef(alongEl, "Cut by chain") ?: return null)
+        // **The side is clicked in the chain's own space, and it has to be said now that the picks may span
+        // spaces.** A click is a bare position; [Chains.sideAt] reads it in the chain's plane, and until the
+        // boolean's `crossSpace` reached this row the two could not differ — a chain was only pickable where
+        // it was drawn. They can now, and a position carried across a switch would be scored against a line it
+        // does not share coordinates with: the wrong half, kept silently, and then frozen into `signs=` where
+        // OP-1 guarantees it is never reconsidered. So it is a gesture refusal, by name, with the way forward.
+        // A replay never comes here — it is handed the sign it recorded — which is what keeps every recorded
+        // `clicks=` position in one stated frame: the chain's.
+        if (signs.isEmpty() && at != null && activeSpace.name != chainEl.space) {
+            note =
+                "Cut by chain: the side to keep is clicked beside ${nameOf(chainEl)}, which is drawn in " +
+                "${spaceLabel(spaceNamed(chainEl.space) ?: activeSpace)} — switch back there and click the side, " +
+                "so that \"which half\" is read in the same drawing you pointed at"
+            return null
+        }
         val side = signs.firstOrNull() ?: sideScoredAt(chain, at)
         val cut =
             add(
@@ -10683,6 +10726,9 @@ class Document {
      * persisted beyond the step itself: the pair is *ordered* by the chain's own direction of travel — left
      * half first — which is a property of the value, so replay rebuilds the same two bodies without a choice
      * having been recorded (OP-1's ordered solution set, with both branches taken instead of one).
+     *
+     * The fence stands normal to the **chain's own space**, exactly as [cutByChain]'s does and for the same
+     * reason — see the note there for why that reading needs no argument and no version bump.
      */
     @Suppress("UNCHECKED_CAST")
     fun splitByChain(
@@ -10723,10 +10769,20 @@ class Document {
             note = it
             return null
         }
+        // A ray is the one near miss worth its own sentence: it looks like half a chain and is refused for a
+        // reason of the operator rather than of the tool — it stops, so the plane closes round its end and
+        // there are not two sides to choose between (see [chainOf] and [Chain]).
+        if (chainEl.kind == ElementKind.RAY) {
+            note =
+                "Cut by chain: ${nameOf(chainEl)} is a ray — it stops, so the plane flows round its end and there is " +
+                "no side to keep; cut with the line through it, with a chain, or with anything that closes"
+            return null
+        }
         return chainOf(chainEl) ?: run {
             note =
-                "Cut by chain: ${nameOf(chainEl)} is ${kindWord(chainEl)} — cut with a chain, or with anything that " +
-                "closes (a circle, an outline, a rectangle), which separates the plane just as well"
+                "Cut by chain: ${nameOf(chainEl)} is ${kindWord(chainEl)} — cut with a chain or a line, both of which " +
+                "run on for ever, or with anything that closes (a circle, an outline, a rectangle), which separates " +
+                "the plane just as well"
             return null
         }
     }
