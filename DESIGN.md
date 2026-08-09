@@ -15494,8 +15494,24 @@ settles — so it cannot grow unnoticed. Not fixed here because the fix is in th
 rather than in anything this package touches, and a package that changes how a derived position is written is
 a format question of its own.
 
-**Beyond those, the rest of the numbered queue is empty** (the session-59 entry above is closed; session 63's is the newest). What remains is the parked
-list below, each item recorded at its source.
+**Queued in session 63 (a deliberate cut of the revolve package, promoted here so it is not lost): the
+number pad takes no sign.** The pad accepts digits and a dot, so a negative angle or offset — both first-class
+meanings since the signed revolve — can only be stated through a panel parameter (as the user's own
+`angle4 = −15°` is). Teach the scalar entry a minus sign **program-wide** (every `ang`/`len`/`num` slot, one
+rule, not a per-tool patch), with the boundary kept honest: a negative number where the *node* refuses one
+(an extrude depth, a radius) stays the node's refusal in the node's words — the pad states values, it does
+not police them. Recorded as a cut in *the revolve completed* (Turn 63); the sentence there stays as the
+history of why it waited.
+
+**The plan for the next session: the two entries above are one small batch** — the creep's fix is the
+projection's own conditioning made a fixed point on first save (its dangerous consequence is already gone:
+the undo baseline no longer trusts `save ∘ load`, session 63's chain-cut note), and the sign is a
+scalar-entry change with tests on a signed offset typed straight into the revolve gesture. Both are
+regression-pinned already (`ChainCutReachTest.assertRoundTrips`; `RevolveIntervalTest`'s panel-parameter
+detour states the workaround it retires).
+
+**Beyond those two, the rest of the numbered queue is empty** (the session-59 entry above is closed). What
+remains is the parked list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
 (it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and
