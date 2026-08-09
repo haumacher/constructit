@@ -15176,7 +15176,10 @@ their **surfaces**, and there are now analytic surface patches to be a function 
 `FacePatch.surface`, beside the planes an extrusion and a loft already name. What is still absent is the blend
 itself and, before it, the **edge** between two named faces as a first-class thing: `Section3.edges` names a
 revolution's rings and an extrusion's uprights, but nothing yet says "these two faces meet along this curve"
-for an arbitrary pair. That, not the surfaces, is now the first missing piece.)*;
+for an arbitrary pair. That, not the surfaces, is now the first missing piece.)* *(Session 71 queues the
+blends whole — the mechanism settled in discussion and adopted, the 2D fillet run in the edge's own moving
+normal section — see the numbered entry at the queue's tail; shelling, draft and text below stay parked
+here.)*;
 and **shelling** to a stated wall thickness, since a real member is hollow (0.8–15% of its bounding box) and
 the only route today is subtracting a hand-built inner solid. **Draft** follows them and is meaningless
 before them. Also named: **text as geometry** (part marking, serial plates, signage) — a general capability,
@@ -15510,8 +15513,59 @@ scalar-entry change with tests on a signed offset typed straight into the revolv
 regression-pinned already (`ChainCutReachTest.assertRoundTrips`; `RevolveIntervalTest`'s panel-parameter
 detour states the workaround it retires).
 
-**Beyond those two, the rest of the numbered queue is empty** (the session-59 entry above is closed). What
-remains is the parked list below, each item recorded at its source.
+**Queued in session 71 (user-directed): 3D edge blends — the 2D fillet, one dimension up.** The session-37
+parked item above becomes a numbered line; the question that queued it was the user's own — a profile
+filleted before an extrude or a sweep rounds the *lateral* edges, but the two cap faces of an outline
+revolved less than a full turn stay sharp, so *"what is the most general mechanism?"* — and the mechanism,
+settled in discussion and adopted, is three applications of standing doctrine rather than anything new. An
+edge blend is an **ordinary construction** over a provenance-named edge, the two surfaces it separates, a
+radius and a stored sign — never a kernel op (OP-9 said so from the start) and never a mesh post-process
+(the mesh is a sink). The three slices, each whole:
+
+1. **The edge, first-class (kernel only).** OP-8's rule applied to the one thing `Section3` does not yet
+   say: adjacency. Every `SolidEdge` names the **two `FaceName`s it bounds**, stated structurally per
+   feature (extrusion, revolution, exact loft — the features whose face lists exist; the others keep their
+   named refusals), never discovered from triangles, with entries staying in the list under invalidity so
+   indices never shift. With it, the two convention gaps a close reading found: the extrude and the revolve
+   index their **cap edges in two different spaces** (`extrusionEdges` against `boundaryPieces` in the
+   sketch plane, `Revolve3.edges` against the transformed cap outline), which wants one stated convention
+   behind one generic accessor ("the edges of face *f*", "the edge between *f* and *g*"); the revolve's
+   **BOTTOM cap outline comes back reversed** (its `Affine` is a reflection and `GeomMath.transform`
+   re-orients the loop), so `RevolveCapPiece(BOTTOM, i)` is not profile piece *i* and the adjacency must be
+   right anyway; and an extrusion's **arc-swept face names its cylinder only in prose** —
+   `FacePatch.surface` is populated for revolutions alone — so the typed surface the blend will read must
+   exist for the extrusion too.
+2. **The blend as a construction.** At each station along the edge, the plane **normal to the edge** cuts
+   the two named surfaces in two traces — lines and circles, for the entire plane / cylinder / cone /
+   sphere / torus vocabulary — which is exactly what `FilletMath.FilletLeg` already takes, so the 2D fillet
+   construction runs verbatim in the moving section: variant scored from the click, stored as a sign, never
+   re-scored, healing when the radius outgrows a leg. The generality claim is that the *already-easy* cases
+   are this same construction collapsed: an upright or a ring is an edge swept by a profile **corner**, its
+   normal section *is* the profile plane, and the blend arc lands in the profile — "fillet the outline
+   first" was never a separate feature; a cap edge is the identical construction where the normal plane is
+   not the profile plane, an edge swept by a profile **piece**. First tier is OP-9's own sentence made
+   literal with machinery that exists — the edge lifts to a `Path3`, the sweep carries the fillet section,
+   the boolean applies it (subtract on a convex edge, add on a concave one) — at the stated cost that the
+   result takes the mesh route. **Chamfer** is the same sentence with `chamferEnds`, and inherits the
+   parked chamfer-on-arc convention unchanged.
+3. **`Feature3.Blend` — the dress-up feature.** What keeps the honesty ledger: base feature + edge
+   addresses + a radius parameter + stored signs, a feature case of its own whose face list **extends the
+   base's** — base faces keep their indices, one blend band appended per edge, the way caps append after
+   sides today — so sketch-on-face, sections and named refusals all survive a dressed part.
+
+What falls out by sharing and stored choices, recorded so it is looked for rather than built: *"same radius
+on all these edges"* is **one parameter feeding many blends** (equality by sharing, the no-solver stance's
+own answer); *"all of the curve parts"* is the cap face's boundary chain and *"some of them"* is single
+pieces, because the cap boundary **is the profile's own pieces with inherited identity**; and a
+tangent-continuous run — the 2D joint registry, one level up — blends as one smooth ribbon. Exactness per
+OP-15: the in-profile collapses and plane–plane along a straight edge are exact; the general cap blend is
+exact at every station with chords between, and flagged. Named **future extensions, not cuts**: vertex
+blends where three or more edges meet at a corner (a sphere-patch question of its own), and **3D edge
+picking** — a section corner already carries an edge's name, so the 2D machinery picks edges first, and the
+3D pick joins the parked face-ID provenance item where the rest of it waits.
+
+**Beyond those three — the small batch and the blends — the numbered queue is empty** (the session-59 entry
+above is closed). What remains is the parked list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
 (it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and
