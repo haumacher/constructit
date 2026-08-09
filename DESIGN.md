@@ -15522,7 +15522,8 @@ edge blend is an **ordinary construction** over a provenance-named edge, the two
 radius and a stored sign — never a kernel op (OP-9 said so from the start) and never a mesh post-process
 (the mesh is a sink). The three slices, each whole:
 
-1. **The edge, first-class (kernel only).** OP-8's rule applied to the one thing `Section3` does not yet
+1. **The edge, first-class (kernel only). — done, session 71; see the as-built note below.** OP-8's rule
+   applied to the one thing `Section3` did not yet
    say: adjacency. Every `SolidEdge` names the **two `FaceName`s it bounds**, stated structurally per
    feature (extrusion, revolution, exact loft — the features whose face lists exist; the others keep their
    named refusals), never discovered from triangles, with entries staying in the list under invalidity so
@@ -15563,6 +15564,80 @@ exact at every station with chords between, and flagged. Named **future extensio
 blends where three or more edges meet at a corner (a sphere-patch question of its own), and **3D edge
 picking** — a section corner already carries an edge's name, so the 2D machinery picks edges first, and the
 3D pick joins the parked face-ID provenance item where the rest of it waits.
+
+#### Implementation status (as built — the edge, first-class: slice 1 of the blends)
+
+Slice 1 shipped whole and **kernel-only**: no DSL node, no tool, no Editor change, no format change, no
+version bump. Everything here is derived at eval time, which
+`EdgeAdjacencyTest.nothingInThisSliceIsStored` proves the way this file's rules ask — a partial revolve with a
+sketch on one of its caps, saved, loaded and saved to the same bytes.
+
+**Adjacency is a field, stated by whoever builds the edge.** `SolidEdge` gained `between: FacePair`, an
+**unordered** pair of `FaceName`s, filled in by the same loop that makes the edge — the extrusion's, the
+revolution's, the exact loft's — and never by a pass over the result. The alternative rejected was a separate
+`adjacencyOf(feature, edgeName)` function beside the edge list: it would have had to re-derive the same
+per-feature structure a second time, which is precisely the drift the loft's `LoftPlan` exists to prevent (one
+authority, two readers). Degenerate entries state their adjacency like every other — a revolve corner on the
+axis traces a ring that collapses to a point and still names the two bands it separates — so nothing drops
+out of the ordered list and no index renumbers. Nothing is invented for the features that have no face list:
+`Prism`, `Sweep`, `MeshBoolean`, `Imported` keep their refusals word for word, pinned literally in
+`EdgeAdjacencyTest.theRefusingFeaturesStillRefuseInTheSameWords`, including the prism's recorded asymmetry
+(it names faces to *sketch on* and still has no edges).
+
+Two facts the flat piece list had lost came back as public kernel functions rather than as inline arithmetic:
+`Section3.loopSpans` (which stretch of `Geom3.boundaryPieces` each ring occupies) and
+`Section3.previousInLoop`. They are what makes *"the upright at the start of piece `i` is where face `i − 1`
+meets face `i`"* correct across a hole — the wrap closes inside its own loop and never reaches into the
+region around it — and they are shared by the extrusion's uprights and the revolution's rings, which is the
+same sentence one dimension apart. A one-piece loop is its own predecessor, so an extruded circle's seam
+names face #1 twice; that is stated as a fact of the construction, not guarded against.
+
+**One cap-edge convention, replacing two.** `Section3.CAP_EDGE_CONVENTION` states it and both implementations
+cite it: a cap edge is **footprint boundary piece `i`, in `Geom3.boundaryPieces` order, as it lies on the cap
+face — in that face's own plane and coordinates**. Index space is therefore `FaceName.Side`'s own and
+`sketchspace el= piece=`'s own, one address space for the whole file. What it replaced: the extrusion handed
+back the *untransformed* sketch piece against the *un-flipped* sketch plane (the right world curve, in a frame
+belonging to no face), and the revolve indexed against the **transformed cap outline**, which is not a
+construction fact at all but an artefact of a determinant. The rejected alternative was making the extrusion
+adopt the revolve's outline space; it loses on both counts — the outline order is not durable, and it would
+have renumbered every extrusion's bottom-cap section corners, where the chosen direction renumbers only the
+revolve's, and only for a partial turn.
+
+**The BOTTOM reversal is handled by mapping per piece, not by index arithmetic.** The bottom cap's `Affine` is
+a reflection, so `GeomMath.transform(loop, t)` re-orients the ring (OP-14) and outline piece `i` is profile
+piece `n − 1 − i` within its loop. Rather than invert that, the cap edges apply the (now shared)
+`Revolve3.capMap` / `Section3.capMap` to **each piece individually**: the traversal direction of a piece is
+not a fact anybody reads, but its index is. `sectionOf` is unaffected because `cutEdge` on an `OnPlane` edge
+is invariant under a piece's direction — every existing section test stayed green untouched, which was the
+stated tripwire. `EdgeAdjacencyTest.theBottomCapsReversedOutlineDoesNotReachTheEdgeIndices` pins the reversal
+itself (asserting the face outline really is reversed, and that the top cap's is not) *and* that the edge
+indices do not follow it, in the revolve frame's own terms rather than through either cap's affine.
+
+**The typed surface: the frame travels with the band.** `FacePatch.surface` is now `Surface3?` — a
+`Revolve3.Band` plus the axis frame (`origin`, `axis`, `ref`, the turn interval, `full`) its numbers are
+measured in — and an extrusion's arc- or circle-swept side face carries the cylinder it previously named only
+in prose. The band vocabulary is untouched: an extruded arc *is* a surface of revolution about the sweep
+direction through the arc's own centre, so the generalization needed a frame and not a word. **Alternatives
+named and rejected:** putting the frame *inside* each `Band` case, which repeats it six times and forces
+`Revolve3.cutBand`'s dispatch — which already works in the frame's own `(s, r, θ)` — to carry data it has; and
+a second, extrusion-only surface vocabulary, which would say "a cylinder" twice and make a blend dispatch on
+the *feature* rather than on the surface, the exact thing OP-8 exists to prevent. Sixteen assertion lines in
+`RevolveFaceTest`/`RevolveFaceSpaceTest` moved from `.surface` to `.surface?.band`; no assertion changed.
+
+**What stays refused, and why.** A face swept by an **ellipse** is an elliptic cylinder this drawing has no
+word for: it is dispatched by predicate up front and refuses **wholly and by name** (`reason` now names the
+elliptic cylinder — the old message called it "a cylinder", which was the wrong word — and `surface` stays
+null), the session-69 rule applied unchanged. A spline's sweep likewise. An extrusion's **planar** faces and
+both caps carry no surface: their exact statement is the plane plus the outline, and there is no axis to name
+— stated on the field so the asymmetry with a revolution's flat bands (which do have one) is not read as an
+omission. Nothing was cut from the slice.
+
+**The two generic accessors** are `Section3.edgesOfFace(feature, face)` and
+`Section3.edgeBetween(feature, a, b)`, both `result to reason` like everything else in the file. They read
+`SolidEdge.between` and know nothing about which feature made it, so slices 2 and 3 address an edge by its two
+faces without a case per feature. `edgeBetween` refuses when two faces meet along **several** edges rather
+than picking one, which is the one-input-is-one-curve rule verbatim: which of two an index meant would change
+as the geometry moved.
 
 **Queued in session 71, behind the blends (user-directed): expressions — the binding generalized to a
 function, and the curve a function defines.** Postponed since the early sessions until ordinary

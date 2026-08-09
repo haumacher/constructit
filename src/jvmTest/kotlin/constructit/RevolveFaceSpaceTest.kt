@@ -92,8 +92,8 @@ class RevolveFaceSpaceTest {
     private fun farEndPiece(ed: Editor): Int {
         val faces = assertNotNull(constructit.geom.Section3.faces(ed.featureOf(ed.solids().last())).first)
         return faces.indices
-            .filter { faces[it].surface is constructit.geom.Revolve3.Band.Planar }
-            .maxByOrNull { (faces[it].surface as constructit.geom.Revolve3.Band.Planar).s }!!
+            .filter { faces[it].surface?.band is constructit.geom.Revolve3.Band.Planar }
+            .maxByOrNull { (faces[it].surface?.band as constructit.geom.Revolve3.Band.Planar).s }!!
     }
 
     // ---- the acceptance: a boss on the end of a turned part ----
@@ -167,7 +167,7 @@ class RevolveFaceSpaceTest {
         val ed = shaft()
         val body = ed.solids().single()
         val faces = assertNotNull(constructit.geom.Section3.faces(ed.featureOf(body)).first)
-        val barrel = faces.indexOfFirst { it.surface is constructit.geom.Revolve3.Band.Cylinder }
+        val barrel = faces.indexOfFirst { it.surface?.band is constructit.geom.Revolve3.Band.Cylinder }
         val why = assertNotNull(ed.doc.faceRefusal(body, barrel), "a cylinder is no plane")
         assertTrue("cylinder" in why, "…and it says which surface it is: $why")
         assertTrue("datum plane" in why, "…and what does work instead: $why")
@@ -178,7 +178,7 @@ class RevolveFaceSpaceTest {
         assertTrue("cylinder" in ed.statusHint, "and the status line speaks: ${ed.statusHint}")
 
         // the edge on the axis is the other honest refusal, and it names the axis
-        val axisEdge = faces.indexOfFirst { it.surface is constructit.geom.Revolve3.Band.Degenerate }
+        val axisEdge = faces.indexOfFirst { it.surface?.band is constructit.geom.Revolve3.Band.Degenerate }
         val axisWhy = assertNotNull(ed.doc.faceRefusal(body, axisEdge))
         assertTrue("axis of revolution" in axisWhy, axisWhy)
     }

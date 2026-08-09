@@ -113,6 +113,14 @@ object Revolve3 {
 
         /** The turn interval's own sweep, a complete turn included. */
         val sweep: Double get() = if (full) TWO_PI else turnEnd - turnStart
+
+        /**
+         * [band] as a [Surface3] — this frame's world half, which is the part of it a surface statement
+         * needs, carried alongside the family so a reader that is not this file can use the numbers.
+         *
+         * See [Surface3] for why the frame travels with the band at all, and for the alternatives rejected.
+         */
+        fun surfaceOf(band: Band): Surface3 = Surface3(O, A, P, turnStart, turnEnd, full, band)
     }
 
     /**
@@ -288,10 +296,10 @@ object Revolve3 {
                 } else {
                     "that profile edge sweeps ${band.label} and not a plane — put a datum plane where you want to sketch"
                 },
-                band,
+                f.surfaceOf(band),
             )
         }
-        return FacePatch(name, planarPlane(f, band), planarOutline(f, band), null, band)
+        return FacePatch(name, planarPlane(f, band), planarOutline(f, band), null, f.surfaceOf(band))
     }
 
     /**
@@ -370,18 +378,33 @@ object Revolve3 {
     ): FacePatch {
         val name = FaceName.RevolveCap(which)
         val plane = capPlane(f, which)
-        val o = f.origin2
-        val t =
-            if (which == SolidFace.TOP) {
-                Affine(f.axis2.x, f.perp2.x, f.axis2.y, f.perp2.y, -f.axis2.dot(o), -f.perp2.dot(o))
-            } else {
-                Affine(f.perp2.x, f.axis2.x, f.perp2.y, f.axis2.y, -f.perp2.dot(o), -f.axis2.dot(o))
-            }
+        val t = capMap(f, which)
         val pieces =
             feature.sketch.regions.flatMap { r ->
                 (listOf(r.outer) + r.holes).flatMap { l -> GeomMath.transform(l, t).elements }
             }
         return FacePatch(name, plane, pieces, null, null)
+    }
+
+    /**
+     * The map from a profile piece's own sketch coordinates into the cap at [which] end — the coordinate
+     * swap [capPatch] describes, factored out because two things must use exactly this map and cannot be
+     * allowed to drift: the cap face's outline and the cap **edges** (see [Section3.CAP_EDGE_CONVENTION]).
+     *
+     * The bottom map is a **reflection**: applied to a whole [Loop] it makes [GeomMath.transform] re-orient
+     * the ring (OP-14), which is precisely why the cap edges apply it **per piece** instead — a piece's own
+     * traversal direction is not a fact anybody reads, but its index is.
+     */
+    fun capMap(
+        f: Frame,
+        which: SolidFace,
+    ): Affine {
+        val o = f.origin2
+        return if (which == SolidFace.TOP) {
+            Affine(f.axis2.x, f.perp2.x, f.axis2.y, f.perp2.y, -f.axis2.dot(o), -f.perp2.dot(o))
+        } else {
+            Affine(f.perp2.x, f.axis2.x, f.perp2.y, f.axis2.y, -f.perp2.dot(o), -f.axis2.dot(o))
+        }
     }
 
     /** The plane of the cap at the interval's [which] end — see [capPatch] for why these two frames. */
@@ -432,18 +455,32 @@ object Revolve3 {
     /**
      * The edges of [feature]: the **ring** each profile corner traces, then — for a partial turn — the
      * profile's own pieces as they lie on each cap.
+     *
+     * The adjacency is read off the sweep, exactly as an extrusion's is (OP-8). A **ring** is traced by the
+     * start corner of profile piece `i`, so it is where the band over the loop's previous piece meets the
+     * band over piece `i` ([Section3.previousInLoop] — the wrap stays inside the loop). A **cap piece** is
+     * where that cap meets the band over the same piece `i`. Both hold for the degenerate entries too: a
+     * corner on the axis traces a ring that is one point, and it still names its two bands, so the list keeps
+     * its length and its indices whatever the geometry does.
+     *
+     * The cap edges follow [Section3.CAP_EDGE_CONVENTION]: index space is [Geom3.boundaryPieces]'s, and the
+     * geometry is the profile piece mapped **individually** through [capMap] into the cap's own plane. That
+     * per-piece map is what pins the bottom cap: the whole-loop map is a reflection, so mapping the loop
+     * re-orients it (OP-14) and the outline's piece `i` is *not* profile piece `i` down there — which is what
+     * this used to index against, silently.
      */
     fun edges(feature: Feature3.Revolution): Pair<List<SolidEdge>?, String?> {
         val f = frameOf(feature) ?: return null to "the axis of revolution has no direction"
         val pieces = Geom3.boundaryPieces(feature)
         val out = ArrayList<SolidEdge>()
         for ((i, e) in pieces.withIndex()) {
+            val between = FacePair(FaceName.Side(Section3.previousInLoop(feature, i)), FaceName.Side(i))
             val sr = f.sr(GeomMath.startOf(e))
             if (sr.y <= Geom3.WELD_TOL) {
                 // a corner **on** the axis traces no ring: it is one point, and [Section3.cutEdge] answers
                 // a degenerate edge as the point it is
                 val p = f.world(sr.x, 0.0, 0.0)
-                out.add(SolidEdge(EdgeName.RevolveRing(i), EdgeGeom.Straight(p, p)))
+                out.add(SolidEdge(EdgeName.RevolveRing(i), EdgeGeom.Straight(p, p), between))
             } else {
                 val plane = Plane3(f.O + f.A * sr.x, f.P, f.N)
                 val ring =
@@ -452,15 +489,21 @@ object Revolve3 {
                     } else {
                         ProfileElement.ArcE(Arc(Vec2(0.0, 0.0), sr.y, f.turnStart, f.turnEnd, true))
                     }
-                out.add(SolidEdge(EdgeName.RevolveRing(i), EdgeGeom.OnPlane(plane, ring)))
+                out.add(SolidEdge(EdgeName.RevolveRing(i), EdgeGeom.OnPlane(plane, ring), between))
             }
         }
         if (!f.full) {
             for (which in listOf(SolidFace.BOTTOM, SolidFace.TOP)) {
-                val patch = capPatch(feature, f, which)
-                val plane = patch.plane ?: continue
-                for ((i, e) in patch.outline.withIndex()) {
-                    out.add(SolidEdge(EdgeName.RevolveCapPiece(which, i), EdgeGeom.OnPlane(plane, e)))
+                val plane = capPlane(f, which)
+                val t = capMap(f, which)
+                for ((i, e) in pieces.withIndex()) {
+                    out.add(
+                        SolidEdge(
+                            EdgeName.RevolveCapPiece(which, i),
+                            EdgeGeom.OnPlane(plane, GeomMath.transform(e, t)),
+                            FacePair(FaceName.RevolveCap(which), FaceName.Side(i)),
+                        ),
+                    )
                 }
             }
         }

@@ -1,5 +1,6 @@
 package constructit.geom
 
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
@@ -99,6 +100,76 @@ sealed interface EdgeName {
 }
 
 /**
+ * A face's **analytic surface, stated where it stands**: a [Revolve3.Band] together with the axis frame its
+ * numbers are measured in.
+ *
+ * *Why the frame travels with the band* (session 71, slice 1). [Revolve3.Band] says `a cylinder of radius r
+ * over the axial interval s0..s1` — a sentence that means nothing without an axis, and which the revolution
+ * could leave implicit only because its one reader could always ask [Revolve3.frameOf] for the frame back.
+ * An **extrusion's** arc-swept face is the very same cylinder and has no revolve frame to ask, so the frame
+ * had to become part of the statement. The alternative considered and rejected was putting the frame
+ * *inside* each `Band` case (`Cylinder(origin, axis, r, …)`), which would repeat it six times and force
+ * [Revolve3.cutBand]'s family dispatch — which works in the frame's own `(s, r, θ)` throughout — to carry
+ * data it already has; the other alternative, a **second** surface vocabulary for extrusions, would say "a
+ * cylinder" twice and make a blend dispatch on the *feature* rather than on the surface, which is exactly
+ * what OP-8's provenance rule is for.
+ *
+ * The frame is the revolution's own, generalized: a point of the surface at `(s, r, θ)` is
+ * `origin + axis·s + (ref·cos θ + binormal·sin θ)·r`, and `turnStart..turnEnd` (or [full]) is the angular
+ * extent of **this patch** — a revolve's turn, an extruded arc's own sweep.
+ */
+data class Surface3(
+    /** A point the axis passes through: the band's `s` is measured from here. */
+    val origin: Vec3,
+    /** The axis direction, a unit vector. */
+    val axis: Vec3,
+    /** The radial direction at `θ = 0`, a unit vector perpendicular to [axis]. */
+    val ref: Vec3,
+    val turnStart: Double,
+    val turnEnd: Double,
+    /** Whether the patch goes all the way round, in which case the turn interval is the whole circle. */
+    val full: Boolean,
+    val band: Revolve3.Band,
+) {
+    /** `axis × ref` — the frame's third leg, derived rather than stored so the three cannot drift apart. */
+    val binormal: Vec3 get() = axis.cross(ref)
+
+    /** The world point of this surface at `(s, r, θ)`. */
+    fun world(
+        s: Double,
+        r: Double,
+        th: Double,
+    ): Vec3 = origin + axis * s + (ref * cos(th) + binormal * sin(th)) * r
+}
+
+/**
+ * The **two named faces an edge bounds** (OP-8, session 71 slice 1) — stated by the feature that built the
+ * edge, never discovered from triangles.
+ *
+ * Unordered: an edge separates two faces and neither of them is "first", so [sameAs] compares as a set. The
+ * two may be the **same** face, and that is not a degenerate case to guard against but a real one — the seam
+ * of a cylinder extruded from a whole circle is where face #1 meets face #1.
+ */
+data class FacePair(val a: FaceName, val b: FaceName) {
+    /** Whether [f] is one of the two. */
+    fun has(f: FaceName): Boolean = a == f || b == f
+
+    /** The face on the other side of the edge from [f], or null when [f] is not one of the two. */
+    fun other(f: FaceName): FaceName? =
+        when {
+            a == f -> b
+            b == f -> a
+            else -> null
+        }
+
+    /** Whether this is the pair `{x, y}`, in either order. */
+    fun sameAs(
+        x: FaceName,
+        y: FaceName,
+    ): Boolean = (a == x && b == y) || (a == y && b == x)
+}
+
+/**
  * One face of a solid, named structurally: the plane it lies in (normal **out of the material**, the
  * convention [Geom3.facePlane] and [Geom3.sideFace] already use) and its own boundary in that plane's (u, v).
  *
@@ -113,17 +184,21 @@ data class FacePatch(
     val outline: List<ProfileElement>,
     val reason: String?,
     /**
-     * The **surface family** this face is a patch of, where it has an analytic one: a revolution's
-     * cylindrical, conical, spherical, toroidal or flat band (see [Revolve3.Band]). Null for the faces
-     * whose family is the patch itself — every planar face, and every ruled one whose only description is
-     * its own rulings.
+     * The **surface** this face is a patch of, where it has an analytic one: a cylindrical, conical,
+     * spherical, toroidal or flat band with the axis frame it stands in ([Surface3]) — a revolution's, and
+     * since session 71 an extrusion's arc-swept side face too.
+     *
+     * Null for the faces whose family is the patch itself: every **planar** face (whose exact statement is
+     * [plane] plus [outline], and which has no axis to name), every **ruled** one whose only description is
+     * its own rulings, and every face the vocabulary refuses by name — an elliptic cylinder, a spline's
+     * sweep — where [reason] says which and no half-exact answer is offered.
      *
      * It is carried on the patch rather than re-derived by whoever needs it so that the exact parameters
      * a face was **built** from — an axis, a radius, a half-angle, a band's own interval — are the ones a
-     * section, a refusal and (one day) a blend all read. That is the parked 3D-blending work's own
-     * prerequisite: a fillet between two faces is a function of their surfaces, not of their triangles.
+     * section, a refusal and a blend all read. That is the 3D-blending work's own prerequisite: a fillet
+     * between two faces is a function of their surfaces, not of their triangles.
      */
-    val surface: Revolve3.Band? = null,
+    val surface: Surface3? = null,
 )
 
 /** One edge of a solid, in the world: a straight one, or a curve lying on a known plane. */
@@ -133,8 +208,17 @@ sealed interface EdgeGeom {
     data class OnPlane(val plane: Plane3, val piece: ProfileElement) : EdgeGeom
 }
 
-/** One structurally named edge of a solid — the thing a section *corner* is the cut of. */
-data class SolidEdge(val name: EdgeName, val geom: EdgeGeom)
+/**
+ * One structurally named edge of a solid — the thing a section *corner* is the cut of, and (since session
+ * 71) the thing a blend is a construction over.
+ *
+ * [between] is the edge's **adjacency**: the two [FaceName]s it bounds, read off the feature's own structure
+ * — which profile piece, which cap, which band or rail — and never off the mesh (OP-8: provenance, not
+ * discovery). It is stated for every entry, degenerate ones included: a revolve corner *on* the axis traces
+ * a ring that collapses to a point, and it still names the two bands it separates, so nothing drops out of
+ * the ordered list and no index ever renumbers (OP-3, OP-17's index-stability rule).
+ */
+data class SolidEdge(val name: EdgeName, val geom: EdgeGeom, val between: FacePair)
 
 /**
  * One **curve of a section**, in the cutting plane's own (u, v) — and an *input* of the construction on that
@@ -367,12 +451,24 @@ object Section3 {
                     FacePatch(name, plane, rectangle(len, depth), null)
                 }
             }
-            is ProfileElement.ArcE, is ProfileElement.CircleE, is ProfileElement.EllipticArcE, is ProfileElement.EllipseE ->
+            // An arc or a circle sweeps a **cylinder**, and since session 71 it says so in the vocabulary and
+            // not only in prose: the refusal is unchanged (it is not a plane, so a sketch space still
+            // declines) and the typed surface stands beside it for whoever wants the surface rather than a
+            // plane — a blend, above all.
+            is ProfileElement.ArcE ->
+                FacePatch(name, null, emptyList(), CURVED_SIDE, extrudedCylinder(base, depth, Circle(e.arc.center, e.arc.radius), e.arc))
+            is ProfileElement.CircleE ->
+                FacePatch(name, null, emptyList(), CURVED_SIDE, extrudedCylinder(base, depth, e.circle, null))
+            // An **ellipse** sweeps an elliptic cylinder, which this drawing has no word for: it refuses
+            // wholly and by name, dispatched here by predicate rather than answered half-exactly further
+            // down (the session-69 rule, one feature over).
+            is ProfileElement.EllipticArcE, is ProfileElement.EllipseE ->
                 FacePatch(
                     name,
                     null,
                     emptyList(),
-                    "that boundary edge is curved, so the face it sweeps is a cylinder and not a plane — pick a straight edge",
+                    "that boundary edge is an ellipse, so the face it sweeps is an elliptic cylinder, which this " +
+                        "drawing has no name for — pick a straight edge",
                 )
             is ProfileElement.BezierE ->
                 FacePatch(
@@ -382,6 +478,31 @@ object Section3 {
                     "that boundary edge is a spline, so the face it sweeps is ruled and not a plane — pick a straight edge",
                 )
         }
+
+    private const val CURVED_SIDE =
+        "that boundary edge is curved, so the face it sweeps is a cylinder and not a plane — pick a straight edge"
+
+    /**
+     * The **cylinder** an extrusion's arc or circle sweeps, in [Surface3]'s frame: the axis is the sweep
+     * direction through the piece's own centre, `θ` is measured in the sketch plane's own `(u, v)` — so the
+     * piece's angles *are* the surface's — and the band's axial interval is the extrusion's depth range,
+     * whichever sign the depth has.
+     *
+     * [arc] null means the whole circle, i.e. a patch that closes on itself.
+     */
+    private fun extrudedCylinder(
+        base: Plane3,
+        depth: Double,
+        circle: Circle,
+        arc: Arc?,
+    ): Surface3 {
+        val band = Revolve3.Band.Cylinder(circle.radius, min(0.0, depth), max(0.0, depth))
+        val o = base.toWorld(circle.center)
+        val axis = base.normal.normalized()
+        if (arc == null) return Surface3(o, axis, base.u, 0.0, 2.0 * PI, true, band)
+        val end = arc.startAngle + GeomMath.sweep(arc)
+        return Surface3(o, axis, base.u, min(arc.startAngle, end), max(arc.startAngle, end), false, band)
+    }
 
     private fun rectangle(
         w: Double,
@@ -411,13 +532,24 @@ object Section3 {
         )
     }
 
+    /**
+     * The map from a footprint piece's own 2D coordinates into a cap face's — the identity at the **top**,
+     * where the face frame is the sketch frame, and the `y` mirror at the **bottom**, where the plane is
+     * flipped ([Plane3.flipped] negates `v`) so the normal points out of the material.
+     *
+     * One function because two things must use exactly this map and cannot be allowed to drift: the cap
+     * face's own outline ([capFace]) and the cap **edges** ([extrusionEdges]) — see [CAP_EDGE_CONVENTION].
+     */
+    private fun capMap(mirror: Boolean): Affine =
+        if (mirror) Affine(1.0, 0.0, 0.0, -1.0, 0.0, 0.0) else Affine(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
     private fun capFace(
         regions: List<Region>,
         plane: Plane3,
         mirror: Boolean,
         name: FaceName,
     ): FacePatch {
-        val t = if (mirror) Affine(1.0, 0.0, 0.0, -1.0, 0.0, 0.0) else Affine(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+        val t = capMap(mirror)
         val pieces =
             regions.flatMap { r ->
                 (listOf(r.outer) + r.holes).flatMap { l -> GeomMath.transform(l, t).elements }
@@ -584,6 +716,79 @@ object Section3 {
 
     // ---- the structural edge list ----
 
+    /**
+     * **The one cap-edge convention** (session 71, slice 1), stated here and cited by both implementations —
+     * [extrusionEdges] and [Revolve3.edges].
+     *
+     * A **cap edge** — an extrusion's [EdgeName.CapPiece], a partial revolution's [EdgeName.RevolveCapPiece]
+     * — is one footprint boundary piece as it lies on one cap face. Three questions had two answers before
+     * this, and now have one each:
+     *
+     * 1. **Which index space.** [Geom3.boundaryPieces]'s, always: `CapPiece(which, i)` and
+     *    `RevolveCapPiece(which, i)` are *profile piece `i`*, the very index [FaceName.Side] uses and the one
+     *    a stored `sketchspace el= piece=` has always recorded. One address space for the whole file. What
+     *    this replaced is the revolve's own former space — the index of a piece in the **transformed** cap
+     *    outline, which is not a construction fact at all but an artefact of a determinant: the bottom cap's
+     *    map is a reflection, so [GeomMath.transform] re-orients the loop (OP-14) and piece *i* of that
+     *    outline was profile piece `n − 1 − i` **within its own loop**. Nobody could have done that index
+     *    arithmetic correctly from outside, which is the argument for the convention being this one.
+     * 2. **Which geometry.** The piece **as it lies on the cap**, not the piece as it was drawn: the
+     *    footprint piece mapped through the cap's own [capMap]/[Revolve3.capMap]. So the returned curve is in
+     *    the coordinates of a face that is *in the face list*, and a reader can hold the edge and the face's
+     *    outline in one frame. What this replaced is the extrusion's former answer, which handed back the
+     *    untransformed sketch piece against the un-flipped sketch plane — the same world curve, in a frame
+     *    belonging to no face.
+     * 3. **Which plane.** [FacePatch.plane] of the cap the edge lies on. It follows from (2) and is stated so
+     *    that `EdgeGeom.OnPlane.plane` of a cap edge is always a named face's plane.
+     *
+     * Nothing a file stores changes meaning: the world curve of every cap edge is what it was, and a cut of
+     * one ([cutEdge]) is invariant under the direction a piece is traversed in, so `sectionOf` answers
+     * exactly as before — only the revolve's **bottom** cap block now comes out in profile order instead of
+     * reversed, which is the bug this convention exists to remove.
+     */
+    const val CAP_EDGE_CONVENTION =
+        "a cap edge is footprint boundary piece i, in Geom3.boundaryPieces order, as it lies on the cap face — " +
+            "in that face's own plane and coordinates"
+
+    /**
+     * The half-open index ranges of [Geom3.boundaryPieces] that each **loop** of the footprint occupies:
+     * regions in order, each region's outer loop then its holes.
+     *
+     * The flat piece list has lost the one fact adjacency needs — where a ring closes — and this puts it
+     * back without adding a second order to keep in step: it is [Geom3.boundaryPieces]'s own traversal,
+     * counted. Its consumer is [previousInLoop], and the reason it exists is that the corner before piece #1
+     * of a **hole** is the last piece of that hole and never a piece of the region around it.
+     */
+    fun loopSpans(feature: Feature3): List<IntRange> {
+        val out = ArrayList<IntRange>()
+        var at = 0
+        for (r in feature.footprint) {
+            for (loop in listOf(r.outer) + r.holes) {
+                out.add(at until at + loop.elements.size)
+                at += loop.elements.size
+            }
+        }
+        return out
+    }
+
+    /**
+     * The boundary piece **before** [piece] in its own loop — the wrap being within the loop, never across a
+     * region boundary or into a hole.
+     *
+     * This is what makes an upright's or a ring's adjacency structural: the edge at the *start* corner of
+     * piece `i` is where the face over piece `i − 1` meets the face over piece `i`, and "`i − 1`" means the
+     * loop's own predecessor. A one-piece loop (a circle, an ellipse) is its own predecessor, and the edge is
+     * then the seam where a face meets itself — which is a fact about the construction and not a degeneracy.
+     */
+    fun previousInLoop(
+        feature: Feature3,
+        piece: Int,
+    ): Int {
+        val span = loopSpans(feature).firstOrNull { piece in it } ?: return piece
+        val n = span.last - span.first + 1
+        return span.first + (piece - span.first + n - 1) % n
+    }
+
     /** The edges of [feature] in provenance order, or null with the reason it has none that are constructed. */
     fun edges(feature: Feature3): Pair<List<SolidEdge>?, String?> =
         when (feature) {
@@ -596,6 +801,15 @@ object Section3 {
             is Feature3.Sweep -> null to SWEEP_ONLY
         }
 
+    /**
+     * An extrusion's edges: the upright at every boundary corner, then the boundary itself as it lies on the
+     * bottom cap and on the top one — see [CAP_EDGE_CONVENTION] for what a cap edge hands back.
+     *
+     * The adjacency is read straight off the sweep (OP-8). An **upright** stands at the start corner of piece
+     * `i`, which is where the face over the loop's previous piece meets the face over piece `i`
+     * ([previousInLoop] — the wrap stays inside the loop, so a hole's first upright never names the outer
+     * boundary). A **cap piece** is where that cap meets the face over the same piece `i`.
+     */
     private fun extrusionEdges(f: Feature3.Extrusion): List<SolidEdge> {
         val out = ArrayList<SolidEdge>()
         val p = f.sketch.plane
@@ -603,11 +817,27 @@ object Section3 {
         val pieces = Geom3.boundaryPieces(f)
         for ((i, e) in pieces.withIndex()) {
             val s = p.toWorld(GeomMath.startOf(e))
-            out.add(SolidEdge(EdgeName.Upright(i), EdgeGeom.Straight(s, s + axis * f.depth)))
+            out.add(
+                SolidEdge(
+                    EdgeName.Upright(i),
+                    EdgeGeom.Straight(s, s + axis * f.depth),
+                    FacePair(FaceName.Side(previousInLoop(f, i)), FaceName.Side(i)),
+                ),
+            )
         }
-        for ((i, e) in pieces.withIndex()) out.add(SolidEdge(EdgeName.CapPiece(SolidFace.BOTTOM, i), EdgeGeom.OnPlane(p, e)))
-        for ((i, e) in pieces.withIndex()) {
-            out.add(SolidEdge(EdgeName.CapPiece(SolidFace.TOP, i), EdgeGeom.OnPlane(p.translated(f.depth), e)))
+        for (which in listOf(SolidFace.BOTTOM, SolidFace.TOP)) {
+            val bottom = which == SolidFace.BOTTOM
+            val plane = if (bottom) p.flipped() else p.translated(f.depth)
+            val t = capMap(bottom)
+            for ((i, e) in pieces.withIndex()) {
+                out.add(
+                    SolidEdge(
+                        EdgeName.CapPiece(which, i),
+                        EdgeGeom.OnPlane(plane, GeomMath.transform(e, t)),
+                        FacePair(FaceName.Cap(which), FaceName.Side(i)),
+                    ),
+                )
+            }
         }
         return out
     }
@@ -622,23 +852,90 @@ object Section3 {
         if (plan == null) return null to why
         val out = ArrayList<SolidEdge>()
         val m = plan.railCount
-        for (k in 0 until plan.sections.size - 1) {
+        val last = plan.sections.size - 1
+        for (k in 0 until last) {
             for (j in 0 until m) {
-                out.add(SolidEdge(EdgeName.Rail(k, j), EdgeGeom.Straight(plan.ringW[k][j], plan.ringW[k + 1][j])))
+                // a rail runs *along* the run, so it is the crease between the two bands of the same band
+                // row that meet at rail j — the previous rail interval and this one, wrapping round the ring
+                out.add(
+                    SolidEdge(
+                        EdgeName.Rail(k, j),
+                        EdgeGeom.Straight(plan.ringW[k][j], plan.ringW[k + 1][j]),
+                        FacePair(FaceName.Band(k, (j + m - 1) % m), FaceName.Band(k, j)),
+                    ),
+                )
             }
         }
         for (k in plan.sections.indices) {
             if (plan.preps.getOrNull(k) == null) continue
             for (j in 0 until m) {
+                // a section's own ring edge is the crease *across* the run: the band below it meets the band
+                // above it, and at a terminal section one of the two is that section's own face — which
+                // exists exactly when the ring does, since [loftFaces] caps every area section that is
+                // terminal and [loftEdges] rings every section that has a prep (an apex has neither)
+                val below = if (k == 0) FaceName.SectionFace(0) else FaceName.Band(k - 1, j)
+                val above = if (k == last) FaceName.SectionFace(last) else FaceName.Band(k, j)
                 out.add(
                     SolidEdge(
                         EdgeName.SectionRing(k, j),
                         EdgeGeom.Straight(plan.ringW[k][j], plan.ringW[k][(j + 1) % m]),
+                        FacePair(below, above),
                     ),
                 )
             }
         }
         return out to null
+    }
+
+    // ---- the generic accessors the blend consumes ----
+
+    /**
+     * The edges of [feature] that bound face [face], in the edge list's own order — *"the edges of face f"*,
+     * the first of the two questions an edge blend asks (session 71).
+     *
+     * Generic by construction: it reads the stated [SolidEdge.between] of every edge and knows nothing about
+     * which feature made them, so a feature that names its faces gets this for free and one that refuses
+     * ([edges] returning a reason) refuses here too, by the same words.
+     */
+    fun edgesOfFace(
+        feature: Feature3,
+        face: FaceName,
+    ): Pair<List<SolidEdge>?, String?> {
+        val (fs, whyFaces) = faces(feature)
+        if (fs == null) return null to whyFaces
+        if (fs.none { it.name == face }) return null to "this solid has no ${face.label}"
+        val (es, whyEdges) = edges(feature)
+        if (es == null) return null to whyEdges
+        return es.filter { it.between.has(face) } to null
+    }
+
+    /**
+     * The edge of [feature] between faces [a] and [b] — *"the edge between f and g"*, the second question,
+     * and the one an edge blend is actually addressed by.
+     *
+     * Two faces may meet along **several** edges — the two arcs of a slot's outline meet at both ends — and
+     * that is refused rather than resolved, for the reason every other one-input-is-one-curve refusal in this
+     * file is: which of two an index meant would change as the geometry moved. Name the edge itself then.
+     */
+    fun edgeBetween(
+        feature: Feature3,
+        a: FaceName,
+        b: FaceName,
+    ): Pair<SolidEdge?, String?> {
+        val (fs, whyFaces) = faces(feature)
+        if (fs == null) return null to whyFaces
+        for (f in listOf(a, b)) if (fs.none { it.name == f }) return null to "this solid has no ${f.label}"
+        val (es, whyEdges) = edges(feature)
+        if (es == null) return null to whyEdges
+        val hits = es.filter { it.between.sameAs(a, b) }
+        return when (hits.size) {
+            0 -> null to "${a.label} and ${b.label} do not meet along an edge"
+            1 -> hits[0] to null
+            else ->
+                null to
+                    "${a.label} and ${b.label} meet along ${hits.size} separate edges, and one input is one edge — " +
+                    "name the edge itself"
+        }
     }
 
     // ---- the face a footprint edge names: sketch-on-face, generalized past the prism ----

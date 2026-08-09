@@ -146,24 +146,24 @@ class RevolveFaceTest {
         val faces = assertNotNull(fs)
         assertEquals(4, faces.size, "a complete turn has no caps, so only the profile's own four pieces")
         for (i in faces.indices) assertEquals(FaceName.Side(i), faces[i].name, "face #${i + 1} is named by its piece")
-        assertTrue(faces[0].surface is Revolve3.Band.Degenerate, "the edge on the axis sweeps nothing")
+        assertTrue(faces[0].surface?.band is Revolve3.Band.Degenerate, "the edge on the axis sweeps nothing")
         assertNull(faces[0].plane)
-        assertTrue(faces[1].surface is Revolve3.Band.Planar, "the far end is a flat disc")
+        assertTrue(faces[1].surface?.band is Revolve3.Band.Planar, "the far end is a flat disc")
         assertNotNull(faces[1].plane, "…and therefore a plane one can sketch on")
-        assertTrue(faces[2].surface is Revolve3.Band.Cylinder, "the barrel is a cylinder")
+        assertTrue(faces[2].surface?.band is Revolve3.Band.Cylinder, "the barrel is a cylinder")
         assertNull(faces[2].plane)
-        assertTrue(faces[3].surface is Revolve3.Band.Planar, "the near end is a flat disc too")
+        assertTrue(faces[3].surface?.band is Revolve3.Band.Planar, "the near end is a flat disc too")
     }
 
     /** The exact parameters are **retained** on the patch: the barrel knows its own radius and its span. */
     @Test
     fun aBandKeepsTheParametersItWasBuiltFrom() {
         val faces = assertNotNull(Section3.faces(featureOf(shaft(r = 17.5, len = 64.0))).first)
-        val barrel = assertNotNull(faces[2].surface as? Revolve3.Band.Cylinder)
+        val barrel = assertNotNull(faces[2].surface?.band as? Revolve3.Band.Cylinder)
         assertClose(barrel.r, 17.5, tol = 1e-12, msg = "the barrel's radius is the profile's own")
         assertClose(barrel.s0, 0.0, tol = 1e-12, msg = "…and its band starts at the near end")
         assertClose(barrel.s1, 64.0, tol = 1e-12, msg = "…and ends at the far one")
-        val coneBand = assertNotNull(Section3.faces(featureOf(cone(r = 30.0, h = 60.0))).first!![2].surface as? Revolve3.Band.Cone)
+        val coneBand = assertNotNull(Section3.faces(featureOf(cone(r = 30.0, h = 60.0))).first!![2].surface?.band as? Revolve3.Band.Cone)
         assertClose(coneBand.sApex, 0.0, tol = 1e-9, msg = "the cone's apex is where its profile edge meets the axis")
         assertClose(coneBand.tanHalf, 0.5, tol = 1e-12, msg = "…and its half-angle is the edge's own slope")
     }
@@ -173,16 +173,16 @@ class RevolveFaceTest {
     fun aBallIsOneSphericalBandAndOneEdgeOnTheAxis() {
         val faces = assertNotNull(Section3.faces(featureOf(ball(r = 20.0))).first)
         assertEquals(2, faces.size)
-        val sphere = assertNotNull(faces[0].surface as? Revolve3.Band.Sphere)
+        val sphere = assertNotNull(faces[0].surface?.band as? Revolve3.Band.Sphere)
         assertClose(sphere.radius, 20.0, tol = 1e-12, msg = "the sphere's radius is the meridian arc's own")
         assertClose(sphere.sc, 0.0, tol = 1e-12, msg = "…and its centre is on the axis")
-        assertTrue(faces[1].surface is Revolve3.Band.Degenerate, "the closing diameter lies on the axis")
+        assertTrue(faces[1].surface?.band is Revolve3.Band.Degenerate, "the closing diameter lies on the axis")
     }
 
     /** An arc whose centre is **off** the axis sweeps a torus, and both radii come off the drawing. */
     @Test
     fun anArcOffTheAxisSweepsATorus() {
-        val band = assertNotNull(Section3.faces(featureOf(torus(major = 50.0, minor = 10.0))).first!![0].surface as? Revolve3.Band.Torus)
+        val band = assertNotNull(Section3.faces(featureOf(torus(major = 50.0, minor = 10.0))).first!![0].surface?.band as? Revolve3.Band.Torus)
         assertClose(band.rc, 50.0, tol = 1e-12, msg = "the major radius is how far the arc's centre stands off the axis")
         assertClose(band.minor, 10.0, tol = 1e-12, msg = "the minor radius is the arc's own")
     }
@@ -198,7 +198,7 @@ class RevolveFaceTest {
         assertEquals(before.map { it.name }, after.map { it.name }, "the names are the construction's, not the geometry's")
         assertEquals(4, after.size)
         assertClose(
-            (after[2].surface as Revolve3.Band.Cylinder).r,
+            (after[2].surface?.band as Revolve3.Band.Cylinder).r,
             31.0,
             tol = 1e-12,
             msg = "the same face, the new radius",
@@ -456,7 +456,7 @@ class RevolveFaceTest {
             )
         val f = featureOf(s)
         val faces = assertNotNull(Section3.faces(f).first)
-        assertTrue(faces[2].surface is Revolve3.Band.Unnamed, "a spline sweeps a surface this drawing cannot name")
+        assertTrue(faces[2].surface?.band is Revolve3.Band.Unnamed, "a spline sweeps a surface this drawing cannot name")
         // …and yet an axis-normal cut of it is still exact, because that column reads the profile itself
         val sec = sectionOf(s, Plane3(Vec3(50.0, 0.0, 0.0), Vec3.Y, Vec3.Z))
         assertTrue(!sec.edges[2].approximated, "the profile's own crossing is analytic whatever kind it is")
