@@ -1646,6 +1646,7 @@ it:
 | `tool revolve` with **no `scalar=`** — the *complete revolution*, and `dofs=` on a partial one (OP-17, session 63) | a new **spelling** rather than a new argument: the angle slot used to be required, so no build could write a `tool revolve` step without a `scalar=`, and the slot owned nothing, so none ever wrote a `dofs=` for one. A step with no scalar now names the complete revolution — a construction with no angle node — and a partial one carries its offset freedom in `dofs=`, appended by the rule the `dofs=` row above states. The **offset never became an argument of its own**: `scalar=` is already an ordered list, so a two-scalar revolve writes `scalar="angle","offset"` exactly as any other two-scalar tool does | none, and **no version bump**. Every revolve any earlier build wrote recorded an angle, and that angle still means what it meant — including `360°`, which still closes the body at the *value* level for exactly that reason (the structural form is what a **new** drawing gets when nothing is typed, never a reinterpretation of an old file). An absent `dofs=` still means "every freedom stands at its default", which for the offset is the zero it always was; the one visible consequence is that a pre-package file **gains** `dofs=0deg` on its first re-save, which is asserted rather than hidden (`ChainCutReachTest.assertRoundTrips`) |
 
 | `tool sweep signs=` again — **a closed run's seam counts among the crossings** (OP-26, session 66) | **v2 → v3, the format's second bump.** `Pierce3.crossings` could not see a change of side across a closed run's own start, so a ring whose seam lies exactly in the section's plane reported one crossing where it has two. Correcting the walk inserts that crossing at index **0** (its arc length is nothing), so every index a v2 file recorded on such a drawing now names the crossing one place further along | **the recorded index is shifted on load by exactly the crossing that was inserted in front of it** — one where the run crosses at its seam right now (`Pierce3.crossesAtSeam`), nothing otherwise (`Document.migratedPierce`). The migration is *exact*, which is the whole reason it is one: the new set is the old set with at most one crossing put in front, so what a v2 reader would have shown for this file at this load is `all[k]` of the seam-blind walk and the very same crossing is `all[k + δ]` of this one. A **negative** index is the origin reading and is never shifted; an index that had already outrun its set stays out of it, refusing in the words it always used. Where the run or the plane has **no value** the shift cannot be measured, so the number is kept exactly as written and the load **names the element** (`loadNotes`) |
+| `sketchspace el= piece=` on a **revolution** — a turned part's flat faces, and a partial turn's caps (OP-17's item 4 of the sphere queue, session 69) | **no new argument and no new spelling**: the same two arguments the face variant has always carried, over the same address space (`Geom3.boundaryPieces`), now answered for a feature kind that used to refuse them. A revolution's face indices `0 until n` are its profile's own boundary pieces and `n` / `n + 1` its low- and high-angle caps | none, and **no version bump**, and this one is airtight rather than argued: before this build `createFaceSpace` on a revolve **always** returned null (`Geom3.sideFace` → *"this solid is not a prism"*), and the loader threw `LoadError` on such a step — so no build could ever write one and no file can contain one. A `piece=` that names a face a *later* edit turned curved refuses in the words of the surface it became (a cylinder, a cone, a torus) and heals when it flattens again, which is OP-3 and not a format question |
 
 **Why a bump, and what was rejected** — the two rows above both argued their way *out* of one, so the argument
 for this one has to be made rather than assumed. Three options were weighed:
@@ -4913,16 +4914,21 @@ exact profile sketch, so every property a ball needs is a property the revolve a
   element is published: the loop is a node, so the picture is drawn once rather than three times.
 - **The plane it lands on is the plane you are drawing on**, because the revolve is plane-anchored — so on a
   face or a datum it simply works, and the ball's equator lies in that space.
-- **Chorded, and both helps say so.** A revolution still has no named faces (`Section3` answers
-  `REVOLVE_ONLY`), so the ball's section is cut from its mesh: a working plane through the centre gives a
-  **chorded** great circle, and the volume comes out a fraction short of `4/3·π·r³` because the shell is
-  inscribed twice over — a chorded meridian carried on chorded parallels. Measured, and it is the queue
-  entry's own number: at r = 20 and the default tolerance, 4970 triangles enclosing **33402.9 mm³ against
-  33510.3 analytic — 0.32 % short**. `SphereTest` asserts a one-sided band under the exact volume rather than a
-  count, because *being over it* would mean the shell is not inscribed at all. Closing that gap is **item 4 of
-  the sphere queue** (analytic faces for surfaces of revolution) and it is a *Revolution* gap shared by every
-  turned part in the tool, not a sphere gap — and **item 5** (the sphere as a distance *locus*: sphere ∩ sphere,
-  trilateration, sphere ∩ curve) is untouched by this package. Both remain queued.
+- ~~**Chorded, and both helps say so.**~~ — **half of this is retired in session 69** by item 4 of the sphere
+  queue (*Analytic faces for surfaces of revolution*, below). The clause as written was: *"A revolution still
+  has no named faces (`Section3` answers `REVOLVE_ONLY`), so the ball's section is cut from its mesh: a working
+  plane through the centre gives a **chorded** great circle."* It does not any more: the ball is **one spherical
+  band** closed on its own axis, so a plane through the centre gives the exact circle of the drawn radius and an
+  off-centre one the exact small circle, each an ordinary construction input. Both helps and the body's own note
+  were rewritten to say that instead. What is **untouched** is the other half, and it was always a different
+  statement: the *picture* is still triangles, so the volume comes out a fraction short of `4/3·π·r³` because
+  the shell is inscribed twice over — a chorded meridian carried on chorded parallels. Measured, and it is the
+  queue entry's own number: at r = 20 and the default tolerance, 4970 triangles enclosing **33402.9 mm³ against
+  33510.3 analytic — 0.32 % short**. `SphereTest` still asserts a one-sided band under the exact volume rather
+  than a count, because *being over it* would mean the shell is not inscribed at all. That the two could be
+  separated is the lesson: a mesh's fineness (OP-9's sink) and a section's exactness are different questions,
+  and the old clause conflated them. **Item 5** (the sphere as a distance *locus*: sphere ∩ sphere,
+  trilateration, sphere ∩ curve) is untouched by either package and remains queued.
 - **Free, off the revolve: the picture coarsens on both axes.** Session 67's rule gives a revolution two mesh
   levels because nothing outside its mesh reads either count, so the ball's 3D drag is cheap without one line
   about spheres anywhere.
@@ -4933,6 +4939,128 @@ volume; a datum through the centre sectioning it as an approximated great circle
 hitting the near surface exactly a radius in front of the centre; an STL whose size is the facet count's own
 formula; one undo taking all six elements; byte-equal round trips replaying to the same volume; and the palette
 pairing asserted against the circle rows themselves.
+
+#### Analytic faces for surfaces of revolution (as built, session 69; the sphere queue's item 4)
+
+The gap the ball's own note named as *"a `Revolution` gap shared by every turned part in the tool, not a sphere
+gap"*, closed. `Section3.faces`, `.edges` and `.structuralRefusal` all answered `REVOLVE_ONLY`, so a revolution
+had no named faces: its section fell back to `meshSection`, its curves drew as chords, they could not be used as
+construction inputs, and there was no face to sketch on. All four of those are now false. The whole of it is one
+new kernel file, `geom/Revolve3.kt`, plus the wiring that reads it; `REVOLVE_ONLY` is deleted.
+
+**A revolution's faces are its profile's own pieces.** There is nothing to discover, which is the point: a
+profile segment parallel to the axis sweeps a **cylinder**, one meeting the axis at an angle a **cone**, one
+perpendicular to it a flat **annulus or disc**, a profile arc centred on the axis a **sphere** and one centred
+off it a **torus**; a piece lying *on* the axis sweeps nothing at all, which is not a hole in the shell but the
+pole it closes on; and a **partial** turn adds the two flat **caps** the profile itself is. `Revolve3.Band` is
+that family as a value, and it is carried on the `FacePatch` (`FacePatch.surface`) rather than re-derived by
+whoever needs it, so the exact parameters a face was *built* from — an axis, a radius, a half-angle, a band's
+own interval — are the ones a section, a refusal and later a blend all read.
+
+- **The identity rule.** A revolution's face is named by the **index of the profile boundary piece it is swept
+  by**, in `Geom3.boundaryPieces` order — regions in order, each region's outer loop then its holes, pieces in
+  loop order — followed by the two caps of a partial turn, **low-angle first**. That is the *same address space*
+  an extrusion's `FaceName.Side` uses and the same one `sketchspace el= piece=` has always recorded, so
+  **nothing about any stored file changes meaning and no version is bumped**. The index is a fact of the
+  *construction* and not of the geometry: drag the profile, retype a radius, change the sweep, move the axis —
+  the piece list keeps its length and its order, so face #3 goes on being face #3 and every space and section
+  input anchored on it follows (OP-17's liveness, asserted by dragging a shaft's corners and re-reading the same
+  index). The one honest caveat is `Loop`'s own (OP-14, already recorded on `boundaryPieces`): a ring the user
+  turns inside out is renormalised and renames its own edges.
+- **The frame a flat face is sketched in departs from `Geom3.sideFace`'s intrinsic rule, deliberately.** A
+  prism's side face has no distinguished point, so its own picked edge is the only choice-free anchor there is;
+  a face of revolution has a **centre** — the axis pierces it — so the origin goes there, `u` runs along the
+  radius the profile is drawn at, and right-handedness fixes `v` once the normal points out of the material.
+  That is what somebody sketching a boss on the end of a turned part is measuring from: a circle at (0, 0) is
+  concentric with the shaft. The status line says which of the two frames it is (`Document.faceFrameNote`),
+  because a note that told all three face kinds the same story would be wrong about two of them.
+- **`Geom3.facePlane` reaches a partial revolve's caps — a recorded cut, reversed.** The old comment read: *"a
+  revolve's end caps are planes too, but they are *rotated* frames, and naming them TOP/BOTTOM would invent a
+  convention this slice has no use for."* Both halves stopped being true. The convention is not invented:
+  `Turn3.Arc` is **ordered**, and `Geom3.revolve`'s emitter already states the rule — *"the cap at the
+  interval's low angle faces backwards out of the sweep, the one at its high angle forwards — the same
+  reversed-bottom / upright-top rule the extrude uses"* — so `BOTTOM` = the low-angle cap is a **reading of the
+  winding**, not a new choice. And the use exists: *Extrude on face* raising a pip off the end of a partial
+  turned part. A **complete** revolution still has neither cap and refuses in the words its own kind uses.
+
+**The exact-section dispatch, decided by predicate before any geometry is made.** This is the doctrine's second
+half — *exact paths never degrade silently to mesh paths* — and it is a table rather than a heuristic:
+
+| band | plane ⟂ axis | plane through the axis | plane ∥ axis, off it | oblique |
+|------|--------------|------------------------|----------------------|---------|
+| flat annulus / disc / sector | exact (a planar face) | exact | exact | exact |
+| cap of a partial turn | exact (a planar face) | exact | exact | exact |
+| cylinder | exact circle / arc | exact pair of rulings | exact pair of rulings | **exact ellipse** |
+| cone | exact circle / arc | exact pair of rulings | **mesh** — a hyperbola, no name | exact ellipse when `\|n·axis\| > sin α`, else **mesh** (parabola / hyperbola) |
+| sphere | exact circle | **exact circle** | **exact circle** | **exact circle** |
+| torus | exact circles / arcs | exact profile arcs | **mesh** — a quartic | **mesh** — a quartic |
+| swept by an ellipse or a spline | exact circles / arcs | exact profile pieces | **mesh** | **mesh** |
+
+Two of those columns are **family-independent**, which is what makes the table's left half so wide and what
+gives the torus its exact cases for free. A plane **perpendicular to the axis** meets the body wherever the
+profile does, so its section is the circles — arcs, over a partial turn — at the profile's *own* crossing radii,
+which is exact for a spline profile as much as for a segment. A plane **containing the axis** meets it in the
+profile piece itself, placed at the two meridian angles its half-planes stand at. Both are constructed **on** the
+band, so neither can leave it. The family answers are tried first because they say more where they apply — a
+ball cut through its own axis is *one* circle, not two half-circles — and each is kept only if it lies **wholly**
+on the band, a band being one piece of a surface and not the whole of it. A candidate wholly *off* the band is
+dropped (the plane meets the surface elsewhere, not this face); one only **partly** on it is a proper sub-piece,
+which no single named curve here can state, so the two columns above answer instead and, failing them, the band's
+own sampled runs — flagged, drawn, and refused as an input by name (OP-15). Nothing is ever fitted to samples.
+
+- **Where a section still comes back sampled it is a *whole family* refusing, never half of one.** The cone's
+  parabolic and hyperbolic sections and the torus's quartic ones are real curves this drawing has no name for:
+  `Conic.kt` carries ellipses and nothing else. Adding a name for them is a future extension of OP-24, not a
+  limit — and until it exists the honest answer is the one given. `RevolveFaceTest` asserts **which path was
+  taken** (`Revolve3.cutBand(...).exact == null`) and not merely that the shape came out right, because the
+  dispatch is the claim and nothing else can check it.
+- **`Conics.ellipseFromImplicit` is the one piece of new maths**, and only the cone needed it: a cylinder's
+  section falls out already parametrized as two conjugate semi-diameters, whereas substituting a plane's frame
+  into `|P − apex|² = (1 + tan²α)((P − apex)·axis)²` leaves a quadratic in `(x, y)` and nothing more. The
+  reduction is the textbook one and it is exact, and it returns **null** — never an approximation — for a
+  parabola, a hyperbola, an imaginary conic or a degenerate pair of lines.
+- **Whether a candidate lies on its band is a *predicate* decided by sampling**, 128 points, each tested
+  exactly: its `(s, r)` preimage against the profile piece, its angle against the turn interval. The curve
+  returned is still exact; what is sampled is the yes/no. That is the same line `Section3.inclinedCylinderCut`
+  already drew for a cylinder running off its ends, and it is stated rather than hidden.
+- **One latent bug fell out of this and is fixed for every feature kind**: `PlaneSection.approximated` read
+  only the *named* edges, so a face cut into several pieces — which refuses as an input and keeps drawing —
+  reported an exact section while drawing chords. It now reads what is **drawn** as well.
+
+**What the seam gets for free.** Nothing in `Intersect3`, `Document.sectionInput` or the *Sketch on face*
+gesture had to learn about revolutions: they read `PlaneSection`, and `PlaneSection` changed. So a datum across
+a shaft offers the barrel's circle as an ordinary `CircleValue` that follows the turned radius; the same section
+promoted into space (OP-26's step 6) reports itself **exact** instead of *"chords of the section's own
+tessellation"*; and *Sketch on face* opens on a shaft's flat end, where a circle extrudes into a watertight boss.
+The one gesture that needed a rule is picking a **cap**: a revolve's footprint is its own profile, so its
+boundary edges name the *bands they sweep*, and the cap standing in that same plane is bounded by those very
+edges. It is resolved by where the click lands rather than by a mode — **on an edge means the band that edge
+sweeps, inside the profile and clear of every edge means the cap the profile is** — and only a cap actually
+lying in the space being clicked in can be reached that way, which is the honest limit of a pick made in one
+plane. A cap standing elsewhere is reached by its stored address or by a datum plane.
+
+**Deliberate cuts, each a whole thing rather than half of one.**
+
+- **`Geom3.sectionAt` still refuses a revolve** (*"a revolved solid has no prismatic cross-section"*), so the
+  *Section* tool — which makes a 2D **area** at a height, not a section curve — does not reach one. Nothing here
+  is blocked by geometry any more; what is missing is the decision about which 2D area a turned part's
+  horizontal cut is, and that belongs with `prismatic` and the slab algebra (OP-22), not here.
+- **Mesh booleans stay mesh** (OP-9's sink rule): a revolution is still not `prismatic`, so a boolean over one
+  goes to the general engine and its result names nothing. That is the recorded boundary, untouched.
+- **Villarceau circles** — the torus's third exact plane family, cut by a bitangent plane — are not implemented.
+  They are exact and they do exist; they are also a measure-zero family of planes nobody reaches by dragging a
+  datum, so they are recorded as a future extension rather than smuggled in. The dispatch answers them today
+  with the honest sampled path, which is correct, just not the best possible.
+- **A partially-on-band exact curve is not trimmed**, it falls back. Trimming an ellipse to the arc that is
+  actually on the band is exact and would be better; it needs the band-boundary crossings solved per family,
+  which is a package of its own. The existing cylinder precedent (`inclinedCylinderCut`) makes the same choice.
+
+`RevolveFaceTest` (19 tests) and `RevolveFaceSpaceTest` (9) are the record, and `SphereTest` gained the
+exactness its old chorded clause promised. **2013 → 2043 tests**, four of which changed *direction* rather than
+being repaired: three honesty clauses that came true (`SphereTest`'s chorded section, `RevolveIntervalTest`'s
+*"as a revolve's section always is"*, `Issue13TessScaleTest`'s *"sampled at the mesh tolerance"*) and one
+refusal that improved (`ProjectOnFaceToolTest`'s mesh-body case, whose turned ring now refuses because no flat
+face of it *faces the drawing* rather than because it has none).
 
 #### Datum planes — any line, any angle (as built, on GitHub #6)
 
@@ -5746,6 +5874,22 @@ accident: `requestAnimationFrame` is a platform API (OP-12), and `Viewport3` mus
 headless suite drives synchronously — a gesture there still means exactly one `onChange`, and it is the shell
 that decides how many of those become pixels. Everything else (`repaint`, the view switch) still paints
 straight through.
+
+*Corrected in session 69: a frame with **nothing left owed** must paint nothing.* One pending flag served both
+reasons for a frame, and `repaint` cleared it — correctly, since a paint that happens now satisfies one that was
+owed — but the frame itself was still queued, and with the flag down it fell through to the `else` branch and
+ran `draw3d()`. In the **plan** that composes the working plane's sketch onto the 2D canvas through the *3D*
+view's own size, blanking the drawing until something repainted it. The two reasons are now told apart
+(`docPending` and `viewPending`), so `if (whole) repaint() else if (view) draw3d()`. What kept this hidden for
+seven sessions is worth recording: Chrome delivers real pointer moves **aligned to the frame**, so the armed
+frame is consumed in the same one and the orphan never exists — it takes synthetic input, where a press can
+overtake the move in front of it, and it surfaced as an *intermittent* pixel count in
+`BrowserE2ETest.buildAndDragInBrowser` that had cost a rerun in five consecutive gates. The flake and the defect
+got separate fixes, which is the right number: the test now waits on two real signals (a `mousemove` counter
+installed after the shell's own handler, then a nested animation frame) instead of bundling `Mouse.click`, with
+its thresholds byte-identical; and `aPressThatOvertakesItsMovesFrameKeepsThePlanDrawn` dispatches all three
+events inside one `evaluate` — the only way to *guarantee* the orphan — and fails every time against a bundle
+built without the guard.
 
 **(e) A hover moves no vertex.** The worst of the six, and the one the user would have hit first: `repaint()`
 set the GL dirty flag unconditionally, and `Editor.pointerMove` fires `onChange` on every hover while a
@@ -12630,6 +12774,37 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   item 4. **2001 → 2017 green**, no golden moved, nothing cut. **Items 4 and 5 of the sphere queue remain
   open** — analytic faces for surfaces of revolution, and the sphere as a distance *locus* — and neither was
   started. See *The ball — a circle, one dimension up* under *Going to 3D*.
+- **Turn 69** — **Analytic faces for surfaces of revolution** (item 4 of the sphere queue, OP-17). Closed the
+  gap the ball's own note named as *a `Revolution` gap shared by every turned part in the tool, not a sphere
+  gap*: `Section3` answered `REVOLVE_ONLY` in four places, so a revolution had no faces, no exact section, no
+  construction inputs and nothing to sketch on. The design is the queue entry's own and it needed no argument —
+  **a revolution's faces are its profile's own pieces** — and the identity that falls out of it is the whole
+  reason nothing about the file format moves: a face is named by the boundary-piece index `sketchspace el=
+  piece=` has always recorded, so the address survives every edit for the same reason an extrusion's does, and
+  no build could ever have written such a step for a revolve anyway (it refused). Two decisions are worth the
+  record. First, the **frame** a flat face of revolution is sketched in puts its origin where the axis pierces
+  it rather than on the picked edge, which departs from `Geom3.sideFace`'s intrinsic rule *because the two faces
+  are different things*: a prism's side has no distinguished point and a face of revolution has a centre, and
+  the person sketching a boss on a shaft's end is measuring from that centre. Second, the exact-section
+  **dispatch is a table decided by predicate up front**, and its two widest columns turned out to be
+  family-independent — a plane perpendicular to the axis reads the profile's own crossing radii, a plane
+  containing the axis places the profile piece at two meridian angles — which is what hands the torus its exact
+  cases without a line of torus algebra and hands a spline-swept band an exact answer for free. Where no name
+  exists (a cone's parabola and hyperbola, a torus's quartic, an ellipse- or spline-swept band) a **whole
+  family** refuses and the honest sampled path answers; the tests assert *which path was taken*, because the
+  dispatch is the claim. One recorded cut was reversed with its rationale quoted (`Geom3.facePlane` now names a
+  partial revolve's caps `BOTTOM`/`TOP`, which is a reading of `Turn3.Arc`'s own ordering rather than the
+  invented convention the old comment feared), one latent bug was fixed for every feature kind
+  (`PlaneSection.approximated` ignored what was *drawn*), and **three honesty clauses came true and were
+  rewritten rather than deleted** — the ball's chorded section above all, whose retirement also separated two
+  claims the old wording conflated: a mesh's fineness and a section's exactness are different questions.
+  Deliberate cuts, each whole: `sectionAt` still refuses a revolve, mesh booleans stay mesh, Villarceau circles
+  and the trimming of a partly-on-band exact curve are recorded as future extensions. Folded in: the browser
+  E2E's preview-pixel flake, which had cost a rerun in five consecutive gates and turned out to be a **real
+  shell defect** rather than a test one — a coalesced frame whose reason had already been paid by a synchronous
+  repaint fell through to `draw3d()` and blanked the plan, invisible under real input because Chrome aligns
+  pointer moves to the frame. Test and defect got separate fixes and the defect got its own deterministic
+  regression (see *(d) Redraws coalesce* under the performance note). 2013 → 2043 tests.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -14751,7 +14926,13 @@ would save.
 **Named in session 37 and not yet queued — two gaps a real structural part shows** (from a cast arm looked at
 in the round): **3D edge blends**, which is most of what the eye reads as a casting and is a dimensioned
 manufactured feature rather than decoration — nothing can break an edge between two faces of a solid today,
-and it pushes hardest on OP-9 since blending mesh faces is a different problem from blending analytic ones;
+and it pushes hardest on OP-9 since blending mesh faces is a different problem from blending analytic ones.
+*(Session 69 supplies a piece this item was recorded as needing: a blend between two faces is a function of
+their **surfaces**, and there are now analytic surface patches to be a function of — `Revolve3.Band` on
+`FacePatch.surface`, beside the planes an extrusion and a loft already name. What is still absent is the blend
+itself and, before it, the **edge** between two named faces as a first-class thing: `Section3.edges` names a
+revolution's rings and an extrusion's uprights, but nothing yet says "these two faces meet along this curve"
+for an arbitrary pair. That, not the surfaces, is now the first missing piece.)*;
 and **shelling** to a stated wall thickness, since a real member is hollow (0.8–15% of its bounding box) and
 the only route today is subtracting a hand-built inner solid. **Draft** follows them and is meaningless
 before them. Also named: **text as geometry** (part marking, serial plates, signage) — a general capability,
@@ -14890,14 +15071,24 @@ splits in three, and only the first is small.
    its section is chorded until item 4 — the same honesty *Tube*'s help now carries about its plan hint. The
    pairing with *Circle (centre, radius)* / *(centre, point)* is deliberate: a ball is what a circle says one
    dimension up, and the two spellings are the same two the circle has.
-4. **Analytic faces for surfaces of revolution.** `Section3.faces`, `.edges` and `.structuralRefusal` all
+4. ~~**Analytic faces for surfaces of revolution.**~~ — **built in session 69**; see *Analytic faces for
+   surfaces of revolution* under *Going to 3D*. One kernel file (`geom/Revolve3.kt`), `REVOLVE_ONLY` deleted,
+   and the address space unchanged, so no stored file changes meaning. The face-patch family the entry asked
+   for is `Revolve3.Band` — spherical, conical, cylindrical, toroidal and planar bands read off the profile's
+   own pieces, plus a partial turn's two caps — carried on the `FacePatch` so a later blend reads the surfaces
+   and not the triangles. All three of the entry's own acceptances hold: a plane through a ball is an exact
+   circle (off-centre too), a cylindrical section through the axis is two exact lines, and *Sketch on face*
+   reaches a shaft's flat end and a partial revolve's cap. **Three families refuse by name where the drawing
+   has no word for the curve** — a cone's parabolic and hyperbolic sections, a torus's quartic ones, and any
+   band swept by an ellipse or a spline — each refusing *wholly* and dispatched by predicate up front, never
+   half-exact. The original entry, kept: *`Section3.faces`, `.edges` and `.structuralRefusal` all
    answer `REVOLVE_ONLY` today, so a revolution has no named faces: its section falls back to `meshSection`,
    its curves draw as chords, they cannot be used as construction inputs, and there is no face to sketch on.
    That is a *Revolution* gap and not a sphere gap — **every turned part in the tool has it** — and closing it
    is what makes a plane through a ball an exact circle, a cylindrical section two exact lines, and *Sketch on
    face* reach a shaft's flat end. It wants a face-patch family for surfaces of revolution (spherical,
    conical, toroidal and planar bands, read off the profile's own pieces), which is also what the parked 3D
-   blending work will need. Bigger than item 3, and shared.
+   blending work will need. Bigger than item 3, and shared.* **Item 5 remains open.**
 5. **The sphere as a *locus* — the concept behind the concept.** In the plane the circle is how the drawing
    carries **distance**: circle ∩ circle is an ordered intersection set whose branch is a stored `Select` sign
    (OP-1), and tangency and Apollonius are built on it. In space there is no distance-based construction at

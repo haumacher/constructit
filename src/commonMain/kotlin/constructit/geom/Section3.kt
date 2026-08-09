@@ -39,6 +39,18 @@ sealed interface FaceName {
     data class SectionFace(val section: Int) : FaceName {
         override val label: String get() = "section ${section + 1}'s own face"
     }
+
+    /**
+     * A **partial** revolution's cap — the profile itself, standing at one end of the swept interval.
+     *
+     * [SolidFace.BOTTOM] is the cap at the interval's **low** angle and [SolidFace.TOP] the one at its
+     * high angle, which is not a new convention but [Geom3.revolve]'s own winding rule read on the angle
+     * (the reversed-bottom / upright-top rule the extrude uses). A complete revolution has neither.
+     */
+    data class RevolveCap(val which: SolidFace) : FaceName {
+        override val label: String
+            get() = if (which == SolidFace.TOP) "the cap at the end of the sweep" else "the cap at the start of the sweep"
+    }
 }
 
 /**
@@ -68,6 +80,22 @@ sealed interface EdgeName {
     data class SectionRing(val section: Int, val rail: Int) : EdgeName {
         override val label: String get() = "edge #${rail + 1} of section ${section + 1}"
     }
+
+    /**
+     * A revolution: the **ring** traced by the start corner of profile piece [piece] — a circle over a
+     * complete turn, an arc over a partial one, and a single point where that corner is on the axis.
+     */
+    data class RevolveRing(val piece: Int) : EdgeName {
+        override val label: String get() = "the ring traced by profile corner #${piece + 1}"
+    }
+
+    /** A partial revolution: profile edge [piece] as it lies on the cap at [which] end of the sweep. */
+    data class RevolveCapPiece(val which: SolidFace, val piece: Int) : EdgeName {
+        override val label: String
+            get() =
+                "profile edge #${piece + 1} of the cap at the " +
+                    (if (which == SolidFace.TOP) "end" else "start") + " of the sweep"
+    }
 }
 
 /**
@@ -84,6 +112,18 @@ data class FacePatch(
     val plane: Plane3?,
     val outline: List<ProfileElement>,
     val reason: String?,
+    /**
+     * The **surface family** this face is a patch of, where it has an analytic one: a revolution's
+     * cylindrical, conical, spherical, toroidal or flat band (see [Revolve3.Band]). Null for the faces
+     * whose family is the patch itself — every planar face, and every ruled one whose only description is
+     * its own rulings.
+     *
+     * It is carried on the patch rather than re-derived by whoever needs it so that the exact parameters
+     * a face was **built** from — an axis, a radius, a half-angle, a band's own interval — are the ones a
+     * section, a refusal and (one day) a blend all read. That is the parked 3D-blending work's own
+     * prerequisite: a fillet between two faces is a function of their surfaces, not of their triangles.
+     */
+    val surface: Revolve3.Band? = null,
 )
 
 /** One edge of a solid, in the world: a straight one, or a curve lying on a known plane. */
@@ -215,10 +255,6 @@ object Section3 {
             "its curves draw as chords and cannot be used as construction inputs; build the geometry you want " +
             "to anchor on from the operands' own sketches instead"
 
-    private const val REVOLVE_ONLY =
-        "a revolved solid's faces are surfaces of revolution, which this slice does not name — its section " +
-            "draws from the mesh and offers no construction inputs"
-
     private const val PRISM_ONLY =
         "this solid is a stack of slabs from the exact boolean algebra (OP-22), whose internal interfaces are " +
             "not faces — its section draws from the mesh and offers no construction inputs; a horizontal cut " +
@@ -249,7 +285,7 @@ object Section3 {
             is Feature3.Extrusion -> extrusionFaces(feature) to null
             is Feature3.Prism -> prismFaces(feature) to null
             is Feature3.Loft -> loftFaces(feature)
-            is Feature3.Revolution -> null to REVOLVE_ONLY
+            is Feature3.Revolution -> Revolve3.faces(feature)
             is Feature3.MeshBoolean -> null to MESH_ONLY
             is Feature3.Imported -> null to IMPORT_ONLY
             is Feature3.Sweep -> null to SWEEP_ONLY
@@ -269,7 +305,10 @@ object Section3 {
             is Feature3.Extrusion -> true
             is Feature3.Loft -> true
             is Feature3.Prism -> false
-            is Feature3.Revolution -> false
+            // A revolution's faces **are** its whole boundary (OP-17's item 4): every profile boundary
+            // piece sweeps exactly one band, a partial turn adds exactly two caps, and a piece lying on
+            // the axis sweeps nothing — which is not a hole in the shell but the pole it closes on.
+            is Feature3.Revolution -> true
             is Feature3.MeshBoolean -> false
             is Feature3.Imported -> false
             is Feature3.Sweep -> false
@@ -278,9 +317,8 @@ object Section3 {
     /** Why a general section of [feature] cannot name its faces, or null when it can. */
     fun structuralRefusal(feature: Feature3): String? =
         when (feature) {
-            is Feature3.Extrusion, is Feature3.Loft -> faces(feature).second
+            is Feature3.Extrusion, is Feature3.Loft, is Feature3.Revolution -> faces(feature).second
             is Feature3.Prism -> PRISM_ONLY
-            is Feature3.Revolution -> REVOLVE_ONLY
             is Feature3.MeshBoolean -> MESH_ONLY
             is Feature3.Imported -> IMPORT_ONLY
             is Feature3.Sweep -> SWEEP_ONLY
@@ -551,8 +589,8 @@ object Section3 {
         when (feature) {
             is Feature3.Extrusion -> extrusionEdges(feature) to null
             is Feature3.Loft -> loftEdges(feature)
+            is Feature3.Revolution -> Revolve3.edges(feature)
             is Feature3.Prism -> null to PRISM_ONLY
-            is Feature3.Revolution -> null to REVOLVE_ONLY
             is Feature3.MeshBoolean -> null to MESH_ONLY
             is Feature3.Imported -> null to IMPORT_ONLY
             is Feature3.Sweep -> null to SWEEP_ONLY
@@ -619,6 +657,10 @@ object Section3 {
         feature: Feature3,
         piece: Int,
     ): Pair<FacePatch?, String?> {
+        // A revolution's face is the band its profile piece sweeps, and indices past the profile's own
+        // pieces are the two caps of a partial turn ([Revolve3.facePatchOf]) — one address space, so a
+        // recorded `sketchspace el= piece=` needs no format change to reach either.
+        if (feature is Feature3.Revolution) return Revolve3.facePatchOf(feature, piece)
         if (feature !is Feature3.Loft) {
             // The prism route is [Geom3.sideFace] verbatim — frame, anchor and refusals — because that frame
             // is the **sketching** convention (OP-17): the picked segment on the x axis, v into the face,
@@ -781,7 +823,10 @@ object Section3 {
             null,
             if (es == null) whyEdges else null,
             drawn,
-            edges.any { it.approximated },
+            // What is drawn decides this, not only what is named: a face cut into several pieces refuses as
+            // an *input* and keeps drawing, and when those pieces are chords the section is chords whether
+            // or not one index could name them (OP-15 — the flag is about the picture's honesty).
+            edges.any { it.approximated } || drawn.any { it.approximated },
         )
     }
 
@@ -819,6 +864,9 @@ object Section3 {
                     ) to pieces.map { DrawnPiece(it, false) }
             }
         }
+        // a revolution's bands have their own dispatch, decided by the plane's relation to the axis before
+        // any geometry is made (OP-17's item 4 — see [Revolve3.cutBand] for the table)
+        revolutionCut(feature, patch, cut)?.let { return it }
         // the exact case first, and it is the one a mechanical drawing lives on: a cylinder cut **perpendicular
         // to its axis** is that cylinder's own arc or circle, derived from the profile rather than fitted to
         // samples (OP-15 — exact means the numbers come from the parameters)
@@ -835,6 +883,55 @@ object Section3 {
         axisParallelSideCut(feature, patch.name, cut)?.let { return it }
         val strip = ruledStrip(feature, patch.name) ?: return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
         return cutRuledStrip(label, strip, cut)
+    }
+
+    /**
+     * A band of a **surface of revolution**, cut (OP-17's item 4): the exact curve where the family and the
+     * plane's relation to the axis have one, and the band's own sampled runs where they do not.
+     *
+     * Null when this face is not a revolution's band at all, so every other reading below stands untouched.
+     * The refusals are the planar face's verbatim — one input is one curve, and a face cut into several
+     * pieces is drawn whole and named not at all — because that rule is about *indices*, not about which
+     * surface the pieces came off.
+     */
+    private fun revolutionCut(
+        feature: Feature3,
+        patch: FacePatch,
+        cut: Plane3,
+    ): Pair<SectionEdge, List<DrawnPiece>>? {
+        if (feature !is Feature3.Revolution) return null
+        val name = patch.name
+        if (name !is FaceName.Side) return null
+        val label = name.label
+        val band = Revolve3.cutBand(feature, name.piece, cut) ?: return null
+        val exact = band.exact
+        if (exact != null) {
+            return when (exact.size) {
+                0 -> SectionEdge(label, null, null, "the plane does not cut $label") to emptyList()
+                1 -> SectionEdge(label, exact[0], null, null) to emptyList()
+                else ->
+                    SectionEdge(
+                        label,
+                        null,
+                        null,
+                        "the plane cuts $label into ${exact.size} separate pieces, and one input is one curve — " +
+                            "move the plane to where that face is crossed once",
+                    ) to exact.map { DrawnPiece(it, false) }
+            }
+        }
+        val runs = band.runs.orEmpty().filter { it.size >= 2 }
+        return when (runs.size) {
+            0 -> SectionEdge(label, null, null, "the plane does not cut $label") to emptyList()
+            1 -> SectionEdge(label, null, runs[0], null) to emptyList()
+            else ->
+                SectionEdge(
+                    label,
+                    null,
+                    null,
+                    "the plane cuts $label into ${runs.size} separate pieces, and one input is one curve — " +
+                        "move the plane to where that face is crossed once",
+                ) to runs.flatMap { r -> polylinePieces(r).map { DrawnPiece(it, true) } }
+        }
     }
 
     /**
@@ -1255,6 +1352,11 @@ object Section3 {
                 val d0 = cut.distanceTo(geom.a)
                 val d1 = cut.distanceTo(geom.b)
                 when {
+                    // A **degenerate** edge is one point, and the point is the honest answer when the plane
+                    // reaches it: that is what a revolution's pole is — the ring a corner on the axis traces,
+                    // which has no length but is a corner of the section all the same (OP-17's item 4).
+                    (geom.b - geom.a).length() <= Geom3.WELD_TOL ->
+                        if (abs(d0) <= ON_PLANE_TOL) cut.toLocal(geom.a) to null else null to "the plane does not cross that edge"
                     abs(d0) <= ON_PLANE_TOL && abs(d1) <= ON_PLANE_TOL ->
                         null to "that edge lies in the plane, so it is a whole line there and not a corner"
                     abs(d0) <= ON_PLANE_TOL -> cut.toLocal(geom.a) to null

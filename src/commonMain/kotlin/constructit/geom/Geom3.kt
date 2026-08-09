@@ -2831,10 +2831,27 @@ object Geom3 {
                     SolidFace.TOP -> feature.plane.translated(feature.maxZ) to null
                     SolidFace.BOTTOM -> feature.plane.translated(feature.minZ).flipped() to null
                 }
-            // Deliberately refused rather than guessed: a revolve's end caps are planes too, but they
-            // are *rotated* frames, and naming them TOP/BOTTOM would invent a convention this slice has
-            // no use for. The cut is recorded in DESIGN.md under OP-17.
-            is Feature3.Revolution -> null to "a revolved solid has no top or bottom face"
+            // **Reversed in session 69** (OP-17's item 4 of the sphere queue). The recorded cut read: *"a
+            // revolve's end caps are planes too, but they are *rotated* frames, and naming them TOP/BOTTOM
+            // would invent a convention this slice has no use for"*. Both halves have since stopped being
+            // true. The convention is no longer invented — [Turn3.Arc] is **ordered**, and this very file's
+            // emitter already states the rule ("the cap at the interval's low angle faces backwards out of
+            // the sweep, the one at its high angle forwards — the same reversed-bottom / upright-top rule
+            // the extrude uses"), so BOTTOM = the low-angle cap is a reading of the winding rather than a
+            // new choice. And the use exists: a boss on the end of a partial turned part is exactly what
+            // *Extrude on face* asks of this accessor. A **complete** revolution still has neither cap,
+            // and says so in the words its own kind uses.
+            is Feature3.Revolution -> {
+                val f = Revolve3.frameOf(feature)
+                when {
+                    f == null -> null to "the axis of revolution has no direction"
+                    f.full ->
+                        null to
+                            "this solid is a complete revolution, so it has no start and no end and therefore no " +
+                            "top or bottom face — put a datum plane where you want to sketch"
+                    else -> Revolve3.capPlane(f, which) to null
+                }
+            }
             // Deliberately refused, for the reason a revolve's caps are: a loft's end faces *are* planes (its
             // terminal sections'), but their frames are the sections' own — which may be tilted relative to
             // each other and absent altogether at an apex — so naming one TOP would invent a convention this

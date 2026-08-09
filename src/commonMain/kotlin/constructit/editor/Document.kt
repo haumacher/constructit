@@ -86,6 +86,8 @@ import constructit.geom.Plane3
 import constructit.geom.PlaneSection
 import constructit.geom.ProfileElement
 import constructit.geom.Project3
+import constructit.geom.RegionBool
+import constructit.geom.Revolve3
 import constructit.geom.Section3
 import constructit.geom.Segment
 import constructit.geom.SolidFace
@@ -2130,6 +2132,15 @@ class Document {
      * The pick a plan-view editor can make: a **side face projects to exactly one footprint edge**, so
      * clicking that edge names the face, and the solid it belongs to, in one gesture. Measured against the
      * same footprint geometry the hint draws and [HitTest] picks by, so what looks like an edge is one.
+     *
+     * **A partial revolution's cap is picked by clicking the face itself, not an edge of it** (OP-17's item
+     * 4). A revolve's footprint is its own profile, so its boundary edges name the *bands they sweep* — and
+     * the cap standing in this very space is bounded by those same edges, which is the one ambiguity in the
+     * whole address space. It is resolved by where the click lands rather than by a mode: on an edge means
+     * the band that edge sweeps, inside the profile and clear of every edge means the cap the profile *is*.
+     * Only a cap that actually lies in the space being clicked in can be reached this way, which is the
+     * honest limit of a pick made in one plane; a cap standing elsewhere is reached by its stored address
+     * or by a datum plane.
      */
     fun solidEdgeNear(
         at: Vec2,
@@ -2138,14 +2149,73 @@ class Document {
     ): Pair<Element, Int>? {
         // drawn *in this space*, deliberately not the space's own anchor: that solid shows its face here,
         // not its plan, so a click on it is not in the coordinates its boundary pieces live in
-        val solid =
-            HitTest.nearest(this, ev, at, tol) { it.kind == ElementKind.SOLID && it.space == activeSpace.name }
-                ?: return null
+        val solid = HitTest.nearest(this, ev, at, tol) { it.kind == ElementKind.SOLID && it.space == activeSpace.name }
+        if (solid == null) return capUnder(at, ev)
         val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return null
         val pieces = Geom3.boundaryPieces(feature)
         if (pieces.isEmpty()) return null
         val best = pieces.indices.minByOrNull { HitTest.distanceToPiece(at, pieces[it]) } ?: return null
         return solid to best
+    }
+
+    /**
+     * The **cap of a partial revolution** the click [at] lands inside of, when the click reached no
+     * boundary edge at all — the pick described on [solidEdgeNear].
+     *
+     * Only a cap standing in the plane being clicked in can be reached, and only from inside the profile it
+     * *is*, so this never takes a click away from an edge: a boundary edge within tolerance has already
+     * answered by the time this is asked. Everything about it is constructed — the cap's plane comes off the
+     * turn interval ([Revolve3.capPlane]) and the containment off the profile's own rings — so what the
+     * gesture records is an index like every other face address.
+     */
+    private fun capUnder(
+        at: Vec2,
+        ev: Evaluator,
+    ): Pair<Element, Int>? {
+        val here = planeOf(activeSpace, ev) ?: return null
+        for (el in elements.asReversed()) {
+            if (el.kind != ElementKind.SOLID || el.space != activeSpace.name || !el.visible) continue
+            val feature = (ev.valueOf(el.ref) as? SolidValue)?.solid?.feature as? Feature3.Revolution ?: continue
+            val f = Revolve3.frameOf(feature) ?: continue
+            if (f.full) continue
+            val rings =
+                feature.sketch.regions.flatMap { r ->
+                    (listOf(r.outer) + r.holes).map { l -> l.elements.flatMap { GeomMath.tessellatePiece(it) } }
+                }
+            if (!RegionBool.contains(rings, at)) continue
+            val n = Geom3.boundaryPieces(feature).size
+            for ((k, which) in listOf(SolidFace.BOTTOM, SolidFace.TOP).withIndex()) {
+                val p = Revolve3.capPlane(f, which)
+                if (abs(abs(p.normal.normalized().dot(here.normal.normalized())) - 1.0) > 1e-9) continue
+                if (abs(here.distanceTo(p.origin)) <= Section3.ON_PLANE_TOL) return el to (n + k)
+            }
+        }
+        return null
+    }
+
+    /**
+     * How a face space's frame is introduced, in the words of the face it actually is.
+     *
+     * A prism's or a loft's side face has no distinguished point, so its own picked edge is the anchor and
+     * the note says so. A **face of revolution** has a centre — the axis pierces it — and that is where its
+     * origin is put ([Revolve3]), which is what somebody sketching a boss on the end of a turned part is
+     * measuring from; a *cap* of a partial turn is the profile itself, standing at one end of the sweep. A
+     * note that told all three the same story would be wrong about two of them (refusals and notes both
+     * name what a thing is — OP-3's rule, applied to the status line).
+     */
+    fun faceFrameNote(space: SketchSpace): String {
+        val feature = space.anchor?.let { (Evaluator().valueOf(it.ref) as? SolidValue)?.solid?.feature }
+        val piece = space.piece
+        if (feature is Feature3.Revolution && piece != null) {
+            val n = Geom3.boundaryPieces(feature).size
+            if (piece >= n) {
+                return "the profile itself, standing at the ${if (piece == n) "start" else "end"} of the sweep, " +
+                    "with the axis of revolution along v and the origin where the profile was drawn from"
+            }
+            return "u along the radius the profile is drawn at, the origin where the axis of revolution pierces " +
+                "the face — so a circle at (0, 0) is concentric with the turned part"
+        }
+        return "u along the edge you picked, v up into the face, the origin at that edge's middle"
     }
 
     /**
@@ -10629,11 +10699,13 @@ class Document {
      * orientation to state, so an angle node here would be a degree of freedom that changes nothing — the same
      * argument [regularPolygon] makes about `360°/count`.
      *
-     * **Chorded, and the help says so.** A revolution has no named faces yet (`Section3` answers `REVOLVE_ONLY`),
-     * so this body's section is cut from its mesh: a working plane through the centre gives a chorded circle, not
-     * an exact one, and the volume comes out a fraction short of `4/3·π·r³` because the shell is inscribed twice
-     * over — a chorded meridian carried on chorded parallels. That is a *Revolution* gap, shared by every turned
-     * part in the tool, and closing it is item 4 of the sphere queue in DESIGN.md, not this gesture's business.
+     * **Exact where it counts, and the help says so.** Since item 4 of the sphere queue landed, a revolution
+     * *does* have named faces ([Revolve3]): this body is one spherical band closed on its own axis, so a working
+     * plane through the centre gives an **exact** circle of the drawn radius and an off-centre one the exact
+     * small circle — each a construction input like any other. What stays approximate is the **picture**: the
+     * mesh is inscribed twice over (a chorded meridian carried on chorded parallels), so the displayed volume
+     * still comes out a fraction short of `4/3·π·r³`. That is the mesh's own business (OP-9's sink rule) and
+     * not the section's, which is exactly the distinction the honesty clause used to conflate.
      */
     private fun ball(
         center: PointRef,
@@ -10650,7 +10722,7 @@ class Document {
         madeSolid(
             solid,
             "a ball$radiusWord$about — the half-disc of ${nameOf(arc)} and ${nameOf(diameter)} turned a complete " +
-                "revolution about that diameter, so it has no ends and, being a revolve, a chorded surface",
+                "revolution about that diameter, so it has no ends — one spherical face, sectioned exactly",
         )
         return solid
     }

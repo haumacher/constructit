@@ -316,9 +316,21 @@ class ProjectOnFaceToolTest {
         assertTrue(assertNotNull(reasonOf(curve)).contains("edge-on"), "…and it goes again")
     }
 
-    /** A **mesh body** has no face to land on, and the gesture refuses by name, naming what does work. */
+    /**
+     * A body **no flat face of which faces the drawing** has nothing to land on, and the gesture refuses by
+     * name, naming what does work.
+     *
+     * The fixture is a turned ring, and what it demonstrates changed with item 4 of the sphere queue: a
+     * revolution used to have no named faces at all, so the refusal was OP-9's mesh-only one. It has them
+     * now — this ring's two flat annuli among them — but both stand **edge-on** to the plan the curve is
+     * drawn in, so a drawing thrown along that plan's normal still lands on none of them in a curve. The
+     * refusal moved from "there is nothing here to name" to "nothing here faces you", which is a better
+     * sentence about the same gesture. (The mesh-only wording is still exercised by
+     * `SectionInputTest.aMeshRoutePartsSectionDrawsButNamesNothing` and by `ProjectOnFaceTest`'s own
+     * `landingFace` case on a `Feature3.MeshBoolean`.)
+     */
     @Test
-    fun aMeshBodyIsRefusedByNameAndPointsAtWhatWorks() {
+    fun aBodyWithNoFaceFacingTheDrawingIsRefusedByNameAndPointsAtWhatWorks() {
         val ed = Editor()
         ed.setTool(Tools.RECTANGLE)
         ed.click(Vec2(20.0, 0.0))
@@ -336,8 +348,8 @@ class ProjectOnFaceToolTest {
         ed.click(Vec2(50.0, 30.0))
         val drawn = assertNotNull(ed.doc.elements.lastOrNull { it.kind == ElementKind.SEGMENT })
 
-        assertEquals(null, ed.doc.projectOntoFace(drawn, solid), "a revolve names no face")
-        assertTrue(noteOf(ed).contains("revolved"), noteOf(ed))
+        assertEquals(null, ed.doc.projectOntoFace(drawn, solid), "no face of this ring faces the plan")
+        assertTrue(noteOf(ed).contains("edge-on"), noteOf(ed))
         assertTrue(noteOf(ed).contains("Intersection curve"), "…and says what does work: ${noteOf(ed)}")
     }
 

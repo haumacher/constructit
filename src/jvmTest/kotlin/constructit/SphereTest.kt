@@ -18,7 +18,9 @@ import constructit.exchange.ExportFormat
 import constructit.exchange.Exports
 import constructit.geom.Feature3
 import constructit.geom.Geom3
+import constructit.geom.Plane3
 import constructit.geom.ProfileElement
+import constructit.geom.Section3
 import constructit.geom.Turn3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
@@ -279,13 +281,15 @@ class SphereTest {
     }
 
     /**
-     * **A working plane through the centre sections it — as a chorded circle, and it says so.** The datum is
-     * hinged on the ball's own diameter at 90°, so it stands upright through the axis and cuts a great circle;
-     * the section is `approximated` because a revolution has no analytic faces yet (item 4 of the queue), and
-     * its extent is a whole diameter each way, a hair short for the same reason the volume is.
+     * **A working plane through the centre sections it — as an exact circle, and the help says so.** The datum
+     * is hinged on the ball's own diameter at 90°, so it stands upright through the axis and cuts a great
+     * circle. Since item 4 of the sphere queue landed the ball is **one spherical face** ([Revolve3]), so what
+     * comes back is a single `CircleE` of the drawn radius to the last bit — not twenty chords a hair short of
+     * one. This is the honesty clause this suite used to carry, come true: the *picture* is still triangles
+     * (which is why the volume band below stays), the *section* is not.
      */
     @Test
-    fun aPlaneThroughTheCentreSectionsTheBallAsAChordedCircle() {
+    fun aPlaneThroughTheCentreSectionsTheBallAsAnExactCircle() {
         val ed = ballByRadius()
         val diameter = ed.doc.elements.single { it.kind == ElementKind.SEGMENT }
         ed.setTool(Tools.SKETCH_PLANE)
@@ -296,14 +300,36 @@ class SphereTest {
         assertTrue(diameter.visible, "the axis it was hinged on is a curve like any other")
         val sections = ed.doc.spaceSections(space, Evaluator())
         val section = assertNotNull(sections.singleOrNull(), "the plane cuts exactly the ball: $sections").second
-        assertTrue(section.approximated, "chorded until surfaces of revolution gain analytic faces (queue item 4)")
+        assertTrue(!section.approximated, "exact since surfaces of revolution gained analytic faces (queue item 4)")
+        assertEquals(null, section.inputsRefusal, "…so it offers construction inputs like any named section")
 
-        val pts = section.drawn.flatMap { piece -> if (piece is ProfileElement.Seg) listOf(piece.segment.a, piece.segment.b) else emptyList() }
-        assertTrue(pts.size > 20, "a chorded circle is many little segments, not a handful: ${pts.size}")
-        val width = pts.maxOf { it.x } - pts.minOf { it.x }
-        val height = pts.maxOf { it.y } - pts.minOf { it.y }
-        assertClose(width, 40.0, tol = 0.2, msg = "the section is a diameter across")
-        assertClose(height, 40.0, tol = 0.2, msg = "…and a diameter tall — a great circle")
+        val circles = section.drawn.filterIsInstance<ProfileElement.CircleE>()
+        assertEquals(1, circles.size, "one circle, not a barrel of chords: ${section.drawn.size} pieces")
+        assertClose(circles[0].circle.radius, 20.0, tol = 1e-9, msg = "a great circle, exact to the drawn radius")
+        assertClose(circles[0].circle.center.x, 0.0, tol = 1e-9, msg = "centred where the ball is")
+        assertClose(circles[0].circle.center.y, 0.0, tol = 1e-9, msg = "…in both directions")
+    }
+
+    /**
+     * **An off-centre plane gives the exact small circle**, which is the other half of what item 4 bought:
+     * `√(r² − d²)` from the ball's own parameters, at every distance, and nothing at all past the surface.
+     */
+    @Test
+    fun anOffCentrePlaneSectionsTheBallAsTheExactSmallCircle() {
+        val ed = ballByRadius()
+
+        @Suppress("UNCHECKED_CAST")
+        val solid = Evaluator().solid(solidOf(ed.doc).ref as SolidRef)
+        for (d in listOf(6.0, 15.0)) {
+            val sec = Section3.sectionOf(solid, Plane3(Vec3(0.0, 0.0, d), Vec3.X, Vec3.Y))
+            assertTrue(!sec.approximated, "exact $d mm off the centre too")
+            val c = sec.drawn.filterIsInstance<ProfileElement.CircleE>().single()
+            assertClose(c.circle.radius, kotlin.math.sqrt(400.0 - d * d), tol = 1e-9, msg = "the small circle at $d")
+        }
+        assertTrue(
+            Section3.sectionOf(solid, Plane3(Vec3(0.0, 0.0, 24.0), Vec3.X, Vec3.Y)).isEmpty,
+            "a plane clear of the ball cuts nothing at all",
+        )
     }
 
     /** The ball is a mesh a ray finds: dead centre it is hit at exactly the radius, and clear of it, missed. */
@@ -394,7 +420,8 @@ class SphereTest {
         for (id in listOf(Tools.SPHERE_R, Tools.SPHERE)) {
             val help = assertNotNull(byId[id]).help
             assertTrue("revolve" in help, "$id says the body is a revolve")
-            assertTrue("chorded" in help, "$id says its section is chorded")
+            assertTrue("exact circle" in help, "$id says its section is an exact circle now (queue item 4)")
+            assertTrue("chorded" !in help, "$id no longer claims a chorded section: $help")
         }
     }
 

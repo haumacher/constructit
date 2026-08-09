@@ -159,13 +159,31 @@ private fun setupApp() {
         preview.draw()
     }
 
-    // the two flags the frame coalescing below is made of, declared here because `repaint` clears one
+    // the three flags the frame coalescing below is made of, declared here because `repaint` clears two
     var framePending = false
     var docPending = false
+
+    /**
+     * Whether a coalesced frame still owes the **3D view** a redraw — the flag whose absence blanked the plan.
+     *
+     * `docPending` alone was not enough, and the gap is worth stating because it is the kind that only shows
+     * under synthetic input. A pointer move in the plan arms a whole-document frame; a press then repaints
+     * **straight through** and clears `docPending`, exactly as it should — but the frame it was armed for is
+     * still queued, and with nothing owed it fell through to `draw3d()`, which composes the sketch onto the
+     * 2D canvas at the *3D* canvas's size and so wiped the plan until something repainted it. The two
+     * reasons for a frame are now told apart: a document change and a **camera** change, the latter being
+     * the only thing `draw3d()` alone answers. A `repaint` satisfies both, because it draws the 3D view too.
+     *
+     * Real human input hides this — Blink delivers pointer moves aligned to the frame, so the armed frame is
+     * consumed in the same one — which is why it surfaced as an intermittent browser E2E failure rather than
+     * as a report: the assertion sampled the canvas on whichever side of the orphaned frame it landed.
+     */
+    var viewPending = false
 
     fun repaint() {
         // a paint that happens now satisfies any frame that was still owed (see `frameSoon`)
         docPending = false
+        viewPending = false
         // the drawing buffer must match the element's CSS size on *every* paint, not only on window
         // resize: panel content or a wrapping status line changes the canvas box too, and a stale buffer
         // is silently scaled by CSS — which offsets every hit test from what the user sees
@@ -214,14 +232,23 @@ private fun setupApp() {
      * lag was.
      */
     fun frameSoon(wholeDocument: Boolean) {
-        if (wholeDocument) docPending = true
+        if (wholeDocument) docPending = true else viewPending = true
         if (framePending) return
         framePending = true
         window.requestAnimationFrame {
             framePending = false
             val whole = docPending
+            val view = viewPending
             docPending = false
-            if (whole) repaint() else draw3d()
+            viewPending = false
+            // a frame that has both to do does the document's paint, since `repaint` draws the 3D view too;
+            // a frame that has **neither** left — a synchronous `repaint` overtook it — paints nothing at
+            // all, which is the whole of [viewPending]'s reason for existing
+            if (whole) {
+                repaint()
+            } else if (view) {
+                draw3d()
+            }
         }
     }
 

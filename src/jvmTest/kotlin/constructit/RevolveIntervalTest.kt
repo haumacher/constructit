@@ -437,8 +437,9 @@ class RevolveIntervalTest {
      * **What reads a revolution still reads it.** The plan hint is the *sketch* — where the profile was
      * drawn — which is what addresses the feature, and stays so for a body standing 45° away from it: the
      * drawing is where you click to reach the solid, and where the material actually is, is what the tool's
-     * own note says. The section machinery keeps its refusal (a surface of revolution is not named by this
-     * slice, OP-17) and names the body rather than falling silent.
+     * own note says. Since item 4 of the sphere queue the section machinery **names** the body's faces
+     * instead of refusing them (OP-17), so the plane offset behind the drawing cuts the material it finds
+     * there and offers it as inputs — the addressing claim above is untouched by that, which is the point.
      */
     @Test
     fun aBodyStatedByAnOffsetStillDrawsAndPicksWhereItWasSketched() {
@@ -452,9 +453,10 @@ class RevolveIntervalTest {
         )
         val cut = c.section(body, c.planeOffset(c.planeXY(), c.parameter("h", (-15).mm)))
         val s = Evaluator().valueOf(cut) as? constructit.core.SectionValue ?: error("a section value")
-        assertTrue(s.section.pieces.isNotEmpty(), "a body standing behind its drawing still sections from its mesh")
-        assertTrue(s.section.approximated, "...flagged approximated, as a revolve's section always is")
-        assertTrue(s.section.inputsRefusal?.contains("revolved") == true, "and the refusal still speaks: ${s.section.inputsRefusal}")
+        assertTrue(s.section.pieces.isNotEmpty(), "a body standing behind its drawing still sections where the material is")
+        assertEquals(null, s.section.inputsRefusal, "a revolution names its faces now (queue item 4): ${s.section.inputsRefusal}")
+        assertTrue(s.section.edges.isNotEmpty(), "…so the section has named faces to address")
+        assertTrue(!s.section.approximated, "…and a cut perpendicular to the axis is exact, not chords")
     }
 
     /**

@@ -1412,8 +1412,8 @@ class Editor(
                     (if (space.anchor == null) " Nothing here to cut into: its line is part of no solid." else "") +
                     sectionNote(space)
             else ->
-                "Sketching on ${space.name}, the face of ${space.anchor?.let { doc.nameOf(it) }}: u along the edge you picked, " +
-                    "v up into the face, the origin at that edge's middle" +
+                "Sketching on ${space.name}, the face of ${space.anchor?.let { doc.nameOf(it) }}: " +
+                    doc.faceFrameNote(space) +
                     (space.originCorner?.let { " (moved onto section corner #${it + 1})" } ?: "") +
                     ". Cut here drills into the material; Extrude builds outward, as a boss." +
                     sectionNote(space)

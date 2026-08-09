@@ -514,6 +514,55 @@ object Conics {
         }
     }
 
+    /**
+     * The ellipse a general conic `A x² + B xy + C y² + D x + E y + F = 0` **is**, or null when it is not
+     * one — the inverse of [implicit], and the door through which a surface with a quadratic equation
+     * hands its plane section back as a value (OP-24, and OP-15's line moved outward once more).
+     *
+     * [Conics.cylinderSection] does not need this because a cylinder's section falls out already
+     * parametrized, as two conjugate semi-diameters. A **cone's** does not: substituting a plane's frame
+     * into `|P−apex|² = (1+tan²α)((P−apex)·axis)²` leaves a quadratic in `(x, y)` and nothing more, so the
+     * reduction has to be done rather than read off. It is the textbook one and it is exact: translate to
+     * the centre (the stationary point of the quadratic form, which exists exactly when `B² − 4AC ≠ 0`),
+     * rotate by `½·atan2(B, A−C)` to kill the cross term, and read the two semi-axes off the diagonal.
+     *
+     * Null — never an approximation — when the conic is a parabola or a hyperbola (`B² − 4AC ≥ 0`, no
+     * centre or the wrong signs), when it is imaginary or a single point, or when it degenerates to a pair
+     * of lines. Those sections are real curves this drawing simply has no name for, and the caller's
+     * business is to say so rather than to fit something (the *watertight or refused* doctrine's second
+     * half: exact paths never degrade silently).
+     */
+    fun ellipseFromImplicit(
+        A: Double,
+        B: Double,
+        C: Double,
+        D: Double,
+        E: Double,
+        F: Double,
+    ): Ellipse? {
+        val disc = B * B - 4.0 * A * C
+        // an ellipse is the negative-discriminant case, and the margin keeps a near-parabola out rather
+        // than letting it come back as an ellipse the size of the sky
+        val scale = max(max(abs(A), abs(B)), abs(C))
+        if (scale <= 0.0 || disc >= -1e-12 * scale * scale) return null
+        // the centre solves the gradient — [2A B; B 2C](x, y) = (−D, −E) — whose determinant is `−disc`
+        val det = -disc
+        val xc = (B * E - 2.0 * C * D) / det
+        val yc = (B * D - 2.0 * A * E) / det
+        if (!xc.isFinite() || !yc.isFinite()) return null
+        val fc = (D * xc + E * yc) / 2.0 + F
+        val theta = if (abs(B) < 1e-300 && abs(A - C) < 1e-300) 0.0 else 0.5 * atan2(B, A - C)
+        val c = cos(theta)
+        val s = sin(theta)
+        val a2 = A * c * c + B * c * s + C * s * s
+        val c2 = A * s * s - B * c * s + C * c * c
+        if (abs(a2) <= 0.0 || abs(c2) <= 0.0) return null
+        val ra = -fc / a2
+        val rb = -fc / c2
+        if (ra <= 0.0 || rb <= 0.0 || !ra.isFinite() || !rb.isFinite()) return null
+        return Ellipse(Vec2(xc, yc), sqrt(ra), sqrt(rb), norm(theta, PI)).canonical()
+    }
+
     // ---- intersections (OP-1): ordered solution sets ----
 
     /**

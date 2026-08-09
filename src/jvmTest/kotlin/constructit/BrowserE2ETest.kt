@@ -67,20 +67,38 @@ class BrowserE2ETest {
 
             // Circle tool: centre between them, through the right point
             page.click("#tool-circle")
-            page.mouse().click(midx, y)
+            watchMoves(page)
             // **A live tool preview, in real Chrome** (`ToolDef.preview`): with the centre in, the growing
             // circle has to be on the canvas *before* the second click, and gone again after it. Asserted on
             // the pixels, because that is the only thing a browser can be asked about a canvas — and against
             // the *idle* count rather than against zero, since the accent colour is a palette colour that
             // other marks (here the rider dot the centre click landed on) also use.
+            //
+            // Each count is read off a canvas the shell owes **no further paint** on, which is what
+            // [moveAndSettle] is for and why the two clicks here are spelled out as press/release. A pointer
+            // move is a *streamed* event, so its repaint is coalesced into the next animation frame (OP-12);
+            // a press repaints straight through and clears what the move had pending, which leaves that frame
+            // to run `draw3d` over the plan instead. `Mouse.click` bundles move and press too tightly to let
+            // the first of those paints land — so whether the frame arrived before or after `getImageData`
+            // decided what these counts were, which is exactly the coin toss being removed here.
+            moveAndSettle(page, midx, y)
+            page.mouse().down()
+            page.mouse().up()
             val idle = previewPixels(page)
-            page.mouse().move(p2x, y)
+            moveAndSettle(page, p2x, y)
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/02-preview.png")))
             val hovering = previewPixels(page)
             assertTrue(hovering > idle + 50, "the growing circle should be painted while hovering ($idle -> $hovering)")
-            page.mouse().click(p2x, y)
+            // the pointer is already on `p2x` — the hover above put it there — so the building click is the
+            // press alone, and owes no frame for the same reason the centre click no longer does
+            page.mouse().down()
+            page.mouse().up()
             assertTrue(previewPixels(page) <= idle, "…and gone once the click has built it")
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/02-built.png")))
+
+            // **A press that overtakes the frame a move armed must not blank the plan** — the shell bug the
+            // flake above was a symptom of. Its own test is [aPressThatOvertakesItsMovesFrameKeepsThePlanDrawn];
+            // what stays here is the flake's own fix, which is the waiting above.
 
             // A **defaulted** scalar slot, in the real shell (OP-13): Midpoint still takes exactly two clicks,
             // and a number typed before them turns the same gesture into a ratio point whose factor is an
@@ -829,6 +847,46 @@ class BrowserE2ETest {
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()
         }
+    }
+
+    /**
+     * Arm the counter [moveAndSettle] waits on: one plain `mousemove` listener on the plan canvas.
+     *
+     * Registered *after* the shell's own (`Main.kt`, the handler wrapped in `streamed`), so the DOM's
+     * ordering rule — listeners on one target fire in the order they were added — makes an increment here
+     * mean the shell has already handled that very move, and has therefore already asked for its frame.
+     */
+    private fun watchMoves(page: Page) {
+        page.evaluate(
+            """
+            () => {
+              window.__citMoves = 0;
+              document.getElementById('canvas').addEventListener('mousemove', () => { window.__citMoves++; });
+            }
+            """.trimIndent(),
+        )
+    }
+
+    /**
+     * Move the pointer, and return only once the paint that move **owes** has landed.
+     *
+     * A pointer move on the plan is a *streamed* event: the shell coalesces its repaint into the next
+     * animation frame (OP-12, `Main.kt`'s `frameSoon`), so `Mouse.move` returns with the canvas still showing
+     * the frame before it. The wait is on two real signals in sequence and never on a clock. First the
+     * counter from [watchMoves], because Chrome hands a synthetic move to the page at its own pace — an
+     * increment says the shell's handler has run and the frame is armed. Then an animation frame of this
+     * test's own, which the browser runs after the one the shell asked for, so by the time it resolves the
+     * paint is on the canvas; the second frame is slack for the case where the shell's frame arms another.
+     */
+    private fun moveAndSettle(
+        page: Page,
+        x: Double,
+        y: Double,
+    ) {
+        val before = (page.evaluate("() => window.__citMoves || 0") as Number).toInt()
+        page.mouse().move(x, y)
+        page.waitForFunction("n => (window.__citMoves || 0) > n", before)
+        page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))")
     }
 
     /**
@@ -1725,6 +1783,75 @@ class BrowserE2ETest {
             }
             """.trimIndent(),
         ).let { (it as Number).toInt() }
+
+    /**
+     * **A press that overtakes the frame its own move armed must not blank the plan** — the shell defect the
+     * preview-pixel flake in [buildAndDragInBrowser] turned out to be a symptom of.
+     *
+     * The mechanism, in `Main.kt`. A pointer move is a *streamed* event, so its repaint is coalesced into the
+     * next animation frame (OP-12). A press is not: it repaints **straight through**, and that repaint clears
+     * what the move had pending, exactly as it should. But the frame the move armed is still queued, and with
+     * nothing left owed it fell through to `draw3d()` — which composes the working plane's sketch onto the 2D
+     * canvas through the *3D* view's own size, and so wiped the plan until something repainted it. The cure is
+     * to tell the two reasons for a frame apart (`viewPending`): a frame with neither left paints nothing.
+     *
+     * **Why the events are dispatched from inside the page.** Real human input never reaches this: Chrome
+     * delivers pointer moves aligned to the frame, so the armed frame is consumed in the same one. Even
+     * Playwright's `Mouse.move` + `down` are two round trips, with room for a frame between them — which is
+     * why the defect showed up as an *intermittent* pixel count rather than as a report. One `evaluate`
+     * dispatching all three events synchronously is the only way to guarantee the frame is orphaned, and the
+     * two animation frames after it guarantee it has run before the canvas is read. Deterministic in both
+     * directions: with the guard removed this test fails every time.
+     */
+    @Test
+    fun aPressThatOvertakesItsMovesFrameKeepsThePlanDrawn() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+        Playwright.create().use { pw ->
+            pw.chromium().launch().use { browser ->
+                val page = browser.newPage()
+                page.setViewportSize(1000, 700)
+                page.navigate(index.toURI().toString())
+                page.waitForSelector("#canvas")
+                val box = page.querySelector("#canvas").boundingBox()
+                val y = box.y + box.height * 0.5
+                val x1 = box.x + box.width * 0.35
+                val x2 = box.x + box.width * 0.6
+
+                // something on the plan to lose, and a tool with a **live preview** — the move must actually
+                // change the picture, or there is no frame for the press to overtake
+                page.click("#tool-line")
+                page.mouse().click(x1, y)
+                page.mouse().click(x2, y)
+                page.click("#tool-circle")
+                page.mouse().click(x1, y)
+                val before = inkPixels(page)
+                assertTrue(before > 0, "the plan is drawn to begin with")
+
+                page.evaluate(
+                    """
+                    ([x, y]) => {
+                      const c = document.getElementById('canvas');
+                      const at = t => new MouseEvent(t, { bubbles: true, clientX: x, clientY: y, button: 0 });
+                      c.dispatchEvent(at('mousemove'));
+                      c.dispatchEvent(at('mousedown'));
+                      c.dispatchEvent(at('mouseup'));
+                      return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))));
+                    }
+                    """.trimIndent(),
+                    listOf(x2, y),
+                )
+                page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/orphan-frame.png")))
+                assertTrue(
+                    inkPixels(page) > before / 2,
+                    "the plan is still drawn after a press overtook its move's own frame ($before -> ${inkPixels(page)})",
+                )
+            }
+        }
+    }
 
     /**
      * **Hidden, found again, shown** — the user's report end to end in a browser (OP-18's *Show hidden*).

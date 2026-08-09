@@ -155,11 +155,11 @@ class Issue13TessScaleTest {
      * radius — it is the algebraic slab (OP-22), not a tessellation, so the relative-tolerance change
      * cannot leak into it. That is the honesty line, asserted at the large radius the #13 model uses.
      *
-     * A large *revolve* is still **drawn** from its mesh — that is the path that reads TESS_TOL_MM, so #13
-     * touches it — but it exposes no analytic construction inputs (a surface-of-revolution section is its
-     * own unbuilt slice, DESIGN.md): `pieces` is populated and flagged approximated, while `edges` is empty
-     * and `inputsRefusal` says why. This change alters only how *many* chords the drawing uses, never that
-     * distinction, so it is asserted here as the unchanged behaviour.
+     * A large *revolve* is the second half, and since item 4 of the sphere queue it makes the point more
+     * strongly than it used to: a washer's section perpendicular to its axis is now cut from the profile's
+     * **own** crossings ([Revolve3]) rather than from its triangles, so it reads TESS_TOL_MM nowhere at all
+     * and names its faces as inputs. The relative-tolerance change therefore cannot reach it by any route,
+     * which is what is asserted here.
      */
     @Test
     fun sectionsAreUnaffected() {
@@ -178,13 +178,10 @@ class Issue13TessScaleTest {
         val s =
             Evaluator().valueOf(rsec) as? constructit.core.SectionValue
                 ?: error("the section node evaluates to a compound section value")
-        assertTrue(s.section.pieces.isNotEmpty(), "the revolve's section is drawn from its mesh (${s.section.pieces.size} pieces)")
-        assertTrue(s.section.approximated, "and flagged approximated — it is sampled at the mesh tolerance")
-        assertTrue(s.section.edges.isEmpty(), "but it exposes no analytic inputs (a revolve section is unbuilt)")
-        assertTrue(
-            s.section.inputsRefusal?.contains("revolved") == true,
-            "and it says why: ${s.section.inputsRefusal}",
-        )
+        assertTrue(s.section.pieces.isNotEmpty(), "the revolve's section is drawn (${s.section.pieces.size} pieces)")
+        assertTrue(!s.section.approximated, "and exact — the profile's own crossings, at no tessellation tolerance")
+        assertTrue(s.section.edges.isNotEmpty(), "…so it exposes analytic inputs (queue item 4)")
+        assertEquals(null, s.section.inputsRefusal, "…and refuses nothing: ${s.section.inputsRefusal}")
     }
 
     companion object {
