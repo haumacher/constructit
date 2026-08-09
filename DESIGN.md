@@ -15564,8 +15564,55 @@ blends where three or more edges meet at a corner (a sphere-patch question of it
 picking** — a section corner already carries an edge's name, so the 2D machinery picks edges first, and the
 3D pick joins the parked face-ID provenance item where the rest of it waits.
 
-**Beyond those three — the small batch and the blends — the numbered queue is empty** (the session-59 entry
-above is closed). What remains is the parked list below, each item recorded at its source.
+**Queued in session 71, behind the blends (user-directed): expressions — the binding generalized to a
+function, and the curve a function defines.** Postponed since the early sessions until ordinary
+constructions were solid, and arriving now as the user's design, adopted whole. Two consumers of **one
+mechanism**, stated in their words: *"a value could be computed from other values applying an arbitrary
+function — you should be able to use everything java.lang.Math has to offer in addition to plain
+operators"*; and, because a gear's involute *"cannot be constructed from the primitives currently
+available"* yet is *"well-defined … such as bezier ones"*, deliberately **no new primitive curve kind**:
+*"allow to define such curve segments using arbitrary functions — with an involute as example."*
+
+- **An expression is `boundTo` generalized, never a constraint.** Today a bound value tracks one other
+  node — "one value equals the other" — and the general form is a scalar **derived** from named scalars
+  through a pure expression: one direction, an ordinary set of DAG edges, so the no-solver stance is
+  untouched. Writing `a = b + c` *defines* `a`; it does not assert an equation, and what is derived
+  refuses the drag in the wired height's own words. The bare reference is the degenerate expression, so
+  nothing stored changes meaning and today's bindings are the special case they always were.
+- **The vocabulary is dimensioned.** Plain operators and the `java.lang.Math` family, each with a stated
+  dimension rule riding the units layer: `+`/`−` demand equal dimension, `×`/`÷` combine exponents,
+  `sin`/`cos`/`tan` take an angle and yield a ratio, `sqrt` halves exponents, `exp`/`log`/`atan2`'s result
+  and friends demand or deliver the dimensionless — and a violation is the `DimensionError` the evaluator
+  already turns into named invalidity. Literals carry units (`10mm`, `15°`), and the panel keeps speaking
+  display units (OP-7).
+- **The text is the record.** An expression is stored verbatim in its step, parsed deterministically on
+  load, its references resolved through the naming authority (OP-18) — a rename re-points or refuses,
+  never silently orphans — and evaluated closed-form every pass. Determinism is the load-bearing property,
+  not closed form (the spline note's own rule), and cycles are what the DAG already refuses.
+- **A function curve is the same expressions, plus a parameter.** A curve piece defined by `x(t)`, `y(t)`
+  over a stated domain, referencing any scalars in scope, `t` dimensionless and the coordinates lengths —
+  dimension-checked like everything else. Its honesty classes are the ellipse's, verbatim (OP-24):
+  **position-along is exact** — a rider lives at the parameter, and point and tangent are the expression
+  and its **symbolic derivative** (closed form, deterministic; a piece whose derivative the AST cannot
+  state refuses tangent-dependent constructions by name rather than differencing numerically); what stays
+  approximate is only the genuinely metric — measured length, equal-distance spacing, offsets — plus
+  intersections, **numeric but deterministic**, ordered along the first operand (OP-1's canonical rule for
+  parametric curves, stated in the spline note years before this entry). It tessellates under the one
+  scale-relative tolerance, hit-tests, joins profile loops by its endpoints, traces into outlines,
+  extrudes and revolves; a `Section3` band swept by one refuses by name (the session-69 predicate rule);
+  and an affine transform composes with the function, so `transformArc`'s similarity caveat never applies.
+- **The involute is the acceptance, not the feature** (the standing everything-generic rule): with `r` a
+  shared parameter, `x(t) = r·(cos t + t·sin t)`, `y(t) = r·(sin t − t·cos t)` over a stated domain is a
+  gear flank — asserted on the true involute to 1e-9, the tooth closed with existing pieces and mirrored,
+  patterned around the axis, traced, extruded, watertight, its module editing like any number. A gear is
+  what the mechanism makes *possible*, not what it is for.
+
+One parser, one AST, one differentiator, one dimension check — two consumers. That is the reason the two
+halves are one entry, and the order of work inside it is the scalar half first (it is the smaller and the
+curve half consumes it).
+
+**Beyond those four — the small batch, the blends and the expressions — the numbered queue is empty** (the
+session-59 entry above is closed). What remains is the parked list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
 (it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and
