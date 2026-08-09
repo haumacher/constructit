@@ -445,8 +445,8 @@ class TypedScalarTest {
         assertTrue(ed.doc.scalars.none { it.name == "roll" || it.name == "twist" }, "and neither is a panel parameter")
 
         val before = radialSpan(meshOf(solid))
-        assertClose(before.first, 28.767910160401883, 1e-9, "unrolled, the body reaches this far in")
-        assertClose(before.second, 32.00254653672712, 1e-9, "and this far out — 2 mm past the coil's own 30 mm")
+        assertClose(before.first, 28.768648120107148, 1e-9, "unrolled, the body reaches this far in")
+        assertClose(before.second, 32.00274048552655, 1e-9, "and this far out — 2 mm past the coil's own 30 mm")
 
         val (i, f) = field(ed, solid, "roll")
         assertTrue(f.writable, "roll is writable")
@@ -458,8 +458,8 @@ class TypedScalarTest {
         val after = radialSpan(mesh)
         // the same section on the other side of the spine: the whole span moves in, by the same amount at
         // both ends, and stays inside the sqrt(8) = 2.828 mm shell the anchored corner implies either way
-        assertClose(after.first, 27.997490559653052, 1e-9, "rolled, the body reaches further in")
-        assertClose(after.second, 31.232140253085767, 1e-9, "and no longer as far out")
+        assertClose(after.first, 27.99726895373961, 1e-9, "rolled, the body reaches further in")
+        assertClose(after.second, 31.231379569834097, 1e-9, "and no longer as far out")
         // …by the same amount at both ends, to the accuracy the *tessellation* can state it: the extremes are
         // read off triangle vertices, so the two shifts agree to 1.4e-5 mm rather than exactly
         assertClose(before.first - after.first, before.second - after.second, 1e-4, "one rigid flip, not a distortion")

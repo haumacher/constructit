@@ -183,7 +183,9 @@ class EllipticArcTest {
         assertManifold(mesh, "half-ellipse prism")
         val volume = constructit.geom.Geom3.volume(mesh)
         val perimeter = Conics.arcLength(EllipticArc(Ellipse(Vec2(0.0, 0.0), 60.0, 30.0, 0.0), 0.0, PI, true)) + 120.0
-        val bound = (2.0 / 3.0) * GeomMath.TESS_TOL_MM * perimeter * depth
+        // The chord tolerance is scale-relative (GitHub #13): an elliptic arc is sampled at its major axis'
+        // effective tolerance, so the bound uses that rather than the absolute 0.02 mm.
+        val bound = (2.0 / 3.0) * GeomMath.effectiveTol(60.0) * perimeter * depth
         assertTrue(volume <= analytic * depth + 1e-6, "the chords are inscribed, so the mesh cannot be bigger: $volume")
         assertTrue(
             volume >= analytic * depth - bound,
@@ -292,7 +294,11 @@ class EllipticArcTest {
         assertManifold(mesh, "elliptic cylinder")
         val analytic = PI * 60.0 * 30.0 * 12.0
         assertTrue(constructit.geom.Geom3.volume(mesh) <= analytic + 1e-6, "inscribed chords cannot exceed it")
-        assertTrue(constructit.geom.Geom3.volume(mesh) >= analytic * 0.999, "…and are within the tessellation bound")
+        // The tessellation bound is scale-relative (GitHub #13): the whole ellipse's boundary is sampled at
+        // its major axis' effective tolerance, so the undershoot the mesh may show scales with that.
+        val perimeter = 2.0 * Conics.arcLength(EllipticArc(Ellipse(Vec2(0.0, 0.0), 60.0, 30.0, 0.0), 0.0, PI, true))
+        val bound = (2.0 / 3.0) * GeomMath.effectiveTol(60.0) * perimeter * 12.0
+        assertTrue(constructit.geom.Geom3.volume(mesh) >= analytic - bound, "…and are within the tessellation bound")
         roundTrip(ed)
     }
 

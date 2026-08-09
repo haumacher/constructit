@@ -709,6 +709,41 @@ object GeomMath {
      */
     const val TESS_TOL_MM = 0.02
 
+    /**
+     * A **relative** chord tolerance (GitHub #13): the greatest fraction of an arc's own radius that a
+     * chord may fall short of the curve. It is what makes the chord *count* for a given arc invariant
+     * under uniformly scaling the whole model — a 200 mm radius gets the same number of chords a 20 mm
+     * radius got at the old absolute rule, so two solids that look identical on screen mesh to the same
+     * triangle count regardless of their physical size.
+     *
+     * 1e-3 is pinned by the requirement, not guessed: the old absolute [TESS_TOL_MM] is exactly this
+     * fraction of a 20 mm radius (`0.02 / 20 = 1e-3`), so at the crossover radius the two rules agree and
+     * everything at or below 20 mm keeps the fineness it had (its goldens do not move). Only features
+     * larger than that are coarsened — which is the whole complaint in #13, a 200 mm revolve meshing to
+     * ~97k triangles for a display where its 20 mm twin needs ~10k.
+     */
+    const val REL_TOL = 1e-3
+
+    /**
+     * The chord tolerance actually used for an arc of [radius], in millimetres: the [REL_TOL] fraction of
+     * the radius, **floored** by [floorMm] (the absolute [TESS_TOL_MM] by default) so small features never
+     * get coarser than the old rule and existing small-part goldens stay put (OP-15 — the error is still
+     * stated in the unit a part is wrong by, it just stops growing without bound with size).
+     *
+     * It is a **pure function of the radius** on purpose (OP-9). The one-number doctrine existed because
+     * the mesh is measured downstream — a boolean or a section compares two tessellations, and two solids
+     * sharing a face must tessellate that shared face identically. That invariant survives the move to a
+     * relative rule *because* two coincident faces have the same radius, so this returns the same tolerance
+     * and [chordSteps] the same count. Nothing keys on absolute position or on which solid asked; equal
+     * radius always yields equal chords. (If a future export path wants a finer mesh, it threads a smaller
+     * [floorMm] through here — this single chokepoint is the seam, deliberately left honest but unbuilt,
+     * formats being queued last.)
+     */
+    fun effectiveTol(
+        radius: Double,
+        floorMm: Double = TESS_TOL_MM,
+    ): Double = max(floorMm, abs(radius) * REL_TOL)
+
     /** The angular step at which a circle of [radius] deviates from its chord by at most [tolMm]. */
     private fun chordStepAngle(
         radius: Double,
@@ -718,13 +753,17 @@ object GeomMath {
         return 2.0 * kotlin.math.acos((1.0 - tolMm / radius).coerceIn(-1.0, 1.0))
     }
 
-    /** How many chords a sweep of [sweep] rad on [radius] needs to stay within [tolMm] (at least 1). */
+    /**
+     * How many chords a sweep of [sweep] rad on [radius] needs (at least 1). [tolMm] is the **floor**
+     * of the effective tolerance ([effectiveTol]); the tolerance the chords actually honour scales with
+     * the radius above the crossover so the count is scale-invariant (GitHub #13).
+     */
     fun chordSteps(
         radius: Double,
         sweep: Double,
         tolMm: Double,
     ): Int {
-        val step = chordStepAngle(radius, tolMm)
+        val step = chordStepAngle(radius, effectiveTol(radius, tolMm))
         if (step <= 0.0) return 1
         return max(1, ceil(abs(sweep) / step).toInt())
     }

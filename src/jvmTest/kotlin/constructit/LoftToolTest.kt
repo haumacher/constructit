@@ -448,7 +448,10 @@ class LoftToolTest {
         assertClose(
             Geom3.bounds(ed.meshOf(solid))!!.first.x,
             -40.0,
-            constructit.geom.GeomMath.TESS_TOL_MM,
+            // The guide arc through (0,0),(-40,50),(0,100) has radius 51.25 mm — above the 20 mm crossover,
+            // so it is sampled at its own scale-relative tolerance now (GitHub #13), and the shell reaches
+            // its extreme to within one chord's sagitta, that effective tolerance rather than the flat 0.02.
+            constructit.geom.GeomMath.effectiveTol(51.25),
             "the run bows out to the arc's own extreme",
         )
         roundTrip(ed)

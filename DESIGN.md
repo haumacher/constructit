@@ -10870,6 +10870,41 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   group is the mechanism that was always there — a plane hinged on member geometry follows by construction, and
   a section of a solid that moved is cut where the solid now is. No rider form turned out to be uncarriable.
   **1784 → 1792 green**, nothing cut. See *the refusal speaks the drawing's language* under OP-16.
+- **Session 56 — one tolerance, made scale-relative, so a big part and its shrunk twin mesh the same (GitHub
+  issue #13).** The report was *"mesh too fine-grained for display"* with a worked case: a revolve at
+  r = 200 mm meshed to **96,672** triangles, its ×0.1 twin at r = 20 mm to about **9,936**, for a picture in
+  which the two are indistinguishable. The cause was that `GeomMath.TESS_TOL_MM` is a single **absolute**
+  sagitta (0.02 mm), so `chordStepAngle` — `2·acos(1 − tol/r)` — asks for ever more chords as the physical
+  radius grows; triangle count scales with absolute size. The **freeze** the same issue mentions was already
+  gone: it was slice A of the session-51 responsiveness item, delivered in **session 52** — a solid's mesh is
+  derived lazily on first demand, so loading and plan-editing the body build **zero** triangles. This session
+  is the remaining *fineness*, and it is not the freeze. The fix keeps the one-number doctrine's reason
+  verbatim — the mesh is a sink (OP-9), *"nothing downstream measures it, so a per-feature knob would only add
+  a way for two solids in one document to disagree"* — and refuses the user's suggested per-solid fidelity
+  levels for exactly that reason. Instead the single tolerance that feeds `chordStepAngle` becomes **relative
+  to the arc's own radius**, floored by today's absolute value: `effectiveTol(r) = max(TESS_TOL_MM, r·REL_TOL)`
+  with `REL_TOL = 1e-3`, **pinned** (not guessed) by the requirement that a 200 mm arc get the chord count a
+  20 mm arc got before — `0.02/20 = 1e-3`, whose crossover is 20 mm, so nothing at or below 20 mm changes and
+  no small-part golden moves. The user's revolve drops **96,672 → 9,656** (×10.0, its twin's band); a cylinder
+  at r = 20 and at r = 200 now mesh to the **same** 280 triangles where they were 280 vs 888. **The invariant
+  the one number protected survives because `effectiveTol` is a pure function of the radius (OP-9/OP-15):**
+  two coincident faces have the same radius, so they still tessellate identically and shared-face booleans
+  stay watertight — proven by a boolean between an r = 200 and an r = 20 cylinder that share a face, manifold
+  and right on volume, and by `assertManifold` on every solid. A perpendicular cut of a prism is still the
+  **exact** slab (OP-22) at any radius — no tessellation leaks into it — so the OP-15 honesty line is
+  unmoved. The rule is one **chokepoint** (`GeomMath.chordSteps`), so a future export-time tolerance is a
+  parameter thread through `effectiveTol`'s floor, not a redesign — **left honest and unbuilt** (formats are
+  queued last), and orthogonal to the queued slice B (a render-time two-level *quality* argument), which this
+  neither is nor needs. Goldens and tolerance-bounds that legitimately moved were all large features above the
+  20 mm crossover — two SVG goldens (a 35 mm circle in the plan view; a 22 mm-radius turned part) regenerated,
+  and volume/deviation bounds in `EllipticArcTest`, `LoftTest`, `LoftToolTest`, `Edit3DTest`,
+  `TypedScalarTest` rewritten to read the scale-relative tolerance off the feature's own radius. One
+  consequence stated rather than hidden: the renderer's plane-space arc projection reads the same chokepoint,
+  so a 400 mm arc drawn in the 3D view is now sampled to its scale-relative tolerance (~0.4 mm, about a pixel
+  at that pose) instead of driven to subpixel — still finer than the canvas' fixed screen-space count, which
+  is the property that view relies on. **1792 → 1797 green** (five new regression tests in
+  `Issue13TessScaleTest`), nothing cut. See `GeomMath.TESS_TOL_MM`/`REL_TOL`/`effectiveTol` for the rule and
+  its rationale in the code.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -12839,6 +12874,11 @@ absent, and independent of everything else here.
    > so does **(c)**: the quadratic guard is a feature-level refusal, so it still runs on every drag frame and
    > is the residual per-frame cost. One constraint slice B inherits: the **station count** may not become a
    > render-time argument, because the plan hint reads it — a picture's quality may not move a pick target.
+   >
+   > **Independently, GitHub #13 (session 56) took the size out of the count** without touching slices B/C: the
+   > single tessellation tolerance is now **scale-relative** (`effectiveTol(r) = max(TESS_TOL_MM, r·REL_TOL)`),
+   > so a large body meshes ~10× smaller than before while staying one deterministic, per-radius rule (not a
+   > per-solid or render-time *quality* knob — slice B remains its own package). See the session-56 entry.
 2. ~~**The helix's key points, and a point on a helix** (the user's design).~~ **Delivered (session 53) — see
    *As built: a run's key points, and a point that rides a coil* under *Curves in space*.** Both halves shipped
    as one package: every run hands back its **start** and **end** as accessors on the curve node (a coil its

@@ -194,7 +194,11 @@ class LoftTest {
         // ...and within what the tessellation can explain of the true cone
         val exact = kotlin.math.PI * 1600.0 * 90.0 / 3.0
         assertTrue(ev.scalar(vol).base < exact, "an inscribed polygon is smaller than its circle")
-        assertTrue((exact - ev.scalar(vol).base) / exact < 1e-3, "and only by as much as the chord tolerance explains")
+        // The chord tolerance is scale-relative now (GitHub #13): the disc (r = 40) is above the 20 mm
+        // crossover, so it is sampled at its own effective tolerance and the area deficit — about
+        // (4/3)·(tol/r) for an inscribed polygon — scales with it rather than with the absolute 0.02 mm.
+        val relDeficit = 2.0 * constructit.geom.GeomMath.effectiveTol(40.0) / 40.0
+        assertTrue((exact - ev.scalar(vol).base) / exact < relDeficit, "and only by as much as the chord tolerance explains")
     }
 
     // ---- 4. the seam is a choice, and it changes the solid ----
@@ -326,9 +330,12 @@ class LoftTest {
         val bounds = Geom3.bounds(ev.solid(guided).mesh)!!
         assertClose(bounds.second.x, 150.0, 1e-6, "the run bows 50 mm out at half height")
 
-        // the guide is honoured: every vertex of the arc it was tessellated from is a vertex of the shell
+        // the guide is honoured: every vertex of the arc it was tessellated from is a vertex of the shell.
+        // Sample at the guide's *own* tessellation count — scale-relative now (GitHub #13), so no longer a
+        // fixed 8 that happened to divide the old count; this samples exactly the rail's vertices.
         val arc = ev.arc(bow)
-        for (p in constructit.geom.GeomMath.sampleArc(arc, 8)) {
+        val guideSteps = constructit.geom.GeomMath.chordSteps(arc.radius, constructit.geom.GeomMath.sweep(arc), constructit.geom.GeomMath.TESS_TOL_MM)
+        for (p in constructit.geom.GeomMath.sampleArc(arc, guideSteps)) {
             val w = Vec3(p.x, 0.0, p.y)
             assertTrue(
                 ev.solid(guided).mesh.vertices.any { (it - w).length() <= 1e-6 },

@@ -279,15 +279,22 @@ class Edit3DTest {
         )
         val fineMm = deviationMm(arc, p.arcPoints(arc))
         val coarseMm = deviationMm(arc, SceneRenderer.tessellate(arc))
-        assertTrue(fineMm <= GeomMath.TESS_TOL_MM * 1.05, "the plane-space count meets the plane-space tolerance ($fineMm mm)")
+        // The plane-space tolerance is scale-relative now (GitHub #13): a large arc is meshed to its own
+        // effective tolerance, not the absolute 0.02 mm, so the bound is read off the arc's radius.
+        assertTrue(
+            fineMm <= GeomMath.effectiveTol(arc.radius) * 1.05,
+            "the plane-space count meets the plane-space tolerance ($fineMm mm vs ${GeomMath.effectiveTol(arc.radius)})",
+        )
         assertTrue(coarseMm > GeomMath.TESS_TOL_MM * 10.0, "while the screen-space count is $coarseMm mm out — 20x the tolerance")
 
-        // in the units the eye reads it in, at this pose: the coarse polyline leaves the curve by more than a
-        // pixel, so this is a case where the difference is *visible* and not merely arithmetical
+        // in the units the eye reads it in, at this pose: the plane-space polyline is still finer than the
+        // canvas' fixed screen-space count. Post-#13 the plane-space tolerance is scale-relative, so on a
+        // 400 mm arc it is 0.4 mm — about a pixel here — rather than driven to subpixel; the rule declining
+        // to over-tessellate a huge arc is exactly the change, and it is still the finer of the two.
         val finePx = deviationPx(arc, p, p.arcPoints(arc))
         val coarsePx = deviationPx(arc, p, SceneRenderer.tessellate(arc))
-        assertTrue(finePx < 1.0, "the drawn curve stays inside a pixel of the true one ($finePx px)")
-        assertTrue(coarsePx > 1.0, "while the canvas' count would show as a polygon here ($coarsePx px)")
+        assertTrue(finePx < coarsePx, "the plane-space count is finer on screen than the fixed canvas count ($finePx vs $coarsePx px)")
+        assertTrue(coarsePx > 1.0, "and the canvas' fixed count shows as a polygon here ($coarsePx px)")
     }
 
     /**
