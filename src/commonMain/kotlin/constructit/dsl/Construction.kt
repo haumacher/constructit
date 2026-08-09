@@ -19,6 +19,7 @@ import constructit.core.OpNode
 import constructit.core.Path3SetValue
 import constructit.core.Path3Value
 import constructit.core.PlaneValue
+import constructit.core.Point3SetValue
 import constructit.core.Point3Value
 import constructit.core.PointSetValue
 import constructit.core.PointValue
@@ -31,6 +32,7 @@ import constructit.core.SegmentValue
 import constructit.core.SketchValue
 import constructit.core.SolidValue
 import constructit.core.SourceNode
+import constructit.core.Sphere3Value
 import constructit.core.Value
 import constructit.core.transformValue
 import constructit.geom.Affine
@@ -71,6 +73,7 @@ import constructit.geom.MeshBool
 import constructit.geom.Path3
 import constructit.geom.Pierce3
 import constructit.geom.Plane3
+import constructit.geom.Point3Set
 import constructit.geom.Profile
 import constructit.geom.ProfileElement
 import constructit.geom.Project3
@@ -82,8 +85,12 @@ import constructit.geom.Silhouette
 import constructit.geom.Sketch3
 import constructit.geom.Solid3
 import constructit.geom.SolidFace
+import constructit.geom.Sphere3
+import constructit.geom.SphereMeet
+import constructit.geom.Spheres3
 import constructit.geom.Stations3
 import constructit.geom.SweepProfile
+import constructit.geom.Trilateration
 import constructit.geom.Vec2
 import constructit.geom.Vec3
 import constructit.geom.Watertight
@@ -157,6 +164,12 @@ typealias Path3Ref = Ref<Path3Value>
 
 /** An **ordered set of curves in space** (OP-26, step 6) — OP-1's solution set one dimension up. */
 typealias Path3SetRef = Ref<Path3SetValue>
+
+/** A **sphere as a locus** (OP-28) — a distance carried in space, not a body. See [Construction.sphere]. */
+typealias Sphere3Ref = Ref<Sphere3Value>
+
+/** An **ordered set of points in space** (OP-28) — OP-1's `PointSet` one dimension up. */
+typealias Point3SetRef = Ref<Point3SetValue>
 
 /**
  * One input of a [Construction.loft] — a section of the run, or a guide that shapes it (OP-17).
@@ -3555,6 +3568,219 @@ class Construction {
             }
         }
 
+    // ---- the sphere as a locus: distance carried in space (OP-28) ----
+
+    /**
+     * A **sphere locus** about [centre] at [radius] (OP-28) — the carrier of *"this far from there"*.
+     *
+     * The node is the whole of the concept: two inputs, both of them ordinary nodes of the drawing, so the
+     * locus is a pure function of a point in space and a length. Share the radius node with a second sphere
+     * and the two are *equal by construction* (OP-5's same-node-is-equality); drag the corner the centre sits
+     * on and every point built on the locus follows by recompute, with nothing rebuilt and nothing re-solved.
+     *
+     * A **non-positive radius** is refused here, by name and healing (OP-3), because it is a condition on a
+     * value: zero is the centre itself and negative is a second way to say what the positive number already
+     * says, and two ways to say one thing is what stops a stored model being a normal form (the identical
+     * argument [constructit.geom.Curve3Element.Helix3] makes about its own three numbers).
+     */
+    fun sphere(
+        centre: Point3Ref,
+        radius: ScalarRef,
+    ): Sphere3Ref =
+        op(centre, radius) {
+            val r = sc(it[1]).requireDim(Dimension.LENGTH, "radius").mm
+            if (r <= 0.0) {
+                EvalResult.Invalid("a sphere locus needs a radius greater than zero, and this one is ${Frames3.mm(r)} mm")
+            } else {
+                EvalResult.Ok(Sphere3Value(Sphere3((it[0] as Point3Value).p, r)))
+            }
+        }
+
+    /**
+     * A **sphere locus through [surface]**, centred on [centre] (OP-28) — the second spelling, and the one
+     * that states the distance *by construction* rather than by typing it.
+     *
+     * The pair is deliberate and is exactly the pair the circle has had since the beginning — *Circle (centre,
+     * radius)* beside *(centre, point)* — read one dimension up, and the ball repeated it in session 68. The
+     * difference is one node, and it is the difference between a distance the drawing **states** and one it
+     * **measures**: this radius is `|surface − centre|`, so moving either point moves the locus, and *"as far
+     * as that corner"* is a shared input rather than an asserted relation.
+     */
+    fun sphereThrough(
+        centre: Point3Ref,
+        surface: Point3Ref,
+    ): Sphere3Ref =
+        op(centre, surface) {
+            val c = (it[0] as Point3Value).p
+            val r = ((it[1] as Point3Value).p - c).length()
+            if (r <= 0.0) {
+                EvalResult.Invalid("a sphere locus needs two different points: its centre and the point on it are the same place")
+            } else {
+                EvalResult.Ok(Sphere3Value(Sphere3(c, r)))
+            }
+        }
+
+    /**
+     * The **circle where two sphere loci meet** (OP-28's first composition) — an exact circle in space, and
+     * the one line of the table that has no branch to choose: two spheres meet in *one* circle or in none.
+     *
+     * A [Path3Ref] rather than a value of its own, because that is what the drawing already means by a circle
+     * in space: one closed path of one exact `Arc3` of a full turn — the same object a drawn circle becomes
+     * when it is lifted (OP-26). So it sweeps, it stations, it carries a point that rides it, and it is picked
+     * and drawn by the code every other curve in space is.
+     *
+     * Every way of *not* meeting refuses **by name** and heals (OP-3): too far apart, one inside the other,
+     * concentric — and **tangency**, which is the interesting one. Two spheres that touch meet at a point, and
+     * a point is not a circle; handing back a circle of radius zero would be handing back a different kind of
+     * thing under the same name, which is the very thing [sectionSegment] refuses to do. So a touch is
+     * invalid, it says so, and it heals the moment the radii overlap again.
+     */
+    fun sphereCircle(
+        a: Sphere3Ref,
+        b: Sphere3Ref,
+    ): Path3Ref =
+        op(a, b) {
+            val s1 = (it[0] as Sphere3Value).sphere
+            val s2 = (it[1] as Sphere3Value).sphere
+            when (val m = Spheres3.meet(s1, s2)) {
+                is SphereMeet.Circle -> EvalResult.Ok(Path3Value(Path3(listOf(m.circle), closed = true)))
+                is SphereMeet.Touch ->
+                    EvalResult.Invalid(
+                        "those two sphere loci touch at a single point rather than meeting in a circle — " +
+                            "change a radius until they overlap",
+                    )
+                SphereMeet.Apart ->
+                    EvalResult.Invalid(
+                        "those two sphere loci are ${Frames3.mm((s2.center - s1.center).length())} mm apart and " +
+                            "reach ${Frames3.mm(s1.radius + s2.radius)} mm between them, so they do not meet",
+                    )
+                SphereMeet.Nested ->
+                    EvalResult.Invalid("one of those sphere loci runs entirely inside the other, so they do not meet")
+                SphereMeet.Concentric ->
+                    EvalResult.Invalid("those two sphere loci share a centre, so there is no circle where they meet")
+            }
+        }
+
+    /**
+     * The **trilateration pair** of three sphere loci (OP-28's second composition) — the ordered solution set
+     * behind *"40 from that corner, 55 from that one and 30 from the third"*.
+     *
+     * Ordered by **which side of the plane through the three centres** each solution stands on, positive being
+     * the side the right-hand normal `(C₂ − C₁) × (C₃ − C₁)` points to. That rule, and the three properties it
+     * was chosen for, are stated once where the arithmetic is ([constructit.geom.Spheres3.trilaterate]); what
+     * matters here is that it is a function of the operands alone, so the branch [selectPoint3] stores means
+     * the same thing on every recompute and on every reload.
+     *
+     * A **tangency** collapses the pair onto the plane and comes back as a one-element set, so both signs
+     * answer the same point — OP-1's own rule for two coincident circle crossings, unchanged. **Collinear
+     * centres** have no plane to take a side of, so there is no pair: an empty set, refused by name where it
+     * is selected.
+     */
+    fun trilaterate(
+        a: Sphere3Ref,
+        b: Sphere3Ref,
+        c: Sphere3Ref,
+    ): Point3SetRef =
+        op(a, b, c) {
+            val s1 = (it[0] as Sphere3Value).sphere
+            val s2 = (it[1] as Sphere3Value).sphere
+            val s3 = (it[2] as Sphere3Value).sphere
+            val points =
+                when (val t = Spheres3.trilaterate(s1, s2, s3)) {
+                    is Trilateration.Pair -> listOf(t.plus, t.minus)
+                    is Trilateration.Touch -> listOf(t.at)
+                    Trilateration.None, Trilateration.Collinear -> emptyList()
+                }
+            EvalResult.Ok(Point3SetValue(Point3Set(points)))
+        }
+
+    /**
+     * Every place the run [path] **enters or leaves** the sphere locus [sphere] (OP-28's third composition) —
+     * the points at a stated distance along a run, ordered along the run.
+     *
+     * The ordering is **arc length from the run's start**, which is the order the sweep's own crossings have
+     * used since OP-26's step 2 and is the only one that is a property of the drawing rather than of the
+     * arithmetic: it survives re-tessellation, it survives the sphere moving, and it is the order the user
+     * sees when they follow the run with their eye. A **touch is not a crossing** — a run that comes tangent
+     * to the locus and turns back changes no side and pierces nothing — and a closed run's **seam** is
+     * compared across, both because this walk *is* that walk over a different field
+     * ([constructit.geom.Pierce3.crossingsOf]).
+     *
+     * [path] may be a lifted drawing exactly as any other `PATH3` may (`Document.spaceCurveRef`), which is
+     * what makes *"where does the footprint's own outline pass 40 mm from that corner"* one gesture.
+     */
+    fun sphereMeetsRun(
+        sphere: Sphere3Ref,
+        path: Path3Ref,
+    ): Point3SetRef =
+        op(sphere, path) {
+            val s = (it[0] as Sphere3Value).sphere
+            val p = (it[1] as Path3Value).path
+            EvalResult.Ok(Point3SetValue(Point3Set(Spheres3.crossings(s, p).map { hit -> hit.at })))
+        }
+
+    /**
+     * Pick a branch from an **ordered set of points in space** by sign (OP-28) — [select]'s own shape one
+     * dimension up, down to the meaning of the sign: `>= 0` is the first member, `< 0` the last.
+     *
+     * Two branches, so a **sign** and not an index, and that is the same distinction OP-1 draws in the plane:
+     * a trilateration factors into exactly one binary geometric choice (which side of the centres' plane), so
+     * a sign says it with its meaning attached, while an index would say it by counting.
+     *
+     * [emptyReason] is what an empty set is called in the caller's own terms, for [select]'s reason: "there is
+     * no such point" is always the same fact and only ever needs a better sentence.
+     */
+    fun selectPoint3(
+        set: Point3SetRef,
+        sign: Int,
+        emptyReason: String = "no point in space is at all of those distances",
+    ): Point3Ref =
+        op(set) {
+            val pts = (it[0] as Point3SetValue).set.points
+            when {
+                pts.isEmpty() -> EvalResult.Invalid(emptyReason)
+                sign >= 0 -> EvalResult.Ok(Point3Value(pts.first()))
+                else -> EvalResult.Ok(Point3Value(pts.last()))
+            }
+        }
+
+    /**
+     * Pick branch [index] of an ordered set of points in space (OP-28) — [selectAt]'s own shape one dimension
+     * up, for the producer whose count is not two.
+     *
+     * A run threaded through a sphere locus can cross it any number of times, so the branch is an **index**
+     * into an arc-length-ordered set and not a sign, for exactly the reason a quartic's branch is: a set whose
+     * size is a value factors into nothing, and "branch 3 of a two-element set" has a clean answer — invalid,
+     * with a reason, healing the moment the third crossing comes back (OP-3) — where a composed pair of signs
+     * would have none.
+     */
+    fun selectPoint3At(
+        set: Point3SetRef,
+        index: Int,
+        emptyReason: String = "the run does not reach that sphere locus, so it crosses it nowhere",
+    ): Point3Ref =
+        op(set) {
+            val pts = (it[0] as Point3SetValue).set.points
+            when {
+                pts.isEmpty() -> EvalResult.Invalid(emptyReason)
+                index < 0 || index >= pts.size ->
+                    EvalResult.Invalid(
+                        "the run crosses that sphere locus ${pts.size} time(s) now, so crossing ${index + 1} is gone — " +
+                            "move it back until it exists, or take the intersection again",
+                    )
+                else -> EvalResult.Ok(Point3Value(pts[index]))
+            }
+        }
+
+    /**
+     * The points [set] currently holds — what a click scores its branch against, exactly as [solutionCount]
+     * is what a four-branch intersection asks before it selects (OP-1's creation UX, one dimension up).
+     */
+    fun solutionPoints3(
+        set: Point3SetRef,
+        ev: Evaluator,
+    ): List<Vec3> = ((ev.eval(set.node) as? EvalResult.Ok)?.value as? Point3SetValue)?.set?.points ?: emptyList()
+
     /**
      * The **drawn pieces** of [view] as this construction reads them — the same coercion
      * [projectedOntoFace] and [combinedViews] apply inside their own `compute`.
@@ -3881,3 +4107,9 @@ fun Evaluator.sketch(ref: SketchRef): Sketch3 = (valueOf(ref) as SketchValue).sk
 fun Evaluator.solid(ref: SolidRef): constructit.geom.Solid3 = (valueOf(ref) as SolidValue).solid
 
 fun Evaluator.pointSet(ref: PointSetRef): constructit.geom.PointSet = (valueOf(ref) as PointSetValue).set
+
+/** A **sphere locus** (OP-28) — see [Construction.sphere]. */
+fun Evaluator.sphere3(ref: Sphere3Ref): Sphere3 = (valueOf(ref) as Sphere3Value).sphere
+
+/** An **ordered set of points in space** (OP-28) — see [Construction.trilaterate]. */
+fun Evaluator.point3Set(ref: Point3SetRef): Point3Set = (valueOf(ref) as Point3SetValue).set

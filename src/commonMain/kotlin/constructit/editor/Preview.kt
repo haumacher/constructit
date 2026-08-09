@@ -9,6 +9,7 @@ import constructit.core.EllipticArcValue
 import constructit.core.Evaluator
 import constructit.core.LineValue
 import constructit.core.LoopValue
+import constructit.core.Point3Value
 import constructit.core.PointValue
 import constructit.core.RayValue
 import constructit.core.RegionValue
@@ -463,6 +464,33 @@ object Previews {
         if (r < Vec2.EPS) return emptyList()
         return listOf(PreviewShape.Circ(Circle(centre, r)))
     }
+
+    /**
+     * A **sphere locus**'s outline as the cursor states it (OP-28): the circle about the picked centre that
+     * passes through the cursor — which is exactly what the plan draws once the locus exists, so the preview
+     * and the result are one picture.
+     *
+     * Its own function rather than [circleCentrePoint] because the slot is a `POINT3`: the centre arrives as
+     * an *element*, and it may stand off the plane, in which case what the plan shows is its projection —
+     * the same reading the drawing itself makes.
+     */
+    fun sphereLocusThrough(c: PreviewContext): List<PreviewShape> {
+        val centre = planPositionOf(c.element(0), c) ?: return emptyList()
+        val r = (c.cursor - centre).length()
+        if (r < Vec2.EPS) return emptyList()
+        return listOf(PreviewShape.Circ(Circle(centre, r)))
+    }
+
+    /** Where [el] stands in the active plane's own coordinates — a plane point as it is, a point in space projected. */
+    private fun planPositionOf(
+        el: Element?,
+        c: PreviewContext,
+    ): Vec2? =
+        when (val v = el?.let { c.ev.valueOf(it.ref) }) {
+            is PointValue -> v.p
+            is Point3Value -> c.doc.activePlane3(c.ev)?.toLocal(v.p)
+            else -> null
+        }
 
     /** The live circumcircle through the two picked points and the cursor. */
     fun circle3(c: PreviewContext): List<PreviewShape> {

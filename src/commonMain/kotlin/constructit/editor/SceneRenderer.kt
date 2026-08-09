@@ -19,9 +19,11 @@ import constructit.core.RegionValue
 import constructit.core.ScalarValue
 import constructit.core.SegmentValue
 import constructit.core.SolidValue
+import constructit.core.Sphere3Value
 import constructit.dsl.valueOf
 import constructit.geom.Arc
 import constructit.geom.Chain
+import constructit.geom.Circle
 import constructit.geom.Conics
 import constructit.geom.Curves3
 import constructit.geom.Ellipse
@@ -33,6 +35,8 @@ import constructit.geom.Plane3
 import constructit.geom.ProfileElement
 import constructit.geom.Ray
 import constructit.geom.Segment
+import constructit.geom.Sphere3
+import constructit.geom.Spheres3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
 import kotlin.math.abs
@@ -304,6 +308,10 @@ object SceneRenderer {
                 // view can honestly put it — see [drawSpacePoint], and [HitTest.distanceTo] for why this one
                 // *is* drawn in the plan while a height point is not.
                 is Point3Value -> drawSpacePoint(v.p, plane3, proj, target, style)
+                // A **sphere locus** (OP-28) is scaffolding in space, and it draws in *both* views — a locus
+                // visible in only one of them is a locus half the drawing cannot build with. See
+                // [drawSphereLocus] for what each view honestly shows.
+                is Sphere3Value -> drawSphereLocus(v.sphere, plane3, proj, target, style)
                 is PointSetValue ->
                     v.set.points.forEach {
                         if (ghost) ring(proj, target, it, style) else dot(proj, target, it, style.stroke)
@@ -650,8 +658,70 @@ object SceneRenderer {
             is Path3Value -> emphasizePath(v.path, doc, ev, proj, target, style)
             // ...and a point in space rings where it is drawn, exactly as a plane point does
             is Point3Value -> spacePointAt(v.p, doc.activePlane3(ev), proj)?.let { target.circle(it, 7.0, ringStyle) }
+            // ...and a sphere locus restates its own image in the emphasis style (OP-28)
+            is Sphere3Value -> drawSphereLocus(v.sphere, doc.activePlane3(ev), proj, target, style)
             else -> {}
         }
+    }
+
+    /**
+     * A **sphere locus** (OP-28) as each view honestly shows it — and each view shows something different,
+     * because the honest picture of a sphere is different in each.
+     *
+     * - **In the plan**, its **outline**: a circle of the locus's own radius about the centre's projection.
+     *   Under the parallel projection the 2D canvas is, that circle *is* the locus's silhouette exactly — the
+     *   shadow of a sphere on any plane is a disc of its own radius — so nothing is approximated and nothing
+     *   is chosen. It is also never empty, which the alternative (the circle where the locus meets the plane)
+     *   would be whenever the plane missed it, and a locus that vanishes from the view it is being built in
+     *   is a locus nobody can click.
+     * - **In the 3D view**, its **three great circles** ([Spheres3.greatCircles]) — view-independent, so they
+     *   turn with the model and not with the camera, and instantly legible as a sphere.
+     *
+     * Drawn from the overlay in both views rather than through [Scene3], and that is deliberate: scaffolding
+     * is a thing to *see through* material, not behind it. A construction locus hidden by the very body it is
+     * measuring from would be useless at the moment it is wanted. Recorded as the choice it is.
+     */
+    private fun drawSphereLocus(
+        sphere: Sphere3,
+        plane: Plane3?,
+        proj: PlaneProjection,
+        target: DrawTarget,
+        style: Style,
+    ) {
+        val pl = plane ?: return
+        if (proj.similarity) {
+            proj.drawCircle(target, Circle(pl.toLocal(sphere.center), sphere.radius), style)
+            return
+        }
+        for (circle in Spheres3.greatCircles(sphere)) drawLiftedPolyline(Curves3.polyline(circle), pl, proj, target, style)
+    }
+
+    /**
+     * A run of world points drawn where the 3D view puts them — through [PlaneProjection.toScreenLifted],
+     * each point stated in [plane]'s own (u, v, lift) frame.
+     *
+     * Shared by the emphasis of a curve in space and by a sphere locus's great circles, so the one rule about
+     * a vertex with no image — it **breaks the run** rather than being bridged, exactly as `drawChain` does —
+     * is stated once instead of twice.
+     */
+    private fun drawLiftedPolyline(
+        points: List<Vec3>,
+        plane: Plane3,
+        proj: PlaneProjection,
+        target: DrawTarget,
+        style: Style,
+    ) {
+        val screen = ArrayList<Vec2>()
+        for (p in points) {
+            val at = proj.toScreenLifted(plane.toLocal(p), plane.distanceTo(p))
+            if (at == null) {
+                if (screen.size >= 2) target.polyline(screen.toList(), style)
+                screen.clear()
+                continue
+            }
+            screen.add(at)
+        }
+        if (screen.size >= 2) target.polyline(screen.toList(), style)
     }
 
     /**

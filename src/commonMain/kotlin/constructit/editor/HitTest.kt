@@ -17,9 +17,11 @@ import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.SegmentValue
 import constructit.core.SolidValue
+import constructit.core.Sphere3Value
 import constructit.dsl.valueOf
 import constructit.geom.Arc
 import constructit.geom.Chain
+import constructit.geom.Circle
 import constructit.geom.Curve3Element
 import constructit.geom.Curves3
 import constructit.geom.GeomMath
@@ -28,6 +30,8 @@ import constructit.geom.Plane3
 import constructit.geom.ProfileElement
 import constructit.geom.Ray3
 import constructit.geom.Segment
+import constructit.geom.Sphere3
+import constructit.geom.Spheres3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
 import kotlin.math.abs
@@ -113,6 +117,7 @@ object HitTest {
         (el.handle as? HeightPointHandle)?.let { h -> return distanceToHeightPoint(h, world, view, ev) }
         (ev.valueOf(el.ref) as? Path3Value)?.let { return distanceToPath(it.path, world, view, plane) }
         (ev.valueOf(el.ref) as? Point3Value)?.let { return distanceToSpacePoint(it.p, world, view, plane) }
+        (ev.valueOf(el.ref) as? Sphere3Value)?.let { return distanceToSphere(it.sphere, world, view, plane) }
         return distanceToValue(ev, el, world)
     }
 
@@ -133,8 +138,12 @@ object HitTest {
      * **Null with no view at all**: the snap resolver and the weld magnet ask a 2D question, and the answer
      * would be a *plane* point at the projection, which is not this point. A placing click therefore never
      * snaps onto one — the same refusal a height point makes, for the same reason.
+     *
+     * Public since OP-28, because scoring a branch is the same question as picking one: a click that has to
+     * say *which* of two trilateration solutions it meant measures against exactly what the pick measures
+     * against, in whichever view is driving, so the branch the user gets is the one they pointed at.
      */
-    private fun distanceToSpacePoint(
+    fun distanceToSpacePoint(
         p: Vec3,
         world: Vec2,
         view: PlaneProjection?,
@@ -149,6 +158,39 @@ object HitTest {
         if (len < Vec2.EPS) return null
         val local = lifted(pl, p)
         return (local - ray.origin).cross(d).length() / len
+    }
+
+    /**
+     * How near [world] is to the **sphere locus** [s] (OP-28) — each view measuring it where it draws it,
+     * which is the rule every 3D kind in this file follows.
+     *
+     * - **In the plan**, the distance to its **outline circle**: how far the pointer stands from the centre's
+     *   projection, less the radius, unsigned — so the locus is grabbed on the ring the canvas draws and not
+     *   across the whole disc, exactly as a drawn circle is picked on its rim and not at its centre.
+     * - **In the 3D view**, the distance to the nearest of its **three great circles**, against the pointer's
+     *   viewing ray in the plane's own (u, v, lift) frame and therefore in millimetres — the same measure
+     *   [distanceToPath] takes, over the very polylines the renderer draws.
+     *
+     * **Null with no view at all**, which is the *point* in space's rule rather than the curve's, and
+     * deliberately so: the snap resolver and the weld magnet ask a 2D question, and a placing click must
+     * never land on a construction locus — what would be shared is a plane point at a projection, which is
+     * not on the locus at all.
+     */
+    private fun distanceToSphere(
+        s: Sphere3,
+        world: Vec2,
+        view: PlaneProjection?,
+        plane: Plane3?,
+    ): Double? {
+        val pl = plane ?: return null
+        if (view == null) return null
+        if (view.similarity) return abs((pl.toLocal(s.center) - world).length() - s.radius)
+        val ray = view.viewRay(world)
+        if (ray.dir.length() < Vec3.EPS) return null
+        return Spheres3.greatCircles(s).minOfOrNull { circle ->
+            val local = Curves3.polyline(circle).map { p -> pl.toLocal(p).let { Vec3(it.x, it.y, pl.distanceTo(p)) } }
+            local.zipWithNext().minOfOrNull { (a, b) -> distRayToSegment(ray, a, b) } ?: Double.MAX_VALUE
+        }
     }
 
     /**
@@ -551,6 +593,20 @@ object HitTest {
         }
         // a height point is met where it is *seen* — its image, mapped back onto the plane the band was
         // dragged on — which is the same "only through a view that can place it" rule the pick follows
+        // …and a **sphere locus** (OP-28) is met where the band sees its image: its outline in the plan, its
+        // great circles in the 3D view — the same two pictures the renderer draws and the pick measures.
+        (ev.valueOf(el.ref) as? Sphere3Value)?.let { v ->
+            val pl = plane ?: return false
+            if (view == null || view.similarity) {
+                return pieceMeets(ProfileElement.CircleE(Circle(pl.toLocal(v.sphere.center), v.sphere.radius)), lo, hi)
+            }
+            return Spheres3.greatCircles(v.sphere).any { circle ->
+                Curves3.polyline(circle).any { p ->
+                    val at = view.toScreenLifted(pl.toLocal(p), pl.distanceTo(p))?.let { view.toPlane(it) }
+                    at != null && inRect(at, lo, hi)
+                }
+            }
+        }
         (el.handle as? HeightPointHandle)?.let { h ->
             if (view == null || view.similarity) return false
             val (base, lift) = h.localAt(ev) ?: return false

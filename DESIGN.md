@@ -9975,6 +9975,204 @@ a queue line. **3D sketch constraints** are refused permanently and by design, n
 two corners are closer together than the sum of their trims folds back on itself and still passes every
 manifold test (*Queued in session 40*) — the queue entry says why it needs a decision before a patch.
 
+## The sphere as a locus — distance carried in space (OP-28 — RESOLVED)
+
+In the plane, **distance is carried by the circle**. `circle ∩ circle` is an ordered solution set whose branch
+is a stored `Select` sign (OP-1); tangency, the fillet, Apollonius and every "so far from there" a drawing says
+are built on that one mechanism. In space the tool had no such thing. Points in space came only from height
+points (OP-25), riders on curves, projections and section corners; `Intersect3` was plane-∩-solid and nothing
+else (OP-26, step 6). Nowhere could a drawing say **"40 from that corner and 55 from that one"** — which is the
+one sentence a no-solver CAD has to be able to say by *construction*, since a solver is exactly what everyone
+else says it with.
+
+**A sphere locus supplies it, and it composes exactly as its 2D twin does.** This is the third dimension of the
+no-solver stance, and it needed no new doctrine — only the existing one read one dimension up.
+
+### What a sphere locus is, and what it is not
+
+A `Sphere3Value`: a **centre** (any point in space of the drawing) and a **radius** (any scalar node). Two
+inputs, both ordinary nodes, so the locus is a pure function of them — share the radius node between two loci
+and they are equal *by construction*, drag the corner and everything built on the locus follows by recompute.
+
+It is deliberately **not** a body, and the type system is what enforces that:
+
+- **not a solid.** The tool has built a *ball* since session 68 — a full revolve of a half-disc profile, an
+  ordinary `Feature3.Revolution`, watertight, meshed, measured, exported, a boolean operand. A locus is the
+  concept *behind* that one: a surface with no interior, whose whole purpose is to be intersected. Because it
+  is a distinct `Value` kind it can never reach a slot that expects material, so no boolean, no volume and no
+  export can be asked of a thing that has none — which is *watertight or refused* (OP-9) being kept by typing
+  rather than by remembering.
+- **not exported.** `ExportScene` filters on `SolidValue`, so this follows without a rule of its own.
+- **not a curve.** Nothing runs along it; a `PATH3` slot cannot take one, and a `CURVE` slot could not read it
+  even in principle (a `Vec2` means "in some plane's coordinates" — OP-17's partition, unchanged).
+- **scaffolding**, in the sense the document already means: it is in the ancestor closure of the results
+  (`Document.scaffoldingElements`), so the dim toggle already knows about it and no flag was added.
+
+### The composition table (as built)
+
+| composition | result | branch | ordering rule |
+|---|---|---|---|
+| **sphere ∩ sphere** | a **circle in space** — one exact `Curve3Element.Arc3` of a full turn, in a closed `Path3` | **none**: two loci meet in one circle or in none | — |
+| **sphere ∩ sphere ∩ sphere** | the **trilateration pair** — an ordered `Point3Set` | a **sign** (±1), persisted | which side of the plane through the three centres (below) |
+| **sphere ∩ curve** | the **points at a stated distance along a run** — an ordered `Point3Set` | an **index**, persisted | **arc length along the run** |
+| *(sphere ∩ plane)* | *a circle in space — the same final step, in the kernel (`Spheres3.meetPlane`)* | *none* | *— (**cut**: no gesture, see below)* |
+
+A **sign** for the pair and an **index** for the run, and that split is OP-1's own: a trilateration factors into
+exactly one binary *geometric* choice, so a sign says it with its meaning attached; how often a run crosses a
+locus is a **value**, so a set whose size can change is addressed by index — where "branch 3 of a two-element
+set" has a clean answer (invalid, with a reason, healing when the third comes back) and a composed pair of
+signs would have none.
+
+### The sign convention, stated once
+
+The two trilateration solutions are mirror images in the plane through the three centres, so there is exactly
+one geometric thing to call *the branch*: **which side of that plane** the point stands on, positive being the
+side the right-hand normal
+
+```
+n = (C₂ − C₁) × (C₃ − C₁)
+```
+
+points to — the side from which the three centres, **in the order the construction states them**, are seen to
+turn counter-clockwise. A stored `+1` therefore means "above the centres' plane" for as long as the drawing
+exists.
+
+Three properties recommend it, and they are the three OP-1's own 2D rules were chosen for:
+
+- it is a property of the **operands alone**. The order of the three loci is *structural*, decided when the
+  tool collected its slots and never re-derived, so nothing about the viewport, the click or the tessellation
+  can move it;
+- it **turns with the construction**: under any rigid motion the centres and the normal turn together, so a
+  rotated copy of a drawing rides the rotated branch. (A *mirrored* copy takes the other one, which is correct
+  — mirroring is what exchanges the two solutions.)
+- it is **continuous** everywhere except at genuine degeneracies: the pair collapses onto the plane exactly
+  when the two solutions coincide (a tangency, where both signs answer the same point — OP-1's rule for two
+  coincident circle crossings, unchanged), and the plane itself is ill-defined exactly when the three centres
+  are **collinear**, which refuses by name.
+
+It is not imposed on the arithmetic; it **falls out of it**. With `eₓ` along `C₂ − C₁` and `e_y` along the
+perpendicular component of `C₃ − C₁` (whose coefficient `j` is positive by construction), `e_z = eₓ × e_y` and
+`n = d·j·e_z` with `d > 0` and `j > 0` — so the `+z` solution *is* the `+n` one, and there is no second place
+where a sign could quietly be decided.
+
+### What refuses, and what heals
+
+Everything about *where* the loci stand is a **value**, so it is node invalidity with a reason that heals
+(OP-3), never a gesture refusal. Each way of not meeting has its own sentence:
+
+- two loci **too far apart**, one **inside** the other, or **concentric**;
+- two loci that merely **touch** — and this one is about a *kind*, not a distance: a touch is a point, and a
+  point is not a circle, so handing back a circle of radius zero would be handing back a different thing under
+  the same name (the rule `sectionSegment` already keeps for a section curve that has become an arc);
+- three loci that **do not overlap**, or whose centres now lie on **one line** (in which case they meet in a
+  whole circle rather than at a pair of points);
+- a run that **does not reach** a locus, or that reaches it fewer times than the recorded index;
+- a **non-positive radius**, which is a second way to say what a positive number already says.
+
+Gesture refusals are reserved for the structural things — a pick that is not a locus, a pick that is not a
+point, the same locus clicked twice — and they name the element and the way through, as every refusal does.
+
+### The gestures (five rows, and what they are not)
+
+| row | slots | what it does |
+|---|---|---|
+| *Sphere locus (centre, radius)* | `POINT3` + typed radius | the locus, with the distance typed |
+| *Sphere locus (centre, surface point)* | `POINT3`, `POINT3` | the locus, with the distance **stated by the drawing** |
+| *Circle of two sphere loci* | `SPHERE`, `SPHERE` | the exact circle in space |
+| *Point from three sphere loci* | `SPHERE`, `SPHERE`, `SPHERE`, `SIDE` | the trilateration point; the last click chooses the branch |
+| *Point where a run meets a sphere locus* | `SPHERE`, `PATH3` | the crossing; the click on the run chooses it |
+
+The two producer spellings are the pair *Circle (centre, radius)* / *(centre, point)* has had since the
+beginning, read one dimension up — the ball repeated it in session 68 and so does this. They differ in exactly
+one node (`sphere` against `sphereThrough`), which is what recording the tool records.
+
+**Rows of their own rather than an extension of *Intersect*, and that is a decision.** *Intersect* takes two
+`CURVE` slots — carriers stated in *some plane's* coordinates — and a locus is not one at any tolerance; a slot
+that accepted both would be a slot whose meaning depended on what happened to be clicked, and the three results
+differ in kind as well (a circle in space, a point with a sign, a point with an index). Three unambiguous
+gestures say what one overloaded one could only guess at.
+
+**The trilateration's fourth click is a `SIDE` slot**, and it is not ceremony. The click that fills the *third*
+locus lands on that locus's rim, which is nowhere near either solution — so unlike an intersection curve (where
+the pick and the branch are honestly the same click) the branch here needs a click of its own. That is OP-1's
+creation UX — *"clicking near one intersection sets the `Select` sign to that side"* — done the only way three
+loci allow. One honest limit, stated in the help: **in the plan the two solutions can fall on the same spot**,
+and they always do when the three centres lie in the plan being looked along, because the two are mirror images
+in that very plane. Orbit into the 3D view and the pointer's ray tells them apart. This is the helix rider's
+own split (OP-26) — *the 2D/3D difference is in the pick, not in the point* — arriving a second time.
+
+### How it draws, and where
+
+A locus that nobody can see is a locus nothing can be built from, so it draws in **both** views, and each view
+draws the honest picture of a sphere *for that view*:
+
+- **in the plan**, its **outline**: a circle of the locus's own radius about the centre's projection. Under the
+  parallel projection the 2D canvas is, that circle *is* the silhouette exactly — the shadow of a sphere on any
+  plane is a disc of its own radius — so nothing is approximated and nothing is chosen. It is also never empty,
+  which the alternative (the circle where the locus meets the plane) would be whenever the plane missed it.
+- **in the 3D view**, its **three great circles** in the world axes (`Spheres3.greatCircles`). Deliberately
+  **view-independent**: the silhouette is a property of the camera and would be recomputed on every orbit, and
+  what is drawn ought to be a fact about the drawing (the same argument the silhouette-edge note makes).
+
+Both are drawn from the `SceneRenderer` overlay rather than through `Scene3`, so a locus is **not depth-sorted
+behind material** — deliberate, and recorded: scaffolding is a thing to see *through* a body, and a construction
+locus hidden by the very body it measures from would be useless exactly when it is wanted. One definition
+serves both the drawing and the pick (`HitTest` measures against the identical circles), which is the standing
+rule: what is visible is pickable. The style is construction purple, **dashed** — a fact about the element
+rather than a toggle's answer, so it never reads as the silhouette of a ball.
+
+### What the file gains
+
+**Five new tool spellings and nothing else.** No new step kind, no new argument, and **no version bump** — the
+branch rides the `signs=` a `tool` step has always carried (a sign for the pair, an index for the run), the
+radius is an ordinary `scalar=` parameter, and a brand-new tool id changes the meaning of nothing already
+written, which is the versioning doctrine's own test. A locus is replayed by the very `ToolDef.build` the click
+ran, like every other row.
+
+### Deliberate cuts, each whole
+
+- **sphere ∩ plane has no gesture.** The mathematics is in the kernel and tested (`Spheres3.meetPlane` — it is
+  literally the last step `meet` takes once two spheres are reduced to one plane), but the gesture would need a
+  **plane-valued tool slot**, which the table has lacked since session 16 and which is that gap's to close, not
+  this package's. Using the *active* working plane implicitly was considered and rejected: it would make the one
+  row of the table whose second operand is not clicked. A future extension, not a limit.
+- **A locus's radius is dragged in the plan only.** In the 3D view every point of the locus is at the radius, so
+  no pointer ray states one; the handle holds what it has and the panel field types it (OP-13's pairing).
+- **No locus of a locus family** — no "all points 40 from this *curve*" (a pipe surface), and no cylinder or
+  cone locus. Each is a real concept and each wants its own value and its own composition table; recorded as
+  future extensions.
+- **A locus is not a boolean operand and never becomes one.** Not deferred — it is what the value being its own
+  kind means.
+
+### Implementation status (as built — session 70)
+
+One new kernel file (`geom/Sphere3.kt`: `Sphere3`, `Point3Set`, `SphereMeet`, `Trilateration`, `Spheres3`), two
+new `Value` kinds (`Sphere3Value`, `Point3SetValue`), seven DSL ops, five `ToolDef` rows, one `SlotKind`
+(`SPHERE`), one `ElementKind` (`SPHERE_LOCUS`), one `Style`, one `Handle` (`SphereLocusHandle`), and branches in
+the four seams a new drawn kind always needs — `SceneRenderer.draw`, `SceneRenderer.emphasize`,
+`HitTest.distanceTo` and `HitTest.meetsRect`.
+
+**`Pierce3` was generalized rather than paralleled**, and that is the one change to existing machinery. Its walk
+already followed a signed field along a run and bisected the sign changes on the analytic piece; it now takes
+the field as an argument (`Pierce3.crossingsOf`), with the plane case reading `n·(P − p₀)` and the sphere case
+`|P − C| − r`. So sphere ∩ curve inherits every law the in-place sweep's crossings obey without restating one:
+arc-length order, a closed run's **seam** compared across (session 66's fix), a **touch is not a crossing**, and
+a root bisected on the piece's own formula rather than on a chord. A law repaired for one is now repaired for
+both.
+
+The exactness claims, each asserted analytically rather than against a picture: two loci 50 apart with radii 40
+and 30 meet in a circle of radius **24** centred **32** along the centre line, and every sampled point of it is
+at 40 and 45 from the two centres to **1e-9**; the trilateration point of a pillar's two bottom corners and a
+top corner stands at **40**, **55** and **55** to **1e-9**, and goes on doing so after a corner is dragged.
+
+**2049 → 2095 green** (`SphereLocusTest`, 21; `SphereLocusToolTest`, 17; `SphereLocusProbeTest`, 8), nothing
+cut from any existing test, no golden moved. The probe is the composition half and asks the only question worth
+asking of a new kind — *is the mechanism general?* — by running it through seams that were written before it
+and know nothing about it: the ghost layer, deletion and its dependents, the dependency panel, a **sketch on a
+face** (a locus centred on a point of another pane), the marquee, the naming authority, the cascade, and the
+export seam, which refuses a drawing that is all scaffolding without ever having been told about spheres. The whole-table audit (`RecordedElementTest`) gained three loci in its fixture, so every row of
+the composition table is driven generically as well as by its own test.
+
 ## Open points (to discuss one by one)
 
 - [x] **OP-1 Branch/continuity policy** — RESOLVED: deterministic, orientation-based branch
@@ -10191,6 +10389,20 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
       canvas, and pickable in both by the same rule each view draws it with. The smooth mode is uniform
       Catmull–Rom with a **chord** end condition, chosen for locality over a natural spline's global solve.
       Steps 2–8 stand as written. See *Implementation status (as built — step 1)*.
+- [x] **OP-28 The sphere as a locus — distance carried in space** — RESOLVED (session 70, the sphere queue's
+      item 5 and the entry that closes it): a `Sphere3Value` that is a **locus and not a body** — a centre node
+      and a radius node, no interior, so typing alone keeps it out of every slot that expects material. It
+      composes as its 2D twin does: two loci meet in an **exact circle in space**, three meet at the
+      **trilateration pair** (branch by a persisted **sign**), and a locus meets a **run** at the points a
+      stated distance along it (branch by a persisted **index**, ordered by arc length). The sign is *which
+      side of the plane through the three centres*, positive being `(C₂ − C₁) × (C₃ − C₁)`'s side — a property
+      of the operands alone, equivariant under rigid motion, continuous but at the two degeneracies it names.
+      Every scored choice is made once at the click and taken verbatim on replay (OP-1/OP-18). Five tool rows,
+      drawn and picked in both views, **no version bump**. `Pierce3`'s walk was generalized to any signed
+      field rather than paralleled, so a sphere's crossings inherit the seam and touch laws. Cut whole and
+      recorded: sphere ∩ plane has kernel support but **no gesture** (it wants the plane-valued slot missing
+      since session 16), and the locus *family* (a pipe surface, a cylinder or cone locus) is a future
+      extension. See *The sphere as a locus — distance carried in space*.
 - [x] **OP-27 Why the format records operations, and the invariant that carries** — RESOLVED (the user's
       question, session 49): the format is not the fault. An **operation** is the unit because a construction
       system's sequence *is* its model (OP-5), because a step preserves the *choices* an element graph would
@@ -12805,6 +13017,38 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   repaint fell through to `draw3d()` and blanked the plan, invisible under real input because Chrome aligns
   pointer moves to the frame. Test and defect got separate fixes and the defect got its own deterministic
   regression (see *(d) Redraws coalesce* under the performance note). 2013 → 2043 tests.
+- **Turn 70** — **The sphere as a locus** (item 5 of the sphere queue, and **the entry that closes it**), a
+  new OP: **OP-28**. The user's own question two sessions back — *"spheres — a missed concept so far,
+  right?"* — turned out to have a second half nobody had asked yet, and the queue entry they directed named it
+  exactly: the sphere the tool was missing is not the *ball* (which session 68 built) but the **locus**, the
+  carrier of *"40 from that corner and 55 from that one"*. That sentence is the one thing a no-solver CAD has
+  to be able to say by construction, because a solver is what everybody else says it with — and the plane has
+  been able to say it since OP-1 while space never could. The design is the entry's, and it needed no new
+  doctrine, only the existing one read one dimension up: an ordered solution set plus a persisted `Select`,
+  scored once at the click and **never re-scored**. The one decision the entry left open is the one that
+  mattered, and it is recorded as a convention rather than an implementation detail: **the sign is which side
+  of the plane through the three centres**, positive being the right-hand normal `(C₂ − C₁) × (C₃ − C₁)`'s
+  side — a property of the operands alone (the loci's order is structural), equivariant under rigid motion,
+  continuous except where the pair collapses (a tangency: both signs answer one point) or where the plane
+  itself does not exist (collinear centres: refused by name). It falls **out** of the standard trilateration
+  frame rather than being imposed on it, which is why there is no second place a sign could quietly be
+  decided. What a locus is *not* is enforced by typing rather than by rules: it is its own `Value`, so it can
+  never fill a solid's slot, and no boolean, volume or export can be asked of a thing with no interior. Two
+  things fell out that were not foreseen. `Pierce3`'s walk **generalized to any signed field** — the plane
+  case reads `n·(P − p₀)`, the sphere case `|P − C| − r` — so sphere ∩ curve inherits the arc-length order, the
+  closed-run seam and the *a touch is not a crossing* law instead of restating them, and a law repaired for one
+  is repaired for both. And the trilateration needs a **fourth click**: unlike an intersection curve, where the
+  pick and the branch are honestly one click, the third locus's pick lands on that locus's rim and says nothing
+  about which of the two points is meant. One honest limit is stated in the help rather than hidden: in the
+  plan the two solutions coincide whenever the three centres lie in the plan being looked along, and the 3D
+  view is where they are told apart — the helix rider's own *the 2D/3D difference is in the pick, not in the
+  point*, arriving a second time. Five rows (two producer spellings, one consumer per line of the composition
+  table), drawn in **both** views (outline in the plan, three view-independent great circles in 3D, dashed and
+  pickable in each), **no version bump** — five new tool spellings change the meaning of nothing already
+  written. Deliberate cuts, each whole and recorded: sphere ∩ plane is in the kernel but has **no gesture**
+  (it wants the plane-valued slot the table has lacked since session 16), the radius drags in the plan only,
+  and the locus *family* (a pipe surface, a cylinder or cone locus) is a future extension. **2049 → 2095
+  green**, nothing cut, no golden moved. See *The sphere as a locus — distance carried in space* (OP-28).
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -15041,7 +15285,10 @@ absent, and independent of everything else here.
    anchoring problem one dimension up — so those curves refuse by name with that reason, recorded as a future
    extension and not a limit.
 
-**Queued in session 52 (user-directed): the sphere — a concept the tool had missed.** Asked as *"spheres — a
+~~**Queued in session 52 (user-directed): the sphere — a concept the tool had missed.**~~ — **closed whole in
+session 70**, across three packages: the gesture (item 3, session 68), analytic faces for surfaces of revolution
+(item 4, session 69) and the sphere as a *locus* (item 5, session 70 — OP-28). Nothing of it is parked. The
+original entry, kept: Asked as *"spheres — a
 missed concept so far, right?"*, and the honest answer was *yes as a concept, no as a capability*: the word
 appears nowhere in the engine (only `computeBoundingSphere` in the camera), `Feature3` is Extrusion /
 Revolution / Sweep / Loft / Prism / MeshBoolean / Imported — and yet a ball builds today. Verified headlessly
@@ -15089,8 +15336,21 @@ splits in three, and only the first is small.
    face* reach a shaft's flat end. It wants a face-patch family for surfaces of revolution (spherical,
    conical, toroidal and planar bands, read off the profile's own pieces), which is also what the parked 3D
    blending work will need. Bigger than item 3, and shared.* **Item 5 remains open.**
-5. **The sphere as a *locus* — the concept behind the concept.** In the plane the circle is how the drawing
-   carries **distance**: circle ∩ circle is an ordered intersection set whose branch is a stored `Select` sign
+5. ~~**The sphere as a *locus* — the concept behind the concept.**~~ — **built in session 70**; see *The
+   sphere as a locus — distance carried in space* (OP-28). **The sphere queue closes with it**: items 3, 4 and
+   5 are all delivered and nothing of this entry is parked. It landed as the entry sketched it — a `Sphere3`
+   value, ordered solution sets in space, a branch by sign — and the one decision the entry left open is the
+   one that mattered: **the sign is which side of the plane through the three centres**, positive being the
+   side the right-hand normal `(C₂ − C₁) × (C₃ − C₁)` points to, which is a property of the operands alone (the
+   order of the three loci is structural), turns with a rigid motion, and is continuous except at the two
+   genuine degeneracies it names. All three lines of the composition table are built with a gesture each, plus
+   two producer spellings — five rows — and the fourth, **sphere ∩ plane**, is in the kernel but has no
+   gesture, cut whole because it wants the plane-valued tool slot the table has lacked since session 16. Two
+   things fell out that the entry did not foresee: `Pierce3`'s walk **generalized** to any signed field, so a
+   sphere's crossings inherit the seam and touch laws rather than restating them; and a **fourth click** is
+   needed to choose the trilateration branch, because unlike an intersection curve the third pick lands on a
+   locus's rim rather than near the answer. **2049 → 2095 green.** The original entry, kept: *In the plane the
+   circle is how the drawing carries **distance**: circle ∩ circle is an ordered intersection set whose branch is a stored `Select` sign
    (OP-1), and tangency and Apollonius are built on it. In space there is no distance-based construction at
    all — points in space come only from height points (OP-25), riders on curves, projections and section
    corners, and `Intersect3` is plane-∩-solid and nothing else (OP-26 step 6). A sphere supplies the missing
@@ -15099,7 +15359,7 @@ splits in three, and only the first is small.
    That is how a drawing says *"40 from that corner and 55 from that one"* by construction rather than by
    solver — the piece of the no-solver stance that exists only in the plane today. OP-sized: a `Sphere3`
    value, ordered 3D intersection sets, branch by sign, and the same rule that governs every scored choice
-   (scored once at creation, stored, never re-scored on replay).
+   (scored once at creation, stored, never re-scored on replay).*
 
 ~~**Queued in session 58 (found, not reported): a closed run can sweep to an inside-out shell without
 refusing.**~~ — **closed in session 59**, and it took two fixes rather than one: the parallel case of the

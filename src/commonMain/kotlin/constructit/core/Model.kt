@@ -13,6 +13,7 @@ import constructit.geom.Path3
 import constructit.geom.Path3Set
 import constructit.geom.Plane3
 import constructit.geom.PlaneSection
+import constructit.geom.Point3Set
 import constructit.geom.PointSet
 import constructit.geom.Profile
 import constructit.geom.Ray
@@ -20,6 +21,7 @@ import constructit.geom.Region
 import constructit.geom.Segment
 import constructit.geom.Sketch3
 import constructit.geom.Solid3
+import constructit.geom.Sphere3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
 import constructit.units.Quantity
@@ -83,6 +85,29 @@ data class EllipseValue(val ellipse: Ellipse) : Value
 data class EllipticArcValue(val arc: EllipticArc) : Value
 
 data class PointSetValue(val set: PointSet) : Value
+
+/**
+ * A **sphere as a locus** (OP-28): the carrier of *"this far from there"* in space — see [Sphere3].
+ *
+ * A value kind of its own, and emphatically **not** a [SolidValue]. A ball is a body this tool has built since
+ * session 68 (a full revolve, watertight, meshed, exported, a boolean operand); this is the concept behind it —
+ * a surface with no interior, whose whole purpose is to be **intersected**. Keeping the two apart is the type
+ * system doing what OP-9's *watertight or refused* needs it to do: a locus can never reach a slot that expects
+ * material, so no boolean, no export and no volume can ever be asked of a thing that has none.
+ */
+data class Sphere3Value(val sphere: Sphere3) : Value
+
+/**
+ * An **ordered set of points in space** (OP-28): OP-1's [PointSetValue] one dimension up.
+ *
+ * A compound value with a `Select` beside it, for [PointSetValue]'s own reason: *how many* solutions an
+ * intersection has is a function of the operands' values (a run threaded through a sphere enters and leaves it
+ * once, then not at all, then twice again), so a set of nodes sized by it would have to be regenerated on every
+ * edit. The ordering rule is stated **per producer**, exactly as it is in the plane — the side of the
+ * three-centre plane for a trilateration pair, arc length along the run for a sphere met by a curve — and the
+ * branch beside it is structural, taken verbatim on replay and never re-scored.
+ */
+data class Point3SetValue(val set: Point3Set) : Value
 
 /**
  * An **ordered set of curves in space** (OP-26, step 6): OP-1's [PointSetValue] one dimension up — see

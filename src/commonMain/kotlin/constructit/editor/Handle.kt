@@ -10,6 +10,7 @@ import constructit.core.Node
 import constructit.core.ParameterNode
 import constructit.core.Path3Value
 import constructit.core.PlaneValue
+import constructit.core.Point3Value
 import constructit.core.PointValue
 import constructit.core.ScalarValue
 import constructit.core.SourceNode
@@ -18,6 +19,7 @@ import constructit.dsl.EllipseRef
 import constructit.dsl.LineRef
 import constructit.dsl.Path3Ref
 import constructit.dsl.PlaneRef
+import constructit.dsl.Point3Ref
 import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.dsl.valueOf
@@ -1149,4 +1151,68 @@ class HeightPointHandle(
          */
         const val MIN_RAY_LINE_SIN = 0.05
     }
+}
+
+/**
+ * The handle of a **sphere locus** (OP-28): its radius, dragged where the locus is drawn and typed in the
+ * panel.
+ *
+ * **The radius is the whole of its freedom, and that is a statement about what a locus is.** Its centre is
+ * not this handle's business — the centre is a point of the drawing, with a handle of its own, and dragging
+ * *it* moves the locus by recompute like everything else built on it (the parenting rule, OP-26). What the
+ * locus itself owns is the one number a click can state, and stating it is what *"40 from that corner"*
+ * means.
+ *
+ * **The drag is a plan drag**, and deliberately only that. In the 2D canvas the locus is drawn as its own
+ * outline circle about the centre's plan image, so dragging that outline reads a radius the way dragging a
+ * circle's rim does one dimension down — the same gesture, the same meaning. In the 3D view the pointer is
+ * a *ray*, and every point of the locus is at the radius, so no ray states one: an off-plane drag would have
+ * to invent an answer, and the honest one is to hold the radius the drag has and let it be typed (OP-13's
+ * own pairing of dragging with typing). Recorded as a cut rather than left silent.
+ */
+class SphereLocusHandle(
+    val plane: PlaneRef,
+    private val centre: Point3Ref,
+    private val radius: Node,
+) : Handle {
+    override val dragNodes: List<Node> get() = listOf(radius)
+
+    /**
+     * Where the centre stands in [plane]'s own coordinates, or null while either has no value.
+     *
+     * The plane is the locus's **own** space's, held as a node exactly as a height point holds its
+     * ([HeightPointHandle]), which is what keeps the drag honest under a tilted datum: the canvas draws this
+     * locus only while its own space is active, so the frame the drag measures in is the frame it is drawn
+     * in, and no caller has to remember to say which.
+     */
+    private fun centreInPlan(ev: Evaluator): Vec2? {
+        val p = (ev.valueOf(centre) as? Point3Value)?.p ?: return null
+        val pl = (ev.valueOf(plane) as? PlaneValue)?.plane ?: return null
+        return pl.toLocal(p)
+    }
+
+    /**
+     * **The reverse drag**: how far the pointer stands from the centre's plan image, written back into the
+     * radius — "state restates as a value" (OP-18), exactly as dragging a circle's rim restates its radius.
+     */
+    override fun drag(
+        world: Vec2,
+        view: PlaneProjection,
+        held: Double,
+        ev: Evaluator,
+    ) {
+        if (!view.similarity) return
+        drag(world, ev)
+    }
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        val c = centreInPlan(ev) ?: return
+        val r = (world - c).length()
+        if (r > Vec2.EPS) writeScalar(radius, Quantity.mm(r))
+    }
+
+    override fun fields(): List<HandleField> = listOf(scalarField("radius", radius, Dimension.LENGTH))
 }

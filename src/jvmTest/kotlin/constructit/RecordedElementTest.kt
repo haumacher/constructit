@@ -362,6 +362,12 @@ class RecordedElementTest {
     private val RECT_EDGE2 = Vec2(180.0, 40.0)
     private val RECT2_EDGE = Vec2(230.0, -60.0)
     private val CURVE3_MID = Vec2(30.0, 0.0)
+
+    // the rims of the three sphere loci (OP-28), 40 mm out from POINT_A / POINT_B / POINT_C, each chosen so
+    // that the nearest other locus's rim is at least 30 mm further off — a pick that cannot be ambiguous
+    private val LOCUS_A_RIM = Vec2(0.0, -40.0)
+    private val LOCUS_B_RIM = Vec2(60.0, -40.0)
+    private val LOCUS_C_RIM = Vec2(60.0, 85.0)
     private val FREE_SPOT = Vec2(240.0, 120.0)
     private val FREE_SPOT2 = Vec2(270.0, 150.0)
     private val FREE_SPOT3 = Vec2(300.0, 110.0)
@@ -409,6 +415,14 @@ class RecordedElementTest {
         ed.click(POINT_B)
         ed.click(POINT_C)
         ed.key("Enter")
+        // three **sphere loci** (OP-28) on the three plan points, overlapping so that two of them meet in a
+        // circle, three of them meet at a pair of points, and the curve in space above runs out through the
+        // first one — which is what lets the audit drive every row of the composition table generically
+        for (centre in listOf(POINT_A, POINT_B, POINT_C)) {
+            ed.setTool(Tools.SPHERE_LOCUS)
+            ed.type("40")
+            ed.click(centre)
+        }
         ed.setTool(Tools.SELECT)
         ed.checkpoint()
         assertTrue(ed.doc.steplessElements().isEmpty(), "the fixture itself is fully recorded")
@@ -435,6 +449,8 @@ class RecordedElementTest {
             SlotKind.AREA, SlotKind.CHAIN, SlotKind.LOFT_PART -> listOf(RECT_EDGE, RECT_EDGE2, RECT_EDGE)
             SlotKind.SOLID -> listOf(RECT_EDGE, RECT2_EDGE)
             SlotKind.PATH3 -> listOf(CURVE3_MID, CURVE3_MID)
+            // the three sphere loci, each clicked on its own outline circle well away from the other two
+            SlotKind.SPHERE -> listOf(LOCUS_A_RIM, LOCUS_B_RIM, LOCUS_C_RIM)
             // the lift's slot: an ordinary drawn curve, and a second one so a repeat has somewhere to go
             SlotKind.DRAWN_RUN -> listOf(SEG_MID, SEG2_MID, CIRCLE_EDGE)
             // a section curve needs a working plane cutting a solid, which is a gesture of its own — the

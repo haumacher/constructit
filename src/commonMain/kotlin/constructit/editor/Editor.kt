@@ -4342,6 +4342,10 @@ class Editor(
                 // the section of an ancestor solid (GitHub #9's one enumeration, read a fourth time). The
                 // element it yields is the solid; where the click landed is the branch, and the tool scores
                 // that once (`Document.intersectionCurve`)
+                // a sphere locus's slot (OP-28): the locus itself, picked where it is drawn — its outline
+                // circle in the plan, its great circles in the 3D view (`HitTest.distanceToSphere`). One rule,
+                // the standing one: what is visible is pickable.
+                SlotKind.SPHERE -> pickElement(world) { it.kind == ElementKind.SPHERE_LOCUS }
                 SlotKind.SECTION_CURVE -> pickSectionSolid(world)
                 SlotKind.SIDE -> true // captures the click position only; creates nothing
             }

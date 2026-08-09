@@ -212,6 +212,17 @@ enum class SlotKind {
      * what is visible is what is pickable.
      */
     SECTION_CURVE,
+
+    /**
+     * A **sphere locus** (OP-28): the carrier of a stated distance in space, picked where it is drawn — on
+     * its outline circle in the plan, on its great circles in the 3D view.
+     *
+     * A slot of its own rather than [GEOMETRY] or [CENTRIC], and the reason is the whole point of the value
+     * being its own kind: a locus is neither a curve to run along nor a body to cut with, and the only things
+     * it fills are the three intersections it exists for. The type system says so at the value level
+     * (`Sphere3Value` beside everything else); this is that partition where a click meets it.
+     */
+    SPHERE,
 }
 
 /**
@@ -807,6 +818,38 @@ object Tools {
     const val CONNECT_G2 = "connectg2"
 
     /**
+     * The **sphere locus** (OP-28), in the two spellings a circle has had since the beginning and the ball
+     * repeated in session 68: a radius that is typed, and a radius that is a point of the drawing.
+     *
+     * Two ids because the *construction* differs by one node — `sphere` against `sphereThrough` — which is
+     * exactly the difference *Circle (centre, radius)* and *(centre, point)* have, and recording the tool
+     * records which of the two the drawing is made of.
+     */
+    const val SPHERE_LOCUS = "spherelocus"
+    const val SPHERE_LOCUS_PT = "spherelocuspt"
+
+    /**
+     * The three **consumers** of a sphere locus (OP-28) — one row per line of the composition table: two loci
+     * meet in a circle, three meet at a point, and a locus meets a run where the run is at that distance.
+     *
+     * Rows of their own rather than an extension of [INTERSECT], and that is a decision rather than an
+     * omission. *Intersect* takes two `CURVE` slots — carriers stated in **some plane's** coordinates — and a
+     * locus is not one of those at any tolerance; a slot that accepted both would be a slot whose meaning
+     * depended on what happened to be clicked, and the result kinds differ too (a circle in space, a point in
+     * space with a sign, a point in space with an index). Three unambiguous gestures say what one overloaded
+     * one could only guess at, which is the same argument [CONNECT]'s two ids make about continuity.
+     *
+     * [SPHERE_TRILATERATE] and [SPHERE_ON_RUN] each carry **one** discrete choice, scored once from where the
+     * click landed and then persisted in the step's existing `signs=` (OP-1/OP-18) — a *sign* for the pair,
+     * because a trilateration factors into exactly one binary geometric choice, and an *index* for the run,
+     * because how often a run crosses a locus is a value. [SPHERE_CIRCLE] has no choice to make: two loci
+     * meet in one circle or in none.
+     */
+    const val SPHERE_CIRCLE = "spherecircle"
+    const val SPHERE_TRILATERATE = "trilaterate"
+    const val SPHERE_ON_RUN = "sphereonrun"
+
+    /**
      * **Project onto a face** (OP-26, step 8): a drawing thrown onto a face of a solid along the normal of
      * the space it was drawn in — the engraved line, the trimmed edge, the route that follows a surface.
      *
@@ -1152,6 +1195,17 @@ object Tools {
             // branch is scored once and rides the step's existing `signs=` (OP-1/OP-18), so a reload never
             // scores again. No scalar, no second pick, no new file argument.
             ToolDef(INTERSECTION_CURVE, "Intersection curve", ToolCategory.CURVES, listOf(SlotKind.SECTION_CURVE), help = "On a working plane, click the section of the body you want: the curve in space where that plane meets that solid becomes a curve like any other — sweep a tube along it, stand a station on it, carry a cut along it. A plane cuts a body in several curves in general (a bent bar is cut twice, a tube gives two loops); the one you click is the one you get, and that choice is remembered, so moving the plane afterwards never swaps to another curve. Move the body or the plane and the curve follows. The plan draws no section — open a working plane first.", slotNames = listOf("section of a solid")) { d, p, _ -> d.intersectionCurve(p.elements[0], p.at, p.signs.firstOrNull()) },
+            // **The sphere as a locus** (OP-28) — the concept behind the ball, and five rows for the whole of
+            // it: two spellings that build one, and one consumer per line of the composition table. The
+            // producer takes a `POINT3` slot, so its centre may be any point of the drawing — a plan point, a
+            // height point, a section corner, a key point of a curve — and is *shared by node*, which is what
+            // makes *"40 from that corner"* an input rather than an assertion. `crossSpace`, because two
+            // corners a distance is measured from may well have been drawn on two different panes.
+            ToolDef(SPHERE_LOCUS, "Sphere locus (centre, radius)", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT3), scalars = listOf(len("radius")), crossSpace = true, help = "Type a distance, then click the point to measure it from: what you get is not a ball but every point in space that far away — the scaffolding a drawing says \"40 from that corner\" with. It draws dashed, as its outline in the plan and as three great circles in the 3D view, and it is there to be intersected: two of them meet in a circle in space, three meet at a point, and one meets a route where the route is at that distance. Nothing is exported and nothing is cut with it. Drag its outline in the plan to change the radius, or retype it in the panel; drag the point it is centred on and the locus follows.", slotNames = listOf("centre")) { d, p, s -> d.sphereLocus(p.elements[0], s[0]) },
+            ToolDef(SPHERE_LOCUS_PT, "Sphere locus (centre, surface point)", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT3, SlotKind.POINT3), crossSpace = true, preview = Previews::sphereLocusThrough, help = "Click the point to measure from, then a point the locus is to pass through: the distance is the one between them, so it is stated by the drawing rather than typed. Move either point and the locus follows — which is how \"as far as that corner\" is said by construction. The same scaffolding as the typed spelling in every other way.", slotNames = listOf("centre", "point on it")) { d, p, _ -> d.sphereLocusThrough(p.elements[0], p.elements[1]) },
+            ToolDef(SPHERE_CIRCLE, "Circle of two sphere loci", ToolCategory.CURVES, listOf(SlotKind.SPHERE, SlotKind.SPHERE), crossSpace = true, help = "Click two sphere loci: the circle in space where they meet — every point at both distances at once — becomes a curve like any other, so you can sweep along it, stand a station on it, or find where a third locus crosses it. It is an exact circle, not a fit. Loci that are too far apart, one inside the other, or that merely touch say so and heal the moment a radius changes.", slotNames = listOf("sphere locus", "sphere locus")) { d, p, _ -> d.sphereCircle(p.elements[0], p.elements[1]) },
+            ToolDef(SPHERE_TRILATERATE, "Point from three sphere loci", ToolCategory.POINTS, listOf(SlotKind.SPHERE, SlotKind.SPHERE, SlotKind.SPHERE, SlotKind.SIDE), crossSpace = true, help = "Click three sphere loci, then click where you want the point: what you get is the place at all three distances at once — \"40 from that corner, 55 from that one, 30 from the third\" — as an ordinary point in space, usable as a curve's point, a sweep's anchor, an apex or another locus's centre. There are two such points, mirror images either side of the plane through the three centres, which is what the last click chooses between; that choice is remembered, so moving the loci afterwards never swaps to the other. In the plan the two can fall on the same spot (they do whenever the three centres lie in the plan you are looking along) — orbit into the 3D view to choose between them there. Three centres on one line have no such pair and say so.", slotNames = listOf("sphere locus", "sphere locus", "sphere locus", "which of the two points")) { d, p, _ -> d.trilateratePoint(p.elements[0], p.elements[1], p.elements[2], p.at, p.view, p.signs.firstOrNull()) },
+            ToolDef(SPHERE_ON_RUN, "Point where a run meets a sphere locus", ToolCategory.POINTS, listOf(SlotKind.SPHERE, SlotKind.PATH3), crossSpace = true, help = "Click a sphere locus and then a route — a curve in space, or a drawing, which is read as the run it already is: what you get is the place along that route which stands at the stated distance. A route can be at that distance several times; the crossing you click nearest is the one you get, counted along the run, and that choice is remembered. A route that grazes the locus and turns back crosses it nowhere, and a route that no longer reaches it says so and heals.", slotNames = listOf("sphere locus", "curve in space")) { d, p, _ -> d.sphereOnRun(p.elements[0], p.elements[1], p.at, p.view, p.signs.firstOrNull()) },
             // **The lift** (OP-26, step 1's missing source): the drawing read as the run it already is. A
             // repeating slot, because a route may be several drawn pieces — and `closesOnFirstPick` for
             // [CURVE3]'s own reason, since "and it comes back here" is a different run from the open one
@@ -1482,6 +1536,7 @@ object Tools {
             SlotKind.PATH3 -> "curve in space"
             SlotKind.DRAWN_RUN -> "drawn curve"
             SlotKind.SECTION_CURVE -> "section of a solid"
+            SlotKind.SPHERE -> "sphere locus"
         }
 
     /** The glyph a palette button shows for [id] — [SELECT]'s included, which is not a [ToolDef]. */

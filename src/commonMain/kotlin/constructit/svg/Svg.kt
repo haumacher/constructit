@@ -14,6 +14,7 @@ import constructit.core.LoopValue
 import constructit.core.Path3SetValue
 import constructit.core.Path3Value
 import constructit.core.PlaneValue
+import constructit.core.Point3SetValue
 import constructit.core.Point3Value
 import constructit.core.PointSetValue
 import constructit.core.PointValue
@@ -25,6 +26,7 @@ import constructit.core.SectionValue
 import constructit.core.SegmentValue
 import constructit.core.SketchValue
 import constructit.core.SolidValue
+import constructit.core.Sphere3Value
 import constructit.dsl.Ref
 import constructit.dsl.valueOf
 import constructit.geom.Bezier
@@ -194,6 +196,12 @@ object Svg {
                 is SectionValue -> {}
                 // …and an intersection's curves are that same reading, one dimension up (OP-26, step 6).
                 is Path3SetValue -> {}
+                // …and a sphere locus (OP-28) is scaffolding in space: its image needs a plane to look
+                // along, which is the height point's and the space curve's answer above, and it is not
+                // geometry an exported drawing is about in the first place — it is what a point in space
+                // was constructed *with*.
+                is Sphere3Value -> {}
+                is Point3SetValue -> {}
                 null -> {}
             }
         }

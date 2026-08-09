@@ -84,7 +84,7 @@ object Pierce3 {
         path: Path3,
         plane: Plane3,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): List<Pierce> = walk(path, plane, tolMm).first
+    ): List<Pierce> = walk(path, tolMm, fieldOf(plane)).first
 
     /**
      * Whether the first of [crossings] is the run's own **seam** — the crossing a walk that stopped at the last
@@ -99,7 +99,33 @@ object Pierce3 {
         path: Path3,
         plane: Plane3,
         tolMm: Double = GeomMath.TESS_TOL_MM,
-    ): Boolean = walk(path, plane, tolMm).second
+    ): Boolean = walk(path, tolMm, fieldOf(plane)).second
+
+    /**
+     * Every place [path] changes the **sign of [field]**, in order along the run — this walk over a signed
+     * field other than a plane's own (OP-28).
+     *
+     * The generalization is a refactor and not a second mechanism: [crossings] is exactly this over the field
+     * `n·(P − p₀)`, and a sphere locus's crossings are exactly this over `|P − C| − r`
+     * ([constructit.geom.Spheres3.crossings]). Everything the walk decides is therefore decided once — the
+     * order is arc length along the run, a closed run's seam is compared across, a touch is not a crossing,
+     * and the root is bisected on the analytic piece rather than on a chord — so the two questions cannot
+     * drift apart, and a law repaired for one is repaired for both (the seam fix of session 66 is the case in
+     * point).
+     *
+     * [field] must be continuous along the run and is evaluated at a piece and a parameter in `[0, 1]`.
+     */
+    fun crossingsOf(
+        path: Path3,
+        tolMm: Double = GeomMath.TESS_TOL_MM,
+        field: (Curve3Element, Double) -> Double,
+    ): List<Pierce> = walk(path, tolMm, field).first
+
+    /** The signed field a plane crossing follows: the distance to [plane], along its own unit normal. */
+    private fun fieldOf(plane: Plane3): (Curve3Element, Double) -> Double {
+        val n = plane.normal.normalized()
+        return { el, t -> (Frames3.pointAt(el, t) - plane.origin).dot(n) }
+    }
 
     /**
      * The ordered crossings, together with whether the first of them is the **seam** one.
@@ -109,17 +135,10 @@ object Pierce3 {
      */
     private fun walk(
         path: Path3,
-        plane: Plane3,
         tolMm: Double,
+        side: (Curve3Element, Double) -> Double,
     ): Pair<List<Pierce>, Boolean> {
         if (path.elements.isEmpty()) return emptyList<Pierce>() to false
-        val n = plane.normal.normalized()
-
-        fun side(
-            el: Curve3Element,
-            t: Double,
-        ): Double = (Frames3.pointAt(el, t) - plane.origin).dot(n)
-
         val out = ArrayList<Pierce>()
         var before = 0.0
         // the last sample that was *on a side*: zeros carry no side, so a run that touches the plane and turns
@@ -147,7 +166,7 @@ object Pierce3 {
                     // Where the two sides lie either side of a piece **hand-over**, the crossing is the
                     // hand-over point itself: the run passed through the plane exactly where one piece gives
                     // way to the next, and this piece's own start is that point.
-                    val root = if (lastPiece == i) bisect(el, lastT, t, plane, n) else 0.0
+                    val root = if (lastPiece == i) bisect(el, lastT, t, side) else 0.0
                     val tangent = Curves3.tangentAt(el, root)
                     if (tangent != null) {
                         out.add(Pierce(i, root, before + Curves3.lengthTo(el, root), Frames3.pointAt(el, root), tangent))
@@ -291,10 +310,9 @@ object Pierce3 {
         el: Curve3Element,
         a: Double,
         b: Double,
-        plane: Plane3,
-        n: Vec3,
+        side: (Curve3Element, Double) -> Double,
     ): Double {
-        fun f(t: Double): Double = (Frames3.pointAt(el, t) - plane.origin).dot(n)
+        fun f(t: Double): Double = side(el, t)
         var lo = a
         var hi = b
         val fLo = f(lo)

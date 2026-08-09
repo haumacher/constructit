@@ -52,6 +52,7 @@ import constructit.dsl.ScalarRef
 import constructit.dsl.SectionRef
 import constructit.dsl.SegmentRef
 import constructit.dsl.SolidRef
+import constructit.dsl.Sphere3Ref
 import constructit.dsl.instance
 import constructit.dsl.resultOf
 import constructit.dsl.roundedRect
@@ -142,6 +143,27 @@ enum class ElementKind {
      * projection so that it is visible and pickable there (see [SceneRenderer] and [HitTest]).
      */
     SPACE_CURVE,
+
+    /**
+     * A **sphere locus** (OP-28): every point at a stated distance from a point in space — the carrier of
+     * *"40 from that corner"*, and the thing a construction intersects.
+     *
+     * Its own kind, and one that is deliberately **none of the other columns**. It is not a curve (2D or in
+     * space) — nothing runs along it; it is not an area and it is not a **solid**, which is the distinction
+     * this kind exists to enforce: a ball is a body this tool has built since session 68, with a mesh, a
+     * volume, an export and a place in a boolean, while a locus has no interior at all. So a sphere locus
+     * can fill no `SOLID`, `AREA`, `CURVE` or `PATH3` slot; the only slots that take one are the three
+     * intersections it was made for, and the type of its value ([constructit.core.Sphere3Value]) is what
+     * says so at every one of them.
+     *
+     * It is **scaffolding** in the ordinary sense the document already means by that word — the ancestor
+     * closure of the results ([scaffoldingElements]) — and it needs no flag to be: nothing exports it,
+     * because export filters on `SolidValue`; nothing cuts with it, because a boolean's slot wants material.
+     * What it does need is to be **seen and picked in both views**, since a locus nobody can click is a
+     * locus nothing can be built from — see [SceneRenderer] and [HitTest] for how each view draws it where
+     * it honestly is.
+     */
+    SPHERE_LOCUS,
 
     /**
      * A **cutting chain** (OP-22's extension): a curve that separates its sketch plane into two sides — a
@@ -9988,6 +10010,219 @@ class Document {
     ): Double =
         Curves3.projectedOnto(curve.path, plane).minOfOrNull { HitTest.distanceToPiece(near, it) } ?: Double.MAX_VALUE
 
+    // ---- the sphere as a locus: distance carried in space (OP-28) ----
+
+    /**
+     * A **sphere locus** of [radius] about the point [centre] (OP-28) — *"every point 40 from that corner"*,
+     * as a thing the drawing holds and constructions intersect.
+     *
+     * [centre] is read through [pointInSpace], the one seam every point's world position flows through, so a
+     * plan point, a height point, a section corner, a curve's key point and a rider on a coil are all equally
+     * a centre — and each of them is **shared by node**, so dragging the corner drags the locus and everything
+     * built on it. That is the whole of the no-solver stance here: *"40 from that corner"* is an input, not an
+     * assertion about a result.
+     *
+     * Nothing about the radius is refused here. A radius of zero or less is a **value**, so it is the node's
+     * business and comes back as the reason it is invalid, healing the moment the number changes (OP-3).
+     */
+    fun sphereLocus(
+        centre: Element,
+        radius: ScalarRef,
+    ): Element? {
+        val c = pointInSpaceOr(centre, "Sphere locus") ?: return null
+        val el = add(cx.sphere(c, radius), ElementKind.SPHERE_LOCUS, Styles.SPHERE_LOCUS)
+        el.handle = SphereLocusHandle(planeOfSpace(activeSpace.name), c, radius.node)
+        note = "${nameOf(el)}: every point at that distance from ${nameOf(centre)} — move either and it follows"
+        return el
+    }
+
+    /**
+     * A **sphere locus through [surface]**, centred on [centre] (OP-28) — the spelling that takes its distance
+     * from the drawing instead of from the keyboard.
+     *
+     * The pair mirrors *Circle (centre, radius)* / *(centre, point)* and the ball's own two rows, one dimension
+     * up, and the difference is one node: here the radius **is** `|surface − centre|`, so *"as far as that
+     * corner"* is a shared input rather than a number that has to be retyped when the corner moves.
+     */
+    fun sphereLocusThrough(
+        centre: Element,
+        surface: Element,
+    ): Element? {
+        val c = pointInSpaceOr(centre, "Sphere locus") ?: return null
+        val s = pointInSpaceOr(surface, "Sphere locus") ?: return null
+        val el = add(cx.sphereThrough(c, s), ElementKind.SPHERE_LOCUS, Styles.SPHERE_LOCUS)
+        note =
+            "${nameOf(el)}: every point as far from ${nameOf(centre)} as ${nameOf(surface)} is — " +
+            "move either and it follows"
+        return el
+    }
+
+    /**
+     * The **circle where two sphere loci meet** (OP-28) — an exact circle in space, and an ordinary
+     * [ElementKind.SPACE_CURVE] with everything that implies: it draws in both views, it is picked, it sweeps,
+     * it carries a station and a rider, and a third sphere meets it in the trilateration pair.
+     *
+     * No branch is scored, because there is none to score: two spheres meet in one circle or in none. Every
+     * way of not meeting is the node's own reason and heals (OP-3).
+     */
+    fun sphereCircle(
+        a: Element,
+        b: Element,
+    ): Element? {
+        val s1 = sphereRefOf(a, "Circle of two sphere loci") ?: return null
+        val s2 = sphereRefOf(b, "Circle of two sphere loci") ?: return null
+        if (a === b) {
+            note = "Circle of two sphere loci: ${nameOf(a)} cannot meet itself — click two different loci"
+            return null
+        }
+        val el = add(cx.sphereCircle(s1, s2), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
+        note = "${nameOf(el)}: the circle where ${nameOf(a)} and ${nameOf(b)} meet — move either and it follows"
+        return el
+    }
+
+    /**
+     * The **point at three stated distances** (OP-28) — the trilateration pair, with the branch scored once
+     * from the click and stored for ever after.
+     *
+     * **The choice is scored exactly once and never re-scored** (OP-1/OP-18). Where the click landed decides
+     * which of the two solutions this point is, in whichever view was driving; from then on the branch is a
+     * *sign* in the step, taken verbatim on replay. It means *which side of the plane through the three
+     * centres* — see [constructit.geom.Spheres3.trilaterate] — so it goes on meaning the same thing however
+     * far the drawing drifts, which is exactly what re-scoring by nearness could not promise.
+     *
+     * What comes out is an ordinary point in space: it can be a curve's point, a sweep's anchor, an apex, a
+     * coil's axis point, or the centre of another locus. Nothing about it says how it was made.
+     */
+    fun trilateratePoint(
+        a: Element,
+        b: Element,
+        c: Element,
+        near: Vec2,
+        view: PlaneProjection? = null,
+        sign: Int? = null,
+    ): Element? {
+        val s1 = sphereRefOf(a, "Point from three sphere loci") ?: return null
+        val s2 = sphereRefOf(b, "Point from three sphere loci") ?: return null
+        val s3 = sphereRefOf(c, "Point from three sphere loci") ?: return null
+        if (a === b || b === c || a === c) {
+            note = "Point from three sphere loci: click three different loci — one of them was picked twice"
+            return null
+        }
+        val set = cx.trilaterate(s1, s2, s3)
+        val ev = Evaluator()
+        val chosen = sign ?: scoredBranch(cx.solutionPoints3(set, ev), near, view, ev)
+        val el = add(cx.selectPoint3(set, chosen, trilaterationEmptyReason(a, b, c)), ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
+        el.inSpace = true
+        registerSigns(el, listOf(chosen))
+        note =
+            "${nameOf(el)}: the point at all three distances, on the " +
+            (if (chosen >= 0) "positive" else "negative") +
+            " side of the plane through the three centres — drag any centre and it follows"
+        return el
+    }
+
+    /**
+     * The **point where a run crosses a sphere locus** (OP-28) — *"where does this route pass 40 mm from that
+     * corner"*, with the crossing chosen once from the click and stored as an index.
+     *
+     * [run] is read through [spaceCurveRef], so the route may be a curve in space **or a drawing lifted into
+     * the run it already is** — which is what makes *"where the footprint's own outline passes 40 from that
+     * corner"* one gesture rather than two.
+     *
+     * The crossings are ordered by **arc length along the run** and the stored index is taken verbatim on
+     * replay; a crossing the geometry no longer has is invalid with a reason and heals (OP-3), which is the
+     * identical answer a vanished intersection curve gives.
+     */
+    fun sphereOnRun(
+        sphere: Element,
+        run: Element,
+        near: Vec2,
+        view: PlaneProjection? = null,
+        index: Int? = null,
+    ): Element? {
+        val s = sphereRefOf(sphere, "Point where a run meets a sphere locus") ?: return null
+        val path = spaceCurveRef(run, "Point where a run meets a sphere locus") ?: return null
+        val set = cx.sphereMeetsRun(s, path)
+        val ev = Evaluator()
+        val points = cx.solutionPoints3(set, ev)
+        val chosen =
+            index ?: run {
+                if (points.isEmpty()) {
+                    note =
+                        "Point where a run meets a sphere locus: ${nameOf(run)} does not reach ${nameOf(sphere)}, " +
+                        "so it crosses it nowhere — change the radius, or pick a run that passes through it"
+                    return null
+                }
+                val plane = activePlane3(ev)
+                points.indices.minByOrNull { i -> HitTest.distanceToSpacePoint(points[i], near, view, plane) ?: Double.MAX_VALUE } ?: 0
+            }
+        val el = add(cx.selectPoint3At(set, chosen), ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
+        el.inSpace = true
+        registerSigns(el, listOf(chosen))
+        note =
+            "${nameOf(el)}: where ${nameOf(run)} crosses ${nameOf(sphere)}" +
+            (if (points.size > 1) " (crossing ${chosen + 1} of ${points.size}, counted along the run)" else "") +
+            liftNote(run)
+        return el
+    }
+
+    /**
+     * Which branch of an ordered pair in space the click at [near] meant — scored **once**, here, and stored
+     * as a sign by the caller.
+     *
+     * Measured by the very distance the pick uses ([HitTest.distanceToSpacePoint]), so the branch the user
+     * gets is the one they were pointing at in whichever view is driving. An empty set scores `+1`: there is
+     * nothing to point at, the node will say so by name, and the branch is what the drawing rides when the
+     * geometry comes back (OP-3's healing, which needs a recorded choice to heal *to*).
+     */
+    private fun scoredBranch(
+        points: List<Vec3>,
+        near: Vec2,
+        view: PlaneProjection?,
+        ev: Evaluator,
+    ): Int {
+        if (points.size < 2) return 1
+        val plane = activePlane3(ev)
+        val first = HitTest.distanceToSpacePoint(points.first(), near, view, plane) ?: return 1
+        val last = HitTest.distanceToSpacePoint(points.last(), near, view, plane) ?: return 1
+        return if (last < first) -1 else 1
+    }
+
+    /** What "no such point" is called for three loci that do not meet — [Construction.selectPoint3]'s sentence. */
+    private fun trilaterationEmptyReason(
+        a: Element,
+        b: Element,
+        c: Element,
+    ): String =
+        "no point in space is at all three of those distances at once — ${nameOf(a)}, ${nameOf(b)} and " +
+            "${nameOf(c)} either do not overlap, or their centres now lie on one line (in which case they meet " +
+            "in a whole circle rather than at a pair of points)"
+
+    /** [el] as a sphere locus, or null with the reason it is not one — the `SPHERE` slot's own coercion. */
+    @Suppress("UNCHECKED_CAST")
+    private fun sphereRefOf(
+        el: Element,
+        what: String,
+    ): Sphere3Ref? {
+        if (el.kind == ElementKind.SPHERE_LOCUS) return el.ref as Sphere3Ref
+        note =
+            "$what: ${nameOf(el)} is ${kindWord(el)}, not a sphere locus — build one with " +
+            "*Sphere locus (centre, radius)* and click that"
+        return null
+    }
+
+    /** [el] as the point in space a locus is centred on, or null with the reason it is not a point. */
+    private fun pointInSpaceOr(
+        el: Element,
+        what: String,
+    ): Point3Ref? {
+        if (!el.isPoint) {
+            note = "$what: ${nameOf(el)} is ${kindWord(el)}, not a point — click the point the distance is measured from"
+            return null
+        }
+        return pointInSpace(el)
+    }
+
     // ---- the sweep: a profile carried along a curve in space (OP-26, step 2) ----
 
     /**
@@ -13343,6 +13578,17 @@ object Styles {
      * the plan and another on the GPU.
      */
     val SPACE_CURVE = Style(stroke = "#8c564b", width = 2.0)
+
+    /**
+     * A **sphere locus** (OP-28). Construction purple, and **dashed**, which is the whole of what its style
+     * has to say: it is the one drawn thing in either view that is not geometry the drawing is *made of* —
+     * it is what a point in space was constructed *with*, the same role a construction line plays in the
+     * plane, and a reader must not mistake its outline for the silhouette of a ball.
+     *
+     * Thin and dashed rather than merely dimmed, because [DIMMED] is a *toggle's* answer and this is a fact
+     * about the element: a locus reads as scaffolding whether or not anything downstream exists yet.
+     */
+    val SPHERE_LOCUS = Style(stroke = "#9467bd", width = 1.0, dash = 5.0)
 
     /**
      * A **cutting chain** (OP-22's extension). Its own colour, for the reason a space curve has one: it is

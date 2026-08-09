@@ -74,4 +74,11 @@ fun transformValue(
         // …and an intersection's ordered set of curves in space (OP-26, step 6) is a reading of a solid at a
         // plane exactly as a section is, with the curve's own answer above on top of it.
         is Path3SetValue -> throw IllegalArgumentException("intersection curves cannot be transformed by a 2D map — mirror the solid and the plane instead (OP-26)")
+        // …and a sphere locus (OP-28) is the same answer once more: a 2D affine map says nothing about the
+        // axis its centre stands on, and there is no honest image of a sphere in a plane's own coordinates.
+        // Mirror the centre — the locus is a pure function of it and of its radius, and follows by
+        // construction, which is the parenting rule again.
+        is Sphere3Value -> throw IllegalArgumentException("a sphere locus cannot be transformed by a 2D map — mirror its centre (OP-28)")
+        // …and its ordered solution sets in space, for the reason the curves above give.
+        is Point3SetValue -> throw IllegalArgumentException("points in space cannot be transformed by a 2D map — mirror the loci they came from (OP-28)")
     }

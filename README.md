@@ -378,6 +378,23 @@ curve in space, so it is fitted and the error is **said**: a tenth of a micron a
 analytic pedigree at all — an imported mesh, a stack of slabs from the exact boolean — still gives you the
 curve, in the chords its section already draws, and says that is what it is.
 
+**Sphere locus — how the drawing says "40 from that corner and 55 from that one".** In the plan, distance has
+always been carried by the circle: two circles cross, you click the crossing you meant, and it stays yours. A
+**sphere locus** is that same thing in space — not a ball, but *every point at a stated distance from a point*,
+drawn dashed as scaffolding and there to be **intersected**. Type a distance and click a corner, or click two
+points and let the drawing state the distance for you. Then three gestures use it: **two loci meet in a circle
+in space**, exact and usable like any other curve — sweep it, station it, ride it; **three loci meet at a
+point**, which is the sentence at the top of this paragraph said by clicking; and **a locus meets a route**
+where that route stands at the distance, which works on a curve in space *and* on a drawing (a footprint's own
+outline is read as the run it already is). Nothing about it is solved: the corner is one node feeding the
+locus, so dragging the corner moves the answer, retyping the radius moves the answer, and the whole thing
+recomputes rather than re-searching. Three loci meet at **two** points, mirror images either side of the plane
+through the three centres — a fourth click says which one you mean, and that choice is **remembered**, so
+moving the loci afterwards never swaps you onto the other. (In the plan those two can land on the same spot;
+orbit into the 3D view and the two are plainly apart.) What comes out is an ordinary point in space: the apex
+of a tapered body, a point a curve runs through, the centre of the next locus. Loci that are too far apart,
+one inside another, or that merely touch each say so in those words and heal the moment a radius changes.
+
 **Connect — the bend that turns two runs into one route.** Two runs that stop near each other meet at a kink;
 *Connect two curves* puts the bend between them, and the bend is not something you draw — it is *derived* from
 where the two runs end and which way they are pointing when they get there. Click near the end of one curve in
