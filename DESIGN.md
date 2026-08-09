@@ -7009,6 +7009,81 @@ being flattened. **1723 → 1744 green** (the review's probe among them), no new
 existing changed except the four refusal assertions' *subject* — which is to say none of them: every substring
 they check is still in the sentence.
 
+### As built: the projected point (OP-17 / OP-26 extended — GitHub issue #14, session 57)
+
+**The demand.** *"A plane already displays the outline of geometries constructed on its ancestor panes. However,
+sometimes this is not the most convenient way to anchor constructions on that pane. I'd like to select a point
+defined on an ancestor pane to get a derived point on my pane that is the projection of the ancestor pane's
+point on my pane."* This is the natural completion of what the context drawing already promises: a plane draws
+the *outline of the material* built before it (OP-17), which anchors a construction to **where the material
+is**; this anchors it to **a point that was drawn elsewhere**. Two ways of referencing across panes, and the
+second was missing.
+
+**One derived node, `Construction.projectToPlane(plane, point)`** — the point's world position dropped along
+the plane's normal onto it, read in the plane's own (u, v). `Plane3.toLocal` *is* that drop (it keeps only the
+two in-plane components), so the op is one line, and the result is a plain **2D point of the target plane**: not
+a point in space, but an ordinary point of the active sketch space, so it is usable exactly where a drawn point
+is — a circle's centre, a coil's axis (lifted back by a zero height, whose world position is then the foot
+itself), an anchor, a weld master — and drawn where any point of the space is drawn, with no new rendering.
+Chosen over a `Point3` result precisely because the value the user wants to *build on* is stated in the plane's
+own coordinates; a `Point3` in the plane would not fill a 2D centre slot.
+
+**Shared by node, never copied — the no-solver stance applied to anchoring across panes.** The source flows in
+through `Document.pointInSpace`, the one seam every point's world position has flowed through since session 53
+(OP-26): a free point, an intersection, a coil rider, a **height point**, a section key point all project the
+same way, and dragging the source — retyping a parameter it depends on, tilting either the source's plane or the
+target — moves the projection with it, by recompute with nothing rebuilt. Same-node-is-equality, one dimension
+of use further on.
+
+**Allowed onto the plan, and it is the same operation.** The plan is a plane too (world XY); a point in space
+dropped straight down into it is a legal, useful thing, and the plan already draws space points at their
+projection (session 53). The plan-target case is exactly the plane-target case with the identity plane, so no
+code distinguishes it.
+
+**The gesture spans spaces (`crossSpace`), because the source rarely lives where the projection lands.** A free
+point drawn in the plan is not addressable while a datum is active (`addressableIn`: one canvas shows one space,
+and only ancestor *solids'* sections are drawn as context, never bare points) — so the common case *does* need a
+switch, and the honest tool is the loft's/sweep's/boolean's: pick the source in its own space, and the picks
+survive the change of plane. Two slots make the target unambiguous without new machinery: **`POINT3` (the point
+to project) then `SIDE` (a click on the plane to project it onto)**. The result belongs to the space that is
+active when the *last* click lands, so the source is picked first (switching to its pane if need be) and the
+destination click, made on the target, both names the target and completes the gesture — its position is
+discarded, since the foot is fully determined, and the help says so. A single-slot tool was rejected: it would
+complete on the source pick, while the active space was still the *source's*, and the projection would land on
+the wrong plane. The point *in space* drawn as context option (drawing every ancestor point on every descendant,
+picked in place) was rejected as a large change to rendering, hit-testing and `addressableIn` for a case the
+switch already serves — recorded as a possible future convenience, not a gap.
+
+**Make absolute frees it in place, and it falls out of the rider machinery.** The projection is published
+through a **re-pointable view** (`IndirectNode`, OP-16), exactly as a rider is, so *Make absolute* re-points that
+view at a fresh free source at the (u, v) it now has (`detachProjected`, `detachRider`'s own sentence): nothing
+moves, and everything built on it follows the point instead of the source from here on (OP-4 case b, OP-5's
+bind-in-place). The freed coordinates ride the same `dofs=` seam every re-parameterization uses (`detached` →
+`relativeDofs`), which is what makes `save → load → save` byte-equal after freeing.
+
+**Recorded, never discovered.** A new step kind, `projectplane`, naming the source by script id; the target is
+the space the step was written in (the lazy `space` step precedes it), so replay re-projects and discovers
+nothing — no scored choice, so no `signs=`, and the projection is fully derived while it stands, so its own step
+restates no `dofs=`. **No version bump** (OP-18): no stored literal changed meaning, and a file that predates the
+feature loads with empty `loadNotes` and round-trips unchanged.
+
+**Refused by name for the one structural thing.** A plane point of the very plane it would be projected onto lands
+on itself — a structural condition (a 2D point of a space lies in that space's plane by construction), so it is
+caught at build and names both the element and the plane, offering the alternative (pick a point of another pane).
+A point *in space* whose value happens to lie in the plane still projects: its foot is a real, different point.
+And a source with **no current value** is not refused: the projection is invalid with the source's own reason and
+heals when the source has a value again (OP-3), because *where* the source is is a value, not structure.
+
+Nothing was cut. Tests: `ProjectedPointTest` (13) — the perpendicular foot on a 45° datum computed independently
+of the op and asserted to 1e-9 (world position and (u, v)); the projection following a dragged source, an edited
+parameter, and a **tilted source plane** (source on its own datum, projected onto another); a circle centred on
+it and a point welded onto it, both following the source; a **derived** source (an intersection) projecting; *Make
+absolute* freeing it in place with a byte-equal round trip; the two refusals (already-in-the-plane by name, no
+value → invalid-with-reason); the full `crossSpace` tool gesture across a switch, landing on the target and not
+the pane the source was picked in; and a file carrying a `projectplane` step round-tripping byte-for-byte with
+empty load notes, plus an older file without one loading clean. **1800 → 1813 green**, no new golden, no version
+bump.
+
 ### Implementation status (as built — step 3: the helix, the first curve that lies in no plane)
 
 Step 3 of the order above, whole and nothing else: **a helix as a third `Curve3Element`, the construction
@@ -10905,6 +10980,39 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   is the property that view relies on. **1792 → 1797 green** (five new regression tests in
   `Issue13TessScaleTest`), nothing cut. See `GeomMath.TESS_TOL_MM`/`REL_TOL`/`effectiveTol` for the rule and
   its rationale in the code.
+- **Session 57 — the projected point (GitHub issue #14).** The demand was a completion, not a complaint:
+  *"A plane already displays the outline of geometries constructed on its ancestor panes … I'd like to select a
+  point defined on an ancestor pane to get a derived point on my pane that is the projection of the ancestor
+  pane's point on my pane."* A plane already anchors a construction to *where the material is* (its ancestors'
+  sections, OP-17); this anchors it to *a point drawn elsewhere*, and the two are the pair. **One derived node,
+  `projectToPlane`** — the source's world position dropped along the target plane's normal onto it, read in the
+  plane's own (u, v), which is exactly `Plane3.toLocal`, so the op is one line. The result is a plain **2D point
+  of the target plane**, deliberately not a `Point3`: what the user builds *on* it (a circle's centre, a coil's
+  axis, a weld master) is stated in that plane's coordinates, and its world position, lifted back by a zero
+  height, is the foot itself. **Shared by node** through `pointInSpace`, the one seam every point kind has
+  published its world position through since session 53 — so a free point, an intersection, a rider, a height
+  point all project alike, and dragging the source or tilting either plane moves the projection with it (the
+  no-solver stance across panes). **Projecting onto the plan is allowed** and is the identical operation with the
+  identity plane. The gesture is the loft's `crossSpace`: a free point in the plan is not addressable while a
+  datum is active (only ancestor *solids* draw as context, not bare points), so the source is genuinely picked in
+  its own space, and two slots — **`POINT3` then `SIDE`** — make the target the plane the *last* click lands on,
+  so the destination click both names the target and completes the gesture. A single-slot tool was rejected: it
+  would complete on the source pick while the active space was still the source's, landing the projection on the
+  wrong plane; drawing every ancestor point as context on every descendant (pick-in-place, no switch) was
+  rejected as a large rendering/hit-test change for a case the switch already serves, and recorded as a future
+  convenience rather than a gap. **Make absolute frees it in place** and it fell out of the rider machinery: the
+  projection is published through an `IndirectNode`, so freeing re-points that view at a fresh free source at the
+  (u, v) it has (`detachProjected`, `detachRider`'s own sentence), and the freed coordinates ride the `detached`
+  → `relativeDofs` seam that makes `save → load → save` byte-equal. **A new step kind `projectplane`, no version
+  bump** (OP-18): it names the source, the target is the space it was written in, replay re-projects and
+  discovers nothing; no scored choice, so no `signs=`, and a fully-derived projection restates no `dofs=`.
+  **One structural refusal, by name** — a plane point of the very plane it would land on projects to itself — and
+  a source with no value is *not* refused but invalid-with-reason that heals (OP-3), because where the source is
+  is a value. `ProjectedPointTest` (13): the foot on a 45° datum to 1e-9, the projection following a dragged
+  source / an edited parameter / a **tilted source plane**, a circle and a weld anchored on it following the
+  source, a **derived** (intersection) source, Make absolute with a byte-equal round trip, the two refusals, the
+  full tool gesture across a switch, and a `projectplane` file round-tripping with empty load notes. **1800 →
+  1813 green**, nothing cut. See *the projected point* under OP-26.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -12821,6 +12929,15 @@ plane, so the sketch on it stays where it is while the group moves. That is OP-1
 than this one's, and it is now the *honest* answer rather than one a capture faked: what makes a sketch follow is
 a plane hinged on member geometry, which follows by construction. See *the refusal speaks the drawing's language*
 under OP-16.
+
+**Retired in session 57 — nothing, because GitHub #14 arrived as a demand rather than off this queue.** The
+projected point (see *the projected point* under OP-26) closes the issue and retires no queue line; it is the
+completion of what OP-17's context drawing already promised, built on OP-26's `pointInSpace` seam. It leaves
+**one thing parked**, stated where it belongs: drawing every ancestor pane's points as context on a descendant,
+so the source could be picked *in place* with no change of sketch plane, is a future convenience rather than a
+gap — the `crossSpace` gesture (pick the source in its own pane, click the target to land it) already reaches
+every point, and drawing bare points as context is a rendering/hit-test change out of proportion to what it
+would save.
 
 **Named in session 37 and not yet queued — two gaps a real structural part shows** (from a cast arm looked at
 in the round): **3D edge blends**, which is most of what the eye reads as a casting and is a dimensioned

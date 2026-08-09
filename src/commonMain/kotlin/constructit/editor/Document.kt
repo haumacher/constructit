@@ -4932,6 +4932,9 @@ class Document {
         // there is a substrate to hand a literal back after all: re-point it at a free source where the point
         // now stands. Uniform with the drag-attached case below, which unbinds its own `SourceNode`.
         if (node?.boundTo == null && riderOf(pt) != null) return detachRider(pt, dofs)
+        // A projected point (GitHub #14) publishes its position through the same kind of view, so *Make
+        // absolute* frees it in place exactly as it frees a rider — see [detachProjected].
+        if (node?.boundTo == null && projected.containsKey(pt.id)) return detachProjected(pt, dofs)
         if (node?.boundTo == null) {
             note =
                 if (node != null) {
@@ -9134,6 +9137,107 @@ class Document {
             "${nameOf(el)}: ${Format.num(((Evaluator().valueOf(height) as? ScalarValue)?.q?.mm) ?: 0.0)} mm above ${nameOf(elementFor(base) ?: el)} " +
             "— drag it in the 3D view to change the height, or retype it in the panel"
         return el
+    }
+
+    /** How a projected point (GitHub #14) is anchored — its target [plane] and the [source] it follows. */
+    class ProjectedPoint(val plane: PlaneRef, val source: Element)
+
+    /** Points that are the projection of another pane's point onto the active plane, by element id. */
+    private val projected = HashMap<String, ProjectedPoint>()
+
+    /** How [el] is projected, if it is a projected point (GitHub #14). */
+    fun projectedOf(el: Element): ProjectedPoint? = projected[el.id]
+
+    /**
+     * A **projected point** (GitHub #14): [source] — a point defined on another pane — dropped along the
+     * **active plane's normal** onto it, an ordinary derived point of the active space at that foot.
+     *
+     * > *"I'd like to select a point defined on an ancestor pane to get a derived point on my pane that is the
+     * > projection of the ancestor pane's point on my pane."*
+     *
+     * The completion of what the context drawing already promises. A plane draws the outline of the solids
+     * built before it (OP-17), which lets a construction reference *where the material is*; this lets it
+     * reference *a point that was drawn elsewhere* — the two ways of anchoring across panes. The source is
+     * **shared by node**, never copied (the no-solver stance): its world position flows through
+     * [pointInSpace], the one seam every point kind already publishes it through (OP-26, session 53), so a
+     * free point, an intersection, a coil rider, a height point or a section key point all project the same
+     * way, and dragging the source — or tilting either plane — moves the projection with it.
+     *
+     * The result is a plain 2D point of the active plane, in that plane's own (u, v): usable as a circle's
+     * centre, a coil's axis, a weld target, drawn where any point of this space is drawn. Its world position,
+     * lifted back by a zero height ([pointInSpace]), is the perpendicular foot. Published through a
+     * **re-pointable view** ([IndirectNode], OP-16) so *Make absolute* can free it in place ([detachProjected]),
+     * the same affordance every bound point has (OP-4 case b).
+     *
+     * Refused **by name**, building nothing, only for the one structural thing — a pick that is not a point, or
+     * a plane point that already lies **in** the target plane, whose projection onto it is itself. A source with
+     * no current value is not refused: the projection is invalid with the source's own reason and heals when the
+     * source has a value again (OP-3), because *where* the source is is a value, not structure.
+     */
+    fun projectToPlane(source: Element): Element? =
+        recording("projectplane", Arg.El(source), skipIfEmpty = true) { projectToPlaneNow(source) }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun projectToPlaneNow(source: Element): Element? {
+        val target = activeSpace
+        if (!source.isPoint) {
+            note = "Project point: ${nameOf(source)} is ${kindWord(source)}, not a point — click the point to project"
+            return null
+        }
+        // A **plane** point of the very plane it would be projected onto lands on itself — a structural refusal
+        // (a 2D point of a space lies in that space's plane by construction), so it is caught here and not left to
+        // heal. A point *in space* whose value happens to lie in the plane is a value condition and projects: its
+        // foot is a real, different point (dropping a height point onto its own plane recovers its base).
+        if (!source.inSpace && source.space == target.name) {
+            note =
+                "Project point: ${nameOf(source)} already lies in ${target.name} — its projection onto ${target.name} " +
+                "is itself. Pick a point defined on another pane, or switch to the pane you want it projected onto."
+            return null
+        }
+        val plane = activePlane()
+        val local = cx.projectToPlane(plane, pointInSpace(source))
+        val view = cx.indirect(local)
+        val el = add(view, ElementKind.DERIVED_POINT, Styles.DERIVED_POINT)
+        projected[el.id] = ProjectedPoint(plane, source)
+        note =
+            "${nameOf(el)}: ${nameOf(source)} projected onto ${target.name} — it follows ${nameOf(source)} " +
+            "(drag it, or anything it is built on, and the projection moves)"
+        return el
+    }
+
+    /**
+     * Free projected point [pt] (GitHub #14) into a plain **free point of its plane** at the (u, v) it now has:
+     * its view ([IndirectNode]) is re-pointed at a fresh free source, so nothing moves at the moment of the
+     * change and everything built on it follows the point instead of the source from here on — [detachRider]'s
+     * own sentence (OP-16's view re-pointed, OP-5's bind-in-place), for a point bound to a projection rather
+     * than to a curve.
+     *
+     * [dofs] is the freed position as a replay hands it back (OP-18): an ordinary free point from now on, its
+     * coordinates are state and ride the same `dofs=` seam every other re-parameterization uses ([relativeDofs],
+     * via [detached]).
+     */
+    private fun detachProjected(
+        pt: Element,
+        dofs: List<Quantity>,
+    ): Boolean {
+        val view = pt.ref.node as? IndirectNode ?: return false
+        val src = projected[pt.id]?.source
+        val here = pointOf(view, Evaluator()) ?: return false
+        val lengths = dofs.filter { it.dim == Dimension.LENGTH }
+        val at = if (lengths.size == 2) Vec2(lengths[0].mm, lengths[1].mm) else here
+        val free = SourceNode(nextId("fp"), PointValue(at))
+        view.boundTo = free
+        projected.remove(pt.id)
+        detached[pt.id] = free
+        pt.kind = ElementKind.POINT
+        pt.style = Styles.FREE_POINT
+        pt.handle = FreePointHandle(free)
+        noteReparam(pt)
+        noteEdit()
+        note =
+            "${nameOf(pt)} keeps its position and is a free point of ${pt.space} now — " +
+            "it no longer follows ${src?.let { nameOf(it) } ?: "its source"}"
+        return true
     }
 
     /**

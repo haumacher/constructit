@@ -617,6 +617,9 @@ object Tools {
     const val MIDPOINT = "midpoint"
     const val INTERSECT = "intersect"
     const val PROJECT = "project"
+
+    /** Project a point defined on another pane onto the active plane (GitHub #14). */
+    const val PROJECT_TO_PLANE = "projectplane"
     const val POINT_ON_CIRCLE = "ptoncircle"
     const val POINT_ON_HELIX = "ptonhelix"
     const val POINT_ON_ELLIPSE = "ptonellipse"
@@ -988,6 +991,12 @@ object Tools {
             // dragged in the *3D* view, where its height is read off the pointer's ray.
             ToolDef(HEIGHT_POINT, "Height point", ToolCategory.POINTS, listOf(SlotKind.POINT), scalars = listOf(len("height")), help = "Type a height (or pick a parameter in the panel), then click a base point — an existing one is shared, empty space places a new one: the result is that point lifted off the sketch plane, with the height an ordinary parameter. In the 3D view you can grab it and drag the height; the base stays draggable where it was drawn.", slotNames = listOf("base"), icon = Icons.HEIGHT_POINT) { d, p, s -> d.heightPointAt(p.points[0], s[0]) },
             ToolDef(CENTRE, "Centre", ToolCategory.POINTS, listOf(SlotKind.CENTERED), help = "Click a circle, arc, ellipse or elliptic arc to add its centre point.", slotNames = listOf("circle or ellipse"), icon = Icons.CENTRE) { d, p, _ -> d.centerOf(p.elements[0]) },
+            // **Projected point** (GitHub #14). Two picks that span spaces (`crossSpace`): the point to project —
+            // shared by node, any point kind, drawn on whatever pane it lives on, so switch there to click it —
+            // then a click on the pane you want it on, which is what says *which* plane the projection lands in
+            // (the result belongs to the space this last click was made in). It records its own step (a `project`
+            // step naming the source, OP-18) rather than a `tool` step, and does not replicate.
+            ToolDef(PROJECT_TO_PLANE, "Projected point", ToolCategory.POINTS, listOf(SlotKind.POINT3, SlotKind.SIDE), crossSpace = true, recordsSteps = true, replicates = false, help = "Anchor a construction on this pane to a point defined on another. Click the point you want to project — it can live on any pane, so switch the sketch plane to reach it (the picks are kept), and an existing point is shared so the projection follows every edit to it. Then switch to the pane you want it projected onto and click anywhere on it: the point lands at the foot of the perpendicular dropped onto that plane, in the plane's own coordinates — not where you click. Use it as a circle's centre, a coil's axis, a weld target. Make absolute frees it in place if you want to detach it.", slotNames = listOf("point to project", "plane to project onto")) { d, p, _ -> d.projectToPlane(p.elements[0]) },
             // **A point riding a coil** (OP-26, the queue's own design). One PATH3 pick and no number at all,
             // because the angle *is* what the click states — and which winding that angle is on is what the two
             // views answer differently (see the help, and `HitTest.helixAngleAt`).

@@ -2116,6 +2116,31 @@ class Construction {
         }
 
     /**
+     * A **2D point of [plane]**, the perpendicular foot of the point in space [point] on it (GitHub #14) — the
+     * projection that anchors a construction on one pane to a point defined on another.
+     *
+     * The value is the point's world position dropped **along [plane]'s normal** onto the plane, read in the
+     * plane's own (u, v): [Plane3.toLocal] is exactly that drop, since it keeps only the two in-plane
+     * components and discards the one along the normal. So the result is an ordinary plane point — usable as a
+     * circle's centre, a coil's axis, an anchor — whose world position (lifted back by a zero height, OP-25) is
+     * the foot itself.
+     *
+     * **Parented, never copied** — OP-26's rule once more. [point] is *the other pane's point, shared by node*
+     * (fed through `Document.pointInSpace`, the one seam every point's world position flows through since
+     * session 53), so dragging it, retyping what defines it, or tilting either plane moves the projection with
+     * it: same-node-is-equality, applied to anchoring across planes rather than to a shared radius. Invalid with
+     * the source's own reason when the source has none (OP-3), because a projection of nothing is nothing.
+     */
+    fun projectToPlane(
+        plane: PlaneRef,
+        point: Point3Ref,
+    ): PointRef =
+        op(plane, point) {
+            val pl = (it[0] as PlaneValue).plane
+            EvalResult.Ok(PointValue(pl.toLocal((it[1] as Point3Value).p)))
+        }
+
+    /**
      * A **curve in space through [points]** (OP-26's first source): the path that passes through every one of
      * them, in order — straight from point to point, or [smooth] (an interpolating cubic), and [closed] or
      * open.

@@ -796,6 +796,12 @@ object DocumentFormat {
             // recorded simply has none, and the click position places the rider as it always did
             "pointoncurve" -> doc.pointOnCurve(el(1), parsePos(words[2]), keyedNums(words, "dofs").firstOrNull())
             "relative" -> doc.makeRelative(el(1), el(2), keyedNums(words, "dofs"))
+            // A **projected point** (GitHub #14): the source it follows, by name — the target plane is the space
+            // this step was written in (the lazy `space` step precedes it), so replay re-projects and discovers
+            // nothing. A projection is fully derived while it stands, so its own step restates no dofs; once it is
+            // freed (Make absolute) the `absolute` step restates the coordinates it then owns. A *new step kind*
+            // needs no version bump — no stored literal changed meaning (OP-18).
+            "projectplane" -> doc.projectToPlane(el(1))
             // `dofs=` is the freed position of a rider taken off its host, restated (see [restate]); every
             // other form of *Make absolute* needs none, and an older script that has none frees the point
             // where the geometry puts it, exactly as the gesture did
