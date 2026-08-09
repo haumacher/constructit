@@ -1377,8 +1377,8 @@ letters included, because the shell's keydown seam skips fields and modifiers.
    with the group selected as a whole, a geometry-slot click on any member — or a click on its panel row —
    feeds the group, so an array copies every member in one step. Remaining: **relocate-origin / re-parent /
    constructed frames (mates)**, grouping the copies an array of a group makes (they land ungrouped, on
-   purpose — see the as-built note), and letting Mirror/Rotate/Scale/Translate take a group the same way (their
-   builds index `Picks.elements` positionally).
+   purpose — see the as-built note), and letting Mirror/Rotate/Scale/Translate/**Point reflect** take a group
+   the same way (their builds index `Picks.elements` positionally).
 5. **Result layer (OP-14) — done end to end.** Trim ops, `Loop`/`Region`, areas, the *Outline* tool,
    derived scaffolding + a dim toggle, and cubic Béziers (OP-15) taking part in a boundary. Remaining
    here: **rework the wall as an output feature** (OP-21), regions with holes from traced outlines
@@ -3214,6 +3214,41 @@ shape must **state its own domain** — the type below it cannot.
 **Remaining:** the boundary-tracing *Outline* tool and the scaffolding/result display roles — both UI,
 and both deliberately deferred so this slice touches none of the files the ortho-path work is in.
 
+#### Point reflect — the capability was there, the concept was not (as built, session 64)
+
+Asked by the user in one line: *"What about point reflection — a whole missing concept, right?"* The honest
+answer was **yes as a concept, no as a capability**: *Rotate* with 180° typed into it already builds exactly
+the same image, and had since the transform family existed. What it does not build is the same **drawing** —
+and that difference is this section's own doctrine, one operation rather than one dimension down. A rotation
+carries an **angle**; an angle is a freedom the panel offers for ever; so a half turn spelled as a rotation can
+be dragged or retyped to 175° and quietly stop being a point reflection, with nothing in the file recording
+that a reflection was ever meant. *Structural intent gets its own spelling.*
+
+- **The row takes no scalar, and that is the whole design.** `ToolDef(POINT_REFLECT, …, TRANSFORM,
+  [GEOMETRY, POINT])` — two clicks, exactly *Mirror*'s economy, with a point where Mirror has a line. With no
+  scalar slot declared, `toolScalarRefs` creates no step-owned freedom and no panel row can appear from the
+  gesture; the assertion is direct (`PointReflectTest.theGestureAddsNoScalarAnywhere`) rather than inferred.
+- **A dedicated node, not `rotate` with a constant π.** Either would have kept the panel clean — an anonymous
+  `cx.const` is unreachable by construction — and the dedicated one was chosen for two reasons, of which the
+  second is the deciding one. It is **exact**: `sin(π)` is 1.2e-16 rather than 0, so a half turn spelled as a
+  rotation shears its image by that fraction of its distance from the centre, while `Affine.pointReflection`
+  lands every point on `2·c − p` to the last bit. And **there is no angle node in the graph at all**, so the
+  invariant is *structural* rather than merely unexposed — the same argument `Turn3.Full` won one session
+  earlier: what is structural is a kind, never a value.
+- **Everything else is inherited, deliberately.** The image is `addLike`'s, so it keeps the source's kind,
+  style and space and is a live derived copy — drag the centre or the original and it follows. The centre is an
+  ordinary `POINT` slot, so clicking an existing point **shares** it and empty space places one. It records the
+  ordinary `tool` step (no format change, no version bump, `save → load → save` byte-equal), undoes in one
+  layer, and **replicates round a pattern** like any other gesture, which needed no code at all: reflecting one
+  member of a hexagonal ring through the ring's own centre fans to six images in one step.
+- **Two boundaries, recorded rather than built.** A whole **group** as its geometry operand joins the parked
+  Mirror/Rotate note under OP-16 rather than jumping it, because it is Mirror's shape and will be fixed by
+  Mirror's fix. And a **point reflection of a solid** is a future extension named where the 2D transforms
+  refuse 3D values (`core/Transform.kt`), with the reason it is not the same operation: in the plane a half
+  turn is *proper* (det = +1, a rotation), while `−I` in space has det = −1, so reflecting a body through a
+  point yields a **mirror-image part** — a different thing to manufacture, which has to be said out loud before
+  it can be built by clicking.
+
 ## General curves & splines (OP-15 — RESOLVED)
 
 The vocabulary: the family is **splines**. Drawing applications mean **cubic Bézier curves**
@@ -3956,9 +3991,12 @@ step and it is not free: a group is recorded membership, so *k* copies would mea
 names have to be generated, deleted and undone as a unit, and a copy's group would want to be a *linked* copy
 of the original's rather than an independent one (edit the original room, and does the fifth copy's membership
 follow?). Recorded as follow-up rather than guessed at. The status line says the copies are not grouped, so
-nothing has to be discovered by clicking one. And only the two array tools opt in: Mirror, Rotate, Scale and
-Translate could fan the same way once their positional `elements` indexing is addressed, which is a change to
-those builds, not to this mechanism.
+nothing has to be discovered by clicking one. And only the two array tools opt in: Mirror, Rotate, Scale,
+Translate and — since session 64 — **Point reflect** could fan the same way once their positional `elements`
+indexing is addressed, which is a change to those builds, not to this mechanism. *Point reflect* joins that
+list rather than jumping it: it is Mirror's own shape (a geometry slot and one more pick), so it inherits the
+same positional indexing and will be fixed by the same change, and giving it a group operand alone would have
+been a fifth convention in a family of four.
 
 ### Implementation status (as built — one pick cycle, and a group that is framed by default)
 
@@ -4778,6 +4816,48 @@ click and typing a number first is what tilts it. `DatumPlaneTest` is the record
     no second tool either: the *Sketch plane* tool gained an **offset** slot (a defaulted length, so its
     one-click gesture is unchanged), the step gained `offset="name"`, and "0° plus an offset" *is* the
     parallel plane, because a datum at 0° is the space it came from. See the loft's note below.
+
+#### Which way a plane fronts, said and drawn (as built, session 64 — on the user's session-61 report)
+
+*"A positive extrude/revolve goes toward the sketch plane's front"* was written down in session 63 and was
+still, in the drawing itself, **invisible state deciding a visible outcome**: which way a hinged plane fronts is
+decided by which end of the hinge line happened to be drawn first, and nothing said so. The user met it as a
+revolve that *"swept the wrong way"*. Two surfacings, one of words and one of a picture, and neither adds a
+concept:
+
+- **The words are a bearing in the base space**, not a side of the hinge. The obvious spelling — *"its front is
+  to the right of `line1` as `line1` is drawn"* — is exactly true (`normal = n·cos θ − w·sin θ` with
+  `w = n × u`, so a positive angle fronts to the right of the drawn direction) and was **rejected after being
+  written**, because it says nothing the label did not already say: it is a restatement of the sign of θ, since
+  the hinge's drawn direction is *itself* invisible. The bearing is the piece that was actually missing — it
+  differs between the two drawings of one line, which is the whole failure mode — and it is checkable, because
+  a 2D view draws its space with +x right and +y up and every other angle in the drawing is measured from that
+  same +x. So `plane1 (90° on seg1, front toward 270°)` in the space list, and *"Its front faces 270° in plan —
+  that is where a positive Extrude or Revolve builds"* in the note. It is read **off the plane node**, not
+  recomputed from the hinge and the angle, so the sentence cannot drift from the normal a feature is swept
+  along; retyping the angle turns the words round with the plane. Where the plane lies **flat** on its base
+  there is no side to lean toward and the honest answer is the base's own front or its reverse — *front with
+  plan* / *front against plan*.
+- **The picture is a front tick**: a short arrow standing out of the working plane at its **origin**, along the
+  normal, in the **3D view only**. That last is `drawHeightPoint`'s rule and holds for its reason — a 2D canvas
+  looks straight down its own normal, so the front is always exactly toward the reader there and a tick would
+  be a dot that said nothing. One glyph for every kind of space, with no case, because every plane has a front;
+  at the origin rather than in the middle of the view because that is a fact about the space rather than about
+  where the camera is, and it is where the hinge already runs. It is sized in pixels off the local scale, like
+  the frame axes, and drawn at the reference weight because it is not geometry.
+- **The words are datum-only, and that is the cut.** Every other kind of space already names its normal against
+  something visible — a face's front points out of the material, a station's runs along its curve, a plane at a
+  height inherits the one it is parallel to, and the plan's is up — so a facing sentence there would be noise
+  rather than news. The *tick* is universal; the *words* are for the space whose facing is genuinely
+  unguessable. `PlaneFacingTest.thePlanGainsNoFacingWords` pins the cut so it stays cut.
+- **The help says it once each.** *Extrude* and *Revolve* now name the front in one clause and point at the
+  tick — *"a positive depth builds toward this plane's front — the way the tick at its origin points"* — so the
+  sentence a user reads while arming the tool and the arrow they see in the view are the same statement.
+
+Deliberately **not** built: axes for the space's origin (a u/v cross beside the tick). A whole frame glyph is a
+different feature — it competes with the placed-group frame that already draws exactly that, in the same view,
+in the same vocabulary — and the one degree of freedom that was invisible is out of the plane, which the tick
+alone answers. Recorded rather than half-drawn.
 
 ### Implementation status (as built — the loft: a run of sections, and the point that ends it)
 
@@ -11933,6 +12013,41 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   already was) — teaching the pad a sign is a question about every scalar slot in the program. **1919 → 1943
   green.** See *The revolution's interval* under OP-17.
 
+- **Turn 64 — a plane says which way it faces, and a half turn stops being an angle.** Two items, and both are
+  about the same thing one level apart: a capability that existed but could not be *seen* or *said*. The first
+  finishes turn 63's answer. A positive extrude or revolve builds toward the sketch plane's front, and which
+  way a hinged plane fronts is decided by which end of the hinge line happened to be drawn first — invisible
+  state deciding a visible outcome, which is how the user's revolve came to sweep away from the line it was
+  meant to meet. **The wording that was written first was rejected before it shipped**, and the rejection is
+  the interesting part: *"its front is to the right of `line1` as `line1` is drawn"* is exactly true and says
+  **nothing the label did not already say**, because it is a restatement of the sign of the angle — the hinge's
+  drawn direction is itself invisible, so the sentence is only checkable if you already know the answer. What
+  is actually missing is a direction in a frame the user can see, so the space now names its front as a
+  **bearing in the base space** (`plane1 (90° on seg1, front toward 270°)`, and *"Its front faces 270° in
+  plan"*), read off the plane node rather than recomputed, so it cannot drift from the normal a feature is
+  swept along. Beside the words, a **front tick**: a short arrow standing out of the working plane at its
+  origin, in the **3D view only** — a 2D canvas looks straight down its own normal, where the front is always
+  exactly toward the reader and a tick could only be a dot. The words are datum-only (every other space already
+  names its normal against something visible — material, curve, base, up) and the tick is universal; *Extrude*
+  and *Revolve* now point at it in one clause each. Space axes beside the tick are deliberately **not** drawn:
+  a frame glyph is a different feature and one already exists in that view for placed groups.
+  The second item is the user's own question, verbatim — *"What about point reflection — a whole missing
+  concept, right?"* — and the answer was **yes as a concept, no as a capability**: *Rotate* with 180° typed in
+  builds the same image and always did. It does not build the same *drawing*, which is OP-14's rule about
+  spelling: an angle is a freedom the panel offers for ever, so a half turn spelled as a rotation can be edited
+  to 175° and quietly stop being a reflection. *Point reflect* is two clicks with **no scalar slot at all**, and
+  the node is dedicated rather than `rotate` at a constant π — for exactness (`sin π` is 1.2e-16, so the
+  rotation spelling shears its image by that much of its reach) and, deciding it, because then **no angle node
+  exists in the graph to reach**, which is turn 63's *"what is structural is a kind, never a value"* one
+  dimension down. Everything else it inherits and nothing else was written: a live `addLike` copy, a shared
+  centre, an ordinary `tool` step with no format change, one undo, and replication round a pattern that needed
+  no code. Two boundaries recorded rather than built: a **group** as its operand joins the parked
+  Mirror/Rotate note (it is Mirror's shape and wants Mirror's fix), and a **3D** point reflection is named where
+  the 2D transforms refuse 3D values, with the reason it is not the same operation — `−I` in space is improper,
+  so it yields a mirror-image part. **1944 → 1956 green**, one golden regenerated (the editing 3D view gained
+  its tick) and one label assertion updated. See *Which way a plane fronts* under OP-17 and *Point reflect*
+  under OP-14.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -14296,7 +14411,7 @@ Smaller parked items, each already recorded at its source: **`GeomMath.transform
 would be silently wrong under any affine map that is not one; session 47's projection routes conics through
 `Conics` instead and says so at the call site, but the assumption is unguarded and the next non-similarity
 transform will meet it. Then: grouping-per-copy for group arrays and
-Mirror/Rotate as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
+Mirror/Rotate/**Point reflect** as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
 convention (fillet note), drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), **Manifold
 face-ID provenance** — whose *3D picking* half is retired in session 63: a `SOLID` slot and a plain selection
 now resolve by ray ∩ mesh over the bodies the 3D view draws (`Geom3.rayMesh`, `PlaneProjection.eyeRay`), so

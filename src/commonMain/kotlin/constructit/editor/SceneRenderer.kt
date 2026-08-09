@@ -120,6 +120,9 @@ object SceneRenderer {
     /** Screen length of a drawn frame axis — a marker, so it does not scale with the drawing. */
     private const val FRAME_AXIS_PX = 22.0
 
+    /** How long the working plane's front tick stands off it, in screen pixels ([drawFrontTick]). */
+    private const val FRONT_TICK_PX = 30.0
+
     /** How far off the cursor the typed entry is echoed, in pixels — clear of the crosshair, still beside it. */
     private const val ENTRY_GAP_PX = 12.0
 
@@ -228,6 +231,8 @@ object SceneRenderer {
         // the frame this canvas looks along, and resolving it is a node evaluation
         val plane3 = doc.activePlane3(ev)
         drawChain(doc.spaceContext(doc.activeSpace, ev), proj, target, faceStyle)
+        // …and which way that plane **fronts**, which is the one thing about it no drawing on it can show
+        drawFrontTick(proj, target)
         for (el in doc.elements) {
             // A hidden element is drawn only while it is a **ghost** (OP-18's *Show hidden*), and then in
             // [Styles.GHOST] rather than its own: the toggle exists to make a hidden element findable, so it
@@ -482,6 +487,37 @@ object SceneRenderer {
         val top = proj.toScreenLifted(base, lift) ?: return
         proj.toScreen(base)?.let { foot -> target.polyline(listOf(foot, top), faceStyle) }
         target.dot(top, POINT_PX, style.stroke)
+    }
+
+    /**
+     * The **front tick**: a short arrow standing out of the working plane at its origin, pointing the way a
+     * positive *Extrude* or *Revolve* builds.
+     *
+     * Which way a plane faces was invisible state deciding a visible outcome (session 61: a revolve swept
+     * away from the line it was meant to meet), and the words in the space's note can only *name* the side —
+     * the picture is what makes it checkable. Drawn in the **3D view only**, by [drawHeightPoint]'s rule and
+     * for its reason: a 2D canvas looks along its own normal, so the front is always exactly toward the
+     * reader there and a tick would be a dot saying nothing. One glyph for every kind of space, because
+     * every plane has a front and the argument is the same for all of them.
+     *
+     * At the origin rather than in the middle of the view, because that is a fact about the space rather
+     * than about where the camera happens to be — and it is where the hinge [drawChain] has just drawn runs.
+     */
+    private fun drawFrontTick(
+        proj: PlaneProjection,
+        target: DrawTarget,
+    ) {
+        if (proj.similarity) return
+        val origin = Vec2(0.0, 0.0)
+        val px = proj.scaleAt(origin)
+        if (px <= 0.0) return
+        val foot = proj.toScreen(origin) ?: return
+        val tip = proj.toScreenLifted(origin, FRONT_TICK_PX / px) ?: return
+        val d = tip - foot
+        // edge-on, the tick has no screen direction to point along and an arrowhead would be noise
+        if (d.length() < ARROW_PX) return
+        target.polyline(listOf(foot, tip), faceStyle)
+        drawArrow(tip, d.normalized(), target, faceStyle)
     }
 
     /**

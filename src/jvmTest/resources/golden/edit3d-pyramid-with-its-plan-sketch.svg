@@ -879,6 +879,8 @@
   <polyline points="189.884,469.958 210.653,483.034" fill="none" stroke="#dcdcdc" stroke-width="1.000"/>
   <polyline points="232.395,496.722 249.230,473.258" fill="none" stroke="#dcdcdc" stroke-width="1.000"/>
   <polyline points="210.653,483.034 232.395,496.722" fill="none" stroke="#dcdcdc" stroke-width="1.000"/>
+  <polyline points="203.615,262.828 198.822,230.951" fill="none" stroke="#cfd8e3" stroke-width="1.400"/>
+  <polyline points="197.470,239.849 198.822,230.951 202.730,239.058" fill="none" stroke="#cfd8e3" stroke-width="1.400"/>
   <circle cx="203.615" cy="262.828" r="4.000" fill="#ff7f0e"/>
   <circle cx="356.783" cy="323.351" r="4.000" fill="#ff7f0e"/>
   <polyline points="203.615,262.828 356.783,323.351" fill="none" stroke="#333333" stroke-width="1.500"/>

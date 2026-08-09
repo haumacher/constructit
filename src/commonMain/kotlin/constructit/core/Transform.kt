@@ -53,6 +53,11 @@ fun transformValue(
         // real operation, but it needs a 3D transform, and inventing one from a 2D affine (which axis
         // does its reflection line become?) would be a plausible-looking wrong answer. Refused, so the
         // Evaluator turns it into node invalidity (OP-3), until 3D transforms arrive with assemblies.
+        // A **point reflection of a solid** is a future extension recorded here rather than smuggled in with
+        // the 2D one, and it is not the same operation: in the plane a half turn is *proper* (det = +1, it is
+        // a rotation), while `−I` in space has det = −1, so reflecting a body through a point yields a
+        // **mirror-image part** — a different thing to manufacture, and one that has to be said out loud
+        // before it can be built by clicking.
         is PlaneValue -> throw IllegalArgumentException("a sketch plane cannot be transformed by a 2D map (OP-17)")
         // ...and a height point (OP-25) is a point in space: a 2D map has nothing to say about the axis it
         // stands on. Mirror its base and its plane instead, and the point follows by construction.

@@ -622,6 +622,9 @@ object Previews {
         return ghosts(c, listOf(Affine.reflection(axis)))
     }
 
+    /** One ghost, turned a half turn about the cursor — the centre the next click places. */
+    fun pointReflect(c: PreviewContext): List<PreviewShape> = ghosts(c, listOf(Affine.pointReflection(c.cursor)))
+
     /** One ghost, rotated about the cursor by the angle in effect. */
     fun rotate(c: PreviewContext): List<PreviewShape> {
         val a = c.angle(0) ?: return emptyList()

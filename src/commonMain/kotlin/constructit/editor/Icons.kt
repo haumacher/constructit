@@ -182,6 +182,11 @@ object Icons {
     val MIRROR =
         dashed("M12 2.5 L12 21.5") + path("M9 6 L3 12 L9 18 Z") + path("M15 6 L21 12 L15 18 Z", """opacity=".55"""")
 
+    // the half turn drawn as what it is: one shape and its image *through the dot*, so the pair reads as a
+    // reflection in a point rather than in the line MIRROR's icon draws
+    val POINT_REFLECT =
+        path("M4 4 L10 4 L4 10 Z") + path("M20 20 L14 20 L20 14 Z", """opacity=".55"""") + dot(12.0, 12.0, 2.4)
+
     val ROTATE =
         dot(12.0, 20.0, 2.2) + ghost("M12 20 L4.2 13.4") + ghost("M12 20 L19.8 13.4") +
             path("M4.2 13.4 A 10.2 10.2 0 0 1 19.8 13.4") + path("M18.8 9.5 L19.8 13.4 L16.2 11.8")

@@ -58,5 +58,17 @@ data class Affine(
             k: Double,
         ) =
             Affine(k, 0.0, 0.0, k, center.x * (1 - k), center.y * (1 - k))
+
+        /**
+         * The **point reflection** through [center]: every point lands exactly as far the other side of it,
+         * at `2·center − p`.
+         *
+         * The same map [rotation] gives at π, written as its own constant rather than derived from one —
+         * which buys exactness as well as a name: `sin(π)` is 1.2e-16 rather than 0, so a half turn spelled
+         * as a rotation shears its image by that fraction of its distance from the centre, and this one does
+         * not. In the plane it is *proper* (det = +1, a rotation); one dimension up the same idea is not
+         * (see the note in `core/Transform.kt`).
+         */
+        fun pointReflection(center: Vec2) = Affine(-1.0, 0.0, 0.0, -1.0, 2 * center.x, 2 * center.y)
     }
 }

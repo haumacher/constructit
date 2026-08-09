@@ -981,6 +981,14 @@ object Tools {
 
     // Transform
     const val MIRROR = "mirror"
+
+    /**
+     * A **half turn about a point**, as its own tool rather than as [ROTATE] with 180° typed into it —
+     * the capability was reachable all along, the *concept* was not (OP-14). A rotation's angle is a
+     * freedom the panel offers for ever; this row has no scalar slot, so the drawing cannot be edited
+     * into a 175° near-reflection.
+     */
+    const val POINT_REFLECT = "pointreflect"
     const val ROTATE = "rotate"
     const val SCALE = "scale"
     const val TRANSLATE_V = "translatev"
@@ -1172,14 +1180,14 @@ object Tools {
             // ----- Solids: the 2D->3D seam (OP-17). The sketch plane is the world XY plane in this
             // slice; the depth/angle is a panel parameter, which is where the feature's DOF is edited
             // (OP-13) since the 3D view has no picking yet.
-            ToolDef(EXTRUDE, "Extrude", ToolCategory.SOLIDS, listOf(SlotKind.AREA), scalars = listOf(len("depth")), shortcut = 'E', help = "Type a depth (or pick a parameter in the panel), then click an outline or wall footprint: it becomes a solid, shown in the 3D view.", slotNames = listOf("profile"), icon = Icons.EXTRUDE) { d, p, s -> d.extrudeSolid(p.elements[0], s[0]) },
+            ToolDef(EXTRUDE, "Extrude", ToolCategory.SOLIDS, listOf(SlotKind.AREA), scalars = listOf(len("depth")), shortcut = 'E', help = "Type a depth (or pick a parameter in the panel), then click an outline or wall footprint: it becomes a solid, shown in the 3D view. A positive depth builds toward this plane's front — the way the tick at its origin points.", slotNames = listOf("profile"), icon = Icons.EXTRUDE) { d, p, s -> d.extrudeSolid(p.elements[0], s[0]) },
             // **Full is the default, and it is structural** (session 63): with nothing typed the angle slot
             // names a *complete* revolution — a body with no ends, whose watertightness no later edit can
             // switch off, because the graph holds no angle node at all (OP-14's circle-vs-arc rule one
             // dimension up; see [constructit.geom.Turn3]). A typed angle builds the partial, and the offset
             // beside it says where about the axis that partial starts — `typedOnly`, because two angle slots
             // cannot be told apart by dimension and a stray angle must never become an offset nobody stated.
-            ToolDef(REVOLVE, "Revolve", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.LINE), scalars = listOf(angChoice("angle", 360.0), ang("offset", 0.0, typedOnly = true)), help = "Click an outline or footprint, then a line to spin it about (the profile must not cross the axis): with no angle typed it goes the whole way round, a closed body with no ends. Type an angle first (or pick a parameter in the panel) for a partial turn — negative to sweep the other way — and a second number for the offset it starts at, so the body can straddle the drawing or stand clear of it.", slotNames = listOf("profile", "axis"), icon = Icons.REVOLVE) { d, p, s -> d.revolveSolid(p.elements[0], p.elements[1], s.getOrNull(0), s.getOrNull(1)) },
+            ToolDef(REVOLVE, "Revolve", ToolCategory.SOLIDS, listOf(SlotKind.AREA, SlotKind.LINE), scalars = listOf(angChoice("angle", 360.0), ang("offset", 0.0, typedOnly = true)), help = "Click an outline or footprint, then a line to spin it about (the profile must not cross the axis): with no angle typed it goes the whole way round, a closed body with no ends. Type an angle first (or pick a parameter in the panel) for a partial turn — a positive one turns toward this plane's front, the way the tick at its origin points, and a negative one sweeps the other way — and a second number for the offset it starts at, so the body can straddle the drawing or stand clear of it.", slotNames = listOf("profile", "axis"), icon = Icons.REVOLVE) { d, p, s -> d.revolveSolid(p.elements[0], p.elements[1], s.getOrNull(0), s.getOrNull(1)) },
             // ----- the loft (OP-17): the one solid whose cross-section changes along the run. Two tools, one
             // feature: *Extrude to point* is the pyramid/cone gesture (an area, a height, an apex position, and
             // the apex is a real point element so it stays draggable), and *Loft* is the general one — a
@@ -1321,6 +1329,10 @@ object Tools {
             ToolDef(INNER_TANGENTS, "Inner tangents", ToolCategory.CONSTRUCT, listOf(SlotKind.CIRCLE, SlotKind.CIRCLE), help = "Click two circles or arcs for their inner (crossing) common tangents.", slotNames = listOf("circle", "circle"), icon = Icons.INNER_TANGENTS) { d, p, _ -> d.commonTangents(p.elements[0], p.elements[1], inner = true) },
             // ----- Transform -----
             ToolDef(MIRROR, "Mirror", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.LINE), preview = Previews::mirror, help = "Click geometry, then a line to mirror it across.", slotNames = listOf("geometry", "axis"), icon = Icons.MIRROR) { d, p, _ -> d.mirror(p.elements[0], p.elements[1]) },
+            // *Point reflect* takes **no scalar** and that is the whole of it (OP-14): the half turn is a
+            // constant inside the node, so two clicks are the entire gesture and the panel gains nothing a
+            // later edit could turn back into an ordinary rotation.
+            ToolDef(POINT_REFLECT, "Point reflect", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), preview = Previews::pointReflect, help = "Click geometry, then the centre to reflect it through: every point lands as far on the other side. A half turn by construction — there is no angle to drift. Clicking an existing point shares it.", slotNames = listOf("geometry", "centre"), icon = Icons.POINT_REFLECT) { d, p, _ -> d.pointReflect(p.elements[0], p.points[0]) },
             ToolDef(ROTATE, "Rotate", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), scalars = listOf(ang("angle")), preview = Previews::rotate, help = "Type a angle (or pick a parameter in the panel), click geometry, then the centre.", slotNames = listOf("geometry", "centre"), icon = Icons.ROTATE) { d, p, s -> d.rotate(p.elements[0], p.points[0], s[0]) },
             ToolDef(SCALE, "Scale", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT), scalars = listOf(num("factor")), preview = Previews::scale, help = "Type a factor (or pick a parameter in the panel), click geometry, then the centre.", slotNames = listOf("geometry", "centre"), icon = Icons.SCALE) { d, p, s -> d.scale(p.elements[0], p.points[0], s[0]) },
             ToolDef(TRANSLATE_V, "Translate by vector", ToolCategory.TRANSFORM, listOf(SlotKind.GEOMETRY, SlotKind.POINT, SlotKind.POINT), preview = Previews::translate, help = "Click geometry, then two points defining the translation vector.", slotNames = listOf("geometry", "from", "to"), icon = Icons.TRANSLATE_V) { d, p, _ -> d.translateByVector(p.elements[0], p.points[0], p.points[1]) },

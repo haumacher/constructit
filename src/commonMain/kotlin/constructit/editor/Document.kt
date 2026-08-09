@@ -181,6 +181,22 @@ enum class ElementKind {
 }
 
 /**
+ * Which way a sketch plane's **front** turns, in the coordinates of the space it was hinged out of —
+ * [Document.spaceFacing].
+ *
+ * [bearingDeg] is where the front leans in that base, measured from its +x the way every other angle in the
+ * drawing is measured, in `[0, 360)`. It is null exactly when the plane lies **flat** on its base and its
+ * front has no direction in it; then [outward] is the whole answer — the base's own front, or its reverse.
+ */
+class Facing(
+    val bearingDeg: Double?,
+    val outward: Boolean,
+)
+
+/** Below this much of a sideways component a plane lies flat on its base and its front has no bearing. */
+private const val FACING_EPS = 1e-9
+
+/**
  * A named **2D sketch space** (OP-17): a plane to embed on, and the coordinates the canvas draws in while
  * it is active.
  *
@@ -2106,10 +2122,7 @@ class Document {
      * asks the evaluator for its one stored plane node, and a null here is what makes the 3D view fall back
      * to being read-only instead of pointing gestures at a plane that does not exist (edit-in-3D slice 1).
      */
-    fun activePlane3(ev: Evaluator): Plane3? {
-        val ref = activeSpace.plane ?: return Plane3(Vec3.ZERO, Vec3.X, Vec3.Y)
-        return ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? PlaneValue)?.plane
-    }
+    fun activePlane3(ev: Evaluator): Plane3? = planeOf(activeSpace, ev)
 
     /**
      * The nearest solid boundary edge to [at]: the solid, and which of its boundary pieces (OP-8).
@@ -2537,6 +2550,10 @@ class Document {
             space.isDatum ->
                 "${space.name} (${Format.num(spaceAngleDeg(space))}° on ${space.hinge?.let { nameOf(it) }}" +
                     (space.offset?.let { ", ${Format.num(evalMm(it.ref))} mm off" } ?: "") +
+                    // …and which way it fronts, because a label that says everything about *where* a plane is
+                    // and nothing about which way it faces describes only half of what a feature built on it
+                    // will do ([spaceFacing])
+                    facingSuffix(space) +
                     (if (space.from == PLAN_SPACE) ")" else ", from ${space.from})")
             else -> "${space.name} (face of ${space.anchor?.let { nameOf(it) }})"
         }
@@ -2557,6 +2574,58 @@ class Document {
     ): Double {
         val curve = space.station ?: return 0.0
         return (ev.valueOf(curve.ref) as? Path3Value)?.let { Curves3.length(it.path) } ?: 0.0
+    }
+
+    /** The facing clause a datum's label carries — short, because a label is a list entry ([spaceFacing]). */
+    private fun facingSuffix(space: SketchSpace): String {
+        val facing = spaceFacing(space) ?: return ""
+        val bearing = facing.bearingDeg ?: return if (facing.outward) ", front with ${space.from}" else ", front against ${space.from}"
+        return ", front toward ${Format.num(bearing)}°"
+    }
+
+    /**
+     * Which way a **datum's front** turns, or null for a space this question adds nothing to.
+     *
+     * The front is the side a positive *Extrude* or *Revolve* builds toward (`Geom3.datumPlane`:
+     * `normal = u × v`), and until session 64 it was **invisible state deciding a visible outcome** — the
+     * user's revolve swept away from the line it was meant to meet because their upright plane fronted the
+     * other way, and nothing in the label, the note or the canvas said so.
+     *
+     * **Stated as a bearing in the base space, and that is the decision.** The obvious spelling — "right of
+     * the hinge as the hinge is drawn" — is exactly true (with `w = n × u` the normal is `n·cos θ − w·sin θ`,
+     * and `w` is `u` turned a quarter turn counter-clockwise, so a positive angle fronts to the right of the
+     * drawn direction) and yet says **nothing the label did not already say**: it is a restatement of the
+     * sign of θ, because *which way the hinge is drawn* is itself invisible. The bearing is the piece of
+     * information that is actually missing — it differs between the two drawn directions of one line — and it
+     * is checkable against what the canvas shows, since a 2D view draws its space with +x to the right and
+     * +y up ([Camera.worldToScreen]) and every other angle in the drawing is measured from that +x too.
+     *
+     * Read off the **plane node itself** rather than recomputed from the hinge and the angle, so the words
+     * cannot drift from the geometry the features are built on: it is the same value `Extrude` sweeps along.
+     */
+    fun spaceFacing(
+        space: SketchSpace,
+        ev: Evaluator = Evaluator(),
+    ): Facing? {
+        if (!space.isDatum) return null
+        val plane = planeOf(space, ev) ?: return null
+        val base = spaceNamed(space.from)?.let { planeOf(it, ev) } ?: return null
+        val n = plane.normal
+        val du = n.dot(base.u)
+        val dv = n.dot(base.v)
+        val outward = n.dot(base.normal) >= 0.0
+        if (Vec2(du, dv).length() <= FACING_EPS) return Facing(null, outward)
+        val deg = atan2(dv, du) * 180.0 / PI
+        return Facing((deg % 360.0 + 360.0) % 360.0, outward)
+    }
+
+    /** The 3D plane of [space] as it stands, or null when it does not evaluate (OP-3) — the plan's is world XY. */
+    fun planeOf(
+        space: SketchSpace,
+        ev: Evaluator,
+    ): Plane3? {
+        val ref = space.plane ?: return Plane3(Vec3.ZERO, Vec3.X, Vec3.Y)
+        return ((ev.eval(ref.node) as? EvalResult.Ok)?.value as? PlaneValue)?.plane
     }
 
     /** A datum space's angle in degrees, as it stands (0 for any other space). */
@@ -12768,6 +12837,16 @@ class Document {
         center: PointRef,
         angle: ScalarRef,
     ) = addLike(cx.rotate(geom.ref as Ref<Value>, center, angle), geom)
+
+    /**
+     * Geometry reflected through a **point** — [mirror]'s sibling, with a centre where Mirror has an axis
+     * (OP-14: the structural intent gets its own spelling, so no angle can drift off the half turn).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun pointReflect(
+        geom: Element,
+        center: PointRef,
+    ) = addLike(cx.pointReflect(geom.ref as Ref<Value>, center), geom)
 
     @Suppress("UNCHECKED_CAST")
     fun scale(

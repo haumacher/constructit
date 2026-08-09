@@ -1372,6 +1372,7 @@ class Editor(
                     ": u runs along that line, v rises out of " +
                     "${space.from} as the angle grows. Extrude builds along this plane's normal, Cut the other way — " +
                     "a negative angle swaps them. Retype the angle to tilt the plane and everything on it." +
+                    facingNote(space) +
                     // what it can *cut* and what it can be *anchored on* are two questions since GitHub #9: a
                     // hinge that belongs to no solid still has every ancestor it passes through as context
                     (if (space.anchor == null) " Nothing here to cut into: its line is part of no solid." else "") +
@@ -1383,6 +1384,30 @@ class Editor(
                     ". Cut here drills into the material; Extrude builds outward, as a boss." +
                     sectionNote(space)
         }
+
+    /**
+     * Which way this plane **fronts**, as a bearing in the space it was hinged out of ([Document.spaceFacing]
+     * argues why a bearing rather than a side of the hinge).
+     *
+     * The gap this closes was reported as a revolve that swept the wrong way (session 61): a positive
+     * *Extrude* or *Revolve* builds toward the front, the front is decided by which end of the hinge line the
+     * user happened to draw first, and no view showed it. Said in the space's own note because that is where
+     * the space introduces itself — and said **only** for a datum, because every other kind of space already
+     * names its normal against something visible: a face's front points out of the material, a station's runs
+     * along its curve, a plane at a height inherits the one it is parallel to, and the plan's is up.
+     */
+    private fun facingNote(space: SketchSpace): String {
+        val facing = doc.spaceFacing(space, ev()) ?: return ""
+        val which =
+            facing.bearingDeg?.let { " Its front faces ${Format.num(it)}° in ${space.from}" }
+                ?: if (facing.outward) {
+                    " It lies flat on ${space.from}, fronting the same way"
+                } else {
+                    " It lies flat on ${space.from}, fronting the opposite way"
+                }
+        return "$which — that is where a positive Extrude or Revolve builds, and the 3D view marks it with a " +
+            "tick standing out of the plane's origin."
+    }
 
     /**
      * What this plane's **sections** offer, in one sentence: how many curves and corners can be clicked as

@@ -671,7 +671,11 @@ class DatumPlaneTest {
         val labels = ed.doc.spaces.map { ed.doc.spaceLabel(it) }
         assertEquals("plan", labels[0])
         val hinge = assertNotNull(ed.activeSpace.hinge)
-        assertEquals("plane1 (45° on ${ed.doc.nameOf(hinge)})", labels[1], "the angle and the line it turns about")
+        assertEquals(
+            "plane1 (45° on ${ed.doc.nameOf(hinge)}, front toward 270°)",
+            labels[1],
+            "the angle, the line it turns about — and which way it fronts, as a bearing in the plan (session 64)",
+        )
 
         // a datum on a datum says where it came from too
         ed.setTool(Tools.SEGMENT)

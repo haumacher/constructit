@@ -937,6 +937,22 @@ class Construction {
             EvalResult.Ok(transformValue(Affine.rotation(pt(it[1]), sc(it[2]).requireDim(Dimension.ANGLE, "angle").base), it[0]))
         }
 
+    /**
+     * Any geometry turned a **half turn about [center]** — the point reflection (OP-14: a structural intent
+     * gets its own spelling).
+     *
+     * The capability was always here — this is [rotate] at 180° — and that is precisely why it needed a node
+     * of its own: a rotation carries an **angle**, and an angle is a freedom, so a half turn spelled as one
+     * can be dragged or retyped to 175° and quietly stop being a point reflection. There is no angle node in
+     * this graph at all, so there is nothing to offer and nothing to drift. The same argument `Turn3.Full`
+     * won one dimension up (session 63): what is structural is a *kind*, never a value.
+     */
+    fun <V : Value> pointReflect(
+        g: Ref<V>,
+        center: PointRef,
+    ): Ref<V> =
+        op(g, center) { EvalResult.Ok(transformValue(Affine.pointReflection(pt(it[1])), it[0])) }
+
     fun <V : Value> scaleGeom(
         g: Ref<V>,
         center: PointRef,
