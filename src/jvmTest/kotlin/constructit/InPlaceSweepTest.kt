@@ -19,6 +19,7 @@ import constructit.geom.Vec2
 import constructit.geom.Vec3
 import constructit.units.Quantity
 import constructit.units.mm
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.test.Test
@@ -520,6 +521,13 @@ class InPlaceSweepTest {
         val before = Bounds(meshOf(solid))
         val recorded = DocumentFormat.save(t.doc).lineSequence().last { it.startsWith("tool sweep") }
         assertTrue(recorded.contains("signs=1"), "the crossing is recorded: $recorded")
+        // the other crossing is a different body, and while the section stands between the two both readings
+        // are ordinary solids — which is what makes the comparison about the *choice*
+        val otherBefore = Bounds(meshOf(assertNotNull(t.doc.sweepAlongCurve(t.run, t.section, pierce = 0))))
+        assertTrue(
+            abs(span(before) - span(otherBefore)) > 100.0,
+            "the other crossing gives a different ring: ${span(before)} vs ${span(otherBefore)}",
+        )
 
         // drag the section 120 mm along the plane — well past the middle, so the *other* crossing is the
         // nearer one now (the two stand 85 mm apart along it)
@@ -533,14 +541,17 @@ class InPlaceSweepTest {
         // …and so does the body. Which crossing it rides is not visible in the drawing's own plane — the
         // section stands where it is drawn either way — so it is asserted where it *is* visible: the section
         // now stands 116 mm off the crossing it rides instead of 4, and the ring is that much wider than it
-        // was, where the other crossing would have kept it at 35 mm.
+        // was.
         val after = Bounds(meshOf(solid))
-        val flipped = Bounds(meshOf(assertNotNull(t.doc.sweepAlongCurve(t.run, t.section, pierce = 0))))
         assertTrue(span(after) - span(before) > 200.0, "the ring widened with the drawing it still reads: ${span(after)}")
-        assertTrue(
-            span(after) - span(flipped) > 100.0,
-            "and it is not the body the other crossing would give: ${span(after)} vs ${span(flipped)}",
-        )
+        // And it is emphatically not the body the other crossing would now give. Dragged this far, the *other*
+        // reading stands the section 204 mm inside a loop whose own inradius is 150, so the ring it would
+        // sweep folds through itself — which the embedding criterion refuses by name (OP-9, the antiparallel
+        // legs of a plan loop; session 59). Before the drag the same comparison was two ordinary bodies,
+        // asserted above: what changed is the geometry, not the recorded choice.
+        val flipped = assertNotNull(t.doc.sweepAlongCurve(t.run, t.section, pierce = 0))
+        val why = assertNotNull(whyInvalid(flipped), "the other crossing would fold the ring through itself")
+        assertTrue(why.contains("cut into itself"), "and says so by name: $why")
     }
 
     /** A sweep made **through the tool**, so the step and its recorded crossing exist. */

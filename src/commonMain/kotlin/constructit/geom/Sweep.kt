@@ -667,6 +667,23 @@ class EmbeddingReport(
  * lies in the vertex's *normal cone*, which is the honest generalization of "perpendicular" and exactly what
  * a mitred elbow needs.
  *
+ * **Two legs that run side by side are compared where they are side by side** (the derivation corrected in
+ * session 59, after a closed polyline loop swept an inside-out shell with nothing refusing). The closest
+ * points of two segments are the solution of a 2×2 system whose determinant is `1 − (d₁·d₂)²`, and that
+ * determinant vanishes for **parallel or antiparallel** pieces — not because the answer is ill-defined but
+ * because there are many: the double normals of two parallel legs are the whole **overlap interval** of their
+ * spans, every pair on it square to both legs and all of them the same distance apart. Clamping the singular
+ * system instead answers with a *corner* of the run, where the adjoining leg's direction points across the
+ * connector and the normal-cone test — correctly, for a corner — throws the pair out; so on a plan loop whose
+ * legs are each sampled into a single span, the one bottleneck that matters was never offered and a section
+ * standing further inside the loop than its inradius folded the ring through itself in silence. The overlap's
+ * **middle** is taken, since it is interior on both pieces whenever the family has an interior, and such a
+ * pair needs no normal-cone test at all: the stationarity holds identically along the overlap rather than at
+ * a point. Where the projected spans do not overlap there is no family, the nearest points are a pair of ends
+ * — two pieces cut from one straight leg, which never overlap — and the cone test rejects them for running
+ * *along* the spine, exactly as before. It is a statement about parallel legs and not about closed loops: a
+ * U-shaped open run is caught by the same lines of code.
+ *
  * **The seam of a closed path needs no special handling either**, which is worth saying because an
  * arc-length exclusion would have needed the arc distance to wrap: the pieces either side of the seam are
  * neighbours, their approach is not stationary, and they are rejected for the same reason every other
@@ -750,6 +767,7 @@ object Embedding {
         what: String,
         subject: String = "the sweep",
         cure: String = "thin the section, or open the run out",
+        section: List<Vec2>? = null,
     ): EmbeddingReport {
         // ---- the first term: 1/κ_max, station by station, and in station order so the message is stable
         for ((i, st) in frame.stations.withIndex()) {
@@ -772,9 +790,12 @@ object Embedding {
             forEachCell(pieces[i], clearance) { k -> grid.getOrPut(k) { ArrayList() }.add(i) }
         }
 
-        var bestD = Double.MAX_VALUE
+        var nearest = Double.MAX_VALUE
+        var worst = 0.0
+        var bestD = 0.0
         var bestA = 0.0
         var bestB = 0.0
+        var bestNeed = 0.0
         var examined = 0
         val seen = IntArray(pieces.size) { -1 }
         for (i in pieces.indices) {
@@ -791,10 +812,20 @@ object Embedding {
                                 seen[j] = i
                                 examined++
                                 val hit = bottleneck(pieces, i, j, frame.closed)
-                                if (hit != null && hit.d < bestD) {
-                                    bestD = hit.d
-                                    bestA = hit.s
-                                    bestB = hit.t
+                                if (hit != null) {
+                                    if (hit.d < nearest) nearest = hit.d
+                                    // **What this pair needs is what the two sections reach *towards each
+                                    // other*, not what they reach at all** — the isotropic `2·reach` is the
+                                    // same statement maximized over directions, and it is the one this falls
+                                    // back to when the section is a disc or is not offered.
+                                    val need = needed(frame, pieces, i, j, hit, reach, section)
+                                    if (need - hit.d > worst) {
+                                        worst = need - hit.d
+                                        bestD = hit.d
+                                        bestA = hit.s
+                                        bestB = hit.t
+                                        bestNeed = need
+                                    }
                                 }
                             }
                         }
@@ -803,16 +834,81 @@ object Embedding {
             }
         }
 
-        if (bestD < clearance - 2.0 * GeomMath.TESS_TOL_MM) {
+        if (worst > 2.0 * GeomMath.TESS_TOL_MM) {
             return EmbeddingReport(
                 "the run passes within ${Frames3.mm(bestD)} mm of itself, between ${Frames3.mm(bestA)} mm and " +
-                    "${Frames3.mm(bestB)} mm along the path, while $what needs ${Frames3.mm(clearance)} mm " +
+                    "${Frames3.mm(bestB)} mm along the path, while $what needs ${Frames3.mm(bestNeed)} mm " +
                     "between them — so $subject would cut into itself; $cure",
                 bestD,
                 examined,
             )
         }
-        return EmbeddingReport(null, bestD, examined)
+        return EmbeddingReport(null, nearest, examined)
+    }
+
+    /**
+     * **How much room this pair of legs actually needs**, in mm — the two sections' extents *towards each
+     * other*, which is the honest generalization of `2·reach` and reduces to it exactly for a section that is
+     * a disc about the run.
+     *
+     * The isotropic form asks whether two balls of radius `reach` about the spine overlap. That is sound but
+     * it is a statement about the *greatest* the section reaches in *any* direction, and since the in-place
+     * sweep made **off-centre** sections routine (a foundation drawn against the wall it sits by, a section
+     * that pierces its own plane 100 mm from the run) it over-states a body badly: a plan loop with its
+     * section standing 100 mm *outside* is a perfectly good ring, and the ball model refuses it for the same
+     * reason it refuses the one standing 100 mm *inside*, which really does fold through itself. The sign of
+     * the offset is the whole difference and a criterion that cannot see it is not measuring the body.
+     *
+     * What it measures instead is the **support function** of the section in the direction of the approach.
+     * The section stands in the station's own axes, so a profile point `w` sits at `ref·w.x + bi·w.y` from
+     * the run and its extent along the unit approach direction `u` is `w · (u·ref, u·bi)` — an ordinary 2D
+     * support, maximized over the outline. Two convex sets whose shadows on `u` do not overlap cannot meet
+     * (the separating-axis argument), so `h₁(u) + h₂(−u) < d` is a *proof* that this pair of legs is clear,
+     * and the criterion is exact for a convex section rather than merely safe. A **non-convex** section is
+     * measured by its convex hull, which errs the same way the ball did — towards refusing a body that would
+     * have fitted — and never towards accepting a fold.
+     *
+     * [section] is the outline in the profile's own coordinates, or null for *"a disc of radius [reach]"*,
+     * which is what a round tube analytically is and what the swept cut's derived reach means. Null gives
+     * `2·reach` back to the last bit, so every message the isotropic form ever produced is byte-identical.
+     *
+     * The frame is read at the station whose **arriving** chord the span is ([Piece.st]) rather than
+     * interpolated along it; a station apart the axes have turned by one sampling step, which is the same
+     * resolution the whole of this criterion is stated at (OP-15).
+     */
+    private fun needed(
+        frame: MovingFrame,
+        pieces: List<Piece>,
+        i: Int,
+        j: Int,
+        hit: Approach,
+        reach: Double,
+        section: List<Vec2>?,
+    ): Double {
+        if (section == null || section.isEmpty()) return 2.0 * reach
+        val p = pieces[i]
+        val q = pieces[j]
+        val v = q.at(hit.t - q.s0) - p.at(hit.s - p.s0)
+        val d = v.length()
+        if (d <= Geom3.WELD_TOL) return 2.0 * reach
+        val u = v * (1.0 / d)
+        return support(frame.stations[p.st], u, section) + support(frame.stations[q.st], u * -1.0, section)
+    }
+
+    /** How far [section] reaches from the run along [u], read in the station's own axes — the 2D support. */
+    private fun support(
+        st: Frame3,
+        u: Vec3,
+        section: List<Vec2>,
+    ): Double {
+        val a = u.dot(st.ref)
+        val b = u.dot(st.bi)
+        var h = -Double.MAX_VALUE
+        for (w in section) {
+            val e = w.x * a + w.y * b
+            if (e > h) h = e
+        }
+        return h
     }
 
     /**
@@ -822,8 +918,14 @@ object Embedding {
      * Arc *is* length here, and that is by construction rather than by approximation: [Frame3.s] is the
      * cumulative sum of the very chords these pieces are cut from, so a point [x] mm along a piece stands
      * exactly `s0 + x` along the spine.
+     *
+     * [st] is the station whose **arriving** chord this span is — the span's *far* end, not its start. A
+     * [Frame3] is turned for the chord that reaches it ([Frame3.tangent]), so those are the axes the section
+     * stands in along this span, and on a mitred polyline the difference is the whole answer: the station at
+     * a span's *start* carries the previous leg's axes, turned a corner away from the one being measured.
+     * It is what [needed] reads to ask what this leg reaches towards the other one.
      */
-    private class Piece(val a: Vec3, val dir: Vec3, val s0: Double, val len: Double) {
+    private class Piece(val a: Vec3, val dir: Vec3, val s0: Double, val len: Double, val st: Int) {
         fun at(x: Double): Vec3 = a + dir * x
     }
 
@@ -856,7 +958,7 @@ object Embedding {
             val cuts = max(1, ceil(len / cell).toInt())
             val step = len / cuts
             for (q in 0 until cuts) {
-                out.add(Piece(a + dir * (step * q), dir, st[k].s + step * q, step))
+                out.add(Piece(a + dir * (step * q), dir, st[k].s + step * q, step, (k + 1) % n))
             }
         }
         return out
@@ -904,10 +1006,20 @@ object Embedding {
     ): Approach? {
         val p = pieces[i]
         val q = pieces[j]
-        val (x, y) = closestParams(p, q)
+        val near = closestParams(p, q)
+        val x = near.x
+        val y = near.y
         val v = q.at(y) - p.at(x)
         val d = v.length()
         if (d <= Geom3.WELD_TOL) return Approach(0.0, p.s0 + x, q.s0 + y)
+        // **Two legs running side by side are a double normal all along their overlap**, so there is nothing
+        // left to test (OP-26, the corrected derivation). Where the two directions are the same line, the
+        // connector taken across the overlap is perpendicular to *both* by construction and the distance is
+        // constant along it: the stationarity condition holds identically rather than at one point. Asking
+        // the normal-cone test about it again is what used to lose it — the degenerate solve answered with
+        // the loop's own **corner**, where the neighbouring leg's direction points away and the pair was
+        // thrown out (session 58's inside-out ring).
+        if (near.sideBySide) return Approach(d, p.s0 + x, q.s0 + y)
         val u = v * (1.0 / d)
         val ahead = if (x < p.len) p.dir else nextDir(pieces, i, closed)
         val behind = if (x > 0.0) p.dir else prevDir(pieces, i, closed)
@@ -947,24 +1059,83 @@ object Embedding {
         }
 
     /**
+     * Where two pieces are closest, and whether they are **side by side** there — [sideBySide] meaning the
+     * two run along one line over a stretch they share, so the approach is a double normal by construction
+     * and [bottleneck] has nothing left to ask.
+     */
+    private class Closest(val x: Double, val y: Double, val sideBySide: Boolean)
+
+    /**
      * How far along each piece the two are closest — the ordinary segment-to-segment closest points, written
      * out because both directions are unit here (arc *is* length), which reduces the usual algebra to three
      * dot products and a pair of clamps.
+     *
+     * **The parallel case is not a clamp, it is an interval** (OP-26, the derivation corrected in session
+     * 59). The stationarity conditions of `|P(s) − Q(t)|` are `s − b·t = −c` and `t − b·s = −f`, whose
+     * determinant is `1 − b²`; where the two directions are the same line that determinant vanishes because
+     * the two equations are *the same equation*, and the double normals are not a point but the whole
+     * segment `s − b·t = −c` inside the rectangle `[0, len_p] × [0, len_q]` — exactly the stretch over
+     * which the two pieces overlap when each is projected on the other's axis. Every pair on it is a double
+     * normal and they all stand the same distance apart, so any interior one of them answers; the **middle**
+     * of the overlap is taken, because that is the one point of the family that is interior on both pieces
+     * whenever the family has an interior at all. Solving the singular system by clamping instead — which is
+     * what `den ≤ 1e-12 → x = 0` did — answers with a *corner* of the run, where the neighbouring leg's
+     * direction points across the connector and the normal-cone test throws the pair away. That is the whole
+     * of session 58's inside-out ring: a closed polyline's two opposite legs are the one bottleneck that
+     * matters and they were never offered.
+     *
+     * Where the projected spans do **not** overlap the family is empty and the nearest points really are a
+     * pair of ends — two pieces cut from one straight leg are the everyday instance — so those are answered
+     * as the end pair they are and left to the normal-cone test, which rejects them for running *along* the
+     * spine exactly as it always did.
      */
     private fun closestParams(
         p: Piece,
         q: Piece,
-    ): Pair<Double, Double> {
+    ): Closest {
         val r = p.a - q.a
         val b = p.dir.dot(q.dir)
         val c = p.dir.dot(r)
         val f = q.dir.dot(r)
-        val den = 1.0 - b * b
-        var x = if (den > 1e-12) ((b * f - c) / den).coerceIn(0.0, p.len) else 0.0
+        val den = (1.0 - b * b).coerceAtLeast(0.0)
+        if (sqrt(den) * max(p.len, q.len) <= GeomMath.TESS_TOL_MM) return alongOneLine(p, q, b, c)
+        var x = ((b * f - c) / den).coerceIn(0.0, p.len)
         var y = (b * x + f).coerceIn(0.0, q.len)
         x = (b * y - c).coerceIn(0.0, p.len)
         y = (b * x + f).coerceIn(0.0, q.len)
-        return x to y
+        return Closest(x, y, false)
+    }
+
+    /**
+     * The closest points of two pieces that run **along one line** — the overlap of their spans, taken across
+     * the middle of it, or the pair of ends that face each other when the spans miss.
+     *
+     * *"Along one line"* is decided by [closestParams] against the spine's own resolution rather than against
+     * a bare epsilon, and that is the honest reading of it (OP-15): the spine is a polyline within
+     * [GeomMath.TESS_TOL_MM] of the curve it samples, so two pieces whose directions differ by less than that
+     * tolerance **over their own length** are not pieces the polyline can tell apart in direction at all.
+     * Taking the overlap's middle for such a pair overstates their distance by at most that same tolerance —
+     * the distance grows by `(Δs·sinθ)²/2d` off the true foot, and `Δs·sinθ ≤ TESS_TOL_MM` is exactly the
+     * test — which is inside the slack the refusal already carries, and it errs the permissive way.
+     */
+    private fun alongOneLine(
+        p: Piece,
+        q: Piece,
+        b: Double,
+        c: Double,
+    ): Closest {
+        val sgn = if (b >= 0.0) 1.0 else -1.0
+        // q's own span, projected onto p's axis: a point t along q stands at s = −c + sgn·t along p
+        val e0 = -c
+        val e1 = -c + sgn * q.len
+        val from = max(0.0, min(e0, e1))
+        val to = min(p.len, max(e0, e1))
+        if (to > from) {
+            val x = 0.5 * (from + to)
+            return Closest(x, ((x + c) * sgn).coerceIn(0.0, q.len), true)
+        }
+        val x = if (max(e0, e1) <= 0.0) 0.0 else p.len
+        return Closest(x, ((x + c) * sgn).coerceIn(0.0, q.len), false)
     }
 
     /**

@@ -1,5 +1,11 @@
 package constructit
 
+import constructit.core.EvalResult
+import constructit.core.Evaluator
+import constructit.dsl.Construction
+import constructit.dsl.Point3Ref
+import constructit.dsl.solid
+import constructit.geom.Circle
 import constructit.geom.Curve3Element
 import constructit.geom.Curves3
 import constructit.geom.Embedding
@@ -16,6 +22,8 @@ import constructit.geom.Solid3
 import constructit.geom.SweepProfile
 import constructit.geom.Vec2
 import constructit.geom.Vec3
+import constructit.units.deg
+import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -71,6 +79,18 @@ class SweepEmbeddingTest {
         val pts = listOf(Vec2(-w / 2, -h / 2), Vec2(w / 2, -h / 2), Vec2(w / 2, h / 2), Vec2(-w / 2, h / 2))
         return Region(Loop(pts.indices.map { ProfileElement.Seg(Segment(pts[it], pts[(it + 1) % pts.size])) }), emptyList())
     }
+
+    /** A circle of radius [r] drawn [cy] mm off the section's own origin — the off-centre section, plainly. */
+    private fun circleAt(
+        cy: Double,
+        r: Double,
+    ) = Region(Loop(listOf(ProfileElement.CircleE(Circle(Vec2(0.0, cy), r)))), emptyList())
+
+    /** A point of the plan as a graph node, so a drag of it is an ordinary recompute. */
+    private fun Construction.planPoint(
+        x: Double,
+        y: Double,
+    ): Point3Ref = heightPoint(planeXY(), freePoint("p", x.mm, y.mm), const(0.0.mm))
 
     private fun sweptOrFail(
         path: Path3,
@@ -464,6 +484,193 @@ class SweepEmbeddingTest {
             "which is more than an order of magnitude below quadratic: ${report.pairsExamined}",
         )
         assertManifold(sweptOrFail(path, SweepProfile.Round(reach)).mesh, "the 40-turn coil")
+    }
+
+    // ---- 8. two legs running side by side, and which way the section leans (session 59) ----
+
+    /**
+     * **The reported inside-out ring, and its twin that is a perfectly good ring** (the session-58 queue
+     * entry, verbatim). A 100 × 60 closed plan polyline with a plain circular section drawn 100 mm off the
+     * plan's origin used to build a shell of **−13458 mm³** — a ring turned inside out — with the node valid
+     * and nothing refused, while the same drawing offset the other way is **+31402 mm³** of honest ring. The
+     * sign of the offset was the whole difference and the criterion could not see it, for two reasons that
+     * are both fixed here:
+     *
+     * - the two opposite legs of the loop are **antiparallel**, so the segment-to-segment solve was singular
+     *   and its clamped answer landed on the loop's own **corner**, where the normal-cone test threw the pair
+     *   out — the one bottleneck that matters was never offered ([Embedding], the overlap interval);
+     * - and once offered, `2 × reach` would have refused **both** rings, because a reach is what the section
+     *   reaches in *any* direction. What a pair of legs needs is what the two sections reach **towards each
+     *   other**, which is 206 mm inwards and −194 mm outwards on this very drawing.
+     *
+     * The section's own y runs across the plan (the frame's `bi`), and this loop is drawn anticlockwise, so
+     * `−100` is the section standing *inside* the loop and `+100` outside it.
+     */
+    @Test
+    fun aSectionStandingFurtherInsideTheLoopThanItsInradiusIsRefusedAndTheSameSectionOutsideIsNot() {
+        val plan =
+            closedPolyline(
+                Vec3(0.0, 0.0, 0.0),
+                Vec3(100.0, 0.0, 0.0),
+                Vec3(100.0, 60.0, 0.0),
+                Vec3(0.0, 60.0, 0.0),
+            )
+
+        val why = refusal(plan, SweepProfile.Section(circleAt(-100.0, 3.0)))
+        assertTrue(why.contains("cut into itself"), "the ring that would fold through itself is refused: $why")
+        assertClose(namedDistance(why), 60.0, 1e-3, "and the approach it names is the loop's own width: $why")
+        assertTrue(why.contains("needs 206 mm between them"), "with what the two sections reach towards each other: $why")
+        val (a, b) = namedStations(why)
+        assertTrue(b - a > 60.0, "the two positions are a half-loop apart along the run: $a mm and $b mm")
+
+        val ring = sweptOrFail(plan, SweepProfile.Section(circleAt(100.0, 3.0)))
+        assertManifold(ring.mesh, "the same section standing outside the loop")
+        val v = Geom3.volume(ring.mesh)
+        assertTrue(v > 0.0, "and it is a solid the right way out, not a shell turned through itself: $v mm^3")
+        assertClose(v, 31402.154, 0.01, "the ring the queue entry measured")
+    }
+
+    /**
+     * **…and it heals by the parameter the refusal names** (OP-3). *"Thin the section, or open the run out"* —
+     * here the section's own centre is a point of the drawing, so bringing it nearer the run makes the very
+     * same node a solid, with no rebuild and nothing restated.
+     */
+    @Test
+    fun theInsideOutRingHealsWhenTheSectionComesNearerTheRun() {
+        val cx = Construction()
+        val corners =
+            listOf(0.0 to 0.0, 100.0 to 0.0, 100.0 to 60.0, 0.0 to 60.0).map { (x, y) -> cx.planPoint(x, y) }
+        val path = cx.pathThrough(corners, closed = true)
+        val centre = cx.freePoint("section", 0.0.mm, (-100.0).mm)
+        val section = cx.region(cx.loop(cx.circleCR(centre, cx.const(3.0.mm))))
+        val ring = cx.sweep(path, cx.planeXY(), section, cx.const(0.0.deg), cx.const(0.0.deg))
+
+        val bad = Evaluator().eval(ring.node)
+        assertTrue(bad is EvalResult.Invalid, "a section 100 mm inside a loop 60 mm wide is not a body: $bad")
+        assertTrue((bad as EvalResult.Invalid).reason.contains("cut into itself"), "and says why: ${bad.reason}")
+
+        cx.set(centre, 0.0.mm, (-20.0).mm)
+        assertTrue(Evaluator().eval(ring.node) is EvalResult.Ok, "the same node is a solid once the section comes in")
+        val mesh = Evaluator().solid(ring).mesh
+        assertManifold(mesh, "the ring whose section came nearer its run")
+        assertTrue(Geom3.volume(mesh) > 0.0, "the right way out: ${Geom3.volume(mesh)} mm^3")
+    }
+
+    /**
+     * **A U-shaped *open* run is judged by the gap between its legs**, which is what says this is a statement
+     * about parallel legs and not about closed loops. Two antiparallel legs, no seam anywhere, and the same
+     * lines of code: a section that fits between them sweeps a solid, one that does not is refused by name.
+     *
+     * The second half is the degenerate case at its purest — the legs stand far enough apart that each is
+     * sampled into a **single** span, so there is no interior vertex for a clamped solve to land on and the
+     * overlap interval is the only thing that can answer.
+     */
+    @Test
+    fun aUShapedOpenRunIsJudgedByTheGapBetweenItsLegs() {
+        val gap = 50.0
+        val u = polyline(Vec3(0.0, 0.0, 0.0), Vec3(200.0, 0.0, 0.0), Vec3(200.0, gap, 0.0), Vec3(0.0, gap, 0.0))
+        val fits = sweptOrFail(u, SweepProfile.Round(20.0))
+        assertManifold(fits.mesh, "the U whose section fits between its own legs")
+        assertTrue(Geom3.volume(fits.mesh) > 0.0, "and it is a solid: ${Geom3.volume(fits.mesh)} mm^3")
+
+        val why = refusal(u, SweepProfile.Round(30.0))
+        assertTrue(why.contains("cut into itself"), "the U whose section does not fit is refused: $why")
+        assertClose(namedDistance(why), gap, 1e-3, "and the approach it names is the gap between the legs: $why")
+
+        // …and again where each leg is one span, so only the overlap interval can find the bottleneck. Its
+        // two legs run 0…200 mm and 450…650 mm along the path, and the pair reported must stand in the
+        // **middle** of them: a clamped answer to the singular solve can only ever name an end.
+        val wide = polyline(Vec3(0.0, 0.0, 0.0), Vec3(200.0, 0.0, 0.0), Vec3(200.0, 250.0, 0.0), Vec3(0.0, 250.0, 0.0))
+        assertManifold(sweptOrFail(wide, SweepProfile.Round(100.0)).mesh, "the wide U with a section that fits")
+        val wideWhy = refusal(wide, SweepProfile.Round(140.0))
+        assertClose(namedDistance(wideWhy), 250.0, 1e-3, "one span per leg, and the gap is still found: $wideWhy")
+        val (out, home) = namedStations(wideWhy)
+        assertTrue(out > 20.0 && out < 180.0, "the approach is measured along the leg, not off its end: $out mm")
+        assertTrue(home > 470.0 && home < 630.0, "and along the other leg too: $home mm")
+    }
+
+    /**
+     * **Legs that overlap only in part are compared inside that part.** The two legs here run past each other
+     * with 100 mm of shared span out of 300 — the rest of each leg is alongside nothing at all — and the
+     * bottleneck must be reported from **inside** the overlap, which is the only place the two are actually
+     * side by side.
+     */
+    @Test
+    fun legsThatOverlapOnlyPartlyAreComparedInsideTheOverlap() {
+        // out along +x at z = 0, down and back the long way, up again well clear of the outbound leg, and
+        // home along +x at z = 40 — so the only two things anywhere near each other are the first and last
+        // legs, which share exactly x ∈ [0, 100] of their 400 mm and 300 mm spans
+        val route =
+            polyline(
+                Vec3(0.0, 0.0, 0.0),
+                Vec3(400.0, 0.0, 0.0),
+                Vec3(400.0, 0.0, -400.0),
+                Vec3(-200.0, 0.0, -400.0),
+                Vec3(-200.0, 0.0, 40.0),
+                Vec3(100.0, 0.0, 40.0),
+            )
+        val why = refusal(route, SweepProfile.Round(21.0))
+        assertClose(namedDistance(why), 40.0, 1e-3, "the gap between the two legs: $why")
+        val (a, b) = namedStations(why)
+        // the outbound leg runs 0…400 mm along the path and the homeward one 1840…2140 mm; the shared
+        // stretch is 0…100 mm along the path on the way out and 2040…2140 mm on the way home
+        // strictly inside, at both ends: the edges of the shared stretch are exactly what a clamped answer to
+        // the singular solve names, and the two legs are side by side across the whole of it
+        assertTrue(a > 0.0 && a < 100.0, "the approach is inside the shared span on the way out: $a mm")
+        assertTrue(b > 2040.0 && b < 2140.0, "and inside it on the way home: $b mm")
+
+        val fits = sweptOrFail(route, SweepProfile.Round(15.0))
+        assertManifold(fits.mesh, "the same route with a section that fits between the legs")
+        assertTrue(Geom3.volume(fits.mesh) > 0.0, "a solid: ${Geom3.volume(fits.mesh)} mm^3")
+    }
+
+    /**
+     * **Two legs a nanoradian off parallel are the same line**, because the spine is a polyline within
+     * [constructit.geom.GeomMath.TESS_TOL_MM] of the curve it samples and a direction difference smaller than
+     * that tolerance *over the pieces' own length* is not a difference the polyline has. Asserted as an
+     * identity rather than as a tolerance: the skewed U and the exactly parallel one report the same approach.
+     *
+     * This is the case a bare `den > 1e-12` guard gets wrong in the other direction — the solve is not
+     * singular, merely hopelessly ill-conditioned, and its answer runs away to the ends of the segments.
+     */
+    @Test
+    fun legsSkewedByANanoradianAreStillTheSameLine() {
+        val square = polyline(Vec3(0.0, 0.0, 0.0), Vec3(200.0, 0.0, 0.0), Vec3(200.0, 50.0, 0.0), Vec3(0.0, 50.0, 0.0))
+        val skewed =
+            polyline(
+                Vec3(0.0, 0.0, 0.0),
+                Vec3(200.0, 0.0, 0.0),
+                Vec3(200.0, 50.0, 0.0),
+                Vec3(0.0, 50.0 + 2e-6, 0.0),
+            )
+        val straight = namedDistance(refusal(square, SweepProfile.Round(30.0)))
+        val askew = namedDistance(refusal(skewed, SweepProfile.Round(30.0)))
+        assertClose(askew, straight, 1e-6, "a 1e-8 rad skew is invisible to the criterion, as it must be")
+        assertClose(askew, 50.0, 1e-3, "and both name the gap between the legs")
+    }
+
+    /**
+     * **Collinear pieces of one straight leg overlap in nothing and are never a bottleneck.** The overlap
+     * interval is what separates *side by side* from *one after the other*: two pieces cut from the same
+     * straight run project onto disjoint stretches of their common axis, so there is no family of double
+     * normals, the nearest points are the pair of ends that face each other, and the normal-cone test rejects
+     * them for running **along** the spine — exactly as it always did. Asserted through the report's own
+     * sentinel, so it is the criterion being read and not the sweep's verdict.
+     */
+    @Test
+    fun collinearPiecesOfOneLegAreNotSideBySide() {
+        val reach = 12.0
+        val long = report(polyline(Vec3.ZERO, Vec3(900.0, 0.0, 0.0)), reach)
+        assertNull(long.defect, "a straight run cut into dozens of collinear pieces is still never near itself")
+        assertEquals(Double.MAX_VALUE, long.closest, "and has no bottleneck at all: ${long.closest}")
+
+        val zigzag =
+            report(
+                polyline(Vec3.ZERO, Vec3(300.0, 0.0, 0.0), Vec3(300.0, 300.0, 0.0), Vec3(600.0, 300.0, 0.0)),
+                reach,
+            )
+        assertNull(zigzag.defect, "nor is a run of straight legs that never comes back alongside itself")
+        assertEquals(Double.MAX_VALUE, zigzag.closest, "with no bottleneck anywhere: ${zigzag.closest}")
     }
 
     /** The reach's two halves are one statement, so the local failure keeps its own words where both fire. */

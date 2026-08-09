@@ -14,6 +14,7 @@ import constructit.editor.Element
 import constructit.editor.ElementKind
 import constructit.editor.SlotKind
 import constructit.editor.Tools
+import constructit.geom.Geom3
 import constructit.geom.Mesh3
 import constructit.geom.Vec2
 import constructit.units.mm
@@ -223,14 +224,22 @@ class SweepAnchorTest {
      *
      * The coil is parented to a vertical datum and winds about an axis lying **in** the plan, so it goes
      * through the plan — the plane the thread form is drawn in — twice per turn. With nothing picked the
-     * section therefore rides the nearer of those two crossings, and the status line says which one. That
-     * crossing stands 0.287 mm past the top of the section, so the form reaches 0.688 mm from the run there and
-     * a 1 mm pitch has no room for two of them: the node refuses, **globally** (the run passes within its own
-     * clearance) rather than locally, and names both figures.
+     * section therefore rides the nearer of those two crossings, and the status line says which one.
      *
-     * Which is the whole argument for keeping the pick: a default that reads *where the run goes through the
+     * **Reversed in session 59, and the old rationale is worth keeping.** Session 58 recorded this gesture as
+     * a correct *global* refusal: *"that crossing stands 0.287 mm past the top of the section, so the form
+     * reaches 0.688 mm from the run there and a 1 mm pitch has no room for two of them"*. The arithmetic was
+     * right and the model behind it was not — `2 × reach` asks whether two **balls** of that radius overlap,
+     * and a worm's thread form is not a ball. It reaches 0.688 mm *along its own coil*, radially into the
+     * shaft, and hardly at all across to the turn above; the turns clear each other, which is what a thread
+     * is. Since the criterion now measures what the two sections reach **towards each other**
+     * ([Embedding], the support in the approach's direction), GitHub #15's own drawing is a body with no pick
+     * at all. The second half of this test keeps the old sentence where it is still true: a *disc* of the very
+     * same reach on the very same coil is refused, in the very same words.
+     *
+     * The pick keeps its whole argument regardless: a default that reads *where the run goes through the
      * drawing* is right whenever the drawing is at the crossing, and a stated anchor is what says so when it is
-     * not ([theUsersWormRidesItsCoilOnceTheAnchorIsStated] — the same drawing, valid, by one click).
+     * not ([theUsersWormRidesItsCoilOnceTheAnchorIsStated] — the same drawing, by one click).
      */
     @Test
     fun theSameWormWithNoPickNowRidesWhereTheCoilGoesThroughTheDrawing() {
@@ -240,9 +249,23 @@ class SweepAnchorTest {
         assertTrue(note.contains("riding where"), "the choice speaks: $note")
         assertTrue(note.contains("crossing 1 of 2, the one nearest the section"), "and says which crossing: $note")
         assertTrue(note.contains("pick a point of the section"), "and names the alternative: $note")
-        val why = assertNotNull(whyInvalid(solid), "the thread form is wider than half this coil's pitch")
+        assertNull(whyInvalid(solid), "a thread form lying along its own coil is a body: ${doc.note}")
+        val mesh = meshOf(solid)
+        assertManifold(mesh, "the worm thread swept from where its coil goes through the drawing")
+        assertTrue(Geom3.volume(mesh) > 0.0, "and it is a solid the right way out: ${Geom3.volume(mesh)} mm^3")
+
+        // **And the difference is the direction, not the size.** A *disc* reaching the same 0.688 mm from this
+        // coil does not fit between turns 1 mm apart and is refused in the global term's own words — which is
+        // exactly the sentence this drawing used to get, and the reason it no longer does: a thread form
+        // reaches along its own coil, not across to the turn above.
+        val disc =
+            assertNotNull(
+                doc.tubeAlongCurve(named(doc, "thread"), doc.newParameter("wire", 0.688.mm).ref),
+                "the tube gesture builds — this is a value's business",
+            )
+        val why = assertNotNull(whyInvalid(disc), "0.688 mm in *every* direction does not fit a 1 mm pitch")
         assertTrue(why.contains("the run passes within 1 mm of itself"), "refused globally, by the run's own clearance: $why")
-        assertTrue(why.contains("0.688 mm"), "with the reach it measured from the crossing: $why")
+        assertTrue(why.contains("needs 1.376 mm between them"), "and by what a disc of that reach needs: $why")
     }
 
     // ---- 2. the analytic case: a stated corner, and the shell it must lie in ----

@@ -7556,6 +7556,138 @@ kept exactly — the refusal fires at the radius of curvature the closed form st
 says so in its own words, because the interaction is worth knowing: a tube as fat as a coil's own bend needs
 `pitch > 2·(r² + b²)/r` before its turns stop passing through each other.
 
+### Implementation status (as built — the embedding criterion corrected: the overlap interval, and what a section reaches *towards*)
+
+**The defect, from the queue.** A 100 × 60 closed plan polyline with a plain circular section (radius 3) drawn
+100 mm off the plan's origin swept a shell of **−13458.066 mm³** — a ring turned inside out — with the node
+**valid** and nothing refused; the same drawing offset the other way is **+31402.154 mm³** of honest ring, and
+the sign of the offset was the whole difference. *Watertight or refused* (OP-9) says the first must refuse.
+Two independent things were wrong and both are fixed here; the first was the one queued, the second was found
+the moment the first was fixed, because with it fixed the criterion refused **both** rings.
+
+**One: the parallel case wants the overlap interval, not a clamped endpoint.** The closest points of two
+segments solve `s − b·t = −c`, `t − b·s = −f` with `b = d₁·d₂`, whose determinant is `1 − b²`. For **parallel
+or antiparallel** pieces that determinant vanishes — and the reason matters: the two equations become *the
+same equation*, so the solution is not ill-defined but **plural**. The double normals of two parallel legs are
+the whole segment `s − b·t = −c` inside the rectangle `[0, len₁] × [0, len₂]`, which is exactly the stretch
+over which the two legs overlap when each is projected on the other's axis; every pair on it is square to both
+legs and all of them stand the same distance apart. Solving the singular system by clamping instead
+(`den ≤ 1e-12 → x = 0`, then two rounds of `coerceIn`) answers with a **corner** of the run, where the
+adjoining leg's direction points across the connector and the normal-cone test — correctly, for a corner —
+throws the pair out. On a plan loop whose legs are each sampled into a **single** span there is nothing else to
+offer, so the one bottleneck that matters was never examined. The fix is to take the **middle of the overlap**,
+which is interior on both pieces whenever the family has an interior at all, and to ask such a pair no
+normal-cone question: the stationarity holds *identically* along the overlap rather than at a point. Where the
+projected spans do not overlap the family is empty, the nearest points really are a pair of ends — two pieces
+cut from one straight leg, which never overlap, are the everyday instance — and the cone test rejects them for
+running *along* the spine exactly as before. It is a statement about parallel legs and not about closed loops:
+a U-shaped **open** run goes through the same lines of code.
+
+*"Parallel" is decided against the spine's own resolution* (OP-15), not against a bare epsilon: two pieces
+count as one line when `sin θ · max(len) ≤ TESS_TOL_MM`, i.e. when their directions differ by less than the
+tolerance the spine is built to **over the pieces' own length**. That closes the other half of the same hole —
+at `b = −1 + 1e-8` the system is not singular but hopelessly ill-conditioned, and its answer runs away to the
+ends of the segments — and it is paid for honestly: evaluating at the overlap's middle instead of the true foot
+overstates the distance by at most `(Δs·sin θ)²/2d ≤ TESS_TOL_MM²/2d`, which is inside the slack the refusal
+already carries and errs the permissive way.
+
+One consequence worth writing down because it is easy to get backwards: a span is framed by the station at its
+**far** end. A `Frame3` is turned for the chord that *arrives* at it, so the station at a span's start carries
+the previous leg's axes — a whole corner away from the leg being measured. On a smooth run the difference is
+one sampling step; on a mitred polyline it is the entire answer.
+
+**Two: what a pair of legs needs is what the two sections reach *towards each other*.** With the bottleneck
+finally offered, `2 × reach` refused the outward ring too — and it was right to, on its own terms, because a
+*reach* is what the section reaches in **any** direction and the criterion was asking whether two **balls** of
+that radius overlap. That model was harmless while sections sat near the run and stopped being harmless the
+moment session 58's in-place sweep made **off-centre** sections routine. So the clearance a pair needs is now
+the **support function** of the section in the direction of the approach: a profile point `w` stands at
+`ref·w.x + bi·w.y` from the run, so its extent along the approach direction `u` is `w · (u·ref, u·bi)`, an
+ordinary 2D support maximized over the outline, and the pair is clear when `h₁(u) + h₂(−u) < d`. Two convex
+sets whose shadows on `u` do not overlap cannot meet, so this is a **separating-axis proof** that the pair is
+clear rather than a heuristic — the criterion became *exact* for a convex section where it had been merely
+safe. A **non-convex** section is measured by its convex hull, which errs the way the ball did, towards
+refusing a body that would have fitted and never towards accepting a fold. On the queue's own drawing the two
+numbers are 206 mm inwards and **−194 mm** outwards, which is the sign of the offset the old model could not
+see. `2 × reach` is what the same expression gives when maximized over directions, so it is the fallback and
+not a special case: a **round** tube is analytically a disc about the run and is stated as its radius rather
+than as its chords, and the swept cut's *derived* reach (OP-22) has no outline at all — both pass no section
+and get `2 × reach` back to the last bit, which is why every message the isotropic form ever produced is
+byte-identical.
+
+**The signed-volume guard was considered and rejected, and the reasoning is the point.** The queue entry
+nominated it as belt-and-braces — refuse a shell whose signed volume comes out negative — since that is what
+`assertManifold` already tests in every test. Three findings against it, in the order they decided it:
+
+1. **It contradicts a recorded decision with measured value.** The deferral note's refusal audit says that for
+   every constructed feature *every refusal is decidable from the feature, and all of them stayed eager*, which
+   is why `Solid3.mesh` is a plain non-null `Mesh3` with no failure channel anywhere. A volume is a property of
+   the emitted shell, so guarding on it either forces the mesh on every recompute — undoing the 5–10× a plan
+   drag gains by skipping it — or invents the mesh-time failure channel that note exists to avoid.
+2. **It does not catch the class it is nominated for.** The fold recorded in session 42 — *a span shorter than
+   the two mitres that eat into it* — comes out with a **positive** volume on its own fixture
+   (`(0,0,0) → (300,0,0) → (302.62,30,0) → (0,56.24,0)` with an 18 mm tube: +644255 mm³), and so does a
+   `Round(200)` tube on a 300 mm triangle (+1.13e8 mm³): a *symmetric* section's mitre adds outside exactly
+   what it removes inside, so the sign survives the fold. The guard fires only on the **asymmetric**
+   instances. A guard that catches half of one defect class teaches distrust of the other half.
+3. **What it would have caught is decidable from the feature anyway.** Both folds that still slip through are
+   the mitre mechanism with an off-centre section: at a corner turning by Θ the mitre pushes a profile point
+   standing `u` to the inside by `u·tan(Θ/2)` along the tangent, and the band folds when that exceeds the span.
+   An open elbow with 80 mm legs and a section 100 mm inside the corner folds to −1121.5 mm³
+   (`100·tan 45° = 100 > 80`); a closed triangle of 300 mm sides with a section 120 mm inside folds to
+   −9721.9 mm³ (two corners each eating `120·tan 60° = 207.8` out of one 300 mm leg). Neither is a proximity
+   failure — a triangle's three legs all *touch*, so it has no non-neighbouring pair to be a bottleneck at all
+   — and both are the already-queued corner defect, whose exact condition is a per-station arithmetic on the
+   feature. Fixing it there names the corner; a volume guard would only report a sign.
+
+So: **no guard**, the two new fixtures are added to that queue entry, and this note states plainly that the
+criterion cannot see a corner fold. That is the honest boundary, and it is now a *narrower* boundary than
+before: an off-centre section makes the corner defect much easier to reach, which is new information the queue
+entry did not have.
+
+**What it still does not claim**, restated with the directional term in it. The body is measured as the
+sections at the two stations of each bottleneck, so the mitre's own stretch is outside the claim: at a kink the
+section is pushed along the tangent by `u·tan(Θ/2)`, which reaches further than the frame's own plane does, and
+the error stays in the permissive direction exactly as the isotropic note recorded. The frame is read at one
+station per span. And the corner fold above is not a proximity at all.
+
+**Two green tests changed, and neither is the criterion being loosened by fiat.**
+
+- `SweepAnchorTest.theSameWormWithNoPickNowRidesWhereTheCoilGoesThroughTheDrawing` — GitHub #15's own worm,
+  which session 58 recorded as a correct **global** refusal: *"the form reaches 0.688 mm from the run there and
+  a 1 mm pitch has no room for two of them"*. The arithmetic was right; the model behind it was not. A worm's
+  thread form reaches 0.688 mm **along its own coil**, radially into the shaft, and hardly at all across to the
+  turn above — which is what a thread *is*, and the turns clear each other. The drawing is now a body with no
+  pick at all: valid, manifold, **+4.184 mm³**. The old sentence is kept where it is still true, in the same
+  test: a **disc** of the very same 0.688 mm reach on the very same coil is refused in the very same words
+  (*"the run passes within 1 mm of itself … needs 1.376 mm between them"*), so the test now pins that the
+  difference is the **direction and not the size**. This is a reversal of a recorded decision, made deliberately
+  and on the drawing that motivated the feature.
+- `InPlaceSweepTest.theNearestCrossingIsTakenOnceAndNotReTakenWhenTheDrawingDrifts` — the drag pushes the
+  section 120 mm along its plane, and the *other* crossing's reading then stands it **204 mm** inside a
+  400 × 300 loop whose inradius is 150, so the ring that reading would sweep folds through itself and is now
+  refused by name. The test's claim is unchanged and is asserted twice over: the comparison of the two readings
+  as **bodies** was moved to before the drag, where both are ordinary solids and differ by 307 mm of span, and
+  after the drag the other reading is asserted to be the named refusal it now is. Nothing was loosened — the
+  fixture had been quietly exercising the very defect this note fixes.
+
+**Cost is unchanged.** The grid still uses the conservative `2 × reach` as its cell and query radius, which is
+an upper bound on the directional clearance, so the pairs offered are exactly the pairs offered before and the
+40-turn coil's asserted pair count is untouched. The support is evaluated per offered pair over the outline's
+vertices — for a round tube, not at all.
+
+Tests: `SweepEmbeddingTest` gains six (18 → 24) — the queue's reproduction verbatim from both sides, with the
+refusal naming the loop's own 60 mm width and the 206 mm the two sections reach towards each other, and the
+outward ring asserted manifold and **+31402.154 mm³**; the heal, by dragging the section's own centre node from
+100 mm to 20 mm off the run; a U-shaped **open** run judged by the gap between its legs, with a second half
+whose legs are each **one span** and whose reported pair must stand in the *middle* of them; legs that overlap
+only in part, where the bottleneck must be found strictly **inside** the shared stretch; two legs skewed by
+1e-8 rad reporting the identical approach as the exactly parallel twin; and collinear pieces of one leg
+asserted still to be no bottleneck at all, which is the sentinel that must never change. Five of the six fail
+against the pre-fix engine, and the sixth is the sentinel. **1826 → 1832 green** (`./gradlew jvmTest`, counting
+`PASSED`, with the browser flows skipped either side; they are green under `-De2e=1`), no new golden, no version
+bump, no existing golden changed.
+
 ### Implementation status (as built — step 4: the station, a plane stated by a distance along a run)
 
 Step 4 of the order above, whole and nothing else: **`station(path, distance)` is a sketch space**, and the
@@ -11170,6 +11302,39 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   pre-existing defect found and queued (a closed polyline run with a section further inside than the loop's
   inradius sweeps to an inside-out shell, `Embedding`'s antiparallel-legs blind spot). See *the in-place
   sweep* under OP-26.
+- **Turn 59** — Closed session 58's queued defect, and it turned out to be two. First, the one diagnosed: the
+  segment-to-segment solve is **singular** for parallel or antiparallel legs, and the reason is that the two
+  stationarity equations become the same equation — so the double normals are not a point but the **overlap
+  interval** of the two spans, and clamping the singular system answered with the loop's own corner, where the
+  normal-cone test rightly threw the pair away. Taking the middle of the overlap (and asking such a pair no
+  cone question, since the stationarity holds identically along it) restores the one bottleneck a plan loop
+  has; "parallel" is decided against the spine's own tessellation tolerance over the pieces' length, which also
+  disposes of the merely ill-conditioned case at 1e-8 rad. Second, found *because* the first was fixed: with
+  the bottleneck offered, `2 × reach` refused the **good** ring too, since a reach is what a section reaches in
+  any direction and the criterion was really asking whether two balls overlap. The clearance a pair needs is
+  now the section's **support function** in the approach's direction — a separating-axis proof, exact for a
+  convex section, conservative by the hull for a non-convex one, and identical to `2 × reach` for a disc, which
+  is why every message the old form produced is byte-identical. The queue's own drawing reads 206 mm inwards
+  and −194 mm outwards; the sign of the offset is now something the criterion can see, which is what session
+  58's in-place sweep made routine and urgent. The **signed-volume guard** was rejected with reasons rather
+  than skipped: it contradicts the deferral note's refusal audit (a volume forces the mesh; `Solid3.mesh` has
+  no failure channel), and — deciding — it does not catch its own class, because a symmetric section's mitre
+  fold has a *positive* volume. Two folds that still slip through were reproduced, classified as the
+  already-queued corner defect and added to it as fixtures, with the new observation that an off-centre section
+  reaches it far more easily than a fat tube. Two green tests changed, both because the fixture was exercising
+  the defect: GitHub #15's worm now **builds** with no pick (a thread form reaches along its coil, not across
+  to the turn above — the test keeps the old refusal on a *disc* of the same reach, so it pins direction versus
+  size), and the in-place drag's other-crossing comparison moved to before the drag, with the named refusal
+  asserted after it. **1826 → 1832 green**, nothing cut. See *the embedding criterion corrected* under OP-26.
+  **The user then reported the over-refusal half independently, mid-session**: editing the session-58
+  foundation *taller* (`e22` from 10.055 mm to 22.138 mm) made the body vanish — the ball model charging the
+  profile's height against a clearance only its width approaches — and the fix already in flight cures the
+  script verbatim (`EmbeddingDirectionProbeTest`, the report as fixture). The probe review composed the
+  directional clearance with the **roll**: a section reaching 55 mm inward on a loop whose legs pass 100 mm
+  apart refuses by name, heals when a half-turn of the roll swaps its reaches, and refuses again in the same
+  words when the roll comes back — the criterion reads the section *as swept*, not as drawn. The report's
+  second half is its own defect and is queued: the body vanished **silently** — a node that goes invalid under
+  a live edit stores its reason but no route speaks it, which *refusals speak* forbids.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -13022,6 +13187,21 @@ the span — reduces on a sampled smooth curve to `reach ≥ R·cos(θ/2)`, whic
 first: **do the sweep's refusals speak about the curve or about the mesh?** The answer wants stating once, for
 the local criterion and this one together, rather than being settled by whichever check is written second.
 
+> **Session 59 adds two fixtures and one observation, and raises this entry's priority.** The observation:
+> the trim is `u·tan(θ/2)` where `u` is how far the profile stands **to the inside of the turn**, so an
+> *off-centre* section reaches this defect far more easily than a fat tube does — and where a symmetric
+> section's fold keeps a **positive** volume (the mitres add outside what they remove inside), an asymmetric
+> one comes out plainly **inside out**. Two reproductions, both silent today, neither a proximity failure and
+> so neither visible to `Embedding` at all:
+> an **open elbow** `(0,0,0) → (80,0,0) → (80,80,0)` with a circle of radius 3 standing 100 mm inside the
+> corner — `100·tan 45° = 100 > 80`, the leg's whole length — builds **−1121.5 mm³**; and a **closed triangle**
+> `(0,0,0) → (300,0,0) → (150,260,0)` with the same circle 120 mm inside builds **−9721.9 mm³**, its two
+> corners each eating `120·tan 60° = 207.8 mm` out of one 300 mm leg. A triangle also shows why the global term
+> can never reach this: all three of its legs *touch*, so it has no non-neighbouring pair to be a bottleneck
+> at. This is where the signed-volume guard that session 59 rejected would have fired — see the reasoning under
+> *the embedding criterion corrected* (OP-26) for why the answer belongs here, named as a corner, and not there
+> as a sign.
+
 **Retired in session 42 — an unbounded tool as a boolean operand (OP-22's extension), both steps.** Queued in
 session 37, step 1 built in session 41 and **step 2 in session 42**: the directrix is a general `Path3`, the
 rotating/translational carry is a stated structural mode, the directrix is unbounded in the same sense the
@@ -13227,8 +13407,19 @@ splits in three, and only the first is small.
    value, ordered 3D intersection sets, branch by sign, and the same rule that governs every scored choice
    (scored once at creation, stored, never re-scored on replay).
 
-**Queued in session 58 (found, not reported): a closed run can sweep to an inside-out shell without
-refusing.** *Watertight or refused* (OP-9) says a sweep that folds through itself must refuse; `Embedding`'s
+~~**Queued in session 58 (found, not reported): a closed run can sweep to an inside-out shell without
+refusing.**~~ — **closed in session 59**, and it took two fixes rather than one: the parallel case of the
+double-normal solve wants the **overlap interval** (as sketched below), *and* — found the moment that was
+fixed, because the corrected criterion then refused the good ring too — the clearance a pair of legs needs is
+what the two sections reach **towards each other** (a support function in the approach's direction) rather than
+`2 × reach` in every direction. The signed-volume guard suggested below was **considered and rejected**, for
+three reasons recorded in the as-built note, of which the deciding one is that it does not catch the class it
+was nominated for: a *symmetric* section's mitre fold comes out with a **positive** volume. What it would have
+caught is instead handed to the corner-fold entry above, with two new fixtures — an open elbow with 80 mm legs
+and a section 100 mm inside the corner (−1121.5 mm³) and a closed 300 mm triangle with a section 120 mm inside
+(−9721.9 mm³) — which show that an **off-centre** section makes that defect far easier to reach than a fat tube
+does. See *the embedding criterion corrected* under OP-26. The original entry, kept: *Watertight or refused*
+(OP-9) says a sweep that folds through itself must refuse; `Embedding`'s
 **global** term misses the one case that matters on a closed **polyline** loop. Two antiparallel legs make the
 segment-to-segment closest-point solve degenerate (`den = 1 − b²` is zero), the clamped answer lands on the
 loop's own **corner**, and the normal-cone test then rejects the pair as "not a bottleneck" — so a section
@@ -13244,8 +13435,22 @@ queued whole rather than smuggled into the package that found it. A cheaper inte
 shell's signed volume and refusing a negative one by name — is worth considering as the *guard* even after the
 criterion is fixed, since it is the property `assertManifold` already tests for in every test.
 
-**Beyond those six, the rest of the numbered queue is empty.** What remains is the parked list below, each
-item recorded at its source.
+**Queued in session 59 (user-reported): a node that goes invalid under a live edit vanishes silently.**
+Reported in the user's own words against the very refusal session 59 corrected: *"if I then modify the swept
+outline in some way, the 3D solid vanishes and re-occurs, if I change parameters further. However, I do not
+understand, why a solid cannot be drawn in this situation."* The reason existed the whole time —
+`EvalResult.Invalid` carries it, and it names the stations, the clearance and the way out — but no route
+**speaks** it on the live-edit path: the describe routes read it (a pick's description says *"invalid right
+now: …"*), while a drag or a panel edit that makes a body invalid just stops drawing it. *Refusals speak*
+(OP-9's sibling rule) forbids exactly this. The shape of the fix is a **surfacing**, not a new refusal: when a
+recompute turns an element from valid to invalid (or back), the status line says which element and why, in the
+node's own words; and an invalid element should remain *visible as a fact* somewhere permanent — the panel
+naming it with its reason — so the user who edits three things before looking up still finds the answer. What
+it must not become: a modal interruption, a gesture refusal (the edit is legal; the value is what's wrong —
+OP-3), or a log the user has to know to open.
+
+**Beyond those six and the one above, the rest of the numbered queue is empty.** What remains is the parked
+list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
 (it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and

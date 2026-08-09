@@ -1148,7 +1148,13 @@ object Geom3 {
         // spring whose wire is thicker than half its pitch. Checked before a triangle is emitted, and named
         // by *where*, because "this sweep self-intersects" is not something anyone can act on and "at 340 mm
         // along" is.
-        Embedding.check(frame, reach, profileReach(profile, reach)).defect?.let { return null to it }
+        // The section is handed over **as an outline** and not only as its reach, so that the criterion can
+        // ask what it reaches *towards* the other leg rather than what it reaches at all — which is what an
+        // off-centre section (the in-place sweep's everyday case) makes the difference between a ring and a
+        // ring turned inside out. A round tube is analytically a disc about the run, so it is stated as its
+        // radius (null) instead of as its chords: same answer, and to the last bit.
+        val sectionOutline = if (profile is SweepProfile.Round) null else tess.outer
+        Embedding.check(frame, reach, profileReach(profile, reach), section = sectionOutline).defect?.let { return null to it }
         // **A closed path whose frame does not close on itself** is reported rather than smeared over the
         // last band, and the report names the cure: the twist that makes the total come back to zero is an
         // ordinary parameter of this very feature, so the refusal heals by stating it (OP-3). A *planar*
