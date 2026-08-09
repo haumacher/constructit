@@ -25,6 +25,7 @@ class BrowserCanvasDrawTarget(private val ctx: CanvasRenderingContext2D) : DrawT
         for (i in 1 until points.size) ctx.lineTo(points[i].x, points[i].y)
         ctx.strokeStyle = style.stroke
         ctx.lineWidth = style.width
+        dashed(style)
         ctx.stroke()
     }
 
@@ -43,6 +44,7 @@ class BrowserCanvasDrawTarget(private val ctx: CanvasRenderingContext2D) : DrawT
         }
         ctx.strokeStyle = style.stroke
         ctx.lineWidth = style.width
+        dashed(style)
         ctx.stroke()
     }
 
@@ -59,7 +61,18 @@ class BrowserCanvasDrawTarget(private val ctx: CanvasRenderingContext2D) : DrawT
         }
         ctx.strokeStyle = style.stroke
         ctx.lineWidth = style.width
+        dashed(style)
         ctx.stroke()
+    }
+
+    /**
+     * The dash pattern of [style], applied to the stroke that follows — and **cleared** when there is none,
+     * because the context is shared by every primitive of the frame and a pattern left standing would dash
+     * the rest of the drawing.
+     */
+    private fun dashed(style: Style) {
+        val d = style.dash
+        ctx.asDynamic().setLineDash(if (d == null) arrayOf<Double>() else arrayOf(d, d))
     }
 
     override fun dot(

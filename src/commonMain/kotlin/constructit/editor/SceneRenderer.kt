@@ -153,6 +153,7 @@ object SceneRenderer {
         inputs: Set<Element> = emptySet(),
         dependents: Set<Element> = emptySet(),
         spotlight: Set<Element> = emptySet(),
+        ghosted: Set<Element> = emptySet(),
         scaleBar: Boolean = false,
         entry: Pair<Vec2, String>? = null,
     ) {
@@ -160,7 +161,7 @@ object SceneRenderer {
         draw(
             doc, ev, proj, target, wPx, hPx, grid, highlight, preview, selected, snap, joins, closing,
             terminal, dimmed, marquee, frames, picked, emphasis, previews, inputs, dependents, spotlight,
-            scaleBar, entry,
+            ghosted, scaleBar, entry,
         )
         target.end()
     }
@@ -189,6 +190,15 @@ object SceneRenderer {
         inputs: Set<Element> = emptySet(),
         dependents: Set<Element> = emptySet(),
         spotlight: Set<Element> = emptySet(),
+        /**
+         * The elements the user has **hidden** that are nevertheless drawn, as ghosts (OP-18's *Show hidden*,
+         * `Editor.showHidden`) — so a hidden element can be found again and shown.
+         *
+         * A set rather than a flag, for [dimmed]'s reason and one more: which elements are hidden *by
+         * construction* (a welded alias) is the document's question, not the renderer's, and those must never
+         * ghost — showing one would draw a second point on top of its master.
+         */
+        ghosted: Set<Element> = emptySet(),
         scaleBar: Boolean = false,
         /**
          * The digits the user is typing for the armed tool, and the plane point to draw them at — the pending
@@ -219,10 +229,22 @@ object SceneRenderer {
         val plane3 = doc.activePlane3(ev)
         drawChain(doc.spaceContext(doc.activeSpace, ev), proj, target, faceStyle)
         for (el in doc.elements) {
-            if (!el.visible) continue
+            // A hidden element is drawn only while it is a **ghost** (OP-18's *Show hidden*), and then in
+            // [Styles.GHOST] rather than its own: the toggle exists to make a hidden element findable, so it
+            // must read as hidden and not as part of the drawing. The ghost wins over the dim, because being
+            // hidden is the stronger statement about an element — a hidden scaffolding line is still hidden.
+            val ghost = el in ghosted
+            if (!el.visible && !ghost) continue
             // one canvas shows one space (OP-17): everything else belongs to a different coordinate system
             if (el.space != doc.activeSpace.name) continue
-            val style = if (el in dimmed) Styles.DIMMED else el.style
+            val style =
+                if (ghost) {
+                    Styles.GHOST
+                } else if (el in dimmed) {
+                    Styles.DIMMED
+                } else {
+                    el.style
+                }
             // A **height point** stands off this plane (OP-25), so it is drawn where the view can honestly
             // put it and nowhere else — handled before the value dispatch because its value is the one that
             // is not in plane coordinates at all.
@@ -232,7 +254,9 @@ object SceneRenderer {
                 continue
             }
             when (val v = ev.valueOf(el.ref)) {
-                is PointValue -> dot(proj, target, v.p, style.stroke)
+                // A ghost point is a **ring**, not a dot: a dash cannot be seen on a four-pixel disc, so the
+                // one kind that a dashed stroke could not tell apart says it by being hollow instead.
+                is PointValue -> if (ghost) ring(proj, target, v.p, style) else dot(proj, target, v.p, style.stroke)
                 is SegmentValue -> poly(proj, target, listOf(v.seg.a, v.seg.b), style)
                 is LineValue -> clipLine(v.line, view)?.let { poly(proj, target, listOf(it.a, it.b), style) }
                 is RayValue -> clipRay(v.ray, view)?.let { poly(proj, target, listOf(it.a, it.b), style) }
@@ -275,7 +299,10 @@ object SceneRenderer {
                 // view can honestly put it — see [drawSpacePoint], and [HitTest.distanceTo] for why this one
                 // *is* drawn in the plan while a height point is not.
                 is Point3Value -> drawSpacePoint(v.p, plane3, proj, target, style)
-                is PointSetValue -> v.set.points.forEach { dot(proj, target, it, style.stroke) }
+                is PointSetValue ->
+                    v.set.points.forEach {
+                        if (ghost) ring(proj, target, it, style) else dot(proj, target, it, style.stroke)
+                    }
                 // a dimension's value is a scalar (OP-4), so what is drawn is the graphic it prescribes
                 is ScalarValue -> el.annotation?.let { drawDimension(it, ev, proj, target, style) }
                 else -> {}
@@ -283,22 +310,22 @@ object SceneRenderer {
         }
         // a selected dimension's own graphic on top, so the annotation being edited reads as picked
         for (el in selected) {
-            if (!el.visible || el.space != doc.activeSpace.name) continue
+            if ((!el.visible && el !in ghosted) || el.space != doc.activeSpace.name) continue
             el.annotation?.let { drawDimension(it, ev, proj, target, selectionStyle, withText = false) }
         }
         // geometry an armed tool has picked, restated in the pick colour — so a boundary being traced shows
         // how much of it is already in, and a click that hit nothing is visibly a click that added nothing
-        for (el in picked) emphasize(doc, el, ev, proj, target, view, pickStyle, pickRing, tip)
+        for (el in picked) emphasize(doc, el, ev, proj, target, view, pickStyle, pickRing, tip, ghosted)
         // The selection's **inputs** and **dependents** (see [Dependencies]), under the selection itself so
         // the thing that was clicked still reads as the subject. Same emphasis vocabulary as everything else
         // — the piece restated on top of itself — because they are the same kind of statement about an
         // element, made about a different relation.
-        for (el in inputs) emphasize(doc, el, ev, proj, target, view, inputStyle, inputRing, tip)
-        for (el in dependents) emphasize(doc, el, ev, proj, target, view, dependentStyle, dependentRing, tip)
+        for (el in inputs) emphasize(doc, el, ev, proj, target, view, inputStyle, inputRing, tip, ghosted)
+        for (el in dependents) emphasize(doc, el, ev, proj, target, view, dependentStyle, dependentRing, tip, ghosted)
         // the selection, redrawn on top: what delete removes and — when it is a single element — what
         // the inspector's numeric fields refer to. Every kind is highlighted, since a marquee (OP-16)
         // takes whatever it covers and a selection that shows only its points would be unreadable.
-        for (el in selected) emphasize(doc, el, ev, proj, target, view, selectionStyle, selectionRing, tip)
+        for (el in selected) emphasize(doc, el, ev, proj, target, view, selectionStyle, selectionRing, tip, ghosted)
         // A selection that owns no element at all: an opening's jamb (OP-21) is part of the plan *drawing*,
         // so what the emphasis restates is that drawing — the two reveal lines and the gap between them.
         // Same vocabulary as every other selection (the piece drawn again on top of itself), which is what
@@ -373,7 +400,7 @@ object SceneRenderer {
             target.circle(s, 6.0, haloInner)
         }
         // ...and last, the element a name in the panel is being hovered: nothing may hide it
-        for (el in spotlight) emphasize(doc, el, ev, proj, target, view, spotlightStyle, spotlightRing, tip)
+        for (el in spotlight) emphasize(doc, el, ev, proj, target, view, spotlightStyle, spotlightRing, tip, ghosted)
         // the ruler states a length in pixels, so it says something true only under a similarity — the same
         // rule as the grid, one line above
         if (scaleBar && proj.similarity) drawScaleBar(proj.scaleAt(Vec2(0.0, 0.0)), target, hPx)
@@ -414,6 +441,19 @@ object SceneRenderer {
         color: String,
     ) {
         proj.toScreen(at)?.let { target.dot(it, POINT_PX, color) }
+    }
+
+    /**
+     * A point drawn **hollow** — the ghost of a point (OP-18's *Show hidden*). Solid-stroked whatever the
+     * style says, because a dash around a four-pixel ring is three specks and reads as a rendering fault.
+     */
+    private fun ring(
+        proj: PlaneProjection,
+        target: DrawTarget,
+        at: Vec2,
+        style: Style,
+    ) {
+        proj.toScreen(at)?.let { target.circle(it, POINT_PX, style.copy(dash = null)) }
     }
 
     /**
@@ -533,8 +573,12 @@ object SceneRenderer {
         style: Style,
         ringStyle: Style,
         tip: Element?,
+        ghosted: Set<Element> = emptySet(),
     ) {
-        if (!el.visible) return
+        // Emphasis follows the drawing: an element nothing draws cannot be pointed at, but a **ghost** is
+        // drawn (OP-18's *Show hidden*) and therefore can be — which is what lets a hidden element be
+        // selected, seen to be selected, and shown again.
+        if (!el.visible && el !in ghosted) return
         // the same substitution picking makes (OP-17): in a face space the part that face belongs to *is*
         // the face rectangle, so that is what a pick of it highlights
         doc.partOutlineOf(el, ev, tip)?.let { r ->

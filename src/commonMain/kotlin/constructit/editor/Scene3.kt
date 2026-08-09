@@ -33,6 +33,18 @@ class SolidItem(
     val elementId: String,
     val mesh: Mesh3,
     val color: String,
+    /**
+     * This body is a **ghost**: the user hid it, and *Show hidden* ([Editor.showHidden]) is drawing it so it
+     * can be found again (OP-18).
+     *
+     * A ghost contributes **no faces** — only its feature edges, in [Scene3.GHOST_EDGE]. That is the whole of
+     * the 3D treatment and it is chosen rather than an opacity: this view is a flat-shaded painter's
+     * projector with no depth buffer and no blending ([Painter3]), so a translucent shell is not something it
+     * can express — and a shaded ghost would *occlude* the bodies that are really there, which is the exact
+     * opposite of what the toggle is for. As a wireframe it hides nothing, and a hidden body reads as an
+     * outline of where it would be, which is what a ghost is.
+     */
+    val ghost: Boolean = false,
 ) {
     /**
      * The creases, computed **on first read** rather than on construction.
@@ -55,7 +67,7 @@ class SolidItem(
      * as belonging to *this* part, and one authority both back ends ask, so an edge cannot come out a
      * different colour on the GPU than in a golden.
      */
-    val edgeColor: String get() = Painter3.shade(color, Scene3.EDGE_SHADE)
+    val edgeColor: String get() = if (ghost) Scene3.GHOST_EDGE else Painter3.shade(color, Scene3.EDGE_SHADE)
 }
 
 /** A world-space line of the view's furniture: the ground grid and the three axes. */
@@ -160,7 +172,10 @@ class Scene3Sync {
         for (i in had.indices) {
             val a = had[i]
             val b = scene.solids[i]
-            if (a.elementId != b.elementId || a.color != b.color || a.mesh !== b.mesh) return false
+            // ghost included, because it decides what is *in* the buffer (OP-18's *Show hidden*): hiding a
+            // body while the toggle is on keeps its id, its colour and its mesh and yet drops every one of
+            // its triangles, so a comparison blind to it would leave the shaded body on screen
+            if (a.elementId != b.elementId || a.color != b.color || a.mesh !== b.mesh || a.ghost != b.ghost) return false
         }
         val hadCurves = uploadedCurves ?: return false
         if (hadCurves.size != scene.curves.size) return false
@@ -250,6 +265,17 @@ class Scene3(
 
         /** How much of a solid's colour its feature edges keep — dark enough to read on a fully lit face. */
         const val EDGE_SHADE = 0.55
+
+        /**
+         * What a **ghosted** body's wireframe is drawn in (OP-18's *Show hidden*): one colour for all of them,
+         * deliberately not each body's own darkened.
+         *
+         * A ghost is not a body being identified — it is a body that is *not in the drawing* — so the palette
+         * has nothing to say about it, and answering "which one is that?" is the row in the panel's and the
+         * status line's job. Light enough to sit behind the real bodies, dark enough to see against the
+         * background; the same reading as [Styles.GHOST] one dimension up.
+         */
+        const val GHOST_EDGE = "#9aa7b4"
 
         /**
          * How far two neighbouring triangles' normals must diverge before the edge between them counts as a
@@ -395,7 +421,9 @@ class Scene3(
 
         /**
          * The scene of [doc]: every visible element whose value is a solid, plus a ground grid sized to
-         * the model.
+         * the model — and, when [ghosts] names any, those hidden bodies as wireframe ghosts ([SolidItem.ghost],
+         * OP-18's *Show hidden*). [ghosts] is empty unless the toggle is on, so every other caller (the
+         * framing, the double-click pick) sees exactly the scene it always saw.
          *
          * Invalid solids simply contribute nothing, which is OP-3's rule unchanged — a depth dragged to
          * zero makes the part vanish from the 3D view and come back when it is dragged open again.
@@ -407,8 +435,9 @@ class Scene3(
         fun extract(
             doc: Document,
             ev: Evaluator = Evaluator(),
+            ghosts: Set<Element> = emptySet(),
         ): Scene3 {
-            val candidates = doc.elements.filter { it.visible && ev.valueOf(it.ref) is SolidValue }
+            val candidates = doc.elements.filter { (it.visible || it in ghosts) && ev.valueOf(it.ref) is SolidValue }
             // A solid another visible solid is made OF is that solid's construction material —
             // OP-14's scaffolding rule one level up: a boolean's raw operand, the counterbore's
             // cylinder. Drawing both paints two coincident shells fighting per pixel, and the operand
@@ -432,23 +461,28 @@ class Scene3(
                     walk(input)
                 }
             }
-            candidates.forEach { walk(it.ref.node) }
+            // Seeded from the **visible** consumers only. A ghost is a body the user took out of the drawing,
+            // and this rule's own sentence says what that means: hide the consumer and the operand shows
+            // again. Seeding from ghosts too would make switching *Show hidden* on take a body that is really
+            // there off the screen — the toggle removing geometry, which is exactly backwards.
+            candidates.filter { it.visible }.forEach { walk(it.ref.node) }
             val solids = ArrayList<SolidItem>()
             for (el in candidates) {
                 if (el.ref.node.id in consumedIds) continue
                 val v = ev.valueOf(el.ref) as? SolidValue ?: continue
                 if (v.solid.mesh.triangles.isEmpty()) continue
-                solids.add(SolidItem(el.id, v.solid.mesh, colorOf(doc, el)))
+                solids.add(SolidItem(el.id, v.solid.mesh, colorOf(doc, el), ghost = !el.visible))
             }
             // ...and the curves in space (OP-26), by the same rules throughout: every visible element whose
             // value is one, an invalid curve contributing nothing (OP-3), and no space filter — a curve's
             // value *is* world geometry, so unlike a sketch it belongs to the world and not to one canvas.
             val curves = ArrayList<CurveItem>()
             for (el in doc.elements) {
-                if (!el.visible) continue
+                if (!el.visible && el !in ghosts) continue
                 val v = ev.valueOf(el.ref) as? Path3Value ?: continue
                 if (v.path.isEmpty) continue
-                curves.add(CurveItem(el.id, v.path, colorOfCurve(el)))
+                // a ghosted curve has no faces to leave out, so the ghost is the colour and nothing else
+                curves.add(CurveItem(el.id, v.path, if (el.visible) colorOfCurve(el) else GHOST_EDGE))
             }
             return Scene3(solids, curves = curves)
         }

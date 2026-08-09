@@ -28,7 +28,7 @@ class SvgDrawTarget : DrawTarget {
     ) {
         if (points.isEmpty()) return
         val pts = points.joinToString(" ") { "${fmt(it.x)},${fmt(it.y)}" }
-        sb.append("  <polyline points=\"$pts\" fill=\"none\" stroke=\"${style.stroke}\" stroke-width=\"${fmt(style.width)}\"/>\n")
+        sb.append("  <polyline points=\"$pts\" fill=\"none\" stroke=\"${style.stroke}\" stroke-width=\"${fmt(style.width)}\"${dash(style)}/>\n")
     }
 
     override fun polygon(
@@ -37,7 +37,7 @@ class SvgDrawTarget : DrawTarget {
     ) {
         if (points.isEmpty()) return
         val pts = points.joinToString(" ") { "${fmt(it.x)},${fmt(it.y)}" }
-        sb.append("  <polygon points=\"$pts\" fill=\"${style.fill ?: "none"}\" stroke=\"${style.stroke}\" stroke-width=\"${fmt(style.width)}\"/>\n")
+        sb.append("  <polygon points=\"$pts\" fill=\"${style.fill ?: "none"}\" stroke=\"${style.stroke}\" stroke-width=\"${fmt(style.width)}\"${dash(style)}/>\n")
     }
 
     override fun circle(
@@ -45,7 +45,7 @@ class SvgDrawTarget : DrawTarget {
         radiusPx: Double,
         style: Style,
     ) {
-        sb.append("  <circle cx=\"${fmt(center.x)}\" cy=\"${fmt(center.y)}\" r=\"${fmt(radiusPx)}\" fill=\"${style.fill ?: "none"}\" stroke=\"${style.stroke}\" stroke-width=\"${fmt(style.width)}\"/>\n")
+        sb.append("  <circle cx=\"${fmt(center.x)}\" cy=\"${fmt(center.y)}\" r=\"${fmt(radiusPx)}\" fill=\"${style.fill ?: "none"}\" stroke=\"${style.stroke}\" stroke-width=\"${fmt(style.width)}\"${dash(style)}/>\n")
     }
 
     override fun dot(
@@ -81,6 +81,12 @@ class SvgDrawTarget : DrawTarget {
                 TextAnchor.MIDDLE -> "middle"
                 TextAnchor.END -> "end"
             }
+
+        /**
+         * A dashed stroke's attribute, or nothing at all for a solid one — written **only** when there is a
+         * dash, so every golden taken before [Style.dash] existed still matches byte for byte.
+         */
+        fun dash(style: Style): String = style.dash?.let { " stroke-dasharray=\"${fmt(it)}\"" } ?: ""
 
         fun escape(s: String): String = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 

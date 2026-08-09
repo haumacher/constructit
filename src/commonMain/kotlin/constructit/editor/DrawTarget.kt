@@ -2,8 +2,16 @@ package constructit.editor
 
 import constructit.geom.Vec2
 
-/** Visual style for a drawn primitive. */
-data class Style(val stroke: String, val width: Double = 1.5, val fill: String? = null)
+/**
+ * Visual style for a drawn primitive.
+ *
+ * [dash] is the length of one dash **and** of one gap, in screen pixels, or null for a solid stroke — the
+ * one non-colour distinction the drawing vocabulary has (OP-18's *Show hidden*: a ghost has to read as
+ * something other than the dim grey scaffolding wears, and two greys do not tell two states apart). Stated
+ * as a single number because that is all any backend needs to agree on: SVG repeats it as a dasharray, the
+ * canvas as a two-element pattern, and a golden written before it existed still says exactly what it said.
+ */
+data class Style(val stroke: String, val width: Double = 1.5, val fill: String? = null, val dash: Double? = null)
 
 /** Horizontal placement of a text run relative to its anchor — SVG's `text-anchor`, canvas' `textAlign`. */
 enum class TextAnchor { START, MIDDLE, END }

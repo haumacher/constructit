@@ -2172,4 +2172,37 @@ class EditorTest {
         assertClose(pf.y, 0.0)
         assertClose(pf.x, -20.0)
     }
+
+    /**
+     * **Arming the tool that is already armed keeps its picks.** Found by the probe of the ghost layer: a
+     * cross-space *Sweep* had reported "1 pick kept across the switch" and one further click on the live
+     * tool's own palette button threw that pick away without a word — so the promise the sweep's help makes
+     * ("switch the plane between clicks and the picks are kept") depended on the user not touching the
+     * palette. Arming a *different* tool still abandons the half-finished one; abandoning deliberately is
+     * still Escape.
+     */
+    @Test
+    fun reArmingTheLiveToolKeepsWhatItHasCollected() {
+        val ed = Editor()
+        ed.setTool(Tools.LINE)
+        ed.click(Vec2(-20.0, 0.0))
+        ed.click(Vec2(20.0, 0.0))
+        ed.setTool(Tools.MIRROR)
+        ed.click(Vec2(0.0, 0.0))
+        assertEquals(1, ed.toolPicks.size, "one half of the mirror is collected")
+
+        ed.setTool(Tools.MIRROR)
+        assertEquals(1, ed.toolPicks.size, "re-arming the same tool keeps it")
+        assertTrue(ed.statusLine.contains("1 pick so far"), "and says where the gesture stands: ${ed.statusLine}")
+
+        ed.setTool(Tools.CIRCLE)
+        assertTrue(ed.toolPicks.isEmpty(), "arming a different tool abandons the half-finished one")
+
+        // …and Escape is still how a gesture is abandoned deliberately
+        ed.setTool(Tools.MIRROR)
+        ed.click(Vec2(0.0, 0.0))
+        assertEquals(1, ed.toolPicks.size)
+        ed.key("Escape")
+        assertTrue(ed.toolPicks.isEmpty(), "Escape abandons the picks")
+    }
 }

@@ -111,7 +111,9 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
         // exactly from the scene (three per triangle, two per line), so one pass sizes the buffers and a
         // second fills them, with no intermediate collection at all.
         var triVerts = 0
-        for (solid in scene.solids) triVerts += solid.mesh.triangles.size * 3
+        // a ghost contributes no faces at all (OP-18's *Show hidden*, [SolidItem.ghost]) — it is drawn as its
+        // feature edges, so it takes no room in the triangle section
+        for (solid in scene.solids) if (!solid.ghost) triVerts += solid.mesh.triangles.size * 3
         var lineVerts = 0
         for (solid in scene.solids) lineVerts += solid.edges.size * 2
         for (curve in scene.curves) lineVerts += maxOf(curve.points.size - 1, 0) * 2
@@ -144,6 +146,7 @@ class WebGlRenderer3(private val canvas: HTMLCanvasElement) {
             at++
         }
         for (solid in scene.solids) {
+            if (solid.ghost) continue
             val rgb = rgbOf(solid.color)
             val v = solid.mesh.vertices
             for (t in solid.mesh.triangles) {

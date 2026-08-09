@@ -161,6 +161,9 @@
         /* an element that cannot be built right now is present but flagged, never gone (OP-3) */
         #tree .item.invalid { color: #b03a2e; }
         #tree .item.invalid .flag { margin-right: 3px; }
+        /* …and one the user has hidden is flagged the same way, in the ghost's own grey (OP-18) */
+        #tree .item.gone { color: #8a95a1; }
+        #tree .item.gone .flag { margin-right: 3px; }
         #inspector .warn { font-size: 11px; color: #b03a2e; padding: 2px 4px; }
     </style>
 </head>
@@ -209,6 +212,9 @@
                 <label title="Dim the construction the result is built from (OP-14)">
                     <input id="v-dim" type="checkbox"> Dim construction
                 </label>
+                <label title="Draw what you have hidden, as dashed grey ghosts, so you can find it and press Show. A ghost never takes a click from geometry that is really there, and no tool builds on one. A point welded onto another is hidden by the construction and stays hidden.">
+                    <input id="v-hidden" type="checkbox"> Show hidden
+                </label>
             </div>
             <div id="wall-options">
                 <label title="Which side of the centerline a new wall's thickness sits on (OP-21). With Thicken it applies to the NEXT curve you click, so a run can change side part-way.">
@@ -231,7 +237,7 @@
             <h3>Selection</h3>
             <div id="inspector"></div>
             <div id="sel-actions">
-                <button id="s-hide" title="Hide the selected elements (a view state, not part of the drawing)">Hide</button>
+                <button id="s-hide" title="Hide the selected elements — a recorded step, so it is saved with the drawing and undoes like any other (OP-18). Tick 'Show hidden' to find them again.">Hide</button>
                 <button id="s-show" title="Show the selected elements again">Show</button>
             </div>
             <h3>Groups &amp; tools</h3>

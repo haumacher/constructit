@@ -421,6 +421,15 @@ object HitTest {
      * Every visible element satisfying [filter] within [tol] of [world], nearest first; ties go to the
      * most recently created, which is the one drawn on top.
      *
+     * [ghosts] are hidden elements the caller is currently **drawing** as ghosts (OP-18's *Show hidden*,
+     * [Editor.ghostElements]) and therefore wants reachable. Empty by default, which is what keeps every
+     * construction pick exactly what it was: only the routes that *select* pass a ghost set.
+     *
+     * **What is visible wins.** A ghost is offered only when nothing live is within [tol] at all — a search
+     * that found a visible element returns no ghosts, whatever their distances. One rule, and it is the
+     * conservative one: a ghost is a picture of something the user took out of the drawing, so it may never
+     * take a click away from geometry that is really there.
+     *
      * Only elements the **active sketch space** addresses take part (OP-17, [Document.addressableIn]): a
      * plan element is not pickable while a face is being sketched on, and vice versa — the coordinates
      * would not even mean the same thing.
@@ -431,6 +440,7 @@ object HitTest {
         world: Vec2,
         tol: Double,
         view: PlaneProjection? = null,
+        ghosts: Set<Element> = emptySet(),
         filter: (Element) -> Boolean,
     ): List<Pair<Element, Double>> {
         // the part the active face space belongs to, as it stands (OP-17's tip rule) — resolved once per
@@ -439,15 +449,17 @@ object HitTest {
         // …and the active plane, for the same reason: a curve in space (OP-26) is measured against the frame
         // this canvas is looking along, and resolving that is a node evaluation
         val plane = doc.activePlane3(ev)
-        return doc.elements
-            .asSequence()
-            .withIndex()
-            .filter { (_, el) -> el.visible && doc.addressableIn(el, tip) && filter(el) }
-            .mapNotNull { (i, el) -> distanceIn(doc, ev, el, world, tip, view, plane)?.let { Triple(el, it, i) } }
-            .filter { it.second <= tol }
-            .sortedWith(compareBy({ it.second }, { -it.third }))
-            .map { it.first to it.second }
-            .toList()
+        val hits =
+            doc.elements
+                .asSequence()
+                .withIndex()
+                .filter { (_, el) -> (el.visible || el in ghosts) && doc.addressableIn(el, tip) && filter(el) }
+                .mapNotNull { (i, el) -> distanceIn(doc, ev, el, world, tip, view, plane)?.let { Triple(el, it, i) } }
+                .filter { it.second <= tol }
+                .sortedWith(compareBy({ it.second }, { -it.third }))
+                .toList()
+        val live = if (ghosts.isEmpty()) hits else hits.filter { it.first.visible }
+        return (if (live.isEmpty()) hits else live).map { it.first to it.second }
     }
 
     /** Nearest element (point or curve) satisfying [filter], within [tol]. */
@@ -457,8 +469,9 @@ object HitTest {
         world: Vec2,
         tol: Double,
         view: PlaneProjection? = null,
+        ghosts: Set<Element> = emptySet(),
         filter: (Element) -> Boolean,
-    ): Element? = nearestAll(doc, ev, world, tol, view, filter).firstOrNull()?.first
+    ): Element? = nearestAll(doc, ev, world, tol, view, ghosts, filter).firstOrNull()?.first
 
     // ---- marquee: pick everything a rectangle meets (OP-16) ----
 
@@ -466,6 +479,11 @@ object HitTest {
      * Every visible element whose geometry meets the world rectangle spanned by [a] and [b] — what a
      * rubber-band drag in SELECT mode selects. *Meets*, not *contains*: an architect rubber-bands over
      * a room to grab the walls crossing it, and requiring full containment would drop every one of them.
+     *
+     * [ghosts] joins them in, for the reason a rubber band exists: it takes **what is drawn**. While *Show
+     * hidden* is on a ghost is drawn, so a band across it that left it out would be the tool disagreeing with
+     * the picture — and the visible-wins rule of [nearestAll] has nothing to decide here, since a band is not
+     * a competition between candidates.
      */
     fun within(
         doc: Document,
@@ -473,13 +491,14 @@ object HitTest {
         a: Vec2,
         b: Vec2,
         view: PlaneProjection? = null,
+        ghosts: Set<Element> = emptySet(),
     ): List<Element> {
         val lo = Vec2(kotlin.math.min(a.x, b.x), kotlin.math.min(a.y, b.y))
         val hi = Vec2(kotlin.math.max(a.x, b.x), kotlin.math.max(a.y, b.y))
         val tip = doc.facePartTip(ev)
         val plane = doc.activePlane3(ev)
         return doc.elements.filter { el ->
-            el.visible && doc.addressableIn(el, tip) &&
+            (el.visible || el in ghosts) && doc.addressableIn(el, tip) &&
                 (
                     doc.partOutlineOf(el, ev, tip)?.let { r -> ringMeets(r, lo, hi) }
                         // the same rule as [distanceIn]: the part is met as this space's reference context or not

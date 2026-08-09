@@ -1661,4 +1661,118 @@ class BrowserE2ETest {
             browser.close()
         }
     }
+
+    /**
+     * How many pixels the 2D canvas has **drawn on** — anything far enough from the white ground to be ink.
+     *
+     * The only question a browser can be asked about a drawing: a canvas has no DOM. Counting ink rather than
+     * matching a colour, because a one-pixel antialiased stroke never lands on its own hex exactly — what is
+     * being asked here is "is that circle on the screen at all", and more ink is exactly that.
+     */
+    private fun inkPixels(page: Page): Int =
+        page.evaluate(
+            """
+            () => {
+              const c = document.getElementById('canvas');
+              const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+              let n = 0;
+              for (let i = 0; i < d.length; i += 4) {
+                if (d[i + 3] > 40 && (255 - d[i]) + (255 - d[i + 1]) + (255 - d[i + 2]) > 60) n++;
+              }
+              return n;
+            }
+            """.trimIndent(),
+        ).let { (it as Number).toInt() }
+
+    /**
+     * **Hidden, found again, shown** — the user's report end to end in a browser (OP-18's *Show hidden*).
+     *
+     * Hide a circle and it is gone from the canvas and flagged in the panel; tick *Show hidden* and it is
+     * drawn again, as a ghost, and clickable — the status line says it is hidden — so the *Show* button
+     * finally has something to act on. Then untick, and the drawing is what it was.
+     */
+    @Test
+    fun hiddenElementsAreFoundAgainInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            fun ghostRows(): List<String> = page.querySelectorAll("#tree .item.gone").map { it.textContent() }
+
+            val box = page.querySelector("#canvas").boundingBox()
+            val y = box.y + box.height * 0.5
+            val ax = box.x + box.width * 0.35
+            val bx = ax + 300
+
+            // two circles of radius 100, drawn centre first and sized upwards, well apart
+            page.click("#tool-${Tools.CIRCLE}")
+            page.mouse().click(ax, y)
+            page.mouse().click(ax, y - 100)
+            page.click("#tool-${Tools.CIRCLE}")
+            page.mouse().click(bx, y)
+            page.mouse().click(bx, y - 100)
+            page.click("#tool-${Tools.SELECT}")
+
+            // …counted with nothing selected, always: a selection is redrawn on top of itself, so it is ink
+            fun deselect() = page.mouse().click(box.x + 40, box.y + box.height - 40)
+            deselect()
+            val whole = inkPixels(page)
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/30-two-circles.png")))
+
+            // hide the left one, clicked on its outline well away from either of its points
+            page.mouse().click(ax - 100, y)
+            assertEquals(1, page.querySelectorAll("#tree .item.active").size, "one row is selected: ${status()}")
+            page.click("#s-hide")
+            deselect()
+            val hidden = inkPixels(page)
+            assertTrue(hidden < whole, "the hidden circle is off the canvas: $hidden vs $whole")
+            assertEquals(1, ghostRows().size, "…and its row is flagged in the panel, with the toggle still off")
+            val rowTitle = page.querySelectorAll("#tree .item.gone").first().getAttribute("title")
+            assertTrue(rowTitle.contains("hidden"), "the row says what it is: $rowTitle")
+
+            // …and it is unreachable on the canvas: the click that hid it now finds nothing
+            page.mouse().click(ax - 100, y)
+            assertFalse(status().contains("hidden"), "nothing was found where the hidden circle was: ${status()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/31-hidden.png")))
+
+            // tick *Show hidden*: the ghost is drawn again…
+            page.check("#v-hidden")
+            val ghosted = inkPixels(page)
+            assertTrue(ghosted > hidden, "the ghost is drawn: $ghosted vs $hidden")
+            assertTrue(ghosted < whole, "and it is a ghost — dashed, so it is less ink than the circle itself")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/32-ghosted.png")))
+
+            // …and it is clickable, and says what it is
+            page.mouse().click(ax - 100, y)
+            assertTrue(status().contains("hidden (Show brings it back)"), "the ghost names its state: ${status()}")
+            assertEquals(1, page.querySelectorAll("#tree .item.active.gone").size, "the hidden row is the selected one")
+
+            // Show brings it back, and the drawing is whole again
+            page.click("#s-show")
+            assertTrue(ghostRows().isEmpty(), "no row is flagged hidden any more")
+            deselect()
+            assertEquals(whole, inkPixels(page), "the circle is drawn as itself again")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/33-shown.png")))
+
+            // unticking changes nothing about a drawing with nothing hidden in it
+            page.uncheck("#v-hidden")
+            assertEquals(whole, inkPixels(page), "the toggle is a view setting and this view has no ghosts")
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

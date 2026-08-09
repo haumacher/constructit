@@ -10485,16 +10485,33 @@ class Document {
      * The **state** [el] is in, in the words a status line uses — or null when there is nothing to say.
      *
      * One channel, so a state a user must know about is said wherever the element is named ([Editor]'s
-     * inspector header and pick-cycle line both ask this) rather than needing a badge of its own. Today it
-     * has exactly one answer: an imported body that came in as an **open shell**, which decides what that
-     * body can be used for (no boolean, no 3MF, no STL — everything else unchanged).
+     * inspector header and pick-cycle line both ask this) rather than needing a badge of its own. Two
+     * answers today: an imported body that came in as an **open shell**, which decides what that body can be
+     * used for (no boolean, no 3MF, no STL — everything else unchanged), and an element that is **hidden**.
+     *
+     * Hidden says which of the two hidings it is, because they answer differently: a user's hide is undone by
+     * *Show*, while a welded alias is hidden **by the construction** and [setElementsVisible] refuses to show
+     * it — so the sentence that named it must not promise a button that will decline. Reachable at all only
+     * because a hidden element can be selected from the element tree, and — while *Show hidden* is on
+     * (`Editor.showHidden`) — clicked on the canvas as a ghost.
      */
     fun stateOf(
         el: Element,
         ev: Evaluator = Evaluator(),
     ): String? {
-        val f = (ev.valueOf(el.ref) as? SolidValue)?.solid?.feature as? Feature3.Imported ?: return null
-        return if (f.openShell == null) null else "open shell (display and arrangement only)"
+        val states = ArrayList<String>(2)
+        if (!el.visible) {
+            states.add(
+                if (hiddenByConstruction(el)) {
+                    "hidden by the construction (Show leaves it hidden)"
+                } else {
+                    "hidden (Show brings it back)"
+                },
+            )
+        }
+        val f = (ev.valueOf(el.ref) as? SolidValue)?.solid?.feature as? Feature3.Imported
+        if (f?.openShell != null) states.add("open shell (display and arrangement only)")
+        return states.joinToString("; ").ifEmpty { null }
     }
 
     /**
@@ -12952,6 +12969,17 @@ object Styles {
 
     /** Scaffolding, once a result exists to contrast it with — dimmed, not hidden. */
     val DIMMED = Style(stroke = "#c9c9c9", width = 1.0)
+
+    /**
+     * An element the user has **hidden**, while *Show hidden* is on ([Editor.showHidden]): a ghost.
+     *
+     * **Dashed**, and that is the load-bearing half. Hidden and scaffolding are two different states of an
+     * element and both toggles can be on at once, so the two must be distinguishable *at a glance* — and two
+     * light greys are not. A dash says "this is not really in the drawing" in a vocabulary no other style
+     * uses, so it cannot be confused with [DIMMED]'s quiet grey, and the cool tint keeps it from reading as a
+     * lighter version of the black a result is drawn in.
+     */
+    val GHOST = Style(stroke = "#9aa7b4", width = 1.0, dash = 4.0)
 
     /** Annotation (OP-14): thin, and a colour of its own, because it is not part of the drawing. */
     val ANNOTATION = Style(stroke = "#17607d", width = 1.0)

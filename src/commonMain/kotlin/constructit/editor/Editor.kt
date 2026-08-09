@@ -585,6 +585,35 @@ class Editor(
     var dimScaffolding: Boolean = false
 
     /**
+     * Draw the elements the user has **hidden**, as ghosts, so they can be found and shown again (OP-18's
+     * visibility reversal, on a user report: *"if you hide some elements, it's almost impossible to find them
+     * later on to show them again"*). A hidden element was neither drawn nor pickable, so the recorded *Show*
+     * step had nothing to click.
+     *
+     * [dimScaffolding]'s exact twin, and deliberately so: a **view** setting. It records no step, it is in no
+     * file, no undo touches it, and turning it on or off cannot change the drawing by so much as a byte — the
+     * hide and the show stay the recorded steps they have been since the reversal. What it changes is what the
+     * canvas draws and, while it is on, what a click can reach ([ghostElements]).
+     */
+    var showHidden: Boolean = false
+
+    /**
+     * The elements [showHidden] is ghosting right now: hidden **by the user**, never by construction.
+     *
+     * The exception is the whole of the rule. A welded alias (and a duplicate joint marker) is hidden because
+     * the construction says so — showing it would draw a second point on top of its master — which is why
+     * [Document.setElementsVisible] refuses to show one. A toggle that resurrected those markers would be that
+     * same refusal broken from the other side, so the ghost set asks the document the same question the *Show*
+     * action asks ([Document.hiddenByConstruction]).
+     */
+    fun ghostElements(): Set<Element> =
+        if (!showHidden) {
+            emptySet()
+        } else {
+            doc.elements.filterTo(HashSet()) { !it.visible && !doc.hiddenByConstruction(it) }
+        }
+
+    /**
      * Which side of its carrier a new thick path's material sits on (OP-21). A property of the *tool*
      * rather than of a pick, like the active parameter: the WALL tool has no slot to click it into.
      */
@@ -1158,11 +1187,25 @@ class Editor(
         // followed went quietly into the old space.
         val backToPlan = id == Tools.SKETCH_ON_FACE && !doc.activeSpace.isPlan
         if (backToPlan) setActiveSpace(Document.PLAN_SPACE)
+        // **Arming the tool that is already armed keeps what it has collected.** Arming a *different* tool
+        // abandons the half-finished one, which is honest — it is a different operation. Re-arming the same
+        // one is not an operation at all: the palette button of the live tool is still there to be clicked,
+        // the keyboard shortcut is still there to be pressed, and a user who does either mid-gesture means
+        // "yes, this tool" and not "throw away my picks". Silently throwing them away also broke a promise
+        // the editor makes out loud — *Sweep*'s "switch the plane between clicks and the picks are kept" —
+        // since one stray click on the armed tool undid the very picks the switch had just reported keeping.
+        // Abandoning stays reachable and stays explicit: that is what Escape is for ([key]).
+        val rearming = id == toolId && !backToPlan && filledSlots > 0
         toolId = id
-        resetPicks()
+        if (!rearming) resetPicks()
         statusHint =
             if (backToPlan) {
                 "Plan view — Sketch on face picks a solid's footprint edge, which is drawn here; click the edge you want"
+            } else if (rearming) {
+                // …and it says where the gesture stands, because a click that deliberately does nothing must
+                // still answer "what happened?" — with the way to start over
+                "${doc.toolDef(id)?.label ?: id}: $filledSlots pick${if (filledSlots == 1) "" else "s"} so far — " +
+                    "press Escape to start over"
             } else {
                 ""
             }
@@ -1483,6 +1526,19 @@ class Editor(
             }
         return "$kind ${doc.displayName(el)}${doc.stateOf(el)?.let { " — $it" } ?: ""}"
     }
+
+    /**
+     * Why a press did not grab what it landed on — the drag's own refusal, or, for a **ghost**, the fact that
+     * matters more (OP-18's *Show hidden*): the element is hidden. "It is fully determined by the
+     * construction" is a true sentence about a hidden circle and the wrong one to read, because what the user
+     * has just found is something that is not in the drawing at all.
+     */
+    private fun immovableNote(el: Element): String =
+        if (!el.visible) {
+            "${elementLabel(el)} selected — a ghost is not dragged"
+        } else {
+            explainImmovable(el, doc.nameOf(el), doc.ownFields(el))
+        }
 
     // ---- what the selection is built from, and what is built on it (see [Dependencies]) ----
 
@@ -2255,6 +2311,9 @@ class Editor(
             inputs = selectionInputs().map { it.element }.toHashSet(),
             dependents = selectionDependents().toHashSet(),
             spotlight = spotlight?.let { setOf(it) } ?: emptySet(),
+            // what the user hid, while the *Show hidden* toggle is on (OP-18) — drawn as ghosts, so it can
+            // be found again
+            ghosted = ghostElements(),
             scaleBar = showScaleBar,
             // the digits being typed, drawn at the cursor — see [pendingEntryEcho]
             entry = pendingEntryEcho(),
@@ -2443,8 +2502,8 @@ class Editor(
             // the primed subject, when the frame did not already take it: the cycled selection moves, or says
             // why it cannot — and either way nothing else is grabbed instead
             if (primedElement != null) {
-                if (!primedElement.hasFreeDof) {
-                    statusHint = explainImmovable(primedElement, doc.nameOf(primedElement), doc.ownFields(primedElement))
+                if (!primedElement.hasFreeDof || !primedElement.visible) {
+                    statusHint = immovableNote(primedElement)
                     pendingNote = statusHint
                     changed()
                     return
@@ -2482,7 +2541,7 @@ class Editor(
                 dragRiders = doc.riderAnchors()
                 statusHint = note
             } else {
-                statusHint = explainImmovable(hit, doc.nameOf(hit), doc.ownFields(hit))
+                statusHint = immovableNote(hit)
             }
             // …and what the press said is kept for the release: a first click must read exactly as it always
             // did (the reason an immovable element cannot be dragged included), with only the pile's position
@@ -3088,7 +3147,21 @@ class Editor(
     private fun pickAt(world: Vec2): PickPile {
         val ev = ev()
         val tol = tolWorld()
-        val all = HitTest.nearestAll(doc, ev, world, tol, proj()) { it.selectable }.map { it.first }
+        // **A ghost is consulted only where nothing live is** (OP-18's *Show hidden*). The broadest search runs
+        // first, exactly as it always did; only when it comes back empty does the same search run again with
+        // the ghosts joined in, and the ghost set the rest of this pick uses is that one. So a hidden element
+        // can never take a click from geometry that is really there — not even across the searches below,
+        // which each ask a different question and would otherwise each answer it on their own.
+        val liveHits = HitTest.nearestAll(doc, ev, world, tol, proj()) { it.selectable }
+        val ghosts = if (liveHits.isEmpty()) ghostElements() else emptySet()
+        val all =
+            (
+                if (ghosts.isEmpty()) {
+                    liveHits
+                } else {
+                    HitTest.nearestAll(doc, ev, world, tol, proj(), ghosts) { it.selectable }
+                }
+            ).map { it.first }
         val points = all.filter { it.isPoint }.sortedBy { !it.draggable }
         val draggablePoint = points.firstOrNull { it.draggable }
         // An opening's jamb is not an element, so it is picked on its own and then *competes by distance* with
@@ -3099,9 +3172,12 @@ class Editor(
         val jamb = HitTest.nearestJamb(doc, ev, world, tol)
         val reach =
             if (draggablePoint == null && jamb != null) minOf(tol, HitTest.distanceToSegment(world, jamb.seg)) else tol
-        val curves = HitTest.nearestAll(doc, ev, world, reach, proj()) { it.isCurve && it.hasFreeDof }.map { it.first }
-        val annotations = HitTest.nearestAll(doc, ev, world, reach, proj()) { it.annotation != null && it.hasFreeDof }.map { it.first }
-        val movable = draggablePoint ?: curves.firstOrNull() ?: annotations.firstOrNull()
+        val curves = HitTest.nearestAll(doc, ev, world, reach, proj(), ghosts) { it.isCurve && it.hasFreeDof }.map { it.first }
+        val annotations = HitTest.nearestAll(doc, ev, world, reach, proj(), ghosts) { it.annotation != null && it.hasFreeDof }.map { it.first }
+        // **A ghost is selected, never grabbed** (OP-18's *Show hidden*). Dragging is an edit, and the toggle
+        // exists to find what was hidden and show it again — moving geometry that is not in the drawing would
+        // change the model through a picture of it. The same line the tool slots draw, one gesture along.
+        val movable = (draggablePoint ?: curves.firstOrNull() ?: annotations.firstOrNull())?.takeIf { it.visible }
         val ranked = points + (curves + annotations).filter { el -> points.none { it === el } }
         // everything else that can be addressed at all — an area, a solid's footprint hint, a curve the jamb's
         // cap kept out of the grab. Immovable here means "selectable but not draggable", which is a reason to
@@ -3247,7 +3323,7 @@ class Editor(
         from: Vec2,
         to: Vec2,
     ) {
-        val hits = HitTest.within(doc, ev(), from, to, proj())
+        val hits = HitTest.within(doc, ev(), from, to, proj(), ghostElements())
         val kept = if (marqueeAdds) selectedElements else emptyList()
         select(kept + hits.filter { it !in kept }, hits.lastOrNull() ?: selection)
         statusHint =
@@ -4128,9 +4204,18 @@ class Editor(
             // screen distinguishes "that curve is in" from "that click landed in space". A pick that hit
             // something and was *refused* has a better reason of its own, and says that instead.
             val refused = pickRefusal ?: midSequenceWallPick(tool, world)
+            // …and a click that landed on nothing but a **ghost** says so, by name (OP-18's *Show hidden*).
+            // A tool slot deliberately does not take one: the toggle exists to *find* what was hidden, and
+            // building on an element the user took out of the drawing would put the new geometry's input in a
+            // state the drawing does not show. So the ghost is not silently skipped either — the one thing a
+            // refusal owes is a name and a way forward, and both are here.
+            val ghost = ghostUnder(world)
             statusHint =
                 when {
                     refused != null -> refused
+                    ghost != null ->
+                        "${doc.nameOf(ghost)} is hidden — a tool builds only on what is in the drawing; " +
+                            "Show it first. ${tool.help}"
                     // A **subject** slot ([SlotKind]) is the one kind of miss that has to explain itself
                     // rather than merely report itself: every other point slot would have placed something
                     // here, so "nothing happened" is the surprise. Said in the tool's own role word, and
@@ -4411,11 +4496,23 @@ class Editor(
         return true
     }
 
+    /**
+     * The ghost a click landed on when it landed on nothing else (OP-18's *Show hidden*), or null.
+     *
+     * Asked only *after* every ordinary pick has missed, which is what makes it a report rather than a rule:
+     * a ghost never competes with anything, here or in [pickAt].
+     */
+    private fun ghostUnder(world: Vec2): Element? {
+        val ghosts = ghostElements()
+        if (ghosts.isEmpty()) return null
+        return HitTest.nearest(doc, ev(), world, tolWorld(), proj(), ghosts) { it in ghosts }
+    }
+
     private fun pickElement(
         world: Vec2,
         filter: (Element) -> Boolean,
     ): Boolean {
-        val el = HitTest.nearest(doc, ev(), world, tolWorld(), proj(), filter) ?: return false
+        val el = HitTest.nearest(doc, ev(), world, tolWorld(), proj(), filter = filter) ?: return false
         pickedElements.add(el)
         return true
     }

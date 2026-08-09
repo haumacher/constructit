@@ -102,7 +102,7 @@ private fun setupApp() {
         viewport.widthPx = canvas3.width.toDouble()
         viewport.heightPx = canvas3.height.toDouble()
         if (glCheck) {
-            glSync.update(Scene3.extract(editor.doc)) { gl.upload(it) }
+            glSync.update(Scene3.extract(editor.doc, ghosts = editor.ghostElements())) { gl.upload(it) }
             glCheck = false
         }
         gl.draw(viewport.camera)
@@ -929,6 +929,14 @@ private fun setupApp() {
         editor.dimScaffolding = (e.target as HTMLInputElement).checked
         repaint()
     })
+    // …and its twin (OP-18): draw what the user hid, as ghosts, so it can be found and shown again. A view
+    // setting like the dim, so it repaints and records nothing; the 3D view is redrawn too, because a hidden
+    // solid ghosts there as its wireframe.
+    (document.getElementById("v-hidden") as HTMLInputElement).addEventListener("change", { e ->
+        editor.showHidden = (e.target as HTMLInputElement).checked
+        glCheck = true
+        repaint()
+    })
     // which side of the centerline a new wall's thickness sits on — a thick path's justification (OP-21)
     (document.getElementById("v-just") as HTMLSelectElement).addEventListener("change", { e ->
         val picked = (e.target as HTMLSelectElement).value
@@ -1395,9 +1403,27 @@ private fun renderPanel(
             // `data-eid` stays the internal id — it is how a click finds the element again — while what the
             // row *shows* is the drawing's one name for it, the file's (OP-18, [Document.nameOf]), plus the
             // user's own label in front of it where there is one ([Document.displayName])
-            val flag = if (bad == null) "" else "<span class=\"flag\" title=\"${attr(bad.reason)}\">⚠</span>"
-            "<div class=\"item$active${if (bad == null) "" else " invalid"}\" data-eid=\"${it.id}\"" +
-                (if (bad == null) "" else " title=\"${attr("can't be built right now: ${bad.reason}")}\"") +
+            // …and what the user has **hidden** (OP-18), flagged by the same idiom for the same reason: the
+            // panel is the drawing's census, so the one place a hidden element is always findable is a row
+            // that is present and marked. Flagged whether or not *Show hidden* is on — the toggle governs the
+            // canvas, and a row that appeared and vanished with a view setting would make the census a view
+            // too. `○` is the shell's own word for hidden already (a group row's visibility button).
+            val gone = !it.visible
+            val why =
+                if (!gone) {
+                    null
+                } else if (editor.doc.hiddenByConstruction(it)) {
+                    "hidden by the construction (Show leaves it hidden)"
+                } else {
+                    "hidden — select it and press Show to bring it back"
+                }
+            val flag =
+                (if (bad == null) "" else "<span class=\"flag\" title=\"${attr(bad.reason)}\">⚠</span>") +
+                    (if (why == null) "" else "<span class=\"flag\" title=\"${attr(why)}\">○</span>")
+            val title =
+                listOfNotNull(bad?.let { b -> "can't be built right now: ${b.reason}" }, why).joinToString("; ")
+            "<div class=\"item$active${if (bad == null) "" else " invalid"}${if (gone) " gone" else ""}\" data-eid=\"${it.id}\"" +
+                (if (title.isEmpty()) "" else " title=\"${attr(title)}\"") +
                 ">$flag${it.kind.name.lowercase()}$where<span class=\"eid\">${editor.doc.displayName(it)}</span></div>"
         }
 }

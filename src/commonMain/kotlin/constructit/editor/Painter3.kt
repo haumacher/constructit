@@ -111,6 +111,9 @@ object Painter3 {
         }
 
         for (solid in scene.solids) {
+            // a ghost is its wireframe and nothing else (OP-18's *Show hidden*, [SolidItem.ghost]): shading it
+            // would paint a body the user hid over the bodies that are really there
+            if (solid.ghost) continue
             val verts = solid.mesh.vertices
             for (t in solid.mesh.triangles) {
                 val a = verts[t.a]

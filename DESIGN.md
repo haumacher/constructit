@@ -1588,6 +1588,95 @@ with the elements when the group is dissolved.
 second point on its master), so nothing records it and `setElementsVisible` refuses to show one. That is the
 line the reversal draws — the file records what the user chose, not what the construction implies.
 
+#### *Show hidden* — a hidden element has to be findable (as built, on a user report, session 62)
+
+The reversal above made hiding permanent, and that is exactly what made the missing half hurt. The user:
+*"if you hide some elements, it's almost impossible to find them later on to show them again. What about
+adding a 'Show hidden' checkbox similar to the 'Dim construction' checkbox that again shows the hidden
+elements (maybe in a lighter version)."* Their design, adopted whole. The root cause is one sentence: a hidden
+element was **neither drawn nor pickable**, so the recorded *Show* step — a real, undoable, saved step — had
+nothing to click. The panel could reach it by name, and nothing else could.
+
+`Editor.showHidden` is `Editor.dimScaffolding`'s exact twin and that is the whole of its status: a **view**
+setting, a checkbox next to *Dim construction*, recording nothing, in no file, untouched by undo. Toggling it
+is asserted to leave the saved bytes identical in either state, because the moment it were persisted it would
+be a second thing a file says about visibility — the very argument the group-flag decision above already
+settled.
+
+**The ghost is dashed, and that is load-bearing.** `Styles.GHOST` (`#9aa7b4`, dashed) is drawn instead of the
+element's own style, and it wins over `Styles.DIMMED` because being hidden is the stronger statement — a
+hidden scaffolding line is still hidden. Both toggles can be on at once, so the two states must separate *at a
+glance*, and two light greys do not: the dash is a vocabulary nothing else in the drawing uses. It cost the
+one thing the drawing seam did not have, `Style.dash`, written by `SvgDrawTarget` **only when there is one**,
+so every golden taken before it existed still matches byte for byte. A point cannot show a dash at four
+pixels, so a ghosted point is drawn **hollow** instead — the same statement in the one place the dash cannot
+carry it.
+
+**In 3D a ghost is its wireframe.** A hidden solid comes back into `Scene3.extract` as `SolidItem.ghost` and
+contributes **no faces at all**, only its feature edges in `Scene3.GHOST_EDGE`. Not an opacity: the
+construction view is a flat-shaded painter's projector with no depth buffer and no blending, so translucency
+is not something it can express — and a shaded ghost would *occlude* the bodies that are really there, which
+is the opposite of what the toggle is for. Two consequences had to be repaired for the toggle to be honest:
+the material-consumption walk is seeded from **visible** solids only (otherwise ghosting a boolean's result
+would swallow the operands that hiding it had just brought back — a view setting removing geometry), and
+`Scene3Sync.holds` compares `ghost` (same id, same mesh, an empty triangle section, so a comparison blind to
+it would leave the shaded body on screen). The **realistic preview and the exports are deliberately
+untouched**: there, hidden means *not exported*, `ExportScene` already says so by name in its notes, and a
+picture of what would be exported must not show what would not.
+
+**Four decisions, each with its reason:**
+
+1. **What is visible wins the click.** A ghost is offered only where nothing live is within the tolerance at
+   all — not by distance, not by kind. The broadest search runs first exactly as it always did, and only when
+   it comes back empty is it re-run with the ghosts joined in, so the rule holds *across* the several searches
+   a pick makes rather than inside each of them. A ghost is a picture of something the user took out of the
+   drawing; it may never take a click from geometry that is there.
+2. **No tool builds on a ghost, and no ghost is dragged.** Tool slots never see them (the ghost set is an
+   argument, empty by default, so every construction pick is exactly what it was), and a slot click that
+   landed on nothing *but* a ghost **refuses by name**: *"e25 is hidden — a tool builds only on what is in the
+   drawing; Show it first."* Silence was the alternative and it is not one here. **The refusal consumes
+   nothing**: it is a report, and it behaves exactly like the pre-existing "hit nothing pickable" miss —
+   the half-collected slots, the repeating collector and the selection are all left precisely where they
+   were, which is asserted for a repeating slot (*Outline*) beside the plain miss it must match. The same
+   line one gesture along: a ghost is selected, never grabbed — dragging is an edit, and editing through a
+   picture of something that is not in the drawing is how the two get out of step. A **marquee**, by
+   contrast, does take ghosts: a rubber band takes what is drawn, and under the toggle a ghost is drawn.
+3. **The panel flags a hidden row whether the toggle is on or off.** The panel is the drawing's census and the
+   toggle governs the canvas; a row that appeared and vanished with a view setting would make the census a
+   view too. Same idiom as the invalid row (session 60): the row is present, carries a `<span class="flag">`
+   with the reason in its tooltip, and both flags compose on a row that is invalid *and* hidden. The glyph is
+   `○`, which is already the shell's word for hidden on a group row.
+4. **`hiddenByConstruction` never ghosts.** The toggle reveals what the *user* hid; a welded alias and a
+   duplicate joint marker are hidden because the construction says so, and `setElementsVisible` refuses to
+   show them. A toggle that resurrected them would be that refusal broken from the other side. Said, too,
+   rather than merely enforced: `Document.stateOf` — the one channel by which a state rides along wherever an
+   element is named — answers *"hidden (Show brings it back)"* for the user's hide and *"hidden by the
+   construction (Show leaves it hidden)"* for the other, because a sentence that named it must not promise a
+   button that will decline.
+
+**What the probe found instead, and it was not the ghost's** (`ShowHiddenProbeTest`): a cross-space *Sweep*
+on the user's pillar lost its first pick, and isolation put it on a route with nothing to do with hiding —
+**`setTool` reset the collector even when the tool armed was the one already armed**. Arming a *different*
+tool abandons the half-finished one, which is honest, but re-arming the live one is not an operation at all:
+the palette button of the armed tool is still there to be clicked and its shortcut still there to be pressed,
+and one stray click on either silently undid the very picks the space switch had just reported keeping —
+breaking a promise the editor makes out loud, since *Sweep*'s own help says "switch the plane between clicks
+and the picks are kept". Re-arming now keeps the picks and *says where the gesture stands*
+("Sweep: 1 pick so far — press Escape to start over"); abandoning stays explicit and stays Escape's.
+Regression in `EditorTest.reArmingTheLiveToolKeepsWhatItHasCollected`. The probe's own step-count assertion
+went with it: a cross-space gesture legitimately records **two** steps (the `space "plane1"` it runs in and
+the `tool sweep`), so the toggle's innocence is now asserted the way it was meant — the identical gesture with
+the toggle off writes a byte-identical file.
+
+Tested in `ShowHiddenTest` (the ghost drawn only under the toggle, with an SVG golden; the journal identical
+before and after toggling; visible-wins over two coincident circles; the marquee; the refusals; the welded
+alias; the 3D wireframe, the sync gate and the operand that must not be swallowed) and in the browser
+(`BrowserE2ETest.hiddenElementsAreFoundAgainInBrowser`: hide, see the row flagged and the ink go, tick, see
+the ghost, click it, read the status line, press *Show*). The user's own rounded pillar — which hides `e25`
+and `e24` — is the fixture for the round trip: both are found through the toggle, one is shown, and the file
+still replays byte for byte. One stale sentence went with it: the *Hide* button's tooltip still called
+visibility "a view state, not part of the drawing", which the reversal above had made false.
+
 `macrodef "widget" els=e1,e2,e3 pts=e1,e2 scalar="r"` is the third step of that kind (OP-6): it declares a
 **user-defined tool** over elements earlier steps built — which of them are the definition, which of their
 free points are its click slots (the first is the anchor) and which panel scalars it consumes. It creates
@@ -11657,6 +11746,37 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   once too few, which would renumber a recorded crossing index and is therefore a version question rather than
   a patch. **1846 → 1865 green.**
   See *the local embedding term goes directional too* and *the lift* under OP-26.
+
+- **Turn 62 — what you hid has to be findable, and a ghost is not a fainter drawing.** The user: *"if you
+  hide some elements, it's almost impossible to find them later on to show them again. What about adding a
+  'Show hidden' checkbox similar to the 'Dim construction' checkbox"* — their design, adopted whole, and the
+  diagnosis is one sentence: a hidden element was neither drawn nor pickable, so the *Show* step (a recorded,
+  saved, undoable step since the visibility reversal) had nothing to click. `Editor.showHidden` is
+  `dimScaffolding`'s twin down to its status — a view setting that records nothing and is asserted to leave
+  the saved bytes identical in either state. What the package is really about is the three lines it had to
+  draw. **The ghost must not be confusable with the dim**: both toggles can be on at once, two light greys
+  are not a distinction, so a ghost is *dashed* — which cost `Style.dash`, written only where there is one so
+  no golden moved — and a ghosted point, which cannot show a dash at four pixels, is drawn hollow instead.
+  **A ghost must not take a click from geometry that is really there**: it is consulted only where nothing
+  live is under the cursor at all, decided once for the whole pick rather than inside each of the searches a
+  pick makes. And **a ghost is found, not used**: no tool slot takes one and no drag grabs one, with a
+  refusal that names the element rather than a silence. In 3D it is a wireframe, not an opacity — the
+  construction view has no blending, and a shaded ghost would occlude the bodies the toggle exists to keep
+  visible; two things had to be repaired for that to be honest (the material walk is seeded from visible
+  solids only, or ghosting a boolean's result would swallow the operands hiding it had just revealed, and the
+  upload gate now compares `ghost`). The exports and the realistic preview are deliberately untouched: there,
+  hidden means *not exported*. The panel flags a hidden row whether the toggle is on or off — the panel is the
+  census, the toggle governs the canvas — in session 60's invalid-row idiom, both flags composing on a row
+  that is both. `hiddenByConstruction` stays invisible throughout, and now *says* which hiding it is, because
+  a sentence naming a welded alias must not promise a button that will decline. The user's own rounded pillar
+  (which hides `e25` and `e24`) is the round-trip fixture. One stale tooltip went with it: *Hide* still called
+  visibility "a view state, not part of the drawing", which the reversal had made false. **The probe caught a
+  defect and it was not the ghost's**: a cross-space sweep lost its first pick because `setTool` reset the
+  collector even when the tool armed was the one already armed — so a stray click on the live tool's own
+  palette button silently undid the picks the space switch had just reported keeping. Re-arming now keeps
+  them and says where the gesture stands; abandoning is still Escape's job. **1875 → 1894 green** with the
+  browser E2E included: seventeen headless tests, the review's probe, and one in Chrome.
+  See *Show hidden — a hidden element has to be findable* under OP-18.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
