@@ -17,6 +17,7 @@ import constructit.editor.Picks
 import constructit.editor.Tools
 import constructit.geom.Curve3Element
 import constructit.geom.Curves3
+import constructit.geom.Frames3
 import constructit.geom.GeomMath
 import constructit.geom.Mesh3
 import constructit.geom.Path3
@@ -240,6 +241,14 @@ class LiftedRunTest {
         val length = 2.0 * (68.0 - 20.0) + 2.0 * (60.5 - 20.0) + 2.0 * kotlin.math.PI * 10.0
         assertClose(Curves3.length(path), length, 1e-9, "so its length is the drawing's own arithmetic")
         assertTrue(doc.note!!.contains("exact"), "and the lift says it fitted nothing: ${doc.note}")
+
+        // …and **the run turns nowhere**, seam included: every one of its eight joins hands a fillet to a leg
+        // along the leg's own direction, so the sweep's corner criterion (session 65, `Embedding.cornerFold`)
+        // finds no corner here and this foundation is untouched by it. The check is a property of the *curve*
+        // — the analytic tangents either side of each join — and not of how finely the fillets are sampled,
+        // which is exactly what keeps a finer mesh from refusing what a coarser one accepted.
+        val frame = assertNotNull(Frames3.along(path, Vec3.Z, reach = 33.0).first)
+        assertTrue(frame.stations.none { it.corner }, "a rounded outline is tangent at every join it has")
     }
 
     /**

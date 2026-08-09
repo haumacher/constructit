@@ -508,7 +508,24 @@ object Chains {
                 cure = "open the run out, or bring the cut nearer to it",
             )
         report.defect?.let { return null to it }
-        foldDefect(run, carry, boxLo, boxHi)?.let { return null to it }
+        // **The corner fold, in the tool's own words** ([Embedding.cornerFold]). The route rides the sweep's
+        // mitre, so it folds the sweep's way, and it is now judged by the sweep's arithmetic against the
+        // section this tool actually carries — the four corners of the clipped box, which is exact rather
+        // than a sample because both the mitre push and the advance are affine in the section's (x, y).
+        // Read through [Carry.handed], since that sign is what stands between the chain's coordinates and
+        // the frame's.
+        if (mode == CarryMode.ROTATING) {
+            Embedding
+                .cornerFold(
+                    MovingFrame(run, run.last().s - run.first().s, closed = false, seam = 0.0, startRef = run.first().ref),
+                    reach,
+                    listOf(boxLo, Vec2(boxHi.x, boxLo.y), boxHi, Vec2(boxLo.x, boxHi.y))
+                        .map { Vec2(it.x, carry.handed * it.y) },
+                    subject = "the cutting surface",
+                    cure = "open the corner out, or bring the cut nearer to the run",
+                )?.let { return null to it }
+        }
+        foldDefect(run, carry)?.let { return null to it }
 
         val (sides, whySides) = halves(chain, boxLo, boxHi, tolMm)
         if (sides == null) return null to whySides
@@ -793,57 +810,39 @@ object Chains {
         for (i in 0 until n) {
             val st = stations[(far + i) % n]
             if (i > 0) s += (st.at - out.last().at).length()
-            out.add(Frame3(s, st.at, st.tangent, st.ref, st.mitre, st.curvature))
+            out.add(Frame3(s, st.at, st.tangent, st.ref, st.mitre, st.curvature, st.bend, st.corner))
         }
         return out
     }
 
     /**
-     * Why the tool folds back on itself between two stations — or null when every band advances.
+     * Why a **translationally** carried tool folds back through itself — or null while the run keeps going the
+     * way it started.
      *
-     * The exact condition, and one statement for both modes: **the section at the next station must stand
-     * strictly beyond the plane the section at this one lies in**. In [CarryMode.ROTATING] that plane is the
-     * mitre plane, so this is the corner condition — a mitre that eats more of a span than the span has to
-     * give trims the band past itself, which is a fold no proximity test can see. In
-     * [CarryMode.TRANSLATIONAL] the section planes are all parallel to the chain's own space, so the same
-     * sentence reads as *the run must keep advancing through that space* — and while it does, no two sections
-     * can meet at all, since they lie in distinct parallel planes.
+     * The section planes of a translational carry are all parallel to the chain's own space, so two sections
+     * can meet only where the run stops advancing **through** that space: while it advances they lie in
+     * distinct parallel planes and cannot touch at all, whatever the section is. That makes this a statement
+     * about the run's own direction against one fixed plane, with no section in it and no mitre — which is
+     * why it stayed here when the *rotating* mode's fold moved to [Embedding.cornerFold].
      *
-     * Checked at the **four corners of the clipped box** and nowhere else, which is exact rather than a
-     * sample: both the mitre push and the advance are affine in the section's (x, y), so their extremes are
-     * at the corners of the box every profile point lies in.
+     * **It is asked per station and that is right here**, where it would not be there: a run can turn away
+     * from the space's normal in the middle of a smooth piece, with no corner anywhere near, so the place it
+     * happens is a station and not a leg. Nothing about the answer moves when the mesh is refined — the
+     * sign of `tangent · normal` is the curve's, and a finer sampling only says where it changes more
+     * precisely.
      */
     private fun foldDefect(
         run: List<Frame3>,
         carry: Carry,
-        lo: Vec2,
-        hi: Vec2,
     ): String? {
-        val probes = listOf(lo, Vec2(hi.x, lo.y), hi, Vec2(lo.x, hi.y))
+        if (carry.mode != CarryMode.TRANSLATIONAL) return null
         val n = carry.plane.normal.normalized()
-        val advance = (run.last().at - run.first().at).dot(n)
+        val ahead = if ((run.last().at - run.first().at).dot(n) < 0.0) -n else n
         for (k in 0 until run.size - 1) {
-            val a = run[k]
-            val b = run[k + 1]
-            val ahead =
-                when (carry.mode) {
-                    CarryMode.ROTATING -> a.mitre
-                    CarryMode.TRANSLATIONAL -> if (advance < 0.0) -n else n
-                }
-            for (p in probes) {
-                if ((carry.place(b, p) - carry.place(a, p)).dot(ahead) > Geom3.WELD_TOL) continue
-                return when (carry.mode) {
-                    CarryMode.ROTATING ->
-                        "the cut folds back on itself ${Frames3.mm(a.s)} mm along the route — the corner there " +
-                            "turns more sharply than the cut reaches across this solid " +
-                            "(${Frames3.mm(boxReach(lo, hi))} mm), so the two sides of the join trim past each " +
-                            "other; open the corner out, or bring the cut nearer to the run"
-                    CarryMode.TRANSLATIONAL ->
-                        "the route stops advancing through the chain's own plane ${Frames3.mm(a.s)} mm along it, " +
-                            "so a section carried without turning would fold back through the one before it — " +
-                            "carry it rotating instead, or keep the route going the way it started"
-                }
-            }
+            if ((run[k + 1].at - run[k].at).dot(ahead) > Geom3.WELD_TOL) continue
+            return "the route stops advancing through the chain's own plane ${Frames3.mm(run[k].s)} mm along it, " +
+                "so a section carried without turning would fold back through the one before it — " +
+                "carry it rotating instead, or keep the route going the way it started"
         }
         return null
     }

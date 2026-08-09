@@ -90,6 +90,13 @@ enum class CarryMode {
  * magnitude because the local half of the embedding criterion is a statement about the section's reach *in
  * that direction* and not about its reach at all ([Embedding.check]) — a foundation standing wholly outside a
  * bend cannot fold through the inside of it, however wide it is.
+ *
+ * [corner] is whether this station is a **corner of the curve** — a place where the run's own tangent jumps,
+ * which is a property of the *path* and never of how finely it was sampled. It is read from the analytic
+ * pieces either side (see [Frames3]) and not from the chords, and it is what [Embedding.cornerFold] keys on:
+ * a mitre trims a band only where there is a real turn to mitre, and a station sampled along a smooth bend
+ * has no mitre of its own however sharply the bend turns. That distinction is the whole of the answer to
+ * *"do the sweep's refusals speak about the curve or about the mesh"* — see [Embedding].
  */
 data class Frame3(
     /** Arc length from the path's start, along the sampled spine — what a refusal names a station by. */
@@ -101,6 +108,8 @@ data class Frame3(
     val curvature: Double,
     /** Unit, towards the centre of curvature — `Vec3.ZERO` where the piece is straight. */
     val bend: Vec3 = Vec3.ZERO,
+    /** Whether the *curve* turns discontinuously here — a join of two pieces whose tangents differ. */
+    val corner: Boolean = false,
 ) {
     /** The frame's second in-plane axis: `tangent × ref`, so (ref, bi, tangent) is right-handed. */
     val bi: Vec3 get() = tangent.cross(ref)
@@ -362,7 +371,16 @@ object Frames3 {
             val sTwist = if (path.closed && k == 0) length else cum[k]
             val turned = rotate(refs[inIdx], a, rollRad + twistRad * (sTwist / length))
             stations.add(
-                Frame3(cum[k], points[k], a, (turned - a * turned.dot(a)).normalized(), mitre, curvatures[k], sampled.bends[k]),
+                Frame3(
+                    cum[k],
+                    points[k],
+                    a,
+                    (turned - a * turned.dot(a)).normalized(),
+                    mitre,
+                    curvatures[k],
+                    sampled.bends[k],
+                    sampled.corners[k],
+                ),
             )
         }
         return MovingFrame(stations, length, path.closed, seam, refs[0]) to null
@@ -436,6 +454,7 @@ object Frames3 {
         val curvatures: List<Double>,
         val bends: List<Vec3>,
         val params: List<Pair<Int, Double>>,
+        val corners: List<Boolean>,
     )
 
     /**
@@ -510,8 +529,63 @@ object Frames3 {
             bend.removeAt(bend.size - 1)
             params.removeAt(params.size - 1)
         }
-        return Spine(points, curvature, bend, params)
+        return Spine(points, curvature, bend, params, cornersOf(path, params))
     }
+
+    /**
+     * Which stations are **corners of the curve** — read off the pieces the samples came from, so the answer
+     * is a property of the path and not of how finely it was cut.
+     *
+     * A station is one of the samples' `(piece, parameter)` positions, and a piece hand-over is exactly a
+     * sample at `t = 1` of a piece that is not the last: the coinciding first sample of the *next* piece is
+     * dropped by [spine], so the shared point keeps the earlier piece's parameter. A **closed** path's seam
+     * is the same question asked of the last piece against the first, and it lands on station 0 for the same
+     * reason — the returning duplicate is dropped there.
+     *
+     * *"The tangents differ"* is decided against the **analytic** pieces ([Curves3.tangentAt]) rather than
+     * against the chords the spine walks, and that is the load-bearing choice: the chord leaving a sampled arc
+     * is half a sampling step off the arc's own tangent, so a chord-based test would call the perfectly
+     * tangent join of a fillet and its leg a corner, and would call it one by an amount that changes when the
+     * mesh is refined. A rounded rectangle lifted out of the plan has *no* corners by this reading, which is
+     * the right answer and the one a finer mesh cannot alter.
+     */
+    private fun cornersOf(
+        path: Path3,
+        params: List<Pair<Int, Double>>,
+    ): List<Boolean> {
+        val els = path.elements
+        return params.mapIndexed { k, (piece, t) ->
+            when {
+                t >= 1.0 && piece < els.lastIndex -> turnsAt(els[piece], els[piece + 1])
+                path.closed && k == 0 && els.size > 1 -> turnsAt(els.last(), els.first())
+                path.closed && k == 0 && els.size == 1 -> turnsAt(els.first(), els.first())
+                else -> false
+            }
+        }
+    }
+
+    /**
+     * Whether the run's own direction jumps where piece [a] hands over to piece [b].
+     *
+     * The tolerance is a **rounding** one and not a modelling one, in the same sense [Embedding]'s cone test
+     * is: tangency at a join is a fact of how the run was constructed — a fillet is placed tangent to its
+     * legs, a lift chains what the drawing already joined — so the two directions either agree to the last
+     * few bits or differ by a visible angle. Nothing in between can change an answer either, since a join
+     * turning by this little trims `u·tan(θ/2) ≤ u·5e-7` off its bands, which is under a micron for a section
+     * reaching a metre and far below anything this kernel resolves (OP-15). A piece with no direction at its
+     * end counts as a corner, because a run that stands still there has no tangent to be continuous with.
+     */
+    private fun turnsAt(
+        a: Curve3Element,
+        b: Curve3Element,
+    ): Boolean {
+        val ta = Curves3.tangentAt(a, 1.0) ?: return true
+        val tb = Curves3.tangentAt(b, 0.0) ?: return true
+        return ta.dot(tb) < 0.0 || ta.cross(tb).length() > CORNER_EPS
+    }
+
+    /** Below this |sin| between two pieces' analytic tangents their join is smooth — see [turnsAt]. */
+    private const val CORNER_EPS = 1e-6
 
     /**
      * **Which way [el] bends at [t]** — the unit direction from the curve towards its centre of curvature, or
@@ -905,6 +979,194 @@ object Embedding {
             )
         }
         return EmbeddingReport(null, nearest, examined)
+    }
+
+    /**
+     * **Does a corner mitre away more run than there is?** — the third way a swept body folds, and the one
+     * neither term of [check] can see (OP-9's *watertight or refused*; OP-26, step 2's corner treatment).
+     *
+     * **The mechanism.** At a station the ring is laid out in the plane perpendicular to the arriving chord
+     * and then pushed along that chord onto the **mitre plane** ([Frame3.place]) — which is the whole of the
+     * corner treatment and is exactly the trim two straight tubes make of each other. Written out, a profile
+     * point standing `u` to the **inside** of a turn of `θ` is pushed back by `u·tan(θ/2)`, and the same point
+     * on the leaving side stands `u·tan(θ/2)` **forward** along the next leg. So each corner eats
+     * `u·tan(θ/2)` off both legs it joins, and a leg whose two corners eat more than its whole length has its
+     * band handed back past where it started: the surface folds. It is not a proximity — a triangle's three
+     * legs all *touch*, so there is no non-neighbouring pair to be a bottleneck at — and it is not a
+     * curvature, since a polyline corner has none on either side. Both fixtures the record carries are silent
+     * without this: an 18 mm tube through two 85° corners 30.11 mm apart comes out **edge-manifold and
+     * positively volumed**, because a symmetric section's mitre adds outside exactly what it removes inside.
+     *
+     * **`u` is a direction and not a size, exactly as session 59's clearance is.** Each corner contributes a
+     * 2D vector in the station's own axes,
+     *
+     * ```
+     * g = tan(θ/2) · m ,   m the unit direction ⟂ the arriving chord towards the inside of the turn
+     * ```
+     *
+     * and the leg between corners A and B advances for a profile point `w` exactly when
+     * `w·g_A + w·g_B < L`. The whole section advances when that holds for **every** vertex, so what the leg
+     * needs is `max over w of w·(g_A + g_B)` — the section's own support function in the direction the two
+     * mitres jointly bite, and one number rather than two. Taking the two supports *separately* and adding
+     * them would be a different and wronger claim: on a **serpentine** the two corners turn opposite ways,
+     * `g_A + g_B` very nearly cancels, and an ordinary zig-zag tube keeps building — the mitres *shear* its
+     * band instead of shortening it — while the sum of the two supports would refuse it. A **round** tube has
+     * no outline to maximize over, and the support of a disc is its radius, so it falls back to
+     * `reach·|g_A + g_B|` with no case of its own. A non-convex section is measured by its convex hull, which
+     * errs towards refusing a body that would have fitted and never towards accepting a fold, which is the
+     * same boundary [needed] already has.
+     *
+     * **The corners are the curve's, not the mesh's, and that is the decision this term forced.** The exact
+     * condition applied at *every* sampled station would fire on a smooth run at `h ≥ R·cos(Δ/2)` for the
+     * sampling step `Δ` — inside the analytic limit `h ≥ R` that [check]'s local term is asserted at, by an
+     * amount that shrinks as the mesh is refined. A criterion that refuses more of a finer picture is not a
+     * criterion, so the refusals speak about the **curve**: only a station where the run's own tangent jumps
+     * ([Frame3.corner]) is a corner, a stretch of run between two of them is a **leg**, and everything smooth
+     * stays the local term's business, where it is a statement about an analytic curvature. A mixed run of
+     * segments and arcs joined tangentially — a lifted rounded rectangle — therefore has no corners at all and
+     * is untouched here.
+     *
+     * **The boundary is `≥`, and the limit argument decides it.** As the two trims approach the leg's length
+     * the band between them shrinks to nothing; at equality the two rings are one ring and the band is a
+     * sheet of degenerate triangles, so the watertightness the sweep is built on — consecutive bands sharing
+     * one ring, each band a prism of positive length — has no body left to be about. The limit of bodies is
+     * not a body, so equality refuses. That is the same side [check]'s local term takes at `κ·h ≥ 1` and for
+     * the same reason.
+     *
+     * **The resolution is the spine's** (OP-15). A leg's length is the sum of the chords between its two
+     * corners — exact on a straight leg, and on a curved one an understatement of the true arc by less than
+     * the tolerance the spine is built to, so the criterion errs by that much towards refusing. The turn is
+     * read off the station's own mitre plane, which is the plane the ring is actually built on, so the
+     * numbers a refusal quotes are the numbers the built geometry has rather than an idealization of them.
+     *
+     * **What it does not claim.** A corner whose trim exceeds one *sampling step* of a **curved** leg, but
+     * not the leg, pushes its ring past the next station and leaves a local artefact in the mesh which this
+     * does not name — naming it would be the mesh speaking again, and would make a refusal appear when a
+     * drawing is meshed more finely. The honest cure there is the same one this refusal offers.
+     *
+     * [subject] and [cure] are the caller's words, the same courtesy [check] does the swept cut, whose route
+     * runs through the identical mitre and is judged by the identical arithmetic against its own clipped
+     * section (`Chains.sweptTools`).
+     */
+    fun cornerFold(
+        frame: MovingFrame,
+        reach: Double,
+        section: List<Vec2>? = null,
+        subject: String = "the sweep",
+        cure: String = "thin the section, move it towards the outside of the turn, or open the corners out",
+    ): String? {
+        val st = frame.stations
+        if (st.size < 2) return null
+        val corners = st.indices.filter { st[it].corner }
+        if (corners.isEmpty()) return null
+        // the legs: a stretch of run between two corners, and on an open run the two ends, which mitre
+        // nothing (a station at the end of an open path has its own tangent for a mitre plane, so its trim
+        // is exactly zero and the cap falls out with no case for it)
+        val legs = ArrayList<Pair<Int, Int>>(corners.size + 1)
+        if (frame.closed) {
+            for (k in corners.indices) legs.add(corners[k] to corners[(k + 1) % corners.size])
+        } else {
+            // A corner standing **on** an end of an open run has no leg on that side to eat into — which is
+            // not a hypothetical: a swept cut opens its closed route at the station furthest from the target
+            // (`Chains.openedAwayFrom`), and that station keeps the mitre plane it had in the loop.
+            if (corners.first() > 0) legs.add(-1 to corners.first())
+            for (k in 0 until corners.size - 1) legs.add(corners[k] to corners[k + 1])
+            if (corners.last() < st.lastIndex) legs.add(corners.last() to -1)
+        }
+        for ((a, b) in legs) {
+            val ga = if (a < 0) Vec2(0.0, 0.0) else biteOf(st[a])
+            val gb = if (b < 0) Vec2(0.0, 0.0) else biteOf(st[b])
+            val v = ga + gb
+            if (v.length() <= Vec2.EPS) continue
+            val w = worstVertex(v, section, reach) ?: continue
+            val need = w.dot(v)
+            val len = legLength(frame, a, b)
+            if (need < len) continue
+            return foldRefusal(st, a, b, need, len, subject, cure)
+        }
+        return null
+    }
+
+    /**
+     * What one corner **bites** off each of its two legs, as a 2D vector in that station's own axes:
+     * `tan(θ/2)` long, pointing the way the turn closes.
+     *
+     * Read straight off the mitre plane the ring is built on rather than re-derived from the chords. With
+     * `c = mitre·tangent = cos(θ/2)`, the mitre's own in-plane part is `sin(θ/2)` long and points to the
+     * inside of the turn, so dividing it by `c` is `tan(θ/2)` in that direction and one division does the
+     * whole of it. A station with no turn gives back the zero vector, which is what an end of an open run and
+     * a smooth station both are.
+     */
+    private fun biteOf(st: Frame3): Vec2 {
+        val c = st.mitre.dot(st.tangent)
+        if (c <= 0.0) return Vec2(0.0, 0.0)
+        val m = st.mitre - st.tangent * c
+        return Vec2(m.dot(st.ref) / c, m.dot(st.bi) / c)
+    }
+
+    /**
+     * The profile vertex that the two mitres bite hardest — the support point of the section in direction
+     * [v], or the point of the disc of radius [reach] there when no outline is offered.
+     *
+     * The extreme is a vertex because the quantity is linear in the section's own (x, y), so the whole
+     * section advances exactly when the outline's vertices do; a hole lies inside the outer loop's hull and
+     * cannot reach further than it does.
+     */
+    private fun worstVertex(
+        v: Vec2,
+        section: List<Vec2>?,
+        reach: Double,
+    ): Vec2? {
+        if (section == null || section.isEmpty()) return v.normalized() * reach
+        return section.maxByOrNull { it.dot(v) }
+    }
+
+    /** How long the run is between the two ends of a leg — the wrap included, for a closed run. */
+    private fun legLength(
+        frame: MovingFrame,
+        a: Int,
+        b: Int,
+    ): Double {
+        val st = frame.stations
+        if (a < 0) return st[b].s - st.first().s
+        if (b < 0) return st.last().s - st[a].s
+        if (frame.closed && b <= a) return frame.length - st[a].s + st[b].s
+        return st[b].s - st[a].s
+    }
+
+    /**
+     * The refusal a folded leg speaks (OP-3 — a property of *values*, so node invalidity that heals).
+     *
+     * Both corners are named by where they stand along the run, and what they take is quoted as **one**
+     * figure: the two mitres bite the same profile vertex at once, and on a leg whose corners turn opposite
+     * ways one of them *gives back* what the other takes, so a per-corner split would have to print a
+     * negative trim to stay truthful. The figure quoted is exactly the number that was compared against the
+     * leg, which is the rule the whole family follows — a message that quoted anything else would be a
+     * correct refusal nobody could check.
+     *
+     * A leg with only one corner — an end leg of an open run, where the other end is a cap — says so rather
+     * than naming a second corner that is not there.
+     */
+    private fun foldRefusal(
+        st: List<Frame3>,
+        a: Int,
+        b: Int,
+        need: Double,
+        len: Double,
+        subject: String,
+        cure: String,
+    ): String {
+        fun tail(where: String) =
+            "off the ${Frames3.mm(len)} mm of run $where, which is more than there is — so $subject would " +
+                "fold back on itself; $cure"
+        if (a < 0 || b < 0) {
+            val i = if (a < 0) b else a
+            val side = if (a < 0) "before" else "after"
+            return "the corner ${Frames3.mm(st[i].s)} mm along the path mitres ${Frames3.mm(need)} mm " +
+                tail("$side it")
+        }
+        return "the corners ${Frames3.mm(st[a].s)} mm and ${Frames3.mm(st[b].s)} mm along the path mitre " +
+            "${Frames3.mm(need)} mm " + tail("between them")
     }
 
     /**

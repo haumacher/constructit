@@ -476,6 +476,56 @@ class SweptCutTest {
     }
 
     /**
+     * **A route with a real corner in it folds the tool the sweep's way, and is refused in the sweep's
+     * arithmetic** — the swept cut shares the mitre, so it shares the corner criterion
+     * ([Embedding.cornerFold]) rather than carrying one of its own.
+     *
+     * The same wiggle as the fixture above, drawn as a **polyline** instead of a smooth curve: its two kinks
+     * turn through real angles at stations whose curvature is exactly zero either side, so neither term of
+     * the embedding criterion can see them and only the corner term can. The refusal names both corners, what
+     * each mitres away and what run there was between them, and it heals when the corner is opened out.
+     *
+     * The check that used to sit here was **per span** and therefore spoke about the mesh: on a smooth route
+     * it would have fired at `h ≥ R·cos(Δ/2)` for the sampling step `Δ`, inside the analytic limit the local
+     * term is stated at and by an amount that shrinks as the route is sampled more finely. It also asked
+     * whether the next section stands beyond this station's **mitre plane**, which mixes in the *previous*
+     * leg's direction, where the band's own question is whether the section advances along **this** leg. The
+     * corner set is the *curve's* now, and the sentence names the leg and both its corners rather than one
+     * station: this fixture is refused either way, and the words are what changed.
+     */
+    @Test
+    fun aRouteWithARealCornerFoldsTheToolAndIsRefusedAtTheCorner() {
+        if (!MeshBool.available) return
+        val c = Construction()
+        val block = c.block(60.0, 40.0, 40.0)
+        val apex = c.freePoint("apex", 60.mm, 20.mm)
+        val route =
+            c.pathThrough(
+                listOf(
+                    c.at(30.0, 20.0, -40.0, "k0"),
+                    c.at(30.0, 20.0, 10.0, "k1"),
+                    c.heightPoint(c.planeXY(), apex, c.const(20.mm)),
+                    c.at(30.0, 20.0, 30.0, "k3"),
+                    c.at(30.0, 20.0, 80.0, "k4"),
+                ),
+            )
+        val cut = c.splitSolid(block, c.squareChain(5.0, "sq"), c.planeXY(), -1, route, CarryMode.ROTATING)
+
+        val why = reasonOf(Evaluator(), cut)
+        assertTrue(why.contains("fold back on itself"), "the cornered route folds the cutting surface: $why")
+        assertTrue(why.contains("mitre"), "…and says how much each corner mitres away: $why")
+        assertTrue(why.contains("the cutting surface"), "…in the tool's own name, not the sweep's: $why")
+        assertTrue(why.contains("bring the cut nearer to the run"), "…with the tool's own way out: $why")
+
+        c.set(apex, 31.mm, 20.mm)
+        assertTrue(
+            Evaluator().resultOf(cut) is EvalResult.Ok,
+            "and it comes back the moment the corner is opened: ${reasonOf(Evaluator(), cut)}",
+        )
+        assertTrue(volumeOf(Evaluator(), cut, "the cut along the opened-out cornered route") > 0.0, "and it removes material")
+    }
+
+    /**
      * **The translational carry has its own way of folding, and it is refused in its own words**: with every
      * section parallel to the chain's space, two of them meet exactly when the route stops advancing through
      * that space — and while it does advance, no two sections can meet at all, since they lie in distinct

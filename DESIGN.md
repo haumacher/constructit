@@ -8135,6 +8135,177 @@ the pairs offered before.
   quotes 30.286 mm rather than 62.07: the 62 mm arm points into the bend for part of the run, and that part is
   where it folds.
 
+### The sweep's refusals speak about the curve, not about the mesh (stated once, for all three criteria — session 65)
+
+**The question, and why it had to be answered before the third criterion could be written.** Session 40 queued
+the corner fold with the observation that the obvious check for it collides with a decision already shipped:
+the exact fold condition — *every profile vertex advances along the span* — reduces on a **sampled smooth**
+curve to `h ≥ R·cos(Δ/2)` for the sampling step `Δ`, which fires *inside* the analytic local limit `h ≥ R`
+that step 3's criterion is asserted at, 0.01 mm either side. The queue entry was explicit that the answer
+"wants stating once, for the local criterion and this one together, rather than being settled by whichever
+check is written second". It is stated here, and it governs all three terms.
+
+**The answer: the curve.** A refusal is a claim about the **drawing**, so nothing that changes when the same
+drawing is meshed more finely may change what refuses. That rules the mesh-spoken reading out on its own
+terms: `cos(Δ/2) → 1` as the sampling is refined, so a mesh-spoken criterion refuses a *band* of bodies whose
+width is a function of `TESS_TOL_MM` — and refuses **more** of a finer picture, which inverts what refining a
+mesh is for. *Quality is a property of the picture* (OP-15) is the same rule read from the other side. So:
+
+- **The local term** reads the **analytic** curvature of the piece a station was sampled from (`Frame3.curvature`,
+  never a chord estimate) and the analytic bend direction with it, and it refuses at `κ·h(N) ≥ 1` — the exact
+  analytic limit, resolvable to the last bit, which is why its boundary test asserts 0.01 mm either side.
+- **The global term** is measured on the sampled spine, because a bottleneck between two parts of a run is not
+  a statement any piece's vocabulary can make — and it pays for that honestly, by carrying the spine's own
+  stated error as slack and firing only when the run is inside its clearance by **more than** that error. Its
+  boundary test asserts 0.1 mm either side, and the difference between the two figures is the difference
+  between the two claims.
+- **The corner term** (session 65, below) keys on **tangent discontinuity of the pieces** — `Frame3.corner`,
+  read from `Curves3.tangentAt` on either side of a join — and never on a station. A polyline vertex is a
+  corner; a fillet meeting its leg is not, however finely the fillet is sampled; a sampled station in the
+  middle of an arc is not a corner at all and generates no refusal of its own. What is left over on a smooth
+  bend is exactly the local term's business, where it is stated analytically.
+
+**What the sampled station is still allowed to decide is the *numbers*, and that is not a contradiction.** A
+station stands on the chord the spine walks, so its axes are half a sampling step off the arc's own normal and
+its mitre plane is the plane the ring is actually built on. Every figure a refusal quotes is read there, which
+is session 61's recorded choice ("the number in the refusal is the number the *built* geometry has, not an
+idealization of it") and is kept: the mesh may say **how much**, the curve says **whether**. The three terms
+are consistent because they divide those two questions the same way.
+
+**Two consequences, both stated rather than left to be found.** A corner whose trim exceeds one *sampling
+step* of a curved leg — but not the leg — pushes its ring past the next station and leaves a local artefact
+the corner term does not name; naming it would be the mesh speaking, and would make a refusal appear when a
+drawing is meshed more finely. And the **swept cut** used to answer this question the other way: its
+`foldDefect` was a per-span test, so on a smooth route it would have refused at `h ≥ R·cos(Δ/2)` — exactly the
+band this decision rules out. It has been brought into line (see below); its *translational* half stays per
+station, because that statement has no mitre and no sampling in it at all (the sign of `tangent · normal` is
+the curve's, and a finer sampling only says where it changes more precisely).
+
+### As built: a corner mitres away only as much run as there is (the third fold, session 65)
+
+**The defect, from the queue (session 40, refixtured by session 59).** At a corner the mitred join pushes each
+ring onto the bisecting plane, and a profile point standing `u` to the **inside** of a turn of `θ` is pushed
+back `u·tan(θ/2)` — which is exactly the trim two straight tubes make of each other, and is the whole of the
+corner treatment (`Frame3.place`, session 38). The same point stands `u·tan(θ/2)` **forward** along the next
+leg, so a corner eats that much off *both* legs it joins, and a leg whose two corners eat more than its whole
+length has its band handed back past where it started. Three reproductions, all silent before this:
+
+- session 40's route `(0,0,0) → (300,0,0) → (302.62,30,0) → (0,56.24,0)` with an 18 mm tube — two ~85° corners
+  **30.114 mm** apart, the two mitres taking **34.508 mm** — which built a shell that was edge-manifold,
+  `assertManifold`-clean and **+644255 mm³**, because a symmetric section's mitre adds outside exactly what it
+  removes inside;
+- session 59's **open elbow** `(0,0,0) → (80,0,0) → (80,80,0)` with a circle of radius 3 standing 100 mm inside
+  the corner (`103·tan 45° = 103` against an 80 mm leg), which built **−1121.5 mm³**;
+- and its **closed triangle** `(0,0,0) → (300,0,0) → (150,260,0)` with the same circle 120 mm inside, whose two
+  corners take **425.927 mm** off a 300 mm leg, at **−9721.9 mm³**.
+
+Neither term of the embedding criterion can see any of them, and the reasons are structural rather than
+incidental: it is **not a proximity** — a triangle's three legs all *touch*, so it has no non-neighbouring pair
+to be a bottleneck at at all — and it is **not a curvature**, since a polyline corner has zero curvature on
+both sides. This is where the signed-volume guard session 59 rejected would have fired, and the reasoning
+recorded there holds: the guard catches only the asymmetric half, while naming the corner catches both and
+says which corner.
+
+**The condition, derived rather than asserted.** Write `c = mitre·tangent = cos(θ/2)`; the mitre's own in-plane
+part is `sin(θ/2)` long and points to the inside of the turn, so each corner contributes a 2D vector in that
+station's own axes
+
+```
+g = (mitre − tangent·c) / c ,   which is tan(θ/2) towards the inside of the turn
+```
+
+and the leg between corners A and B advances, for a profile point `w`, exactly when `w·g_A + w·g_B < L`. The
+whole section advances when that holds for **every** vertex, so what the leg needs is
+`max over w of w·(g_A + g_B)` — the section's own **support function** in the direction the two mitres jointly
+bite. That is one number and not two, and the difference is load-bearing:
+
+- *Rejected: adding the two corners' supports separately.* On a **serpentine** the two corners turn opposite
+  ways, `g_A + g_B` very nearly cancels, and an ordinary zig-zag tube is perfectly sound — the mitres *shear*
+  its band instead of shortening it, since the vertex the first mitre cuts back is the one the second lets run
+  on. The sum of two supports refuses it. A criterion that invents a fold is the same class of bug as one that
+  misses one, pointing the other way, and it is pinned as a test (`aZigZagWhoseCornersTurnOppositeWaysKeepsBuilding`).
+- A **round** tube has no outline to maximize over and the support of a disc is its radius, so the same
+  expression gives `reach·|g_A + g_B|` with no case of its own — which is the identical device sessions 59 and
+  61 used, and the reason a tube's messages are all one family. A **non-convex** section is measured by its
+  convex hull, which errs towards refusing a body that would have fitted and never towards accepting a fold.
+- It is the **directional** reading `u` all the way down, exactly as session 59's clearance and session 61's
+  local term are: the same section of the same reach standing on the *outside* of the same turn is an ordinary
+  body, and two sections of the identical reach — one reaching upwards out of the plan, one reaching into the
+  turn — are one solid and one refusal. A criterion stated in the reach could not tell either pair apart.
+
+**A leg, and where its ends are.** A *leg* is the stretch of run between two consecutive corners; a closed run's
+every leg has two, an open run's end legs have one corner and a cap. The cap needs no case: a station at the
+end of an open path has its own tangent for a mitre plane, so `θ = 0`, `g = 0`, and the formula gives the right
+answer with nothing written for it. A closed run with a single corner has one leg — the whole loop, with that
+corner at both ends — which the wrap-around arithmetic gives back unforced.
+
+**The boundary is `≥`, and a limit argument decides it.** As the two trims approach the leg's length the band
+between them shrinks to nothing; at equality the two rings are one ring and the band is a sheet of degenerate
+triangles, so the argument the sweep's watertightness rests on — consecutive bands sharing one ring, each band
+a prism of positive length (OP-2, OP-9) — has no body left to be about. The limit of bodies is not a body, so
+equality refuses. It is the same side the local term takes at `κ·h(N) ≥ 1`, and it is asserted from both sides
+at a hundredth of a millimetre on a **polygon** section, whose support in any direction is a vertex, so the
+arithmetic at the limit is exact rather than resolved to a tessellated circle's nearest chord.
+
+**The resolution** (OP-15). A leg's length is the sum of the chords between its two corners — exact on a
+straight leg, and on a curved one an understatement of the true arc by less than the tolerance the spine is
+built to, so the criterion errs by that much towards refusing. No epsilon and no slack: unlike the global term,
+this one is not measuring an approach between two parts of a run, it is arithmetic on a corner the curve
+actually has.
+
+**The refusal speaks and it heals** (OP-3 — a property of *values*, so node invalidity): *"the corners 300 mm
+and 330.114 mm along the path mitre 34.508 mm off the 30.114 mm of run between them, which is more than there
+is — so the sweep would fold back on itself; thin the section, move it towards the outside of the turn, or open
+the corners out"*, and for an end leg *"the corner 80 mm along the path mitres 103 mm off the 80 mm of run
+before it, …"*. **What the two corners take is quoted as one figure and that is deliberate**: the two mitres
+bite the same profile vertex at once, and on a leg whose corners turn opposite ways one of them gives back what
+the other takes, so a per-corner split would have to print a negative trim to stay truthful. The figure quoted
+is exactly the number that was compared against the leg, which is the rule the whole family follows. All three
+cures are real and all three are tested: thinning the tube's radius parameter, and dragging the section's own
+centre node nearer the run, each make the very same node a manifold body.
+
+**It is asked last of the three**, so that where more than one term fires the one that was there first keeps its
+words — the same rule the local term already had against the global one. Every message either of the other two
+terms ever produced is therefore byte-identical, and no body they refuse has changed its sentence.
+
+**The swept cut shares the mitre, so it shares this** (OP-22's extension, step 2). It did **not** share the
+defect — session 42 gave it `foldDefect`, an exact per-span test at the four corners of its clipped box — but it
+answered the curve-versus-mesh question the other way, and it stated the advance in a different direction: it
+asked whether the next section stands beyond the **mitre plane** at this station, which mixes in the *previous*
+leg's direction, where the band's own question is whether the section advances along **this** leg. (A wiggle
+whose two corners turn opposite ways was the case the two readings should most disagree on, and it was probed
+against the pre-fix engine rather than argued about: both accept it, so this is a correction of the
+*statement* and not a false refusal being removed. What the two do measurably differ on is which sentence a
+folded route gets — the old one named one station, the new one names the leg and both its corners.) It now
+takes the same criterion in its own words (`Embedding.cornerFold` with the tool's subject and cure and
+its box's four corners as the section — exact, since both the mitre push and the advance are affine in the
+section's (x, y)). `foldDefect` keeps only its **translational** half, which is a different statement entirely —
+with every section parallel to the chain's space, two of them meet exactly when the run stops advancing through
+that space — and stays per station for the reason given above. Riding it, one thing the cut had been quietly
+losing: `openedAwayFrom` rebuilt each `Frame3` without its `bend`, so a *closed* route's local term fell back to
+the isotropic reach session 61 retired; it now carries the bend and the corner flag through.
+
+**What it does not claim**, stated rather than left to be discovered. A corner whose trim exceeds one sampling
+step of a **curved** leg, but not the leg, pushes its ring past the next station and leaves a local artefact in
+the mesh that this does not name — see the decision above for why naming it would be the mesh speaking. And the
+criterion is about the mitre and nothing else: a section that is fine at every corner and still passes through
+itself somewhere is the other two terms' business.
+
+Tests: `SweepCornerTest` (14 new) — the three reproductions verbatim, each refused with the corners named by
+where they stand and the numbers read out of the sentence, and each **healed** by a live parameter (the tube's
+radius, the section centre's own drag, twice); the boundary asserted from both sides on a polygon section; two
+sections of the *identical* reach, one of which folds; the same section on the outside of the same turn as an
+ordinary body; the zig-zag sentinel; a segment–arc–segment run joined tangentially having **no** corners while
+the same three joins made of segments have two, which is the corner test keyed on tangency rather than on piece
+boundaries; the same two runs refused in two different voices — the smooth one by the *bend*, the kinked one by
+its *corners*; a closed rounded rectangle of segments and fillets turning nowhere, seam included, and sweeping
+a foundation; and a helix having no corner at all. Plus one in `SweptCutTest` for the cut's own words and its
+heal, and — where the contract really lives — an assertion inside `LiftedRunTest`'s own arc test that **the
+user's pillar border**, loaded from their file, has no corner at any of its eight joins, so the foundation
+swept round it is untouched. `assertManifold` on every body that builds. **1947 → 1962 green**, no new golden,
+no version bump, no existing golden changed, and **no existing test changed** — which is worth saying because
+sessions 59 and 61 each had to change several: nothing green was pinning a folded body this time.
+
 ### As built: the lift — a curve drawn in a plane is the run it already is (step 1's missing source, session 61)
 
 **The report.** The user rebuilt their pillar with rounded corners and could not sweep at all: neither the
@@ -12048,6 +12219,44 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   its tick) and one label assertion updated. See *Which way a plane fronts* under OP-17 and *Point reflect*
   under OP-14.
 
+- **Turn 65 — a corner mitres away only as much run as there is, and a refusal is a claim about the drawing.**
+  The last of the three ways a swept body folds, queued since session 40 and refixtured by session 59, and the
+  one neither term of the embedding criterion could ever see: a mitred join pushes each ring onto the bisecting
+  plane, so a profile point standing `u` inside a turn of `θ` eats `u·tan(θ/2)` off **both** legs it joins, and
+  a leg whose two corners eat more than its whole length hands its band back past where it started. It is not a
+  proximity (a triangle's three legs all *touch*, so there is no non-neighbouring pair to be a bottleneck at)
+  and it is not a curvature (a polyline corner has none on either side), which is why an 18 mm tube through two
+  85° corners 30 mm apart came out edge-manifold, `assertManifold`-clean and **+644255 mm³** for two sessions:
+  a symmetric section's mitre adds outside exactly what it removes inside. **The entry demanded a decision
+  first and it was made first**: the exact fold condition reduces on a *sampled* smooth curve to
+  `h ≥ R·cos(Δ/2)`, inside the analytic limit the local term is asserted at, by an amount that shrinks as the
+  mesh is refined — so a mesh-spoken criterion refuses **more** of a finer picture, which inverts what refining
+  is for. The refusals speak about the **curve**: a corner is a place where the run's own *analytic* tangents
+  disagree, so a polyline vertex is one and a fillet meeting its leg is not however finely it is sampled, and a
+  sampled station generates no refusal of its own. The mesh may still say *how much* — every figure is read at
+  the station's own mitre plane, which is the plane the ring is built on, keeping session 61's rule — and the
+  curve says *whether*; the statement is written once for all three terms rather than settled by whichever
+  check was written second, which is what the queue entry asked for. **The arithmetic is directional and it is
+  one number, not two**: each corner contributes `tan(θ/2)` towards the inside of its turn as a 2D vector in
+  that station's axes, and the leg needs the section's **support** in the direction the two of them jointly
+  bite. Adding the two supports separately was **rejected** with a fixture — on a zig-zag the two corners turn
+  opposite ways, the vectors cancel, and the mitres *shear* the band instead of shortening it, so a sum would
+  invent a fold. A disc has no outline and the support of a disc is its radius, so a tube falls back to
+  `reach·|g_A + g_B|` with no case of its own, exactly as sessions 59 and 61 arranged their own fallbacks. The
+  boundary refuses at **equality** on a limit argument (at equality the band is a sheet of degenerate triangles
+  and the watertightness argument has no body left), asserted a hundredth of a millimetre either side on a
+  polygon section so the arithmetic at the limit is exact. **The swept cut turned out to share the mitre but not
+  the defect** — session 42 gave it a per-span check — while answering the curve-versus-mesh question the other
+  way and stating the advance against the *mitre plane* rather than along the leg the band runs down; it now
+  takes this criterion in its own words, keeping only its translational half, which is a different statement
+  and rightly per station. The two readings were probed against the pre-fix engine rather than argued about —
+  they agree on the wiggle they should most disagree on, so what changed is which sentence a folded route gets:
+  one station named, or the leg and both its corners. Riding it, one quiet loss repaired: a closed cut route was
+  rebuilt without its stations' `bend`, so its local term fell back to the isotropic reach session 61 retired.
+  **1947 → 1962 green**, no golden, no version bump, and — unlike sessions 59 and 61 — **no existing test
+  changed**: nothing green was pinning a folded body this time. See *the sweep's refusals speak about the
+  curve* and *a corner mitres away only as much run as there is* under OP-26.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -14044,6 +14253,23 @@ carried along a path is the missing capability rather than a refinement of an ex
    version bump** — two new step kinds and one new `sketchspace` argument, so no stored literal changed
    meaning. Cut with their arguments: exporting a curve (the export seam is bodies, for every run), a
    wireframe part's material, and transcription into an existing space.
+
+~~**Queued in session 40 — a mitre that eats more than the span it runs into.**~~ **Closed in session 65 — see
+*a corner mitres away only as much run as there is* under OP-26**, and with it the decision the entry insisted
+be made first, stated once for all three criteria (*the sweep's refusals speak about the curve, not about the
+mesh*, same section). Nothing of the entry is left. The answer to its own question is **the curve**: a corner
+is a place where the run's own tangent jumps, read off the analytic pieces, so a polyline vertex is one and a
+fillet meeting its leg is not, however finely the fillet is sampled — and a sampled station never generates a
+refusal of its own, which is what keeps a finer mesh from refusing more. Session 59's addendum is answered on
+every point it raised: `u` is directional and is measured as the section's **support** in the direction the two
+mitres jointly bite (so the off-centre section it warned about is exactly the case the criterion is stated in,
+and the symmetric tube's positively-volumed fold is caught by the same sentence as the asymmetric one's
+inside-out shell), all three of its fixtures are regressions that refuse by name and heal, and the job it said
+belonged here *named as a corner rather than there as a sign* is done here and named as a corner. One thing was
+found that the entry did not know: the **swept cut** never had the defect (session 42 gave it a per-span fold
+check) but answered the curve-versus-mesh question the other way and measured its own advance along the wrong
+direction, refusing an ordinary wiggle; both are corrected by giving it this criterion in its own words. The
+original entry, kept:
 
 **Queued in session 40 — a mitre that eats more than the span it runs into.** Found while probing the sweep's
 embedding criterion, and a **different defect** from the one that session fixed: at a corner the mitred join

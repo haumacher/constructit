@@ -1310,6 +1310,14 @@ object Geom3 {
             if (profile is SweepProfile.Round) null else { d -> "the profile's reach into the bend (${Frames3.mm(d)} mm)" }
         Embedding.check(frame, reach, profileReach(profile, reach), section = sectionOutline, inward = intoTheBend)
             .defect?.let { return null to it }
+        // **…and the third way a swept body folds: a corner that mitres away more run than there is**
+        // ([Embedding.cornerFold]). Neither term above can see it — it is not a proximity (a triangle's legs
+        // all touch, so there is no non-neighbouring pair to be a bottleneck at) and it is not a curvature (a
+        // polyline corner has none on either side), and what comes out is edge-manifold and, for a symmetric
+        // section, positively volumed: silent wrong output, which outranks everything. It is asked **last**,
+        // so that where more than one term fires the one that was there first keeps its words — the same rule
+        // the local term already has against the global one.
+        Embedding.cornerFold(frame, reach, sectionOutline)?.let { return null to it }
         // **A closed path whose frame does not close on itself** is reported rather than smeared over the
         // last band, and the report names the cure: the twist that makes the total come back to zero is an
         // ordinary parameter of this very feature, so the refusal heals by stating it (OP-3). A *planar*
