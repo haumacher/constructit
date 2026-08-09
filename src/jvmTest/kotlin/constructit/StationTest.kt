@@ -98,6 +98,7 @@ class StationTest {
         when (el) {
             is Curve3Element.Seg3 -> el.start + (el.end - el.start) * t
             is Curve3Element.Bezier3 -> Curves3.bezierPointAt(el, t)
+            is Curve3Element.Arc3 -> el.at(t)
             is Curve3Element.Helix3 -> el.at(t)
         }
 

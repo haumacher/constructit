@@ -2397,17 +2397,12 @@ class Document {
         named: String? = null,
         part: Element? = null,
     ): SketchSpace? {
-        if (curve.kind != ElementKind.SPACE_CURVE) {
-            note =
-                "Station: ${nameOf(curve)} is ${kindWord(curve)}, not a curve in space — draw the route with " +
-                "Curve through points first, then stand a plane across it"
-            return null
-        }
+        val runRef = spaceCurveRef(curve, "Station") ?: return null
         val name = named ?: nextStationName()
         if (spaceNamed(name) != null) return null
         val base = activeSpace
         val entry = scalarEntryFor(distance)
-        val cuts = part ?: if (replayingVersion != null) null else stationPartAt(curve, evalMm(distance))
+        val cuts = part ?: if (replayingVersion != null) null else stationPartAt(runRef, curve.space, evalMm(distance))
         // the journal must name the base space *before* this step, exactly as a datum's does
         // ([noteSpaceSwitch]) — by the time the step is appended the station is already the active space
         noteSpaceSwitch()
@@ -2418,7 +2413,7 @@ class Document {
             Arg.Keyed("at", Arg.Sc(entry)),
             *(if (cuts == null) emptyArray() else arrayOf(Arg.Keyed("part", Arg.El(cuts)))),
         ) {
-            val intrinsic = cx.stationPlane(curve.ref as Path3Ref, planeOfSpace(curve.space), entry.ref)
+            val intrinsic = cx.stationPlane(runRef, planeOfSpace(curve.space), entry.ref)
             addSpace(SketchSpace(name, null, cuts, from = base.name, station = curve, along = entry), intrinsic)
         }
     }
@@ -2433,12 +2428,13 @@ class Document {
      * the plan *is* the world XY frame by construction, exactly as [activePlane3] says.
      */
     private fun stationPartAt(
-        curve: Element,
+        run: Path3Ref,
+        space: String,
         mm: Double,
         ev: Evaluator = Evaluator(),
     ): Element? {
-        val path = (ev.valueOf(curve.ref) as? Path3Value)?.path ?: return null
-        val up = planeValueOfSpace(curve.space, ev) ?: return null
+        val path = (ev.valueOf(run) as? Path3Value)?.path ?: return null
+        val up = planeValueOfSpace(space, ev) ?: return null
         val station = Stations3.at(path, up.normal.normalized(), mm).first ?: return null
         return partCutBy(station.plane, ev)
     }
@@ -6632,7 +6628,7 @@ class Document {
         dof: Quantity? = null,
     ): Point3Ref? {
         if (curve.kind != ElementKind.SPACE_CURVE) {
-            note = "Point on helix: ${nameOf(curve)} is ${kindWord(curve)}, not a curve in space — click a coil"
+            note = "Point on helix: ${nameOf(curve)} is ${kindWord(curve)}, and a rider rides a coil — click a coil"
             return null
         }
         val ev = Evaluator()
@@ -9570,22 +9566,15 @@ class Document {
         mode: Continuity,
     ): Element? {
         val what = "Connect${if (mode == Continuity.G2) " (curvature)" else ""}"
-        for (el in listOf(first, second)) {
-            if (el.kind != ElementKind.SPACE_CURVE) {
-                note =
-                    "$what: ${nameOf(el)} is ${kindWord(el)}, not a curve in space — click near the end of one " +
-                    "run, then near the end of the other"
-                return null
-            }
-        }
+        val runs = listOf(first, second).map { spaceCurveRef(it, what) ?: return null }
         val ends =
             if (signs.size == 2) {
                 signs.map { if (it == CurveEnd.START.ordinal) CurveEnd.START else CurveEnd.END }
             } else {
                 val ev = Evaluator()
                 listOf(
-                    endNear(first, clicks.getOrNull(0), CurveEnd.END, ev),
-                    endNear(second, clicks.getOrNull(1), CurveEnd.START, ev),
+                    endNear(runs[0], first, clicks.getOrNull(0), CurveEnd.END, ev),
+                    endNear(runs[1], second, clicks.getOrNull(1), CurveEnd.START, ev),
                 )
             }
         if (first === second && ends[0] == ends[1]) {
@@ -9597,7 +9586,7 @@ class Document {
         val one = cx.const(Quantity.number(1.0))
         val curve =
             add(
-                cx.connect(first.ref as Path3Ref, ends[0], second.ref as Path3Ref, ends[1], tensionA ?: one, tensionB ?: one, mode),
+                cx.connect(runs[0], ends[0], runs[1], ends[1], tensionA ?: one, tensionB ?: one, mode),
                 ElementKind.SPACE_CURVE,
                 Styles.SPACE_CURVE,
             )
@@ -9610,7 +9599,13 @@ class Document {
     }
 
     /**
-     * Which end of the curve [el] a click at [at] names — **nearer wins**, measured in **[el]'s own space**.
+     * Which end of the run [run] a click at [at] names — **nearer wins**, measured in **[el]'s own space**.
+     *
+     * The run and the element are both passed because they answer different halves: a drawn pick is *lifted*
+     * into the run being joined ([spaceCurveRef]), so the ends to score against are the **lifted** run's, while
+     * the frame the click was made in is the element's own space. Reading the element's value here would have
+     * scored a segment's ends against a `Path3Value` it does not have and fallen back to a default — the same
+     * click meaning a different end depending on what kind of thing was picked.
      *
      * That is the right frame and not merely a convenient one: a curve in space is addressable only in the
      * space it belongs to ([addressableIn]), so the click that reached it was necessarily made in that space's
@@ -9622,13 +9617,14 @@ class Document {
      * A tie goes to [CurveEnd.START], deterministically, so that the same drawing scores the same way twice.
      */
     private fun endNear(
+        run: Path3Ref,
         el: Element,
         at: Vec2?,
         fallback: CurveEnd,
         ev: Evaluator,
     ): CurveEnd {
         val here = at ?: return fallback
-        val path = (ev.valueOf(el.ref) as? Path3Value)?.path ?: return fallback
+        val path = (ev.valueOf(run) as? Path3Value)?.path ?: return fallback
         val start = path.start ?: return fallback
         val end = path.end ?: return fallback
         val plane = (ev.valueOf(planeOfSpace(el.space)) as? PlaneValue)?.plane ?: return fallback
@@ -9880,7 +9876,7 @@ class Document {
         val solid =
             add(cx.tube(path, planeOfSpace(el.space), radius, noTurn(roll), noTurn(twist)), ElementKind.SOLID, Styles.SOLID)
         solid.space = el.space
-        madeSolid(solid, "a ${lengthWord(radius)} tube along ${nameOf(el)}")
+        madeSolid(solid, "a ${lengthWord(radius)} tube along ${nameOf(el)}" + liftNote(el))
         return solid
     }
 
@@ -10006,7 +10002,7 @@ class Document {
         if (anchor == null && (pierce != null || replayingVersion == null)) registerSigns(solid, listOf(chosen ?: -1))
         madeSolid(
             solid,
-            "${nameOf(profile)} swept along ${nameOf(el)}" +
+            "${nameOf(profile)} swept along ${nameOf(el)}" + liftNote(el) +
                 (anchorEl?.let { ", riding on ${nameOf(it)}" } ?: ridingNote(el, profile, sectionPlane, chosen, hits.size)),
         )
         return solid
@@ -10076,19 +10072,159 @@ class Document {
             " — pick a point of the section to ride it elsewhere"
     }
 
-    /** [el] as the curve in space it is, or null with the reason it is not one — [what] names the tool. */
+    // ---- the lift: a drawn curve is the run it already is (OP-26, step 1's missing source) ----
+
+    /**
+     * Whether [el] is a **drawing that can be lifted** into the run it already describes — a bounded curve of
+     * its space, a traced outline, or an area (its boundary).
+     *
+     * The list is the kinds, not a measurement, so a pick either is one of these or is refused by name and
+     * neither answer depends on where anything currently stands. Excluded, and each for its own reason: a
+     * **line** or a **ray** runs on for ever and so states no length of run (step 5's refusal, verbatim); a
+     * **chain** is unbounded in the same way and is a thing to cut *with*; a **point** is a place; a **solid**
+     * is met by a plane instead ([intersectionCurve]).
+     */
+    fun isLiftable(el: Element): Boolean =
+        when (el.kind) {
+            ElementKind.SEGMENT, ElementKind.ARC, ElementKind.BEZIER -> true
+            ElementKind.CIRCLE, ElementKind.ELLIPSE, ElementKind.ELLIPTIC_ARC -> true
+            ElementKind.OUTLINE, ElementKind.AREA -> true
+            else -> false
+        }
+
+    /**
+     * Whether lifting [el] **closes the run**, read off its kind — a closed boundary by construction (an
+     * outline, an area, a whole conic) closes, and a bounded piece does not.
+     *
+     * Structure, decided when the node is built and never derived from the values (OP-21, [Path3.closed]): a
+     * chain whose last piece happens to end where the first begins is not the same object as one the drawing
+     * says is closed, and a value that drifts must not silently change what the run *is*.
+     */
+    private fun liftCloses(el: Element): Boolean =
+        el.kind == ElementKind.OUTLINE || el.kind == ElementKind.AREA ||
+            el.kind == ElementKind.CIRCLE || el.kind == ElementKind.ELLIPSE
+
+    /**
+     * [el] as the **curve in space** every `PATH3` slot wants: the run itself where it is one, and the
+     * **lift** of a drawing where it is a drawing — or null with the reason it is neither ([what] names the
+     * tool).
+     *
+     * **The coercion, and it is the point of the whole package.** A curve's construction is always parented
+     * (OP-26), so a curve drawn in a space already *is* geometry in the world: the user's own reading —
+     * *"sweep the foundation round the pillar's outline"* — needs no second gesture, and the run it means is
+     * exactly the drawing. This is the identical courtesy [pointInSpace] does one dimension down for a
+     * `POINT3` slot, where a plain 2D point is taken as the point in space it is; the rule is the same one
+     * read up a dimension, so every `PATH3` slot gains it at once — sweep, tube, station, connect, place,
+     * and the swept cut's route.
+     *
+     * **Nothing is discovered and nothing is scored.** What the step records is the pick, and what the pick
+     * means is a function of its *kind* — no proximity, no nearest-anything — so a replay rebuilds the same
+     * node without deciding anything (the recorded-never-discovered rule). Where the user wants the lifted run
+     * as an element in its own right — to name it, hide it, station it and sweep along it at once, or to chain
+     * several drawn pieces into one route — that is the *Lift drawing into space* tool ([liftCurves]), which
+     * builds this very node and wraps it in an element.
+     */
     @Suppress("UNCHECKED_CAST")
     private fun spaceCurveRef(
         el: Element,
         what: String,
     ): Path3Ref? {
-        if (el.kind != ElementKind.SPACE_CURVE) {
+        if (el.kind == ElementKind.SPACE_CURVE) return el.ref as Path3Ref
+        if (isLiftable(el)) return cx.liftedRun(listOf(el.ref), planeOfSpace(el.space), liftCloses(el))
+        if (el.kind == ElementKind.LINE || el.kind == ElementKind.RAY) {
             note =
-                "$what: ${nameOf(el)} is ${kindWord(el)}, not a curve in space — draw the route with " +
-                "Curve through points first, then sweep along it"
+                "$what: ${nameOf(el)} runs on for ever, so it states no length of run — click a bounded curve, " +
+                "an outline, or a curve in space"
             return null
         }
-        return el.ref as Path3Ref
+        note =
+            "$what: ${nameOf(el)} is ${kindWord(el)}, not a curve — click a curve in space, or the drawing " +
+            "that is to be the route (an outline, an area, a segment, an arc, a circle), which is read as the " +
+            "run it already is"
+        return null
+    }
+
+    /**
+     * How a status line names a route that was **lifted from the drawing** — nothing at all for a curve in
+     * space, which is the ordinary case and needs no sentence.
+     *
+     * A choice made for the user speaks, exactly as the in-place crossing does ([ridingNote]): the reader is
+     * told that the drawing itself is being used as the run, in which space it was read, and — where a conic
+     * had to be fitted — what that cost (OP-15).
+     */
+    private fun liftNote(el: Element): String {
+        if (el.kind == ElementKind.SPACE_CURVE) return ""
+        val ev = Evaluator()
+        val plane = planeValueOfSpace(el.space, ev)
+        val fitted = plane != null && cx.liftIsFitted(listOf(el.ref), plane, ev)
+        return ", reading it as the run it already is where it is drawn in ${spaceLabel(spaceOf(el))}" +
+            (if (fitted) " (its conic pieces fitted to 0.1 µm)" else "")
+    }
+
+    /**
+     * A **curve in space lifted from the drawing** (OP-26, step 1's missing source) — the explicit tool, of
+     * which every `PATH3` slot's own coercion ([spaceCurveRef]) is the one-click case.
+     *
+     * The gesture is a repeating pick over drawn curves, and everything about what is built is read off the
+     * pick list rather than from a flag beside it, exactly as *Curve through points* reads its own:
+     *
+     * - **one pick that already closes** — an outline, an area, a circle, an ellipse — is a closed run, by its
+     *   kind and not by measuring it;
+     * - **several picks** are chained in the order they were clicked, each piece flipped if that is what makes
+     *   it continue ([GeomMath.chainRun]), so clicking a segment then an arc gives the run the clicks describe;
+     * - **clicking the first pick again** states that the run comes back there (`closesOnFirstPick`), so the
+     *   recorded step says it by naming that element twice and a replay closes for the reason the gesture did.
+     *
+     * **Where the run starts and which way it goes is the drawing's own** and is worth stating, because a
+     * closed run has no natural end: the run begins where the picked chain's first piece begins and travels
+     * the way that chain is stored — for a traced outline its own normalized (counter-clockwise) traversal,
+     * for a hand-picked chain the order of the clicks. So it is a property of the drawing rather than of the
+     * click that reached it, two lifts of one outline are the same run, and a station's distance is measured
+     * from a place that does not move when the drawing is clicked again.
+     *
+     * Refused **by name**, building nothing, for the structural things — a pick that is not a drawing that can
+     * be lifted, and picks made in two different spaces, which have no one plane to be read in. Everything
+     * about *where* the pieces are — a gap between two of them, a boundary that does not close — is the node's
+     * business and comes back as the reason it is invalid, so it heals when the drawing moves (OP-3).
+     */
+    fun liftCurves(picks: List<Element>): Element? {
+        val what = "Lift drawing into space"
+        if (picks.isEmpty()) {
+            note = "$what: click the drawing that is to become a run"
+            return null
+        }
+        for (el in picks) {
+            if (!isLiftable(el)) {
+                note =
+                    "$what: ${nameOf(el)} is ${kindWord(el)}, and a run is lifted out of a drawn curve — click " +
+                    "an outline, an area, a segment, an arc, a circle or a Bézier"
+                return null
+            }
+        }
+        val closedByGesture = picks.size >= 2 && picks.first() === picks.last()
+        val run = if (closedByGesture) picks.dropLast(1) else picks
+        val space = run[0].space
+        for (el in run) {
+            if (el.space != space) {
+                note =
+                    "$what: ${nameOf(el)} is drawn in ${spaceLabel(spaceOf(el))} and ${nameOf(run[0])} in " +
+                    "${spaceLabel(spaceOf(run[0]))} — a run is lifted out of one drawing, so pick the pieces of " +
+                    "one space (or lift each and join them with Connect two curves)"
+                return null
+            }
+        }
+        val closed = closedByGesture || (run.size == 1 && liftCloses(run[0]))
+        val plane = planeOfSpace(space)
+        val curve = add(cx.liftedRun(run.map { it.ref }, plane, closed), ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
+        curve.space = space
+        val ev = Evaluator()
+        val fitted = planeValueOfSpace(space, ev)?.let { cx.liftIsFitted(run.map { r -> r.ref }, it, ev) } ?: false
+        note =
+            "${nameOf(curve)}: ${run.joinToString(", ") { nameOf(it) }} read as ${if (closed) "a closed run" else "a run"} " +
+            "in space, lying in ${spaceLabel(spaceOf(run[0]))} where ${if (run.size == 1) "it is" else "they are"} drawn — " +
+            (if (fitted) "its conic pieces fitted to 0.1 µm, " else "exact, ") +
+            "and it follows every edit of the drawing"
+        return curve
     }
 
     /**
@@ -10711,11 +10847,8 @@ class Document {
         at: PointRef,
         angle: ScalarRef? = null,
     ): Element? {
-        if (el.kind != ElementKind.SPACE_CURVE) {
-            note = "Place curve: ${nameOf(el)} is ${kindWord(el)}, not a curve in space"
-            return null
-        }
-        val ref = cx.placeCurve(el.ref as Path3Ref, activePlane(), at, angle ?: cx.const(Quantity.deg(0.0)))
+        val runRef = spaceCurveRef(el, "Place curve") ?: return null
+        val ref = cx.placeCurve(runRef, activePlane(), at, angle ?: cx.const(Quantity.deg(0.0)))
         val placed = add(ref, ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
         if (isImportedRun(el)) importedCurves.add(placed.id)
         note = "${nameOf(placed)}: ${nameOf(el)} placed in ${activeSpace.name} — drag the point to move it"
@@ -10749,7 +10882,9 @@ class Document {
     fun sketchFromWireframe(el: Element): Element? {
         val what = "Sketch from wireframe"
         if (el.kind != ElementKind.SPACE_CURVE) {
-            note = "$what: ${displayName(el)} is ${kindWord(el)}, not a curve in space — click an imported wireframe run"
+            note =
+                "$what: ${displayName(el)} is ${kindWord(el)}, not a curve in space — click an imported wireframe " +
+                "run; a curve you drew is already in a sketch, and its own space is the one to draw in"
             return null
         }
         if (!isImportedRun(el)) {

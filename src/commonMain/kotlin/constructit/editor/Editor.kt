@@ -4098,8 +4098,12 @@ class Editor(
                 // height point as it stands, a plain 2D point lifted by nothing (`Document.curveThroughPoints`)
                 SlotKind.POINT3 -> pickElement(world) { it.isPoint }
                 // a sweep's slot (OP-26): the curve in space itself, picked where it is drawn — its plan
-                // projection here, the curve itself in the 3D view (`Document.sweepAlongCurve`)
-                SlotKind.PATH3 -> pickElement(world) { it.kind == ElementKind.SPACE_CURVE }
+                // projection here, the curve itself in the 3D view (`Document.sweepAlongCurve`) — **or a
+                // drawing**, which is read as the run it already is (the lift, `Document.spaceCurveRef`), so
+                // that sweeping a foundation round a footprint's own outline is the one click it looks like
+                SlotKind.PATH3 -> pickElement(world) { it.kind == ElementKind.SPACE_CURVE || doc.isLiftable(it) }
+                // the lift's own slot: the drawing, and nothing that is already a run
+                SlotKind.DRAWN_RUN -> pickElement(world) { doc.isLiftable(it) }
                 // an intersection curve's slot (OP-26, step 6): a click on what the working plane *draws* —
                 // the section of an ancestor solid (GitHub #9's one enumeration, read a fourth time). The
                 // element it yields is the solid; where the click landed is the branch, and the tool scores

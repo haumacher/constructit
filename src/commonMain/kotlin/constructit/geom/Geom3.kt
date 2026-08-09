@@ -1153,8 +1153,16 @@ object Geom3 {
         // off-centre section (the in-place sweep's everyday case) makes the difference between a ring and a
         // ring turned inside out. A round tube is analytically a disc about the run, so it is stated as its
         // radius (null) instead of as its chords: same answer, and to the last bit.
+        // …and the same outline answers the **local** term's own directional question — what the section
+        // reaches *towards the centre of the bend* at each station, which is the number a fold actually turns
+        // on ([Embedding.intoTheBend]). It is named separately in the refusal because it is a different
+        // measurement from the reach the global term quotes, and a message that printed one while testing the
+        // other would be a correct refusal nobody could act on.
         val sectionOutline = if (profile is SweepProfile.Round) null else tess.outer
-        Embedding.check(frame, reach, profileReach(profile, reach), section = sectionOutline).defect?.let { return null to it }
+        val intoTheBend: ((Double) -> String)? =
+            if (profile is SweepProfile.Round) null else { d -> "the profile's reach into the bend (${Frames3.mm(d)} mm)" }
+        Embedding.check(frame, reach, profileReach(profile, reach), section = sectionOutline, inward = intoTheBend)
+            .defect?.let { return null to it }
         // **A closed path whose frame does not close on itself** is reported rather than smeared over the
         // last band, and the report names the cure: the twist that makes the total come back to zero is an
         // ordinary parameter of this very feature, so the refusal heals by stating it (OP-3). A *planar*

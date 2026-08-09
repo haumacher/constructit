@@ -415,6 +415,25 @@ object GeomMath {
                 null to "a whole circle or ellipse already closes, so it cannot be chained with other pieces"
             }
         }
+        val (chained, why) = chainRun(parts)
+        if (chained == null) return null to why
+        val closingGap = (startOf(chained[0]) - endOf(chained.last())).length()
+        if (closingGap > JOIN_TOL) return null to "loop does not close (gap $closingGap mm)"
+        return Loop(chained) to null
+    }
+
+    /**
+     * Chain [parts] into an **open run**, in the order given — [chainLoop] without the closing condition,
+     * and the rule stated once rather than twice.
+     *
+     * The flipping rule is [chainLoop]'s own and is what makes it one rule: a piece's *stored* direction is
+     * arbitrary, so each piece after the first is flipped if that is what makes it continue from the previous
+     * one, the first piece keeps its own direction, and the traversal is then forced. What a **lift** gets out
+     * of it (OP-26) is that clicking a segment and then an arc produces the run the clicks describe, with no
+     * question about which way either piece happened to have been built.
+     */
+    fun chainRun(parts: List<ProfileElement>): Pair<List<ProfileElement>?, String?> {
+        if (parts.isEmpty()) return null to "a run needs at least one piece"
         val chained = ArrayList<ProfileElement>(parts.size)
         chained.add(parts[0])
         var cursor = endOf(parts[0])
@@ -430,9 +449,7 @@ object GeomMath {
             chained.add(pick)
             cursor = endOf(pick)
         }
-        val closingGap = (startOf(chained[0]) - cursor).length()
-        if (closingGap > JOIN_TOL) return null to "loop does not close (gap $closingGap mm)"
-        return Loop(chained) to null
+        return chained to null
     }
 
     // ---- thick paths: an offset region around a carrier (OP-21) ----

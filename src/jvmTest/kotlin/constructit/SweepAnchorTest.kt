@@ -176,43 +176,67 @@ class SweepAnchorTest {
     }
 
     /**
-     * **…and with the section's own origin riding the run, the drawing still means what it always meant**: the
-     * same two picks, the same refusal, in the same words — reach against bend, both figures named.
+     * **…and with the section's own origin riding the run, the drawing is carried rather than refused** — the
+     * local criterion corrected to the direction it was always about (OP-26; the same correction session 59
+     * made to the global term, made here to the local one).
+     *
+     * **The reversal, and the old rationale kept.** This reading used to be refused in the words *"the
+     * profile's reach from the path (5.399 mm) is larger than the bend the run starts with (radius
+     * 5.279 mm)"*. The arithmetic was right and the model behind it was not, exactly as it was not for the
+     * global term: `κ·reach ≥ 1` asks whether the section's greatest distance from the run **in any
+     * direction** outgrows the bend, and what a fold actually turns on is what the section reaches **towards
+     * the centre of that bend** — the profile is carried by `γ + w.x·ref + w.y·bi`, whose derivative along a
+     * rotation-minimizing frame is `t·(1 − κ·(w·N))`. A thread form drawn at the shaft's surface stands 5.4 mm
+     * from the coil's *centre line* and reaches barely a third of a millimetre towards the centre of its own
+     * curvature, so it cannot turn inside out and it is a body.
      *
      * The origin reading is *stated* here (`pierce = -1`) because since the **in-place** sweep it is no longer
-     * what a picked-nothing gesture on this drawing gets: this coil goes through the plan the section is drawn
-     * in, so a fresh gesture now rides that crossing instead (see
-     * [theSameWormWithNoPickNowRidesWhereTheCoilGoesThroughTheDrawing]). What the origin reading *means* is
-     * untouched, which is what this pins — and every file that ever recorded it keeps it
-     * ([aFileWithNoAnchorLoadsWithTheOldReading]).
+     * what a picked-nothing gesture on this drawing gets ([theSameWormWithNoPickNowRidesWhereTheCoilGoesThroughTheDrawing]);
+     * every file that ever recorded it keeps it ([aFileWithNoAnchorLoadsWithTheOldReading]).
      */
     @Test
-    fun theSameWormWithNoAnchorStillRefusesByReachAgainstTheBend() {
+    fun theSameWormWithNoAnchorIsCarriedBecauseItReachesAwayFromTheBend() {
         val doc = DocumentFormat.load(WORM_CIT)
         val solid =
             assertNotNull(
                 doc.sweepAlongCurve(named(doc, "thread"), named(doc, "worm"), pierce = -1),
-                "the sweep is built and refuses as a value, not as a gesture: ${doc.note}",
+                "the sweep is built: ${doc.note}",
             )
-        val why = assertNotNull(whyInvalid(solid), "it is invalid")
-        assertTrue(why.contains("the profile's reach from the path"), "named by its reach: $why")
+        assertNull(whyInvalid(solid), "and a section standing outside its bend is a body: ${whyInvalid(solid)}")
+        val mesh = meshOf(solid)
+        assertManifold(mesh, "the worm form read from the plan's own origin")
+        assertTrue(Geom3.volume(mesh) > 0.0, "and it is a solid the right way out: ${Geom3.volume(mesh)} mm^3")
+
+        // **And the old sentence stays where it is still true**: a *disc* of the same 5.4 mm reach on the same
+        // coil reaches that far in *every* direction, including straight into the bend, and is refused in the
+        // very words this drawing used to get — which is what makes the correction a change of measurement
+        // rather than a weakening of the criterion.
+        val disc =
+            assertNotNull(
+                doc.tubeAlongCurve(named(doc, "thread"), doc.newParameter("wire", 5.399.mm).ref),
+                "the tube gesture builds — this is a value's business",
+            )
+        val why = assertNotNull(whyInvalid(disc), "5.399 mm in *every* direction outgrows a 5.279 mm bend")
+        assertTrue(why.contains("the tube's radius (5.399 mm)"), "named by its reach: $why")
         assertTrue(why.contains("is larger than the bend"), "against the bend: $why")
-        assertTrue(why.contains("pass through itself"), "and what would go wrong: $why")
-        // the two numbers the user saw, unchanged
-        assertTrue(why.contains("5.399"), "the reach it measured: $why")
         assertTrue(why.contains("5.279"), "and the bend it measured against: $why")
+        assertTrue(why.contains("pass through itself"), "and what would go wrong: $why")
     }
 
     /**
      * **The refusal names the place in words.** The bend that refuses a section is the one the run *starts*
      * with here — as it is for every coil — and "0 mm along the path" is exactly the figure a reader takes
      * for nowhere. So the sentence says which bend it is, and keeps the measurement beside the radius.
+     *
+     * Asserted on a **disc**, since the correction above made the worm's own thread form a body: a tube's
+     * radius reaches into the bend by exactly its radius, which is the case the ball model always described
+     * correctly and the case whose every message is byte-identical to what it was.
      */
     @Test
     fun theRefusalNamesWhichBendItIs() {
         val doc = DocumentFormat.load(WORM_CIT)
-        val solid = assertNotNull(doc.sweepAlongCurve(named(doc, "thread"), named(doc, "worm"), pierce = -1))
-        val why = assertNotNull(whyInvalid(solid))
+        val disc = assertNotNull(doc.tubeAlongCurve(named(doc, "thread"), doc.newParameter("wire", 5.399.mm).ref))
+        val why = assertNotNull(whyInvalid(disc))
         assertTrue(why.contains("the bend the run starts with"), "the place is named readably: $why")
         assertTrue(why.contains("0 mm along the path"), "with the measurement kept beside the radius: $why")
         assertTrue(!why.contains("the bend 0 mm along"), "and the old unreadable lead is gone: $why")
@@ -300,19 +324,74 @@ class SweepAnchorTest {
     }
 
     /**
-     * **The same coil refuses the same square when its own origin is what rides the run** — the old contract,
-     * still exact: the section then reaches `sqrt(32² + 7²) = 32.757 mm` from the path, and the coil's own
-     * radius of curvature is `(30² + (10/2π)²)/30 = 30.084 mm`.
+     * **The same coil carries the same square when its own origin rides the run, and it is a different body
+     * from the anchored one** — the anchor's whole argument, now made by the two shapes rather than by a
+     * refusal.
+     *
+     * **The reversal, with the old rationale on the record.** This used to refuse, in the words *"the
+     * profile's reach from the path (32.757 mm) is larger than the bend part-way along it (radius
+     * 30.084 mm)"*: `sqrt(32² + 7²)` against `(30² + (10/2π)²)/30`. Both numbers are still what they were and
+     * the comparison between them is the one the criterion no longer makes — the ball model measures the
+     * section's greatest distance from the run **in any direction**, and what folds a sweep is what the
+     * section reaches **towards the centre of the bend** ([Embedding], the local term corrected as the global
+     * one was in session 59). Read from the plan's origin the square stands ~31 mm along the frame's reference
+     * — which on this coil is very nearly the axis direction — so it swings out on a 31 mm lever arm as the
+     * rotation-minimizing frame precesses, and the most of that arm that ever points *into* the bend is 52 % of
+     * it. The body is therefore embedded, and it is a wildly different body from the anchored one: 14…37 mm
+     * from the axis instead of 27…32, and standing 30 mm above the coil instead of on it.
      */
     @Test
-    fun theSameCoilRefusesTheSquareWhoseOwnOriginRidesTheRun() {
+    fun theSameCoilCarriesTheSquareWhoseOwnOriginRidesTheRunAsADifferentBody() {
         val ed = coilAndSquare()
         val solid = unanchoredSweep(ed)
-        val why = assertNotNull(whyInvalid(solid), "it refuses: ${ed.statusHint}")
+        assertNull(whyInvalid(solid), "it is carried: ${ed.statusHint}")
+        val mesh = meshOf(solid)
+        assertManifold(mesh, "the square read from the plan's own origin")
+        assertTrue(Geom3.volume(mesh) > 0.0, "and it is a solid the right way out: ${Geom3.volume(mesh)} mm^3")
         val b = 10.0 / (2.0 * PI)
         assertClose(sqrt(32.0 * 32.0 + 7.0 * 7.0), 32.757, 1e-3, "the reach the unanchored section has")
         assertClose((900.0 + b * b) / 30.0, 30.084, 1e-3, "against the coil's own radius of curvature")
-        assertTrue(why.contains("the profile's reach from the path (32.757 mm)"), "the reach is named: $why")
+
+        // …and it is emphatically not the anchored body: the lever arm carries it 30 mm above its own coil
+        val far = Bounds(mesh)
+        assertTrue(far.zs.min() > 29.0, "the section rides 30 mm up the frame's reference: ${far.zs.min()}")
+        assertTrue(far.radial.min() < 20.0, "and the arm swings it well inside the coil: ${far.radial.min()}")
+        val near = Bounds(meshOf(anchoredSweep(coilAndSquare())))
+        assertTrue(near.zs.min() < 1.0, "where the anchored one sits on the coil: ${near.zs.min()}")
+        assertTrue(near.radial.min() > 27.0, "and hugs its radius: ${near.radial.min()}")
+    }
+
+    /**
+     * **…and the section that really does reach into the bend is refused, at the same numbers as ever.**
+     *
+     * The companion to the reversal above, and the reason it is a change of *measurement* rather than a
+     * weakening: the same coil, the same 2 × 2 square, drawn 32 mm to the *other* side of the plan's origin so
+     * that what it reaches is towards the centre of curvature instead of away from it. `κ·h(N)` is then over
+     * one at the very first station, and the refusal says so in the words it always used.
+     */
+    @Test
+    fun aSectionReachingIntoTheBendIsRefusedAtTheSameNumbers() {
+        val ed = Editor()
+        ed.camera = Camera(-800.0, 500.0, 40.0)
+        ed.setTool(Tools.HELIX)
+        ed.type("30")
+        ed.type("10")
+        ed.type("2")
+        ed.click(Vec2(0.0, 0.0))
+        // the square below the origin: read from there, it stands 32…34 mm along −bi, which at the start of
+        // this coil points radially inward — straight at the centre of its own curvature
+        ed.setTool(Tools.RECTANGLE)
+        ed.click(Vec2(5.0, -34.0))
+        ed.click(Vec2(7.0, -32.0))
+        ed.setTool(Tools.SWEEP)
+        ed.click(Vec2(30.0, 0.0))
+        ed.click(Vec2(5.0, -33.0))
+        val solid = assertNotNull(ed.solids().lastOrNull(), "the sweep is built: ${ed.statusHint}")
+        val why = assertNotNull(whyInvalid(solid), "a section reaching into the bend folds through itself")
+        // 33.954 rather than a flat 34: the frame's second axis is perpendicular to the *tangent*, which on a
+        // rising coil is a pitch angle off the radial direction, so 34 mm along it reaches 34·cos(3°) inwards
+        assertTrue(why.contains("the profile's reach into the bend (33.954 mm)"), "what it reaches inwards is named: $why")
+        assertTrue(why.contains("the bend the run starts with"), "at the station it happens: $why")
         assertTrue(why.contains("radius 30.084 mm"), "and the bend it is measured against: $why")
         assertTrue(why.contains("pass through itself"), "and the consequence: $why")
     }
@@ -387,10 +466,11 @@ class SweepAnchorTest {
         val two = assertNotNull(anchored.solids().lastOrNull(), "and the third click built it: ${anchored.statusHint}")
         assertTrue(anchored.statusHint.contains("riding on"), "the note names the anchor: ${anchored.statusHint}")
 
-        // the two are different solids, which is the whole point: the unanchored one is the sweep that
-        // refuses (its own origin would orbit 32.757 mm out from a 30.084 mm bend), the anchored one rides
-        assertNotNull(whyInvalid(one), "the unanchored reading is the one that refuses")
+        // the two are different bodies, which is the whole point: the unanchored one reads the square from
+        // the plan's own origin and swings it out on a 31 mm arm, the anchored one rides the coil
+        assertNull(whyInvalid(one), "both are bodies: ${whyInvalid(one)}")
         assertNull(whyInvalid(two), "and the anchored one is a solid")
+        assertTrue(Bounds(meshOf(one)).zs.min() > 29.0, "the unanchored one rides 30 mm off the coil")
         assertClose(Bounds(meshOf(two)).radial.max(), 32.0, 1e-2, "the anchored one rides the coil")
     }
 

@@ -353,12 +353,21 @@ class SweepTest {
         assertManifold(ok.mesh, "the tube that fits round the bend")
     }
 
-    /** An arbitrary profile is judged by its **reach** from the path, and the refusal says so in its words. */
+    /**
+     * An arbitrary profile is judged by what it reaches **into the bend**, and the refusal says so in its
+     * words — the local criterion's directional form (OP-26, the correction session 59 made globally, made
+     * here too).
+     *
+     * The triangle spans the run in both directions, so what it reaches towards the centre of curvature is the
+     * number that decides it and the number the sentence quotes. That it is a *smaller* figure than the
+     * profile's greatest reach is the whole of the correction: what a fold turns on is the section's extent
+     * towards the centre of the bend, and a section standing wholly outside a bend cannot fold through it.
+     */
     @Test
-    fun anArbitraryProfileIsJudgedByItsReachFromThePath() {
+    fun anArbitraryProfileIsJudgedByWhatItReachesIntoTheBend() {
         val path = smooth(Vec3(0.0, 0.0, 0.0), Vec3(20.0, 14.0, 0.0), Vec3(40.0, 0.0, 0.0))
         val why = refusal(path, SweepProfile.Section(triangle(60.0, 8.0)))
-        assertTrue(why.contains("the profile's reach from the path"), "an area is named by its reach: $why")
+        assertTrue(why.contains("the profile's reach into the bend"), "an area is named by what it reaches into the bend: $why")
         assertTrue(why.contains("mm along the path"), "and the station is named: $why")
     }
 

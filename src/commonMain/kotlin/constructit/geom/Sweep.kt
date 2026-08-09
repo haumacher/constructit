@@ -84,6 +84,12 @@ enum class CarryMode {
  * [curvature] is the path's own curvature here — read from the **analytic piece** this station was sampled
  * from, never from the chords, because a chord-based estimate of a straight run is rounding noise and the
  * self-intersection refusal is a claim about the curve.
+ *
+ * [bend] is **which way** that curvature bends: the unit direction from the station towards its centre of
+ * curvature, read from the same analytic piece and zero where the piece is straight. It is carried beside the
+ * magnitude because the local half of the embedding criterion is a statement about the section's reach *in
+ * that direction* and not about its reach at all ([Embedding.check]) — a foundation standing wholly outside a
+ * bend cannot fold through the inside of it, however wide it is.
  */
 data class Frame3(
     /** Arc length from the path's start, along the sampled spine — what a refusal names a station by. */
@@ -93,6 +99,8 @@ data class Frame3(
     val ref: Vec3,
     val mitre: Vec3,
     val curvature: Double,
+    /** Unit, towards the centre of curvature — `Vec3.ZERO` where the piece is straight. */
+    val bend: Vec3 = Vec3.ZERO,
 ) {
     /** The frame's second in-plane axis: `tangent × ref`, so (ref, bi, tangent) is right-handed. */
     val bi: Vec3 get() = tangent.cross(ref)
@@ -288,7 +296,10 @@ object Frames3 {
         seed: FrameSeed? = null,
     ): Pair<MovingFrame?, String?> {
         if (path.elements.isEmpty()) return null to "this curve has no pieces, so there is nothing to sweep along"
-        val (points, curvatures, params) = spine(path, reach, twistRad, tolMm)
+        val sampled = spine(path, reach, twistRad, tolMm)
+        val points = sampled.points
+        val curvatures = sampled.curvatures
+        val params = sampled.params
         val n = points.size
         if (n < 2) return null to "this curve has no length, so there is nothing to sweep along"
 
@@ -350,7 +361,9 @@ object Frames3 {
             // not — so this is not a compensation, it is the same statement read from the side it is built on.
             val sTwist = if (path.closed && k == 0) length else cum[k]
             val turned = rotate(refs[inIdx], a, rollRad + twistRad * (sTwist / length))
-            stations.add(Frame3(cum[k], points[k], a, (turned - a * turned.dot(a)).normalized(), mitre, curvatures[k]))
+            stations.add(
+                Frame3(cum[k], points[k], a, (turned - a * turned.dot(a)).normalized(), mitre, curvatures[k], sampled.bends[k]),
+            )
         }
         return MovingFrame(stations, length, path.closed, seam, refs[0]) to null
     }
@@ -415,11 +428,23 @@ object Frames3 {
 
     /**
      * The sampled spine: the path's points in order (a closed path's returning duplicate dropped), per point
-     * the **analytic** curvature of the piece it came from, and per point the `(piece, parameter)` it was
-     * sampled at.
+     * the **analytic** curvature of the piece it came from and the direction that curvature bends in, and per
+     * point the `(piece, parameter)` it was sampled at.
+     */
+    private class Spine(
+        val points: List<Vec3>,
+        val curvatures: List<Double>,
+        val bends: List<Vec3>,
+        val params: List<Pair<Int, Double>>,
+    )
+
+    /**
+     * The spine of [path], sampled — see [Spine] for what comes back.
      *
      * A point that two pieces hand over at gets the **larger** of their two curvatures, so a station on the
-     * join of a straight run and a bend is judged by the bend — the answer that cannot let a fold through.
+     * join of a straight run and a bend is judged by the bend — the answer that cannot let a fold through —
+     * and it gets **that piece's** bend direction with it, since a magnitude and a direction taken from two
+     * different curves would be a curvature no curve has.
      *
      * The parameters are carried because a **seeded** frame has to say which span it is stated on
      * ([FrameSeed], [spanOf]), and the only honest answer is the one the sampling itself used: matching a seed
@@ -431,7 +456,7 @@ object Frames3 {
         reach: Double,
         twistRad: Double,
         tolMm: Double,
-    ): Triple<List<Vec3>, List<Double>, List<Pair<Int, Double>>> {
+    ): Spine {
         // pass one: how long each piece is, at its own base sampling — needed before the twist can say how
         // finely any of them has to be cut, since the twist is distributed in arc length
         val base = path.elements.map { baseSteps(it, tolMm) }
@@ -450,6 +475,7 @@ object Frames3 {
 
         val points = ArrayList<Vec3>()
         val curvature = ArrayList<Double>()
+        val bend = ArrayList<Vec3>()
         val params = ArrayList<Pair<Int, Double>>()
         for ((i, el) in path.elements.withIndex()) {
             val share = if (total > Geom3.WELD_TOL) lengths[i] / total else 0.0
@@ -460,23 +486,48 @@ object Frames3 {
                 val k = curvatureAt(el, t)
                 if (points.isNotEmpty() && (p - points.last()).length() <= Geom3.WELD_TOL) {
                     // the hand-over point two pieces share, and a sample a degenerate piece repeated
-                    curvature[curvature.size - 1] = max(curvature.last(), k)
+                    if (k > curvature.last()) {
+                        curvature[curvature.size - 1] = k
+                        bend[bend.size - 1] = bendAt(el, t)
+                    }
                     continue
                 }
                 points.add(p)
                 curvature.add(k)
+                bend.add(bendAt(el, t))
                 params.add(i to t)
             }
         }
         // a closed path's last piece ends where the first began: the ring closes through the span list, so
         // the returning duplicate is not a station of its own
         if (path.closed && points.size > 1 && (points.last() - points.first()).length() <= Geom3.WELD_TOL) {
-            curvature[0] = max(curvature[0], curvature.last())
+            if (curvature.last() > curvature[0]) {
+                curvature[0] = curvature.last()
+                bend[0] = bend.last()
+            }
             points.removeAt(points.size - 1)
             curvature.removeAt(curvature.size - 1)
+            bend.removeAt(bend.size - 1)
             params.removeAt(params.size - 1)
         }
-        return Triple(points, curvature, params)
+        return Spine(points, curvature, bend, params)
+    }
+
+    /**
+     * **Which way [el] bends at [t]** — the unit direction from the curve towards its centre of curvature, or
+     * `Vec3.ZERO` where the piece is straight or has no direction at all.
+     *
+     * The direction of [Curves3.curvatureVectorAt], whose magnitude is the very number [curvatureAt] returns,
+     * so the two halves of one fact cannot disagree. Zero is the honest answer for a straight run and not a
+     * defensive one: there is no centre of curvature to point at, and the criterion that reads this multiplies
+     * it by a curvature of zero anyway.
+     */
+    private fun bendAt(
+        el: Curve3Element,
+        t: Double,
+    ): Vec3 {
+        val v = Curves3.curvatureVectorAt(el, t) ?: return Vec3.ZERO
+        return if (v.length() > Vec3.EPS) v.normalized() else Vec3.ZERO
     }
 
     /**
@@ -497,6 +548,7 @@ object Frames3 {
         when (el) {
             is Curve3Element.Seg3 -> 1
             is Curve3Element.Bezier3 -> max(1, bezierSteps3(el, tolMm))
+            is Curve3Element.Arc3 -> max(1, GeomMath.chordSteps(el.radius, el.sweepAngle, tolMm))
             is Curve3Element.Helix3 ->
                 min(
                     MAX_HELIX_SPANS,
@@ -537,6 +589,7 @@ object Frames3 {
         when (el) {
             is Curve3Element.Seg3 -> el.start + (el.end - el.start) * t
             is Curve3Element.Bezier3 -> Curves3.bezierPointAt(el, t)
+            is Curve3Element.Arc3 -> el.at(t)
             is Curve3Element.Helix3 -> el.at(t)
         }
 
@@ -560,6 +613,7 @@ object Frames3 {
     ): Double =
         when (el) {
             is Curve3Element.Seg3 -> 0.0
+            is Curve3Element.Arc3 -> el.curvature
             is Curve3Element.Helix3 -> el.curvature
             is Curve3Element.Bezier3 -> {
                 val d1 = Curves3.bezierTangentAt(el, t)
@@ -624,8 +678,12 @@ class EmbeddingReport(
  * the radius of the tube that contains the body — stays below it. The two terms are the two ways a swept
  * body folds through itself, and they are genuinely different failures:
  *
- * - **Locally**, on a bend tighter than the profile is wide: the inner side of the section turns inside out.
- *   That is `κ·reach ≥ 1`, and it is the criterion the sweep shipped with.
+ * - **Locally**, on a bend tighter than the section reaches into it: the inner side of the section turns
+ *   inside out. That is `κ·h(N) ≥ 1`, with `h(N)` the section's own reach **towards the centre of the bend**
+ *   ([intoTheBend]) — the ball model's `κ·reach ≥ 1` is that statement maximized over directions, and it was
+ *   corrected to the honest one for the same reason and by the same argument the global term was in session
+ *   59: an off-centre section is the in-place sweep's everyday case, and what it reaches *away* from a bend
+ *   cannot fold through the inside of it.
  * - **Globally**, where the run comes back alongside itself: a spring whose wire is thicker than half its
  *   pitch has each turn passing through the turn below, while **every station's curvature is comfortable**.
  *   Nothing local can see it. It is not helix-specific either — a serpentine whose legs run closer than the
@@ -768,12 +826,15 @@ object Embedding {
         subject: String = "the sweep",
         cure: String = "thin the section, or open the run out",
         section: List<Vec2>? = null,
+        inward: ((Double) -> String)? = null,
     ): EmbeddingReport {
         // ---- the first term: 1/κ_max, station by station, and in station order so the message is stable
         for ((i, st) in frame.stations.withIndex()) {
-            if (st.curvature * reach >= 1.0) {
+            val into = intoTheBend(st, reach, section)
+            if (st.curvature * into >= 1.0) {
                 return EmbeddingReport(
-                    "$what is larger than the bend ${bendAt(frame, i)} (radius ${Frames3.mm(1.0 / st.curvature)} mm, " +
+                    "${inward?.invoke(into) ?: what} is larger than the bend ${bendAt(frame, i)} " +
+                        "(radius ${Frames3.mm(1.0 / st.curvature)} mm, " +
                         "${Frames3.mm(st.s)} mm along the path), so $subject would pass through itself",
                     Double.MAX_VALUE,
                     0,
@@ -844,6 +905,42 @@ object Embedding {
             )
         }
         return EmbeddingReport(null, nearest, examined)
+    }
+
+    /**
+     * **How far the section reaches into the bend** at station [st], in mm — the local term's own version of
+     * the correction session 59 made to the global one, and exactly as much of a correction.
+     *
+     * The local failure is the inner side of a section turning inside out on a bend, and the criterion for it
+     * used to be `κ·reach ≥ 1` with [reach] the section's greatest distance from the path **in any
+     * direction** — the ball model. That is sound and it is not what the geometry says. Written out, the sweep
+     * carries a profile point `w` to `γ(s) + w.x·ref + w.y·bi`, and in a rotation-minimizing frame the
+     * reference directions turn only *with the tangent* — `ref′` is parallel to the tangent, by construction
+     * ([Frames3]) — so the derivative of that map along the run is `t·(1 − κ·(w·N))`, with `N` the unit normal
+     * towards the centre of curvature. It vanishes, and the surface folds, exactly when `κ·(w·N) = 1`: what
+     * decides a bend is the section's reach **towards the centre of that bend**, per station and in that
+     * station's own axes, which is the 2D support function `h(N)` and nothing else. (No torsion appears, and
+     * that is the rotation-minimizing frame paying out: a Frenet frame would spin the section about the
+     * tangent and put the twist into this determinant.)
+     *
+     * The ball model is that statement maximized over directions, so it is never *wrong* — it refuses bodies
+     * that fit, which is the same failure the isotropic global term had and the same cure. The user's case is
+     * the ordinary one: a foundation drawn against the outside of a pillar reaches tens of millimetres
+     * outwards and up, and **nothing** towards the pillar, so every 10 mm fillet in the plan refused a
+     * foundation that could not touch itself.
+     *
+     * `null` or an empty [section] means *"a disc of radius [reach] about the run"* — a round tube, and the
+     * derived reach of a swept cut — for which the support is [reach] in every direction, so this returns it
+     * unchanged and every message the isotropic form ever produced is byte-identical.
+     */
+    private fun intoTheBend(
+        st: Frame3,
+        reach: Double,
+        section: List<Vec2>?,
+    ): Double {
+        if (section == null || section.isEmpty()) return reach
+        if (st.bend.length() <= Vec3.EPS) return reach
+        return support(st, st.bend, section)
     }
 
     /**

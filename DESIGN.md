@@ -1518,6 +1518,8 @@ it:
 
 | `tool sweep signs=` — **which crossing of its own plane a section rides** (OP-26, the in-place sweep, session 58) | a new argument on a step that never carried one: a sweep scored no choice before, so no `signs=` was ever written for one | none, and **no version bump**, by the row above's argument. What matters is the *absence*: a `tool sweep` step with no `signs=` is one written before this reading existed and keeps the origin-rides-the-run reading for ever, which is why a step written now **always** records an index — a negative one being the record that the section's own origin rides the run. A load-time migration was rejected outright: the old writer meant the origin, so "migrating" it would be a silent behaviour change on load, not a reproduction of what was meant. `Document.replayingVersion` is what tells a replay from a gesture, so replay never scores and a save never puts a crossing into an older writer's mouth |
 
+| `tool lift` — **a drawing read as the run it already is** (OP-26, step 1's missing source, session 61), and a drawn pick in any `PATH3` slot (`tool sweep els=<an outline>`) | a new tool id, and a new *kind* of argument value for slots that already existed: `els=` on a sweep, a tube, a station, a connect or a swept cut may now name a drawn curve where it could only name a curve in space | none, and **no version bump**. Nothing a file ever stored changes meaning: an element id in `els=` is read by the element's **kind**, which is a fact of the drawing rather than of the step, and no build before this one could write a step naming a drawing there — it refused the pick. A new tool id is the format's ordinary extension point (a file containing one cannot be read by a build that predates it, exactly as every tool added since v2), and the lift carries **no argument of its own** because there is no discrete choice in it: what is lifted is what was picked, how it closes is its kind's business, and where the run starts is the drawing's own order |
+
 Known residual, recorded rather than papered over: the **Outline** tracer still resolves its handovers from
 that tool's own clicks on every replay (`jointBetween`), and a determined ortho meeting still picks its
 circle branch by nearness. Both are re-derived from geometry the same replay rebuilds, so they are stable
@@ -7763,6 +7765,201 @@ against the pre-fix engine, and the sixth is the sentinel. **1826 → 1832 green
 `PASSED`, with the browser flows skipped either side; they are green under `-De2e=1`), no new golden, no version
 bump, no existing golden changed.
 
+### As built: the local embedding term goes directional too (session 61)
+
+Session 59 corrected the criterion's **global** term from a ball model to a support function in the approach's
+direction. The **local** term was left as it shipped — `κ·reach ≥ 1`, with `reach` the section's greatest
+distance from the run *in any direction* — and it is the same over-statement, one term along. This closes it,
+by the same argument and with the same shape of test.
+
+**The derivation, and it is three lines.** A sweep carries a profile point `w` to `γ(s) + w.x·ref + w.y·bi`. In
+a **rotation-minimizing** frame the reference directions turn only with the tangent — `ref′` is parallel to `t`
+by construction, which is the whole content of "introducing no rotation about the tangent" (`Frames3`) — so
+differentiating along the run gives
+
+```
+d/ds [ γ + w.x·ref + w.y·bi ] = t · ( 1 − κ·(w·N) )
+```
+
+with `N` the unit normal towards the centre of curvature. The map stops being an immersion, and the section
+turns inside out, exactly when `κ·(w·N) = 1`. So what decides a bend is `h(N)` — the section's **support
+function in the curvature-normal direction**, per station, read in that station's own axes — and not the
+section's reach at all. Two things fall out of the derivation rather than being asserted: **no torsion appears**
+(a Frenet frame would spin the section about the tangent and put it in this determinant; the RMF is why the
+criterion is this clean), and the ball model `κ·reach ≥ 1` is exactly this statement maximized over directions,
+so it never accepted a fold — it only ever refused bodies that fit.
+
+**Why it had to be corrected now.** The user's report is the case: a pillar rebuilt with a `roundrect`
+footprint of 10 mm fillets, and a foundation drawn in a section plane against the pillar's wall — reaching
+18.14 mm *outwards* and 27 mm *up* and, by construction, **nothing** towards the pillar. Its greatest reach is
+32.5 mm, so `κ·reach = 3.25` at every fillet and the ball model refused, at every one of them, a body that
+cannot touch itself. That is precisely the class session 58's in-place sweep made routine — a section drawn
+where the material is, off the run — and it is why the two halves of this session are one session.
+
+**The frame it is measured in is the frame the mesh is built in**, and the resolution follows from that
+(OP-15). A station stands on the **chord** the spine walks, so its axes are half a sampling step off the arc's
+own normal: on a 10 mm fillet at `TESS_TOL_MM` that is 3.6°, and a section reaching 12 mm inwards is measured
+as 11.978 mm. The number in the refusal is therefore the number the *built* geometry has, not an idealization
+of it — the same choice the whole criterion already makes, stated here because a test asserts the figure.
+
+**Every message a disc ever produced is byte-identical**, by the same construction session 59 used: a round
+tube is analytically a disc about the run and passes **no** outline, and the swept cut's *derived* reach
+(OP-22) has none either, so both get `reach` back unchanged and the sentence is the one they always got. Where
+a section *is* offered the refusal names the directional figure — *"the profile's reach into the bend
+(11.978 mm) is larger than the bend the run starts with (radius 10 mm, 0 mm along the path)"* — because a
+message that quoted the isotropic reach while testing the directional one would be a correct refusal nobody
+could act on.
+
+**The meshing reach is untouched, deliberately.** `Frames3.along(path, …, reach)` uses the reach to decide
+*chord counts* (a point that far off the axis turning by an angle needs as many chords as a circle of that
+radius does), and that is a statement about **geometry**, not about clearance. A smaller directional number
+must not coarsen a mesh, so the isotropic reach goes on being what the sampling is stated in and the
+directional one is read only where a fold is decided. The grid's cell size stays `2 × reach` for the same
+reason session 59 kept it: it is an upper bound on the directional clearance, so the pairs offered are exactly
+the pairs offered before.
+
+**Four green tests changed, and each is the ball model being retired rather than the criterion being loosened.**
+
+- `SweepAnchorTest.theSameCoilRefusesTheSquareWhoseOwnOriginRidesTheRun` → `…CarriesTheSquare…AsADifferentBody`.
+  A 2 × 2 square read from the plan's origin stands ~31 mm along the frame's reference, which on that coil is
+  very nearly the axis: it swings out on a 31 mm lever arm as the RMF precesses (38° over two turns), and the
+  most of that arm that ever points *into* the bend is **52 %** of it (`max κ·h = 0.524` against `κ·reach =
+  1.089`). It is a body, manifold and positive, and it is emphatically not the anchored one — 14…37 mm from the
+  axis instead of 27…32, standing 30 mm above its own coil — which is now how the test makes the anchor's
+  argument. Its companion `aSectionReachingIntoTheBendIsRefusedAtTheSameNumbers` is **new**: the same coil and
+  the same square drawn on the *other* side of the origin, so that 34 mm points at the centre of curvature, is
+  refused at the first station in the words the old one used.
+- `SweepAnchorTest.theSameWormWithNoAnchorStillRefusesByReachAgainstTheBend` → `…IsCarriedBecauseItReachesAwayFromTheBend`.
+  GitHub #15's own worm, with the origin reading stated: a thread form 5.4 mm from the coil's centre line
+  reaches a third of a millimetre towards the centre of its own curvature. The old sentence is kept where it is
+  still true, in the same test — a **disc** of the same 5.399 mm reach on the same coil is refused in the very
+  same words — which is the same device session 59 used and the reason this is a change of *measurement*.
+- `SweepAnchorTest.theRefusalNamesWhichBendItIs` — GitHub issue #15's readability fix ("the bend the run starts
+  with") is asserted on a **disc** now, since the worm's own form is a body: a tube's radius reaches into the
+  bend by exactly its radius, so it is the case that never needed correcting.
+- `SweepTest.anArbitraryProfileIsJudgedByItsReachFromThePath` → `…ByWhatItReachesIntoTheBend`, and
+  `SweepAnchorProbeTest.draggingTheAnchorPastTheBendInvalidatesByNameAndBackHeals` keeps refusing and now
+  quotes 30.286 mm rather than 62.07: the 62 mm arm points into the bend for part of the run, and that part is
+  where it folds.
+
+### As built: the lift — a curve drawn in a plane is the run it already is (step 1's missing source, session 61)
+
+**The report.** The user rebuilt their pillar with rounded corners and could not sweep at all: neither the
+rounded outline in the plan nor the extruded footprint was accepted as the sweep's *"curve in space"*, and the
+alternative the refusal named — *"draw the route with Curve through points first"* — is a dead end, because a
+curve through points is a **polyline** and cannot follow an arc.
+
+**What was missing was the trivial source.** OP-26 gave a curve in space seven of them — through points, a
+helix, two views combined, a section, a connect, a projection onto a face, an imported wireframe — and step 9
+even builds the *reverse* of this one (a sketch traced from a flat imported run). The one it never built is the
+curve **already drawn, lying in the plane it was drawn in**. It is not a new kind of geometry: the parenting
+rule says a curve's construction is always parented and its value is world-space geometry, so a drawing in a
+space *already is* geometry in the world. All that was missing was the reading.
+
+**The decision: a coercion at every `PATH3` slot, and a tool that names the result.** Both, because they are
+one node with two front doors, and each answers something the other cannot:
+
+- **The coercion.** `Document.spaceCurveRef` — which every `PATH3` consumer already went through — now returns
+  the lift of a drawn pick instead of refusing it. That is the identical courtesy `pointInSpace` does one
+  dimension down, where a plain 2D point is taken as the point in space it is (a zero height on its own
+  plane), and it means *sweep, tube, station, connect, place curve and the swept cut's route* gain it at once
+  from one place. The user's gesture is then exactly what they described: click the outline, click the section.
+- **The tool** (*Lift drawing into space*, `tool lift`). A coercion cannot give the run a **name**, cannot
+  **hide** it, and cannot chain **several** drawn pieces into one route — and a route stated once and shared by
+  a station, a tube and a sweep is a different thing from three coercions that happen to agree. So the tool
+  exists, it is a repeating slot with `minPicks = 1`, and it builds the very same node.
+
+*Rejected: recording an implicit lift as a hidden extra step.* The editor could have inserted a `tool lift`
+step of its own whenever a `PATH3` slot took a drawn pick, so that the journal always named an element. It is
+unnecessary and it is worse: nothing is *discovered* by the coercion — what a pick means is a function of its
+**kind** (a closed outline lifts closed, a segment lifts open), with no proximity, no scoring and no geometry
+read — so a replay of `tool sweep els=e43,e34` rebuilds the identical node without deciding anything. Inserting
+a step would put an element in the drawing the user did not ask for, and would make one gesture two undo-able
+things. *Also rejected: lifting a single picked piece to the whole boundary it belongs to* (what `regionOf`
+does for an **area** slot). One click is one curve: a single leg of a footprint is a perfectly good route, and
+the whole border is stated by picking the outline — which the user's own drawing already has.
+
+**Two lifts of one outline are the same run**, and that is a property of the definition rather than of
+book-keeping: the run starts where the picked chain's first piece starts and travels the way that chain is
+stored — for a traced outline its own normalized counter-clockwise traversal, for a hand-picked chain the order
+of the clicks. Nothing about it depends on where the click landed, so a station's distance is measured from a
+place that does not move when the drawing is clicked again, and two coercions of the same outline are two nodes
+with one value. **Closed is structure**, read off the picked element's kind (outline, area, circle, ellipse) or
+stated by the gesture (clicking the first pick again, `closesOnFirstPick` — *Curve through points*' own device),
+never measured from whether the last piece happens to meet the first (OP-21).
+
+**`Arc3` exists now, and session 45's cut is superseded rather than forgotten.** That cut said an `Arc3` case
+is "kept for the producer that needs an arc *as an arc*", because a plane through a cylinder cuts a circle *or*
+an ellipse and the case would have earned half a test. The lift is that producer, whole: the everyday drawing
+is a **line–arc chain** — a rounded rectangle, a filleted outline, an ortho path with corner radii — a fillet's
+radius is a parameter the user typed, and the sweep reads the run's curvature at every station. Fitting those
+arcs into cubics would have put a `1e-4 mm` ripple into the very number the self-intersection criterion is
+stated against. So `Curve3Element` gains `Arc3` (centre, an orthonormal plane frame, radius, start and a
+**signed** sweep — the sign is which way the run is walked, which is the difference from `Helix3`, whose
+chirality is structural because reversing a helix leaves its handedness alone). Adding it is a branch in eight
+exhaustive `when`s, exactly as the type's own note promised, and it pays out beyond the lift for free: a plane
+across a round bar now cuts an **exact** circle (`IntersectionCurveTest` asserts the radius to 1e-12 where it
+used to assert a fit within a tenth of a micron), and `Project3` inherits the same. **An ellipse in space is
+still absent** and is named so it is not looked for: the producers exist, but a curve whose arc length is an
+elliptic integral buys less, and every route that fits one *says* it is fitted.
+
+**The projection of an arc into a plane is exact too, and it had to be.** `Curves3.projectedOnto` is what makes
+a curve in space visible and pickable in the 2D canvas, and the lift's own run is drawn *over* the drawing it
+came from. The shadow of a circle is an **ellipse** — an affine map carries one to the other — and OP-24 has
+that word, so the projection is stated in it by Rytz's construction: the projected frame gives two conjugate
+semi-diameters, one `atan2` turns them into the perpendicular pair, and the arc's parameter maps affinely onto
+the ellipse's (running backwards where the turned pair comes out left-handed, which is `EllipticArc`'s own
+`ccw`). Closed form, no iteration, no tolerance, and **no change of kind as a datum tilts**: where the two
+planes are parallel the ellipse produced is exactly circular. The one honest stop is an arc seen **edge-on**,
+whose shadow is a segment traversed twice and is therefore not one piece of anything; it is drawn as the chords
+it is, which is stated rather than discovered and is a drawing error in a picture that is already a line.
+
+**`Pierce3` needed nothing.** It walks pieces through `Frames3.pointAt` and `Curves3.tangentAt` and bisects on
+the analytic piece, so an arc is crossed and bisected on the arc's own formula the moment the case exists; its
+`MIN_SAMPLES` floor already resolves an excursion of a few per cent of a piece, and an arc's own chord count
+(`GeomMath.chordSteps`, the revolve's rule for the fourth time) is what it starts from. A test asserts a
+crossing found on a fillet standing on that fillet's radius to 1e-12 with the arc's own tangent there — which
+is what lets the in-place sweep seed a frame on a bend and not only on a straight leg.
+
+**What it refuses, by name and with the alternative.** A **line** or a **ray** runs on for ever and so states
+no length of run (step 5's own refusal, reached rather than restated); a **chain** is unbounded in the same way
+and is a thing to cut *with*; a **point** is a place; a **solid** is met by a plane instead. Picks from two
+different spaces are refused with the way out (lift each and join them with *Connect*). Everything about
+*where* the pieces are — a gap between two of them, a boundary that does not close — is the node's business and
+comes back as the reason it is invalid, with the gap named, healing when the drawing moves (OP-3).
+
+**Format: no version bump, and by the catalogue's own rule.** The sweep step records what it always recorded —
+`els=e43,e34` — and a pick's *kind* is what decides how it is read, so no stored literal changes meaning and
+there is nothing to migrate. `tool lift` is a **new tool id**, which is the format's ordinary extension point:
+a file containing one cannot be read by a build that predates it, exactly as every tool added since v2 already
+is, and no argument that ever existed means anything different. Three consequences worth stating: a drawing
+saved before this build is untouched by it; a `tool sweep` naming an outline is a step only this build could
+have written; and the lift itself carries **no** argument at all, because there is no discrete choice in it.
+
+**Tests: 1846 → 1865 green.** `LiftedRunTest` is twelve, on the user's script verbatim: it loads clean and
+round-trips byte-equal; the two-click gesture sweeps the foundation round the rounded border, sitting on the
+ground (`z = 0`) and standing the section's own height (27.004 mm), with the plan extent the rounded footprint
+offset by **exactly** 18.143586883130496 mm on all four sides; every corner of the drawn section is a point of
+the body's surface to **1e-9 mm**; the lifted border is four `Seg3` and four `Arc3` of radius 10 to 1e-12 with
+the run's length the drawing's own arithmetic; a crossing is found *on a fillet* and is exact on the arc;
+retyping the fillet radius to 25 mm moves the run and the body with it; the status line speaks the lift and the
+crossing and the step records `els=e43,e34 signs=1`; a section edited to reach 12 mm into a 10 mm fillet is
+refused by name at its station and reaches the user through `Editor.validityNote`; an **open** chain of a
+segment and an arc lifts, tubes and takes a station at the hand-over; the lifted run is named, hidden and
+shared by two bodies; the `tool lift` gesture records its own step and replays exactly; and the four refusals
+are asserted by their words. `LiftedRunProbeTest` is six more, composing the lift with what was already
+there: a **circle** lifted whole (one `Arc3` of `2π`, whose plan shadow is a whole conic rather than a trimmed
+one) tubed into a torus within a few tenths of a per cent of Pappus and never over it; the in-place sweep
+**seeded in the middle of an arc**, which no run could do before because none had an arc in it; a run lifted
+out of a **datum** that leans when the datum's angle is retyped; an arc seen **edge-on**, whose shadow really
+is the line it is; a lifted run **placed** elsewhere and then dragged; and a **delete** of the drawing taking
+the run, the body and the step with it. That probe also found the one thing this package does *not* fix and
+queues instead — a closed run whose **seam** lies in the cutting plane crosses it once too few — recorded with
+its reproduction and with the reason it is a version-bump-shaped question rather than an eight-line patch.
+Four existing tests that asserted the *old* boundary now assert the new one
+(`SweepToolTest`, `StationToolTest`, `ConnectToolTest` — each keeping the line refusal that is still real — and
+`IntersectionCurveTest`'s fitted circle, which is exact). No new golden, no golden changed, no version bump.
+
 ### Implementation status (as built — step 4: the station, a plane stated by a distance along a run)
 
 Step 4 of the order above, whole and nothing else: **`station(path, distance)` is a sketch space**, and the
@@ -8874,8 +9071,11 @@ parametric placement instead.
 
 **And what it is not, stated so it is not looked for.** There is **no surface layer**, so *surface ∩ surface*,
 lofted or ruled surfaces and a station *on* a surface do not exist and are not deferrals — that is a surface
-kernel and a different project (the closing note of *To be discussed*). There is **no `Arc3`**: no producer
-needs an arc *as an arc* yet, and a case with no producer is a case with no test. **Trim, split and join in
+kernel and a different project (the closing note of *To be discussed*). ~~There is **no `Arc3`**: no producer
+needs an arc *as an arc* yet, and a case with no producer is a case with no test.~~ — **superseded in session
+61**: the **lift** is that producer, so `Arc3` exists and a circular section of a solid is exact rather than
+fitted. What is still absent, by the same rule and named so it is not looked for, is an **ellipse in space**.
+**Trim, split and join in
 space** are not built (to-be-discussed item 4), so a composite path made of several runs is not a value and two
 runs that meet are two runs. There is **no station family** — one station at a time (item 1a) — no **3D offset
 curve** (item 2) and no **variable-section sweep** (item 3), each of which is a settling discussion rather than
@@ -11429,6 +11629,35 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   nothing logged. **1842 → 1854 green** (plus one browser E2E carrying the whole episode through the real
   shell), nothing cut. See *flagged was the half that was missing* under OP-3.
 
+- **Turn 61 — a curve drawn in a plane is the run it already is, and a bend folds towards its own centre.**
+  The user rebuilt their pillar with **rounded corners** and could not sweep at all: the plan outline was
+  refused as *"not a curve in space"*, and the alternative that refusal named — *Curve through points* — is a
+  polyline and cannot follow an arc. Two things were missing, and they turned out to be one session. **The
+  lift**: OP-26 had seven sources for a curve in space and not the trivial one, so every `PATH3` slot now
+  reads a drawn pick as the run it describes — the same courtesy `pointInSpace` does one dimension down — and
+  a *Lift drawing into space* tool names the same node where a run wants a name, a hide, or several drawn
+  pieces chained into one route. Recording an implicit lift as a hidden extra step was **rejected**: nothing is
+  discovered by the coercion, since what a pick means is a function of its *kind*, so a replay decides nothing
+  and inserting a step would put an element in the drawing nobody asked for. **`Arc3`** exists as a
+  consequence, which supersedes session 45's cut with its own stated condition (*"a case is added with the
+  producer that needs it"*) — a rounded outline is arcs, a fillet radius is a typed parameter, and fitting them
+  into cubics would have put a `1e-4 mm` ripple into the number the self-intersection criterion is stated
+  against; a plane across a round bar now cuts an **exact** circle for free. Its 2D shadow is exact too, as the
+  ellipse it really is (Rytz, closed form), with the edge-on case named rather than smuggled. **The local
+  embedding term** was the other half: `κ·reach ≥ 1` measured the section's reach in *any* direction, and the
+  derivative of the sweep along a rotation-minimizing frame is `t·(1 − κ·(w·N))` — so what decides a bend is
+  the support function towards the **centre of that bend**, per station. It is the correction session 59 made
+  to the global term, one term along, and without it the user's foundation — 18 mm outwards, 27 mm up, nothing
+  towards the pillar — was refused at every 10 mm fillet by a criterion measuring a body that was not there.
+  Four green tests changed and each is the ball model retiring, with the old sentence kept in the same test
+  wherever it is still true (a **disc** of the same reach is refused in the same words). A tube's every message
+  is byte-identical, the meshing reach stays the geometric one, and the format takes no bump — an element id in
+  `els=` is read by its element's kind, and nothing a file ever stored changes meaning. A probe found one
+  thing the package does not fix and **queues**: a closed run whose seam lies in the cutting plane is crossed
+  once too few, which would renumber a recorded crossing index and is therefore a version question rather than
+  a patch. **1846 → 1865 green.**
+  See *the local embedding term goes directional too* and *the lift* under OP-26.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -13233,7 +13462,9 @@ carried along a path is the missing capability rather than a refinement of an ex
    surface* has no operands; **solid ∩ solid** is refused rather than approximated (neither the exact prismatic
    algebra nor the mesh kernel yields a curve with an analytic pedigree or an ordering rule that is a property
    of the operands), **plane ∩ plane** is a line and so is unbounded, and an **`Arc3`** case is still kept for
-   the producer that needs an arc *as an arc*. Everything else the entry asked for is there: an ordered set
+   the producer that needs an arc *as an arc* (**that producer arrived in session 61 — the lift — so `Arc3`
+   exists and this cut is superseded**; a circular section of a solid is exact rather than fitted now, which is
+   this step getting the exactness it was promised, for free). Everything else the entry asked for is there: an ordered set
    with a stated, continuous ordering rule, a persisted index that is never re-scored, and invalidity that
    heals when a chosen curve stops existing.
 6. ~~**Connect** — a derived G1/G2 joining piece from endpoint tangents plus tension.~~ **Built in session
@@ -13550,7 +13781,35 @@ naming it with its reason — so the user who edits three things before looking 
 it must not become: a modal interruption, a gesture refusal (the edit is legal; the value is what's wrong —
 OP-3), or a log the user has to know to open.
 
-**Beyond those six, the rest of the numbered queue is empty** (the session-59 entry above is closed). What remains is the parked
+**Retired in session 61 (user-reported): a drawing could not be the route.** Not a queue line but a *stated
+gap* in OP-26's own list of sources — the curve already drawn, lying in the plane it was drawn in — which
+arrived as a demand: a pillar with a `roundrect` footprint, whose rounded outline the sweep refused as *"not a
+curve in space"* while the alternative it named could not follow an arc. Closed by the **lift** at every
+`PATH3` slot plus a tool that names the run, and by the **`Arc3`** case session 45 had cut with its own
+condition attached. It left nothing parked, and it took one thing off the list of things this kernel cannot do
+that it plainly should: a footprint's own border is now a route for a sweep, a tube, a station and a swept cut.
+
+**Queued in session 61 (found by a probe, not reported): a closed run whose seam lies *in* the cutting plane
+crosses it once too few.** `Pierce3.crossings` follows the signed distance along the sampled parameter and
+emits a crossing where its **sign changes**; a sample exactly on the plane carries no side and is skipped,
+which is right for a run that touches and turns back. For a **closed** run the seam is not an end — the run
+goes on through it — so a loop whose start point sits on the plane and passes through it *does* change side
+there, and nothing compares across the wrap. Reproduced in one line by the lift: a circle drawn in the plan
+lifts to one `Arc3` starting at its plane's own +u, so a datum standing on the **x axis** through that circle
+reports **one** crossing where a ring plainly has two. It is old (a closed polyline through points does the
+same) and the lift only makes it easy to reach, because a lifted conic's seam is at a predictable place.
+
+It is **not patched here, and the reason is the doctrine rather than the size** — the fix itself is a wrap
+comparison and about eight lines. A seam crossing has arc length 0, so it enters the ordered set at index
+**0** and renumbers every crossing after it; a `tool sweep signs=1` written by this build against such a
+drawing would silently name a different crossing after the fix, which is exactly the frozen-literal rule
+(OP-18) and therefore a version-bump-shaped question with a migration to argue. Queued whole rather than
+smuggled into the package that found it, with the reproduction above and this note: until it is done, a run
+whose seam lies in a section's plane rides the crossings it *does* report, and the in-place reading is
+otherwise untouched. `LiftedRunProbeTest.theInPlaceSweepCanBeSeededInTheMiddleOfAnArc` deliberately stands its
+datum on the y axis and says why at the call site.
+
+**Beyond those, the rest of the numbered queue is empty** (the session-59 entry above is closed; session 61's is the newest). What remains is the parked
 list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**

@@ -148,6 +148,45 @@ object Intersect3 {
         return Path3Set(ordered.map { it.first })
     }
 
+    /**
+     * **A drawing read as the run it already is** (OP-26, step 1's missing source — *the lift*): the chain
+     * [pieces], drawn in [plane]'s own (u, v), as the curve in space it describes there.
+     *
+     * OP-26 gave a curve in space seven sources — through points, a helix, two views combined, a section, a
+     * connection, a projection onto a face, an imported wireframe — and left out the one that needs no new
+     * geometry at all: **the curve already drawn, lying in the plane it was drawn in**. A plan outline *is* a
+     * route round a building; a filleted profile *is* the path a bead runs on. This is that reading, and it is
+     * one line of geometry because [lifted] already exists: the lift of a whole chain is the lift of each
+     * piece, in order, and the exactness contract is the one [lifted] states — a segment, a cubic, a circle
+     * and a circular arc exactly, an ellipse fitted to [FIT_TOL_MM] and **said** to be.
+     *
+     * **[closed] is structure and is stated by the caller** (OP-21's rule), never measured here: a boundary
+     * that closes is one the drawing said closes — an outline, an area, a circle — and a chain whose last
+     * piece happens to end where the first begins is not the same object as one the user closed. **Direction
+     * and seam are the drawing's own**: the run starts where the chain's first piece starts and goes the way
+     * the chain is stored, which for an outline is its own normalized (counter-clockwise) traversal and for a
+     * hand-picked chain is the order of the clicks. So two lifts of one outline are the same run, and nothing
+     * about where a sweep begins depends on where a click landed.
+     *
+     * The pieces are taken **in the order given**, already chained ([GeomMath.chainRun] is the caller's, since
+     * only the caller knows whether a gap is a refusal or a value's business). What comes back is the run and
+     * whether any piece of it had to be fitted, which is what a status line reports (`exactnessWord`).
+     */
+    fun liftedRun(
+        pieces: List<ProfileElement>,
+        plane: Plane3,
+        closed: Boolean,
+    ): Pair<Path3, Boolean> {
+        val elements = ArrayList<Curve3Element>()
+        var fitted = false
+        for (p in pieces) {
+            val made = lifted(p, plane)
+            if (made.second) fitted = true
+            elements.addAll(made.first)
+        }
+        return Path3(elements, closed) to fitted
+    }
+
     // ---- chaining: the pieces of one cut, joined where the solid's own faces meet ----
 
     private class Run(val pieces: List<DrawnPiece>, val closed: Boolean, val lowest: Vec2, val order: Int)
@@ -347,18 +386,27 @@ object Intersect3 {
     /**
      * One piece of the section as pieces of a curve in space, and whether it had to be fitted.
      *
-     * **Exact for the two cases [Curve3Element] has a name for.** A segment maps to a [Curve3Element.Seg3]
+     * **Exact for every case [Curve3Element] has a name for.** A segment maps to a [Curve3Element.Seg3]
      * because [Plane3.toWorld] is affine; a cubic maps to a [Curve3Element.Bezier3] with its four control
      * points carried one for one, because a Bézier is affine-invariant — the identical argument
-     * [Curves3.projectedOnto] already makes in the other direction. No tolerance appears in either statement.
+     * [Curves3.projectedOnto] already makes in the other direction. A **circle and a circular arc** map to a
+     * [Curve3Element.Arc3] with their centre, radius and angles untouched, because a plane's frame is
+     * orthonormal and an isometry carries a circle to a circle. No tolerance appears in any of the three
+     * statements.
      *
-     * **Fitted for the conics, and that is a fact about the vocabulary rather than a shortcut.** A plane
-     * through a cylinder cuts a circle or an ellipse; `Curve3Element` has neither case, and there is no
-     * degrading here that OP-15 would allow — calling an ellipse a cubic is exactly what it forbids. So it is
-     * fitted, in the plane, to a **stated** [FIT_TOL_MM], and the isometry carries that number into space
-     * unchanged. (Adding an `Arc3` would make the circular half exact and is deliberately not done in this
-     * step — see the record: a case is added with the producer that needs *it*, and the elliptic half would
-     * still be fitted.)
+     * **The circular case was fitted until the lift asked for it**, and the earlier record said so in as many
+     * words: *"adding an `Arc3` would make the circular half exact and is deliberately not done in this step —
+     * a case is added with the producer that needs it"*. The lift (OP-26's step 1 completed) is that producer,
+     * and it needs it whole: a rounded outline is arcs, a fillet's radius is a typed parameter, and the sweep's
+     * self-intersection criterion reads the run's curvature station by station. So this reversal is the rule
+     * working rather than an exception to it, and it pays out **here** — the section curve of a plane through a
+     * cylinder is now exact too, for free and with the same words.
+     *
+     * **Fitted still for the ellipses, and that is a fact about the vocabulary rather than a shortcut.** A
+     * plane through a cylinder cuts a circle *or* an ellipse; `Curve3Element` has no elliptic case, and there
+     * is no degrading here that OP-15 would allow — calling an ellipse a cubic is exactly what it forbids. So
+     * it is fitted, in the plane, to a **stated** [FIT_TOL_MM], and the isometry carries that number into
+     * space unchanged.
      *
      * **Shared rather than copied** (OP-26, step 8): this is *the* lift from a plane's own (u, v) into space,
      * not the intersection's private one, so [Project3] — which projects a drawing onto a face and then has
@@ -382,9 +430,27 @@ object Intersect3 {
                     ),
                 ) to false
             is ProfileElement.ArcE ->
-                fit(Conics.ofCircle(Circle(e.arc.center, e.arc.radius)), e.arc.startAngle, e.arc.startAngle + GeomMath.sweep(e.arc), plane) to true
+                listOf<Curve3Element>(
+                    Curve3Element.Arc3.about(
+                        plane.toWorld(e.arc.center),
+                        plane.u,
+                        plane.v,
+                        e.arc.radius,
+                        e.arc.startAngle,
+                        GeomMath.sweep(e.arc),
+                    ),
+                ) to false
             is ProfileElement.CircleE ->
-                fit(Conics.ofCircle(e.circle), 0.0, if (e.ccw) 2.0 * kotlin.math.PI else -2.0 * kotlin.math.PI, plane) to true
+                listOf<Curve3Element>(
+                    Curve3Element.Arc3.about(
+                        plane.toWorld(e.circle.center),
+                        plane.u,
+                        plane.v,
+                        e.circle.radius,
+                        0.0,
+                        if (e.ccw) 2.0 * kotlin.math.PI else -2.0 * kotlin.math.PI,
+                    ),
+                ) to false
             is ProfileElement.EllipticArcE ->
                 fit(e.arc.ellipse, e.arc.startT, e.arc.startT + Conics.sweep(e.arc), plane) to true
             is ProfileElement.EllipseE ->

@@ -2477,6 +2477,93 @@ class Construction {
         }
 
     /**
+     * A **drawing lifted into space** (OP-26, step 1's missing source): the drawn curves [views], read in the
+     * plane [from] they are drawn in, as the one curve in space they already describe.
+     *
+     * **The trivial source, and the one that was missing.** A curve's construction is always parented (OP-26),
+     * so a drawing in a space *is* geometry in the world — a plan outline is a route round a building and a
+     * filleted profile is the path a bead runs on. Nothing is sampled, nothing is fitted that was not already
+     * a conic ([Intersect3.liftedRun] states the contract), and nothing is copied: the drawn curves and the
+     * plane are inputs, so dragging a corner, retyping a fillet radius or tilting the datum moves the run by
+     * recompute, with nothing rebuilt (OP-21).
+     *
+     * [closed] is **structural** and comes from what was picked — an outline, an area, a circle, or a chain
+     * the gesture closed — never from measuring whether the last piece happens to meet the first (OP-21's
+     * rule, and [Path3.closed]'s own). The views are taken as **untyped refs** for the reason a loft's guide
+     * and a projected drawing are: what they have to be is any drawn curve, and the 2D curve values are six
+     * types with one thing in common.
+     *
+     * Everything else is a condition on **values**, so each is invalidity with a reason that heals (OP-3): a
+     * pick whose value is not a drawn curve at all, a chain whose pieces do not meet (with the gap), and a
+     * closed pick that does not close.
+     */
+    fun liftedRun(
+        views: List<Ref<*>>,
+        from: PlaneRef,
+        closed: Boolean,
+    ): Path3Ref =
+        op(from, *views.toTypedArray()) { args ->
+            val pieces = ArrayList<ProfileElement>()
+            for (i in 1 until args.size) {
+                pieces.addAll(
+                    liftablePieces(args[i])
+                        ?: return@op EvalResult.Invalid(
+                            "what is lifted must be a drawn curve — a segment, an arc, a Bézier, a conic, an " +
+                                "outline or an area",
+                        ),
+                )
+            }
+            if (pieces.isEmpty()) return@op EvalResult.Invalid("there is nothing drawn here to lift")
+            val (chained, why) =
+                if (closed) {
+                    val (loop, reason) = GeomMath.chainLoop(pieces)
+                    loop?.elements to reason
+                } else {
+                    GeomMath.chainRun(pieces)
+                }
+            if (chained == null) return@op EvalResult.Invalid(why ?: "these pieces do not make one run")
+            EvalResult.Ok(Path3Value(Intersect3.liftedRun(chained, (args[0] as PlaneValue).plane, closed).first))
+        }
+
+    /**
+     * Whether lifting [views] into [plane] would have to **fit** a conic — what a status line reports about a
+     * lift's exactness (OP-15), asked of the same pieces the node itself lifts rather than of a second reading.
+     *
+     * Takes the plane as a **value** rather than as a node, so that a sentence about a build never has to
+     * build anything: a status line is a reader.
+     */
+    fun liftIsFitted(
+        views: List<Ref<*>>,
+        plane: Plane3,
+        ev: Evaluator,
+    ): Boolean {
+        val pieces = views.flatMap { liftablePieces(it, ev) ?: return false }
+        return Intersect3.liftedRun(pieces, plane, closed = false).second
+    }
+
+    /**
+     * The drawn pieces a **lift** reads off one value — [guidePieces] plus the one case it does not have,
+     * an **area**, whose run is its outer boundary.
+     *
+     * Separate from [guidePieces] rather than folded into it, because the two questions are different: a
+     * loft's *guide* or a projected drawing is a curve, and an area handed to either of those is a mistake
+     * worth naming. What a *route* is, on the other hand, is exactly a boundary — a footprint is the commonest
+     * thing anybody sweeps along — so an area answers with the boundary it has and its holes are no more part
+     * of the route than they are part of the outline.
+     */
+    private fun liftablePieces(v: Value): List<ProfileElement>? =
+        guidePieces(v) ?: (v as? RegionValue)?.region?.outer?.elements
+
+    /** The same, read through [ev] from a ref — what a gesture asks before it builds. */
+    fun liftablePieces(
+        view: Ref<*>,
+        ev: Evaluator,
+    ): List<ProfileElement>? {
+        val v = (ev.eval(view.node) as? EvalResult.Ok)?.value ?: return null
+        return liftablePieces(v)
+    }
+
+    /**
      * A **tube along [path]**: a circle of [radius] carried along the curve in its moving frame (OP-26,
      * step 2).
      *

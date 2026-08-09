@@ -101,7 +101,13 @@ class SweepAnchorProbeTest {
 
         assertNotNull(anchor.handle, "the anchor is draggable").drag(Vec2(-30.0, 4.0), Evaluator())
         val why = assertNotNull(whyInvalid(solid), "sixty-two millimetres of reach on a thirty-millimetre bend refuses")
-        assertTrue(why.contains("62.0"), "the new reach is named: $why")
+        // The figure the sentence quotes is what the section reaches **into the bend** at the station that
+        // refuses — 30.286 mm against a 30.084 mm radius of curvature — and not the 62.07 mm it reaches at
+        // its widest, which is the local criterion's directional form (OP-26; the correction session 59 made
+        // to the global term, made to the local one too). A 62 mm arm swung by the frame's own precession
+        // points into the bend for part of the run, and that part is where it folds.
+        assertTrue(why.contains("the profile's reach into the bend (30.286 mm)"), "the new reach is named: $why")
+        assertTrue(why.contains("radius 30.084 mm"), "against the bend it outgrows: $why")
         assertTrue(why.contains("pass through itself"), "and the consequence: $why")
 
         assertNotNull(anchor.handle).drag(Vec2(29.0, 4.0), Evaluator())
@@ -163,8 +169,15 @@ class SweepAnchorProbeTest {
         )
         ed.click(Vec2(31.0, 5.0))
         val solid = assertNotNull(ed.solids().lastOrNull(), "the sweep still completes: ${ed.statusHint}")
-        val why = assertNotNull(whyInvalid(solid), "and it is the unanchored reading, which this coil refuses")
-        assertTrue(why.contains("32.757"), "by the section's own reach: $why")
+        // …and what it built is the **unanchored** reading, which is the half of this probe that matters: the
+        // section is read from the plan's own origin, so it rides 30 mm up the frame's reference instead of
+        // hugging the coil. (It used to be asserted by the refusal that reading drew; since the local
+        // criterion measures what a section reaches *into* a bend rather than at all, this one is a body —
+        // so the reading is asserted by where the body stands, which is what it always meant.)
+        assertNull(whyInvalid(solid), "the unanchored reading is a body: ${whyInvalid(solid)}")
+        assertFalse(ed.statusHint.contains("riding on"), "and no anchor was taken: ${ed.statusHint}")
+        val zs = meshOf(solid).vertices.map { it.z }
+        assertTrue(zs.min() > 29.0, "it rides 30 mm off the coil, read from the plan's origin: ${zs.min()}")
 
         val once = DocumentFormat.save(ed.doc)
         assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and the drawing round-trips")

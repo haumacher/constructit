@@ -435,6 +435,8 @@ class RecordedElementTest {
             SlotKind.AREA, SlotKind.CHAIN, SlotKind.LOFT_PART -> listOf(RECT_EDGE, RECT_EDGE2, RECT_EDGE)
             SlotKind.SOLID -> listOf(RECT_EDGE, RECT2_EDGE)
             SlotKind.PATH3 -> listOf(CURVE3_MID, CURVE3_MID)
+            // the lift's slot: an ordinary drawn curve, and a second one so a repeat has somewhere to go
+            SlotKind.DRAWN_RUN -> listOf(SEG_MID, SEG2_MID, CIRCLE_EDGE)
             // a section curve needs a working plane cutting a solid, which is a gesture of its own — the
             // rows that take one are covered by their own tests (IntersectionCurveToolTest)
             SlotKind.SECTION_CURVE -> null

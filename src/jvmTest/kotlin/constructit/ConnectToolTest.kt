@@ -25,10 +25,12 @@ import constructit.geom.Plane3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
 import constructit.units.Quantity
+import constructit.units.mm
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -429,18 +431,42 @@ class ConnectToolTest {
 
     // ---- 6. the two gesture refusals, both structural ----
 
-    /** A pick that is not a curve in space is refused by name, and nothing is built. */
+    /**
+     * **A drawn curve can be one end of a join** — the lift (OP-26, step 1's missing source): the second pick
+     * is a plain segment in the plan, read as the run it already is, and the bend joins the two.
+     *
+     * This test used to assert that such a pick was refused by name. The refusal that remains is the one about
+     * the geometry rather than the vocabulary: a **line** runs on for ever, so it has no end to join.
+     */
     @Test
-    fun aPickThatIsNotACurveInSpaceIsRefusedByName() {
+    fun aDrawnCurveIsJoinableAndALineIsRefusedByName() {
         val ed = Editor()
         val a = runThrough(ed, Vec2(0.0, 0.0), Vec2(100.0, 0.0))
         ed.setTool(Tools.SEGMENT)
         ed.click(Vec2(0.0, 200.0))
         ed.click(Vec2(100.0, 200.0))
         val seg = ed.doc.elements.last { it.kind == ElementKind.SEGMENT }
-        assertEquals(null, ed.doc.connectCurves(a, seg, null, null, emptyList(), emptyList(), Continuity.G1))
+        val join = assertNotNull(ed.doc.connectCurves(a, seg, null, null, emptyList(), emptyList(), Continuity.G1), ed.doc.note)
+        assertEquals(ElementKind.SPACE_CURVE, join.kind, "the join is a run like any other")
+        assertNull((Evaluator().eval(join.ref.node) as? EvalResult.Invalid)?.reason, "and it is valid: ${ed.doc.note}")
+
+        // **and which end of the drawing was clicked is scored against the lifted run's own ends**, not
+        // defaulted: a click by the segment's start joins there, and the piece therefore reaches (0, 200)
+        val toStart =
+            assertNotNull(
+                ed.doc.connectCurves(a, seg, null, null, listOf(Vec2(100.0, 0.0), Vec2(2.0, 200.0)), emptyList(), Continuity.G1),
+                ed.doc.note,
+            )
+        val piece = ((Evaluator().eval(toStart.ref.node) as EvalResult.Ok).value as constructit.core.Path3Value).path
+        assertTrue(
+            (assertNotNull(piece.end) - Vec3(0.0, 200.0, 0.0)).length() < 1e-6,
+            "the join reaches the end the click was nearest: ${piece.end}",
+        )
+
+        val line = ed.doc.line(ed.doc.freePoint(0.0.mm, 300.0.mm), ed.doc.freePoint(100.0.mm, 300.0.mm))
+        assertEquals(null, ed.doc.connectCurves(a, line, null, null, emptyList(), emptyList(), Continuity.G1))
         val why = assertNotNull(ed.doc.takeNote())
-        assertTrue(why.contains("not a curve in space"), "and it says what it wanted: $why")
+        assertTrue(why.contains("runs on for ever"), "and it says what it wanted: $why")
     }
 
     /**

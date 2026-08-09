@@ -363,9 +363,18 @@ class SweepToolTest {
 
     // ---- the refusals a gesture makes, and the ones the node makes ----
 
-    /** A pick that is not a curve in space is refused **by name**, and nothing is built. */
+    /**
+     * **A drawn curve is a route** — the lift (OP-26, step 1's missing source): the tube's slot takes a plain
+     * segment and reads it as the run it already is, lying where it is drawn.
+     *
+     * This test used to assert the opposite, and the reversal is the package: *"the slot itself declines a
+     * plain segment, so the click never reaches the build"* was a gap rather than a rule, since a curve's
+     * construction is always parented and a drawing in a space therefore already *is* geometry in the world.
+     * The refusal that remains is the one that is about the geometry rather than about the vocabulary — a
+     * **line** runs on for ever, so it states no length of run — and it still speaks.
+     */
     @Test
-    fun sweepingAlongSomethingThatIsNotACurveInSpaceIsRefusedByName() {
+    fun sweepingAlongADrawnCurveReadsItAsTheRunItIs() {
         val ed = Editor()
         ed.setTool(Tools.POINT)
         ed.click(Vec2(0.0, 0.0))
@@ -375,16 +384,23 @@ class SweepToolTest {
         ed.click(Vec2(80.0, 0.0))
         val seg = ed.doc.elements.last { it.kind == ElementKind.SEGMENT }
 
-        // the slot itself declines a plain segment, so the click never reaches the build
+        // the slot takes the drawn segment, and what comes out is the tube along where it is drawn
         ed.setTool(Tools.TUBE)
         ed.type("5")
         ed.click(Vec2(40.0, 0.0))
-        assertEquals(0, ed.solids().size, "nothing was built")
-        assertTrue(ed.statusHint.contains("curve in space"), "and the tool asked for what it takes: ${ed.statusHint}")
+        assertEquals(1, ed.solids().size, "the drawn segment is the route: ${ed.statusHint}")
+        assertTrue(ed.statusHint.contains("reading it as the run it already is"), "and the reading speaks: ${ed.statusHint}")
+        val mesh = meshOf(ed.solids().last())
+        assertManifold(mesh, "a tube along a drawn segment")
+        assertClose(mesh.vertices.minOf { it.x }, 0.0, 1e-9, "it runs from where the segment starts")
+        assertClose(mesh.vertices.maxOf { it.x }, 80.0, 1e-9, "…to where it ends")
+        assertClose(mesh.vertices.maxOf { it.z }, 5.0, 1e-9, "…as a 5 mm tube about it")
 
-        // …and the build refuses the same thing by name when it is handed one directly
-        assertEquals(null, ed.doc.tubeAlongCurve(seg, ed.doc.newParameter("r", 5.0.mm).ref))
-        assertTrue(ed.doc.note?.contains("not a curve in space") == true, "the build names it too: ${ed.doc.note}")
+        // …and a **line** still states no length of run, so it is refused by name
+        val line = ed.doc.line(ed.doc.freePoint(0.0.mm, 40.0.mm), ed.doc.freePoint(80.0.mm, 40.0.mm))
+        assertEquals(null, ed.doc.tubeAlongCurve(line, ed.doc.newParameter("r", 5.0.mm).ref))
+        assertTrue(ed.doc.note?.contains("runs on for ever") == true, "the build names it: ${ed.doc.note}")
+        assertNotNull(seg)
     }
 
     /**

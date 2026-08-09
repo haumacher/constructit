@@ -131,6 +131,7 @@ class CombineViewsTest {
                     when (e) {
                         is Curve3Element.Seg3 -> e.start + (e.end - e.start) * t
                         is Curve3Element.Bezier3 -> Curves3.bezierPointAt(e, t)
+                        is Curve3Element.Arc3 -> e.at(t)
                         is Curve3Element.Helix3 -> e.at(t)
                     },
                 )

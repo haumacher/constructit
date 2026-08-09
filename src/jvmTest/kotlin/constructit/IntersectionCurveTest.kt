@@ -161,6 +161,7 @@ class IntersectionCurveTest {
                     when (el) {
                         is Curve3Element.Seg3 -> el.start + (el.end - el.start) * t
                         is Curve3Element.Bezier3 -> Curves3.bezierPointAt(el, t)
+                        is Curve3Element.Arc3 -> el.at(t)
                         is Curve3Element.Helix3 -> el.at(t)
                     },
                 )
@@ -189,26 +190,33 @@ class IntersectionCurveTest {
     }
 
     /**
-     * The same property where the curve had to be **fitted**: a plane across a round bar cuts a circle, for
-     * which `Curve3Element` has no case. Every sample is within the stated tolerance of the bar's true
-     * surface — measured against the analytic radius, not against the mesh, so the tessellation cannot
-     * flatter the fit.
+     * The same property on the curve that used to be **fitted**: a plane across a round bar cuts a circle, and
+     * a circle now has a case in the space vocabulary ([Curve3Element.Arc3], added with the lift — OP-26's
+     * step 1 completed). So the section of a round bar is **exact**, and this asserts the reversal at the
+     * number it turns on: every sample stands on the bar's analytic radius to the last bits of a double,
+     * where the cubic fit stood within a tenth of a micron of it.
+     *
+     * Measured against the analytic radius, not against the mesh, so the tessellation cannot flatter it.
      */
     @Test
-    fun aFittedCircleStandsWithinTheStatedToleranceOfTheTrueSurface() {
+    fun aCircularSectionIsExactRatherThanFitted() {
         val solid = bar()
         val plane = atHeight(40.0)
         val curves = curvesOf(solid, plane)
         assertEquals(1, curves.size)
-        assertTrue(curves[0].fitted, "a circle has no case in the space vocabulary, so it is fitted")
+        assertTrue(!curves[0].fitted, "a circle has a case in the space vocabulary now, so nothing is fitted")
         assertTrue(!curves[0].sampled, "and it is not chords of anything")
+        assertEquals("exact", curves[0].exactnessWord, "and it says so")
+        assertTrue(
+            curves[0].path.elements.all { it is Curve3Element.Arc3 },
+            "the piece is the arc it is: ${curves[0].path.elements}",
+        )
         var worst = 0.0
         for (p in samplesOf(curves[0].path, per = 32)) {
             assertClose(plane.distanceTo(p), 0.0, 1e-12, "on the plane")
             worst = maxOf(worst, abs(hypot(p.x, p.y) - 30.0))
         }
-        assertTrue(worst <= Intersect3.FIT_TOL_MM, "the fit is within ${Intersect3.FIT_TOL_MM} mm: $worst")
-        assertTrue(worst > 0.0, "…and it is a fit, not an accident")
+        assertTrue(worst <= 1e-12, "the radius is the bar's own, to the last bit: $worst")
     }
 
     /** The stated number is what it says: 1e-4 mm, one tenth of a micron, and 200× finer than the mesh's. */

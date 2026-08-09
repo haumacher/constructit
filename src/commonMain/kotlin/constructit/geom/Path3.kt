@@ -40,14 +40,20 @@ enum class Handedness(val turnSign: Double) {
  * parameterized. *Consistency*: it is the rule `Feature3` already follows one layer up, keeping analytic
  * descriptions beside their meshes and dispatching by predicate rather than degrading silently.
  *
- * **Three cases today, and the hierarchy is open on purpose.** [Seg3] and [Bezier3] are what a path through
- * 3D points produces; [Helix3] arrived with OP-26's step 3, which is the rule this hierarchy is grown by — a
- * case with no producer is a case with no test, because every consumer (`sample`, the projection, the
- * drawing, the picking, the moving frame's sampling and its curvature) would have to guess at behaviour
- * nothing exercises. `Arc3` (a circle in an arbitrary plane) is still absent for exactly that reason. Adding
- * one is adding a branch to eight exhaustive `when`s — [Curves3.sample], [Curves3.projectedOnto],
- * [Curves3.derivativeAt], [Curves3.secondDerivativeAt], [Path3.movedBy], and [Frames3]'s step count, point
- * and curvature — so that a new case cannot be silently dropped.
+ * **Four cases today, and the hierarchy is open on purpose.** [Seg3] and [Bezier3] are what a path through
+ * 3D points produces; [Helix3] arrived with OP-26's step 3 and [Arc3] with the **lift** (OP-26's step 1
+ * completed — a curve drawn in a plane, read as the run it already is), which is the rule this hierarchy is
+ * grown by: a case with no producer is a case with no test, because every consumer (`sample`, the
+ * projection, the drawing, the picking, the moving frame's sampling and its curvature) would have to guess
+ * at behaviour nothing exercises. Adding one is adding a branch to eight exhaustive `when`s —
+ * [Curves3.sample], [Curves3.projectedOnto], [Curves3.derivativeAt], [Curves3.secondDerivativeAt],
+ * [Curves3.lengthTo], [Path3.movedBy], and [Frames3]'s step count, point and curvature — so that a new case
+ * cannot be silently dropped.
+ *
+ * Still absent, and named so it is not looked for: an **ellipse in space**. The producer exists (a drawn
+ * ellipse lifts, an inclined cylinder's section is one), and what it would buy is exactness on a curve whose
+ * arc length is an elliptic integral anyway; it is fitted to the one stated [Intersect3.FIT_TOL_MM] until a
+ * drawing asks for more, and every route that fits one *says* it is fitted (OP-15).
  */
 sealed interface Curve3Element {
     /** Where this piece begins — the chain's hand-over point from the piece before it. */
@@ -70,6 +76,104 @@ sealed interface Curve3Element {
     data class Bezier3(val p0: Vec3, val p1: Vec3, val p2: Vec3, val p3: Vec3) : Curve3Element {
         override val start: Vec3 get() = p0
         override val end: Vec3 get() = p3
+    }
+
+    /**
+     * A **circular arc in space** (OP-26, the lift) — a bend that stays a bend, with a radius a bender can
+     * order and a curvature that is a fact rather than a sample.
+     *
+     * **Why this case exists now, when session 45 cut it "with its arguments".** That cut was right for what
+     * asked for it then: a plane through a cylinder cuts a circle *or* an ellipse, so an `Arc3` would have
+     * made half of one producer exact and left the other half fitted — a case earning half a test. What earns
+     * it whole is the lift: the everyday drawing is a **line–arc chain** (a rounded rectangle, a filleted
+     * outline, an ortho path with corner radii), every piece of it is exactly a segment or a circular arc, and
+     * a sweep along it reads the run's curvature at every station. Fitting those arcs into cubics would put a
+     * ripple of `1e-4 mm` into the very number the self-intersection criterion is stated against, and would
+     * make a 10 mm fillet's radius something measured off a spline rather than the parameter the user typed.
+     * See DESIGN.md, OP-26's as-built note for the lift, where the earlier cut is superseded rather than
+     * forgotten.
+     *
+     * **The parameterization**, with `t ∈ [0, 1]` over the whole piece and `θ = startAngle + sweepAngle · t`:
+     *
+     * ```
+     * center + radius·(cos θ · u + sin θ · v)
+     * ```
+     *
+     * so [u] and [v] are the arc's own plane, orthonormal, and `u × v` is the normal the arc turns about by
+     * the **right-hand rule** — which is why a negative [sweepAngle] is not a second way to say anything: it is the
+     * same arc walked the other way round, and *which way a run is walked* is exactly what a directrix must be
+     * able to say. That is the difference from [Helix3], whose chirality is structural: reversing a helix's
+     * traversal leaves its handedness alone, while reversing an arc's traversal is the whole content of the
+     * sign here.
+     *
+     * A whole circle is `|sweepAngle| = 2π`, and it is a perfectly ordinary value of this piece rather than a case:
+     * a closed [Path3] of one such piece is a circle drawn in a plan, lifted.
+     */
+    data class Arc3(
+        val center: Vec3,
+        /** Unit, in the arc's plane; the direction `θ = 0` lies in. */
+        val u: Vec3,
+        /** Unit, perpendicular to [u], in the arc's plane; the direction `θ = π/2` lies in. */
+        val v: Vec3,
+        val radius: Double,
+        /** Where the piece begins, in the arc's own angle. */
+        val startAngle: Double,
+        /** How far it turns, signed by the right-hand rule about `u × v`. */
+        val sweepAngle: Double,
+    ) : Curve3Element {
+        /** The arc's plane normal — the axis it turns about, right-handed with ([u], [v]). */
+        val normal: Vec3 get() = u.cross(v)
+
+        /** The **curvature**, `1/r` — constant, closed form, and what the sweep's refusal is stated against. */
+        val curvature: Double get() = if (radius > 0.0) 1.0 / radius else 0.0
+
+        /** The **arc length**, exactly `|sweepAngle|·r` — a circle travels at constant speed. */
+        val arcLength: Double get() = kotlin.math.abs(sweepAngle) * radius
+
+        /** The angle at parameter [t]. */
+        fun angleAt(t: Double): Double = startAngle + sweepAngle * t
+
+        /** The point at parameter [t] — the closed form above, written out. */
+        fun at(t: Double): Vec3 {
+            val a = angleAt(t)
+            return center + u * (radius * cos(a)) + v * (radius * sin(a))
+        }
+
+        /** The derivative at [t] with respect to the parameter — constant in magnitude, like a helix's. */
+        fun tangentAt(t: Double): Vec3 {
+            val a = angleAt(t)
+            return (u * -sin(a) + v * cos(a)) * (radius * sweepAngle)
+        }
+
+        /** The second derivative — the centripetal term, pointing at the centre. */
+        fun accelerationAt(t: Double): Vec3 {
+            val a = angleAt(t)
+            return (u * cos(a) + v * sin(a)) * (-radius * sweepAngle * sweepAngle)
+        }
+
+        override val start: Vec3 get() = at(0.0)
+        override val end: Vec3 get() = at(1.0)
+
+        companion object {
+            /**
+             * An arc through the plane frame ([uDir], [vDir]) about [center] — orthonormalizing as it goes,
+             * the same courtesy [Helix3.about] and `Construction.plane` do, so the invariants every formula
+             * above rests on are established once rather than re-checked at every use.
+             */
+            fun about(
+                center: Vec3,
+                uDir: Vec3,
+                vDir: Vec3,
+                radius: Double,
+                startAngle: Double,
+                sweepAngle: Double,
+            ): Arc3 {
+                val u = uDir.normalized()
+                val w = vDir - u * vDir.dot(u)
+                val v = if (w.length() > Vec3.EPS) w.normalized() else Vec3.X.cross(u).let { if (it.length() > Vec3.EPS) it.normalized() else Vec3.Y.cross(u).normalized() }
+                return Arc3(center, u, v, radius, startAngle, sweepAngle)
+            }
+        }
     }
 
     /**
@@ -387,6 +491,7 @@ object Curves3 {
         when (el) {
             is Curve3Element.Seg3 -> el.end - el.start
             is Curve3Element.Bezier3 -> bezierTangentAt(el, t)
+            is Curve3Element.Arc3 -> el.tangentAt(t)
             is Curve3Element.Helix3 -> el.tangentAt(t)
         }
 
@@ -407,6 +512,7 @@ object Curves3 {
     ): Vec3 =
         when (el) {
             is Curve3Element.Seg3 -> Vec3.ZERO
+            is Curve3Element.Arc3 -> el.accelerationAt(t)
             is Curve3Element.Bezier3 -> {
                 val u = 1.0 - t
                 (el.p2 - el.p1 * 2.0 + el.p0) * (6.0 * u) + (el.p3 - el.p2 * 2.0 + el.p1) * (6.0 * t)
@@ -477,6 +583,10 @@ object Curves3 {
             is Curve3Element.Seg3 -> listOf(el.start, el.end)
             is Curve3Element.Bezier3 ->
                 (0..GeomMath.BEZIER_STEPS).map { bezierPointAt(el, it.toDouble() / GeomMath.BEZIER_STEPS) }
+            is Curve3Element.Arc3 -> {
+                val n = drawSteps(el)
+                (0..n).map { el.at(it.toDouble() / n) }
+            }
             is Curve3Element.Helix3 -> {
                 val n = drawSteps(el)
                 (0..n).map { el.at(it.toDouble() / n) }
@@ -494,6 +604,17 @@ object Curves3 {
      */
     fun drawSteps(el: Curve3Element.Helix3): Int =
         max(1, minOf(1 shl 14, ceil(kotlin.math.abs(el.turns) * GeomMath.BEZIER_STEPS).toInt()))
+
+    /**
+     * How many chords the *3D drawing* cuts an arc into — **the circle's own presentation count**
+     * ([Conics.renderSteps], 64 to a whole turn), reached rather than restated.
+     *
+     * A different number from the helix's above, and deliberately: what is being drawn here is a circle, and
+     * the canvas already has a rule for how finely it draws one. Nothing geometric depends on it — the 2D
+     * projection of an arc is *exact* ([projectedOnto]) and the mesh's sampling is [Frames3]'s, in
+     * millimetres — so this is the 3D view's line and the reach of a 3D pick, and nothing else.
+     */
+    fun drawSteps(el: Curve3Element.Arc3): Int = max(2, Conics.renderSteps(el.sweepAngle))
 
     /**
      * The whole path as **one** world-space polyline, consecutive pieces sharing their hand-over point.
@@ -521,6 +642,13 @@ object Curves3 {
      * transforming a 2D Bézier. A segment's image is a segment for the same reason. So a path whose points
      * all lie in one space projects onto that space's plane as exactly the 2D chain those points describe,
      * with no tolerance anywhere in the statement.
+     *
+     * **Exact for an arc too, and as a conic rather than as chords** ([projectedArc]). The shadow of a circle
+     * is an ellipse — an affine map carries the one to the other — and the 2D vocabulary has that word
+     * (OP-24), so the projection is stated in it: no tolerance, and no change of *kind* as a datum turns,
+     * because where the two planes are parallel the ellipse produced is exactly circular
+     * ([Ellipse.isCircular]) rather than something else. It is the one case where the shadow's *exactness*
+     * needed a construction rather than a mapping of control points, and it is a closed form (Rytz).
      *
      * **A helix is where that claim honestly stops, and OP-15 requires saying so rather than quietly
      * degrading.** Its image is `x(θ) = A cos θ + B sin θ + Cθ`, `y(θ)` likewise — a **trochoid**, and there
@@ -551,12 +679,62 @@ object Curves3 {
                             Bezier(plane.toLocal(el.p0), plane.toLocal(el.p1), plane.toLocal(el.p2), plane.toLocal(el.p3)),
                         ),
                     )
+                is Curve3Element.Arc3 -> projectedArc(el, plane)
                 is Curve3Element.Helix3 -> {
                     val pts = sample(el).map { plane.toLocal(it) }
                     (0 until pts.size - 1).map { ProfileElement.Seg(Segment(pts[it], pts[it + 1])) }
                 }
             }
         }
+
+    /**
+     * One **arc in space projected onto [plane]**, exactly — the ellipse its shadow is, in that plane's own
+     * (u, v), with the arc's own angles carried across into the ellipse's parameter.
+     *
+     * **The construction is Rytz's, and it is closed form.** Projecting the arc's own frame gives two
+     * *conjugate* semi-diameters, `f₁` and `f₂` — the images of `r·u` and `r·v` — and the curve is
+     * `C + f₁cos θ + f₂ sin θ`, which is an ellipse whatever those two are but is not yet stated in the axes
+     * [Ellipse] is stated in. Substituting `θ = t₀ + φ` turns the pair by `t₀` and the two images become
+     * perpendicular exactly when `tan 2t₀ = 2 f₁·f₂ / (|f₁|² − |f₂|²)` — one `atan2`, no iteration, and the
+     * answer is the same bit on every machine. The arc's parameter maps affinely onto the ellipse's, so the
+     * trimmed piece stays trimmed at the same places, and where the turned pair comes out **left-handed** the
+     * parameter runs backwards instead — which is [EllipticArc]'s own `ccw` and not a second convention.
+     *
+     * Three answers rather than one, and each is what the geometry actually is:
+     * - a whole circle projects to a whole [ProfileElement.EllipseE], because a `2π` sweep in a trimmed arc
+     *   is the ambiguity OP-24 already refuses to write down;
+     * - a piece of one projects to a [ProfileElement.EllipticArcE];
+     * - an arc seen **edge-on** — its plane containing the direction of view — has no ellipse at all: its
+     *   shadow is a *segment traversed twice*, which is not one piece of anything, so it is drawn as the
+     *   chords it is. That is the only place chords appear here, it is stated rather than discovered, and it
+     *   is a drawing error in a picture that is already a line.
+     */
+    private fun projectedArc(
+        el: Curve3Element.Arc3,
+        plane: Plane3,
+    ): List<ProfileElement> {
+        val c = plane.toLocal(el.center)
+        val f1 = plane.toLocal(el.center + el.u * el.radius) - c
+        val f2 = plane.toLocal(el.center + el.v * el.radius) - c
+        val t0 = 0.5 * kotlin.math.atan2(2.0 * f1.dot(f2), f1.dot(f1) - f2.dot(f2))
+        val axisA = f1 * cos(t0) + f2 * sin(t0)
+        val axisB = f1 * -sin(t0) + f2 * cos(t0)
+        val handed = if (axisA.x * axisB.y - axisA.y * axisB.x >= 0.0) 1.0 else -1.0
+        val a = axisA.length()
+        val b = axisB.length()
+        if (a <= Vec2.EPS || b <= Vec2.EPS) {
+            val pts = sample(el).map { plane.toLocal(it) }
+            return (0 until pts.size - 1).map { ProfileElement.Seg(Segment(pts[it], pts[it + 1])) }
+        }
+        val ellipse = Ellipse(c, a, b, kotlin.math.atan2(axisA.y, axisA.x))
+        val startT = handed * (el.startAngle - t0)
+        val endT = handed * (el.startAngle + el.sweepAngle - t0)
+        val ccw = handed * el.sweepAngle >= 0.0
+        if (kotlin.math.abs(el.sweepAngle) >= 2.0 * PI - GeomMath.ANGLE_TOL) {
+            return listOf(ProfileElement.EllipseE(ellipse, ccw))
+        }
+        return listOf(ProfileElement.EllipticArcE(EllipticArc(ellipse, startT, endT, ccw)))
+    }
 
     // ---- arc length: the parameterization a station is stated in (OP-26, step 4) ----
 
@@ -626,6 +804,7 @@ object Curves3 {
         val u = t.coerceIn(0.0, 1.0)
         return when (el) {
             is Curve3Element.Seg3 -> (el.end - el.start).length() * u
+            is Curve3Element.Arc3 -> el.arcLength * u
             is Curve3Element.Helix3 -> el.arcLength * u
             is Curve3Element.Bezier3 -> {
                 var sum = 0.0
@@ -658,7 +837,7 @@ object Curves3 {
         val total = arcLength(el)
         if (total <= 0.0) return 0.0
         val target = s.coerceIn(0.0, total)
-        if (el is Curve3Element.Seg3 || el is Curve3Element.Helix3) return target / total
+        if (el is Curve3Element.Seg3 || el is Curve3Element.Arc3 || el is Curve3Element.Helix3) return target / total
         var lo = 0.0
         var hi = 1.0
         var t = target / total

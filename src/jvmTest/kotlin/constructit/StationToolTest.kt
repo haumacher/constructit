@@ -179,9 +179,17 @@ class StationToolTest {
         assertVec3(assertNotNull(planeOf(ed, ed.doc.activeSpace)).origin, Vec3(40.0, 0.0, 0.0))
     }
 
-    /** **A pick that is not a curve in space is refused by name**, and nothing is built. */
+    /**
+     * **A station stands across a drawn curve too** — the lift (OP-26, step 1's missing source), which every
+     * `PATH3` slot gains at once: a plain segment in the plan is the run it already is, so a station 40 mm
+     * along it stands where anyone would point.
+     *
+     * This test used to assert that a plain segment was refused. That was a gap rather than a rule, and the
+     * refusal it kept alive is now the one that is really about the geometry: a **line** runs on for ever and
+     * so states no length to measure a distance along.
+     */
     @Test
-    fun aPickThatIsNotACurveInSpaceIsRefusedByName() {
+    fun aStationStandsAcrossADrawnCurveAndALineIsRefusedByName() {
         val ed = Editor()
         ed.setTool(Tools.SEGMENT)
         ed.click(Vec2(0.0, 0.0))
@@ -189,8 +197,12 @@ class StationToolTest {
         ed.setTool(Tools.STATION)
         ed.type("40")
         ed.click(Vec2(50.0, 0.0))
-        assertFalse(ed.doc.activeSpace.isStation, "no station on a plain segment")
-        assertEquals(1, ed.doc.spaces.size, "and no space was created either")
+        assertTrue(ed.doc.activeSpace.isStation, "the drawn segment is a run: ${ed.statusHint}")
+        assertVec3(assertNotNull(planeOf(ed, ed.doc.activeSpace)).origin, Vec3(40.0, 0.0, 0.0))
+
+        val line = ed.doc.line(ed.doc.freePoint(0.0.mm, 50.0.mm), ed.doc.freePoint(100.0.mm, 50.0.mm))
+        assertEquals(null, ed.doc.createStationSpace(line, ed.doc.newParameter("d", 40.0.mm).ref))
+        assertTrue(ed.doc.note?.contains("runs on for ever") == true, "and a line says why not: ${ed.doc.note}")
     }
 
     // ---- 2. it is a space: what you draw there is where the station is ----
