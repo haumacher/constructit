@@ -2328,6 +2328,81 @@ the count, press Re-stamp) where it used to be "draw it again".
 - The model **heals automatically**: when inputs return to a valid range, nodes recompute and
   reappear. No manual repair, no deletion.
 
+### Implementation status (as built — *flagged* was the half that was missing, session 60)
+
+Everything above shipped with OP-5 except one word of the fourth bullet: **flagged**. An invalid element was
+hidden, its definition retained, and it healed — but nothing said it had gone, and the user reported exactly
+that: *"if I then modify the swept outline in some way, the 3D solid vanishes and re-occurs, if I change
+parameters further. However, I do not understand, why a solid cannot be drawn in this situation."* The reason
+had been there the whole time (`EvalResult.Invalid` carries one, and the sweep's names the stations, the
+clearance and the two cures) and the describe routes read it on demand — while a **drag or a panel edit** that
+made a body invalid simply stopped drawing it. *Refusals speak* forbids that, and this closes it.
+
+**The mechanism is a surfacing, never a refusal**, because OP-3 is a property of *values*: the edit is legal,
+the value is what is wrong, so nothing is declined, nothing is modal, and the gesture completes and can be
+undone like any other. `Document.invalidElements()` asks the document what cannot be built right now and
+answers with the drawing's own name for each element (the naming authority), the node's reason **verbatim**,
+and one bit — whether the node failed *here* or is only hidden by the cascade (`CASCADE_PREFIX`, named in
+`core/Model.kt` so both ends agree). A message that pointed at a dependent would send the user to the wrong
+element, so only the roots are named; a cascade with no failing element of its own falls back to what there is.
+
+**Two channels, deliberately.** The transition does *not* write `Editor.statusHint`. A drag's own note (a
+height, an offered join) and the fact that a body cannot be built are different things, and one string would
+have made them fight: the reason would flash for one pointer frame and then be overwritten by the next move.
+So `Editor.validityNote` is its own line and `Editor.statusLine` composes the two (the browser shell renders
+`statusHint`-or-help, then the validity note after a `·`). Two consequences worth stating: no existing message
+changed, so every gesture test that asserts a hint still asserts the same string; and **the fact stands** —
+while anything is unbuildable the note stays, word for word, through as many further edits as the user makes,
+which is the half the report was really about. Only *healing* is transient ("e32 is a solid again"), and even
+that outlives the frame it happened on: it survives until the operation after it says something of its own.
+
+**One line, however many flipped**: the first element by name with its reason, and a count of the rest ("— and
+2 more"). The panel is where each of them is listed, so the status bar never becomes a wall of text.
+
+**"Newly" means by name, not by wording.** A drag re-measures the clearance every frame, so the reason's
+*numbers* move while the pointer moves — which is the drawing telling the truth, not a stream of new events.
+The diff is therefore keyed on the element's script name only. Keying on the name (rather than on object
+identity) also makes **undo speak**: undo replays the saved script into a fresh document (OP-18), so
+identities do not survive it and names do — and *what came back* is precisely the question the reporter asked.
+
+**A load states; it does not announce.** A file that arrives with something unbuildable did not just turn that
+way under the user's hand, so `replaceDocument` (and the controller's constructor) takes the loaded validity
+as the **baseline**: the standing note is on screen from the first frame, nothing is announced as a
+transition, and `statusHint` stays entirely the load's own (`loadNotes`, OP-18's migration findings).
+
+**Where the fact lives when the user looks up.** The elements panel keeps the row — present, marked `invalid`,
+carrying the reason in its tooltip — and clicking it puts the whole sentence, cures included, in the
+inspector. That is what "flagged" now means, and it matters most for a solid: an invalid solid draws nothing
+in either view, so its **panel row is the only thing left to ask**, and it must therefore not vanish. Nothing
+was invented for the plan canvas: drawing a phantom footprint for a value that does not exist would be the
+opposite of OP-3.
+
+Cost, since this runs at every change seam: an untouched node answers from its memo (OP-5), and an invalid one
+is recomputed every pass anyway — that is how OP-3 promises healing — so the scan adds a pointer-compare per
+edge over what the repaint already pays, and no mesh is ever forced (a solid's triangles stay deferred).
+
+**Gone is not healed**, found on this package's own probe: deleting an unbuildable element also takes its name
+off the list, and announcing *that* as a heal would be a lie — so the healing sentence is only ever spoken
+about an element that is **there**, and a delete is left to say what a delete says (OP-18: the step and its
+dependents).
+
+One seam the shell needs beyond the gestures: the general boolean engine is WASM and arrives *after* the
+first paint (OP-9), so solids invalid only because it had not loaded heal on a repaint no gesture caused —
+`Editor.revalidate()` re-reads validity there, and it speaks, because "e9 is a solid again" is what happened.
+
+Tests: `InvalidSurfacingTest` (11) — the user's own drawing, its foundation profile widened *inward* until the
+closed border cannot carry the section, asserted as one episode: the sentence names `e32` and quotes the
+node's reason with its cures, the point is where the drag left it and nothing was removed, the fact survives
+two further edits, dragging back heals and says so with a manifold body, the reason arrives *during* the drag
+and one line per frame, a panel parameter edit speaks identically (two circles sharing one radius — sharing a
+node *is* equality), several at once become one line and a count, a folded file **loads** stated rather than
+announced, and an undo says what came back; plus the two the probe added — an invalid solid is **unpickable**
+on the canvas (which is why the panel row is the answer), a **delete** of one is not a heal, and a heal
+that no gesture caused still speaks once the shell re-reads it.
+`BrowserE2ETest.anInvalidatingEditSpeaksInBrowser` carries the
+same episode through the real shell: the live status line, the flagged rows that are still there, the row's
+tooltip, and the inspector's reason when the row is clicked.
+
 ## Macros / custom constructions (OP-6 — RESOLVED)
 
 A macro is a **subgraph** with typed **input ports**; it is a reusable, function-like
@@ -11335,6 +11410,24 @@ manifold test (*Queued in session 40*) — the queue entry says why it needs a d
   words when the roll comes back — the criterion reads the section *as swept*, not as drawn. The report's
   second half is its own defect and is queued: the body vanished **silently** — a node that goes invalid under
   a live edit stores its reason but no route speaks it, which *refusals speak* forbids.
+- **Turn 60** — Closed that second half: an element that goes invalid under a live edit now **says so**, in
+  the node's own words. The design decision the queue entry left open was where the sentence goes, and the
+  answer is *not* the status hint every gesture already writes: a drag's own note and the reason a body is
+  missing are different facts, and putting them in one string made the reason flash for a single pointer frame
+  before the next move overwrote it. So validity got a **channel of its own** (`Editor.validityNote`,
+  `statusLine` composing the two), which also means no existing message changed and every gesture test that
+  asserts a hint still asserts the same string. Three smaller decisions, each recorded because each was a
+  fork: *"newly invalid" is by **name**, not by wording*, since a drag re-measures the clearance every frame
+  and the numbers moving is the truth rather than a new event; **undo speaks** ("Undone · e32 is a solid
+  again"), which works only because the diff is keyed on the drawing's name and undo replays into a fresh
+  document (OP-18); and a **load states rather than announces**, taking the file's validity as the baseline so
+  a drawing that arrives folded is on screen from the first frame without being blamed on the user's last
+  gesture. The *keep-the-fact-visible* half is the panel: the invalid element's row stays, flagged, with its
+  reason in the tooltip and the whole sentence in the inspector when it is clicked — which for a **solid** is
+  the only thing left to ask, since an invalid solid draws nothing in either view; drawing a phantom footprint
+  for a value that does not exist was rejected as the opposite of OP-3. Nothing modal, nothing refused,
+  nothing logged. **1842 → 1854 green** (plus one browser E2E carrying the whole episode through the real
+  shell), nothing cut. See *flagged was the half that was missing* under OP-3.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -13435,8 +13528,16 @@ queued whole rather than smuggled into the package that found it. A cheaper inte
 shell's signed volume and refusing a negative one by name — is worth considering as the *guard* even after the
 criterion is fixed, since it is the property `assertManifold` already tests for in every test.
 
-**Queued in session 59 (user-reported): a node that goes invalid under a live edit vanishes silently.**
-Reported in the user's own words against the very refusal session 59 corrected: *"if I then modify the swept
+~~**Queued in session 59 (user-reported): a node that goes invalid under a live edit vanishes silently.**~~
+— **closed in session 60**, as the entry sketched it: a surfacing, not a refusal. Two channels rather than
+one, which is the only decision the entry left open and the one that mattered — a drag's own note and the
+reason a body is missing must not overwrite each other, so `Editor.validityNote` stands beside `statusHint`
+and the shell shows both. The fact stands while it is true (one line, first by name with the node's reason
+verbatim, the rest counted), healing speaks and outlives its frame, undo speaks because the diff is keyed on
+the drawing's *name* for an element, and a **load states rather than announces**. The panel keeps the invalid
+element's row, flagged and carrying its reason — which for a solid is the only thing left to ask, since an
+invalid solid draws nothing anywhere. **1842 → 1854 green**, nothing cut. See *flagged was the half that was
+missing* under OP-3. The original entry, kept: Reported in the user's own words against the very refusal session 59 corrected: *"if I then modify the swept
 outline in some way, the 3D solid vanishes and re-occurs, if I change parameters further. However, I do not
 understand, why a solid cannot be drawn in this situation."* The reason existed the whole time —
 `EvalResult.Invalid` carries it, and it names the stations, the clearance and the way out — but no route
@@ -13449,7 +13550,7 @@ naming it with its reason — so the user who edits three things before looking 
 it must not become: a modal interruption, a gesture refusal (the edit is legal; the value is what's wrong —
 OP-3), or a log the user has to know to open.
 
-**Beyond those six and the one above, the rest of the numbered queue is empty.** What remains is the parked
+**Beyond those six, the rest of the numbered queue is empty** (the session-59 entry above is closed). What remains is the parked
 list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**

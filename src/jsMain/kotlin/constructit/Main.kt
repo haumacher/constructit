@@ -1077,6 +1077,9 @@ private fun setupApp() {
     // auto-heal (OP-3) — the graph is re-evaluated, and those solids appear.
     MeshBool.initialize { ready ->
         console.log("[MeshBool] ${if (ready) "ready" else "unavailable"} — ${MeshBool.status}")
+        // …and the *saying* half of that auto-heal: nothing the user did changed the graph, so no change seam
+        // ran, and the standing note would otherwise go on naming solids that can be built again (OP-3)
+        editor.revalidate()
         repaint()
     }
 }
@@ -1198,12 +1201,17 @@ private fun renderPanel(
 ) {
     // In the 3D view the gestures are the viewport's to describe — which tool is drawing on which plane, or
     // that a plain drag now selects and moves there while Ctrl orbits — so the status line asks it.
-    (document.getElementById("status") as HTMLElement).textContent =
+    // …and what cannot be built right now rides *alongside* whichever of them is showing (OP-3, and the
+    // reason it is a channel of its own): a drag's note, or a tool's help, must never overwrite the reason a
+    // body is missing, and the reason must not silence the help either — so both are said, in that order.
+    val spoken =
         when {
             editor.statusHint.isNotEmpty() -> editor.statusHint
             view3d -> viewport.help()
             else -> editor.currentHelp()
         }
+    (document.getElementById("status") as HTMLElement).textContent =
+        listOfNotNull(spoken.ifEmpty { null }, editor.validityNote).joinToString(" · ")
 
     // the sketch-space indicator (OP-17): every space, the active one selected. Rebuilt from the document,
     // so a space created by a click — or removed by an undo — shows up here without a second notification.
@@ -1265,6 +1273,7 @@ private fun renderPanel(
                     "<div class=\"hint\">Delete, Hide and Group act on all of them. Click one element for its values.</div>"
             } else {
                 "<div class=\"selname\">${editor.selectionLabel()}</div>" +
+                    invalidRow(editor) +
                     elementNameRow(editor) +
                     materialRow(editor) +
                     fields.withIndex().joinToString("") { (i, f) ->
@@ -1370,19 +1379,44 @@ private fun renderPanel(
 
     // element tree
     val tree = document.getElementById("tree") as HTMLElement
+    // what cannot be built right now (OP-3) — the *fact* the status line's sentence is about, kept where it
+    // stays findable after three more edits. The row is present and flagged, never gone: OP-3 says an invalid
+    // object is hidden and flagged and its definition retained, and this is the flag.
+    val badly = editor.invalidElements.associateBy { it.element.id }
     tree.innerHTML =
         // the *active space's* elements plus the solids, which live in none — the rule is
         // [Document.listedIn]'s, so the shell only renders it (OP-17, GitHub issue #2)
         editor.doc.listedElements().joinToString("") {
             val active = if (editor.isSelected(it)) " active" else ""
+            val bad = badly[it.id]
             // a listed row the canvas is not drawing says where it lives (OP-17): that is a solid, shown in
             // the 3D viewport rather than in this space's plan
             val where = if (it.space == editor.activeSpace.name) "" else " · ${it.space}"
             // `data-eid` stays the internal id — it is how a click finds the element again — while what the
             // row *shows* is the drawing's one name for it, the file's (OP-18, [Document.nameOf]), plus the
             // user's own label in front of it where there is one ([Document.displayName])
-            "<div class=\"item$active\" data-eid=\"${it.id}\">${it.kind.name.lowercase()}$where<span class=\"eid\">${editor.doc.displayName(it)}</span></div>"
+            val flag = if (bad == null) "" else "<span class=\"flag\" title=\"${attr(bad.reason)}\">⚠</span>"
+            "<div class=\"item$active${if (bad == null) "" else " invalid"}\" data-eid=\"${it.id}\"" +
+                (if (bad == null) "" else " title=\"${attr("can't be built right now: ${bad.reason}")}\"") +
+                ">$flag${it.kind.name.lowercase()}$where<span class=\"eid\">${editor.doc.displayName(it)}</span></div>"
         }
+}
+
+/** Text safe inside a double-quoted HTML attribute — a node's reason is a sentence, not markup. */
+private fun attr(text: String): String =
+    text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+
+/**
+ * Why the selected element cannot be built right now, in the node's own words (OP-3), or nothing when it can.
+ *
+ * The **reachable** half of keeping the fact visible: the element list flags it, and clicking the flagged row
+ * lands here, where the whole sentence stands — including the cures it names ("thin the section, or open the
+ * run out"). An invalid solid draws nothing in either view, so without this there was nothing left to ask.
+ */
+private fun invalidRow(editor: Editor): String {
+    val el = editor.selection?.takeIf { editor.selectionCount == 1 } ?: return ""
+    val bad = editor.invalidElements.firstOrNull { it.element === el } ?: return ""
+    return "<div class=\"warn\">can't be built right now: ${attr(bad.reason)}</div>"
 }
 
 /**

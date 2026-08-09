@@ -157,7 +157,7 @@ class EmbeddingDirectionProbeTest {
         assertEquals(why, whyInvalid(solid), "turned inward again, the same refusal in the same words")
     }
 
-    private companion object {
+    companion object {
         val TALLER_CIT =
             """
             constructit 2

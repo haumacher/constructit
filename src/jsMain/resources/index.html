@@ -158,6 +158,10 @@
         #tree .item:hover { background: #eef4fb; }
         #tree .item.active { background: #e2eefb; outline: 1px solid #1f77b4; }
         #tree .item .eid { color: #bbb; float: right; }
+        /* an element that cannot be built right now is present but flagged, never gone (OP-3) */
+        #tree .item.invalid { color: #b03a2e; }
+        #tree .item.invalid .flag { margin-right: 3px; }
+        #inspector .warn { font-size: 11px; color: #b03a2e; padding: 2px 4px; }
     </style>
 </head>
 <body>

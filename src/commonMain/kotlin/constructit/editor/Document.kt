@@ -2,6 +2,7 @@ package constructit.editor
 
 import constructit.core.ArcValue
 import constructit.core.BezierValue
+import constructit.core.CASCADE_PREFIX
 import constructit.core.ChainValue
 import constructit.core.CircleValue
 import constructit.core.EllipseValue
@@ -1419,6 +1420,37 @@ class Document {
      * the browser shell renders whatever this returns (the same discipline as [Editor.selectionFields]).
      */
     fun listedElements(): List<Element> = elements.filter { listedIn(it) }
+
+    /**
+     * An element that cannot be built right now, and the node's own words for why (OP-3).
+     *
+     * The [name] is the drawing's one name for it (the naming authority, [nameOf]) rather than the internal
+     * id, because this is what the status line and the panel say out loud. [own] separates the two kinds of
+     * invalidity the evaluator produces: a node that failed *here* (an empty intersection, a sweep that would
+     * cut into itself) from one that is only hidden because something upstream did — the cascade OP-3
+     * propagates. A message that named a dependent would send the user to the wrong element.
+     */
+    class InvalidElement(
+        val element: Element,
+        val name: String,
+        val reason: String,
+        val own: Boolean,
+    )
+
+    /**
+     * Every element whose value is [EvalResult.Invalid] right now, in document order (OP-3).
+     *
+     * The document's answer, not the shell's: invalidity is a property of *values*, so what is unbuildable
+     * and why is asked here and merely rendered by whoever shows it — the status line's transition sentence
+     * ([Editor.validityNote]), the panel's marked rows, an inspector's reason. Cheap enough to ask on every
+     * change: a node that is still valid answers from its memo, and an invalid one is recomputed every pass
+     * anyway (OP-3's healing promise, see `Node.computeMemoized`).
+     */
+    fun invalidElements(ev: Evaluator = Evaluator()): List<InvalidElement> =
+        elements.mapNotNull { el ->
+            val reason = (ev.eval(el.ref.node) as? EvalResult.Invalid)?.reason ?: return@mapNotNull null
+            InvalidElement(el, nameOf(el), reason, own = !reason.startsWith(CASCADE_PREFIX))
+        }
 
     /**
      * The **tip** of the part the active space cuts into: the most recent visible solid made *of* the
@@ -4768,8 +4800,13 @@ class Document {
         return false
     }
 
-    /** The word a refusal uses for what an element *is* — "a circle", "an elliptic arc". */
-    private fun kindWord(el: Element): String {
+    /**
+     * The word a refusal uses for what an element *is* — "a circle", "an elliptic arc".
+     *
+     * Public because healing speaks the same language as refusing (OP-3): the sentence that says a body is
+     * back — *"e32 is a solid again"* — is the same sentence one word further on.
+     */
+    fun kindWord(el: Element): String {
         val w = el.kind.name.lowercase().replace('_', ' ')
         return (if (w.first() in "aeiou") "an " else "a ") + w
     }

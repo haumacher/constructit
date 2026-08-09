@@ -184,6 +184,14 @@ sealed interface EvalResult {
     data class Invalid(val reason: String) : EvalResult
 }
 
+/**
+ * How a reason that is **only the cascade** begins (OP-3): a node that is invalid because an input is, not
+ * because anything failed here. Named rather than spelled out at the two ends, because a route that tells the
+ * user *which* element to look at has to be able to tell the two apart (see `Document.invalidElements`) —
+ * pointing at a dependent would send them to the wrong place.
+ */
+const val CASCADE_PREFIX = "depends on invalid input"
+
 /** A node in the construction DAG. Stable [id]; pure function of its [inputs] (OP-5). */
 abstract class Node(val id: String) {
     abstract val inputs: List<Node>
@@ -430,7 +438,7 @@ class Evaluator {
         val invalid = argResults.firstOrNull { it is EvalResult.Invalid } as EvalResult.Invalid?
         val result: EvalResult =
             if (invalid != null) {
-                EvalResult.Invalid("depends on invalid input (${invalid.reason})")
+                EvalResult.Invalid("$CASCADE_PREFIX (${invalid.reason})")
             } else {
                 try {
                     node.computeMemoized(argResults.map { (it as EvalResult.Ok).value })

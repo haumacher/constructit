@@ -1563,4 +1563,102 @@ class BrowserE2ETest {
         }
         server.stop(0)
     }
+
+    /**
+     * **A node that goes invalid under a live drag says so — in the real shell** (OP-3 × *refusals speak*).
+     *
+     * The headless suite proves the sentences ([InvalidSurfacingTest]); only a browser can show that they
+     * reach a person: the status line while the drag is still happening, the element list keeping the row and
+     * flagging it (an invalid element is *hidden and flagged*, never gone — OP-3), and the row's own reason
+     * in the inspector when it is clicked. Two circles that stop meeting is the oldest instance of the whole
+     * class, and it needs no file to load.
+     */
+    @Test
+    fun anInvalidatingEditSpeaksInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            fun flagged(): List<String> = page.querySelectorAll("#tree .item.invalid").map { it.textContent() }
+
+            val box = page.querySelector("#canvas").boundingBox()
+            val y = box.y + box.height * 0.5
+            val ax = box.x + box.width * 0.35
+            val bx = ax + 120
+
+            // Two circles of radius 100 whose centres stand 120 apart, so they meet. Each is drawn centre
+            // first and sized **upwards**, which leaves both horizontal extremes free of points — a click on a
+            // point picks the point, and the intersect tool wants the curves.
+            page.click("#tool-${Tools.CIRCLE}")
+            page.mouse().click(ax, y)
+            page.mouse().click(ax, y - 100)
+            page.click("#tool-${Tools.CIRCLE}")
+            page.mouse().click(bx, y)
+            page.mouse().click(bx, y - 100)
+            val drawn = page.querySelectorAll("#tree .item").size
+            // the *outlines*, well away from either circle's own points: a click on a point picks the point
+            page.click("#tool-${Tools.INTERSECT}")
+            page.mouse().click(ax - 100, y)
+            page.mouse().click(bx + 100, y)
+            page.click("#tool-${Tools.SELECT}")
+            val built = page.querySelectorAll("#tree .item").size
+            assertTrue(built > drawn, "the circles meet, and the intersection is in the drawing: ${status()}")
+            assertTrue(flagged().isEmpty(), "everything builds so far: ${status()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/27-meeting.png")))
+
+            // Grow the first circle until the second stands wholly inside it and they no longer meet — a
+            // legal edit with a bad value. It is the **rim** point that is dragged: a circle here is a centre
+            // and a point on it, so dragging the centre carries the rim along and the two keep meeting.
+            page.mouse().move(ax, y - 100)
+            page.mouse().down()
+            page.mouse().move(ax, y - 260)
+            // the panel repaints on the next frame, so the wait is on the *line* rather than on a clock —
+            // and it happens with the button still down, which is what "live" means here
+            page.waitForCondition { (page.querySelector("#status").textContent() ?: "").contains("can't be built right now") }
+            val midDrag = status()
+            page.mouse().up()
+
+            assertTrue(midDrag.contains("can't be built right now"), "the reason arrives while the drag is live: $midDrag")
+            assertTrue(status().contains("can't be built right now"), "…and it is still there after the release: ${status()}")
+            assertEquals(built, page.querySelectorAll("#tree .item").size, "nothing was removed — the definition is retained")
+            // both branches of the intersection went (OP-1's ordered pair), and each row is present and
+            // flagged rather than gone — an invalid element keeps its definition (OP-3)
+            assertEquals(2, flagged().size, "the rows are present and flagged: ${flagged()}")
+            val rowTitle = page.querySelectorAll("#tree .item.invalid").first().getAttribute("title")
+            assertTrue(rowTitle.contains("can't be built right now"), "and the row carries the reason: $rowTitle")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/28-invalid-flagged.png")))
+
+            // clicking the flagged row is how a user asks why: the inspector answers in the node's words
+            page.querySelectorAll("#tree .item.invalid").first().click()
+            val warn = page.querySelector("#inspector .warn")
+            assertTrue(warn != null, "the inspector says why the selected element is missing")
+            assertTrue(warn.textContent().startsWith("can't be built right now:"), "got: ${warn.textContent()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/29-invalid-inspector.png")))
+
+            // …and dragging it back heals, which the line says too
+            page.mouse().move(ax, y - 260)
+            page.mouse().down()
+            page.mouse().move(ax, y - 100)
+            page.mouse().up()
+            page.waitForCondition { (page.querySelector("#status").textContent() ?: "").contains("again") }
+            assertTrue(status().contains("again"), "healing speaks as well: ${status()}")
+            assertTrue(flagged().isEmpty(), "and no row is flagged any more")
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

@@ -128,6 +128,12 @@ class Editor(
     var doc: Document = doc
         private set
 
+    init {
+        // a document handed to the controller is where the drawing *starts*, exactly as a loaded file is:
+        // whatever it cannot build, it arrived unable to build (OP-3, see [rebaseValidity])
+        rebaseValidity()
+    }
+
     /** Swap in a loaded document, dropping every reference into the old one and its history. */
     fun replaceDocument(fresh: Document) {
         // another drawing entirely: its spaces are its own, so the remembered views go with the old one
@@ -143,6 +149,8 @@ class Editor(
         // reads — so it was overwritten by this very line. It stays until the next user action, like every
         // other status line.
         statusHint = loadNote(fresh) ?: ""
+        // a load is not an edit: what the file cannot build is stated, not announced as a transition
+        rebaseValidity()
         onChange()
     }
 
@@ -281,7 +289,7 @@ class Editor(
             adopt(DocumentFormat.load(lastCommitted))
         }
         statusHint = "Undone"
-        onChange()
+        changed()
         return true
     }
 
@@ -291,7 +299,7 @@ class Editor(
         lastCommitted = redoStack.removeLast()
         adopt(DocumentFormat.load(lastCommitted))
         statusHint = "Redone"
-        onChange()
+        changed()
         return true
     }
 
@@ -318,7 +326,7 @@ class Editor(
                 statusHint =
                     "Delete can't reach an opening yet: it has no element of its own. Delete the wall " +
                     "(${doc.nameOf(it.path.footprint)}) to remove it with its openings."
-                onChange()
+                changed()
             }
             return false
         }
@@ -327,7 +335,7 @@ class Editor(
             val root = doc.creatingStep(el)
             if (root == null) {
                 statusHint = "${doc.nameOf(el)} has no construction step to remove"
-                onChange()
+                changed()
                 return false
             }
             roots.add(root)
@@ -346,7 +354,7 @@ class Editor(
                 "Can't delete that: it defines tool ${def.name}, used by ${instances.size} instance " +
                 "element${if (instances.size == 1) "" else "s"} (${instances.take(4).joinToString(", ") { doc.nameOf(it) }}) — " +
                 "delete the instances first"
-            onChange()
+            changed()
             return false
         }
         val removed = droppedSteps.flatMapTo(HashSet()) { it.creates }
@@ -360,14 +368,14 @@ class Editor(
                 doc.journal.clear()
                 doc.journal.addAll(journalBefore)
                 statusHint = "Delete failed: ${e.message}"
-                onChange()
+                changed()
                 return false
             }
         val what = if (targets.size == 1) doc.nameOf(targets[0]) else "${targets.size} elements"
         adopt(fresh)
         checkpoint()
         statusHint = if (dependents == 0) "Deleted $what" else "Deleted $what and $dependents dependent${if (dependents == 1) "" else "s"}"
-        onChange()
+        changed()
         return true
     }
 
@@ -387,7 +395,7 @@ class Editor(
         val result = Imports.import(doc, bytes, fileName)
         checkpoint()
         statusHint = result.message
-        onChange()
+        changed()
         return result
     }
 
@@ -415,7 +423,7 @@ class Editor(
         val why = doc.restampRefusal(p, n)
         if (why != null) {
             statusHint = why
-            onChange()
+            changed()
             return false
         }
         val was = p.count
@@ -425,7 +433,7 @@ class Editor(
                 DocumentFormat.restamp(DocumentFormat.save(doc), name, n)
             } catch (e: Exception) {
                 statusHint = "Re-stamp failed: ${e.message}"
-                onChange()
+                changed()
                 return false
             }
         val (fresh, notes) = result
@@ -433,7 +441,7 @@ class Editor(
         checkpoint()
         val lost = if (notes.isEmpty()) "" else " — ${notes.first()}${if (notes.size == 1) "" else " (and ${notes.size - 1} more)"}"
         statusHint = "Pattern $name: $was -> $n instances$lost"
-        onChange()
+        changed()
         return true
     }
 
@@ -499,11 +507,11 @@ class Editor(
     fun clickScalar(entry: ScalarEntry?) {
         if (entry != null && activeScalar !== entry) {
             activeScalar = entry
-            onChange()
+            changed()
             return
         }
         clearActiveScalar()
-        onChange()
+        changed()
     }
 
     /**
@@ -565,7 +573,7 @@ class Editor(
     fun setSpotlight(el: Element?): Boolean {
         if (el === spotlight) return false
         spotlight = el
-        onChange()
+        changed()
         return true
     }
 
@@ -679,6 +687,166 @@ class Editor(
     var statusHint: String = ""
         private set
 
+    // ---- what cannot be built right now, and what just changed about that (OP-3, *refusals speak*) ----
+    //
+    // The defect this closes, in the reporter's words: *"if I then modify the swept outline in some way, the
+    // 3D solid vanishes and re-occurs, if I change parameters further. However, I do not understand, why a
+    // solid cannot be drawn in this situation."* The reason was there the whole time — `EvalResult.Invalid`
+    // carries a sentence naming the stations, the clearance and the way out — but no route **said** it on the
+    // live-edit path: the describe routes read it on demand, while a drag or a panel edit that made a body
+    // invalid simply stopped drawing it.
+    //
+    // Three decisions shape what is below, and each was a fork:
+    //
+    // - **it is a surfacing, never a refusal.** The edit is legal; the *value* is what is wrong (OP-3), so
+    //   nothing is declined, nothing is modal, and the gesture completes exactly as before;
+    // - **it never writes [statusHint].** A drag's own note (a height, a join offer) and the fact that a body
+    //   cannot be built are two different things, and the one must not overwrite the other — which is what a
+    //   single string would have done, flashing the reason for one pointer frame and then hiding it again. So
+    //   this is its own channel, [validityNote], and [statusLine] composes the two. That also means no
+    //   existing message changes, and a gesture test asserting a hint keeps asserting the same string;
+    // - **the fact stands, the change is announced.** While anything is unbuildable the note *stays* — the
+    //   user who edits three more things before looking up still finds it — and the panel marks the element
+    //   itself with the reason ([Document.invalidElements]). Only healing is transient, and even that outlives
+    //   the frame it happened in (see [healingSpoken]).
+    //
+    // The diff is keyed on the drawing's **name** for an element, not on object identity: undo replays the
+    // saved script into a *fresh* document (OP-18), so identities do not survive it and names do — which is
+    // exactly what makes an undo that heals a body able to say so.
+
+    /** What cannot be built right now, in document order — the panel's rows and this line's subject (OP-3). */
+    var invalidElements: List<Document.InvalidElement> = emptyList()
+        private set
+
+    /**
+     * The standing sentence about validity, or null when everything builds: which element cannot be built and
+     * the node's own reason for it, or — just after it heals — that it is back.
+     *
+     * One line, however many elements flipped: the first by name with its reason, and a count of the rest.
+     * A wall of text on a status line is not read, and the panel is where each of them is listed.
+     */
+    var validityNote: String? = null
+        private set
+
+    /** What the status bar shows: the operation's own note and the validity note, whichever there are. */
+    val statusLine: String
+        get() = listOfNotNull(statusHint.ifEmpty { null }, validityNote).joinToString(" · ")
+
+    /** Element name -> reason, as of the last recompute — the baseline the next one is compared against. */
+    private var invalidBefore: Map<String, String> = emptyMap()
+
+    /**
+     * The healing sentence, and the [statusHint] it was spoken alongside.
+     *
+     * Healing has nothing standing to show — the body is simply there again — so it would vanish on the very
+     * next pointer frame if it were regenerated like the rest. It therefore survives until the operation
+     * *after* the one that healed it says something of its own, which is what the remembered hint detects.
+     */
+    private var healingSpoken: Pair<String, String>? = null
+
+    /**
+     * Read the document's validity, say what **changed** about it, and keep saying what still stands (OP-3).
+     *
+     * Called from [changed], i.e. after every route that can have moved the model. Cheap by construction:
+     * an untouched node answers from its memo, and an invalid one is recomputed every pass regardless,
+     * because that is how OP-3 promises healing.
+     */
+    private fun speakValidity() {
+        val now = doc.invalidElements()
+        invalidElements = now
+        val byName = now.associate { it.name to it.reason }
+        val subjects = toName(now)
+        // "newly" means an element that could be built a moment ago, by name — *not* a reason whose numbers
+        // moved. A drag re-measures the clearance every frame, and re-leading with it would make one situation
+        // look like a stream of new ones
+        val appeared = subjects.filter { it.name !in invalidBefore }
+        // …and healing means the element is **back**, which is not the same as gone from the list: deleting an
+        // unbuildable element also takes its name off it, and announcing that as a heal would be a lie (the
+        // delete has its own sentence, and it says what it removed)
+        val healed =
+            invalidBefore.keys.filter { it !in byName }
+                .mapNotNull { name -> doc.elements.firstOrNull { doc.nameOf(it) == name } }
+        invalidBefore = byName
+        if (subjects.isNotEmpty()) {
+            // something is unbuildable: that is the news whether it just happened or has been true for a
+            // while, and a heal in the same edit is not worth crowding it out
+            healingSpoken = null
+            validityNote = standingNote(subjects, appeared.firstOrNull())
+            return
+        }
+        if (healed.isNotEmpty()) {
+            val lead = healed.first()
+            val rest = healed.size - 1
+            val sentence =
+                "${doc.nameOf(lead)} is ${doc.kindWord(lead)} again" + if (rest > 0) " — and $rest more" else ""
+            healingSpoken = sentence to statusHint
+            validityNote = sentence
+            return
+        }
+        // nothing flipped: keep a heal that has not been talked over yet, and otherwise say nothing
+        val spoken = healingSpoken
+        validityNote = if (spoken != null && spoken.second == statusHint) spoken.first else null
+        if (validityNote == null) healingSpoken = null
+    }
+
+    /**
+     * The elements a sentence may **name**: the ones that failed here, or — when nothing did, so every
+     * invalid element is only hidden by the cascade — what there is. Pointing at a dependent when a root
+     * exists would send the user to the wrong element (see [Document.InvalidElement.own]).
+     */
+    private fun toName(all: List<Document.InvalidElement>): List<Document.InvalidElement> =
+        all.filter { it.own }.ifEmpty { all }
+
+    /** One line about [subjects]: [lead] (or the first) by name with its reason, and a count of the rest. */
+    private fun standingNote(
+        subjects: List<Document.InvalidElement>,
+        lead: Document.InvalidElement? = null,
+    ): String? {
+        val first = lead ?: subjects.firstOrNull() ?: return null
+        val rest = subjects.size - 1
+        return "${first.name} can't be built right now: ${first.reason}" + if (rest > 0) " — and $rest more" else ""
+    }
+
+    /**
+     * Re-read validity where something **outside the graph** changed what a node can compute (OP-3).
+     *
+     * One caller, and it is the reason this is public: the general boolean engine is WASM and arrives after
+     * the first paint (OP-9), so solids that were invalid *because it was not loaded yet* heal on a repaint
+     * that no gesture triggered. Without this the standing note would go on naming them. It speaks, and it
+     * should: "e9 is a solid again" is exactly what happened.
+     */
+    fun revalidate() {
+        speakValidity()
+    }
+
+    /**
+     * Take the validity of the document as it now stands as the **baseline**, without speaking (OP-3).
+     *
+     * Loading a drawing is not an edit: a file that arrives with something unbuildable in it did not just
+     * turn that way under the user's hand, and announcing it as a transition would put the file's own state
+     * in the same voice as their last gesture. The standing note still shows it — the fact is visible from
+     * the first frame — and a *load* has its own channel for what the load had to decide ([loadNote]).
+     */
+    private fun rebaseValidity() {
+        val now = doc.invalidElements()
+        invalidElements = now
+        invalidBefore = now.associate { it.name to it.reason }
+        healingSpoken = null
+        validityNote = standingNote(toName(now))
+    }
+
+    /**
+     * The one seam every change inside the controller goes through: read what the change did to the
+     * drawing's validity ([speakValidity]), then tell the shell to repaint ([onChange]).
+     *
+     * A view-only change (a pan, a spotlight) comes through here too and costs a memo hit per node, which is
+     * what an unchanged pass already costs the renderer.
+     */
+    private fun changed() {
+        speakValidity()
+        onChange()
+    }
+
     /** How near a click has to land, in **screen pixels** — the one number the pick tolerance is stated in. */
     val tolPx = 10.0
 
@@ -741,7 +909,7 @@ class Editor(
         val at = p.toPlane(screen)
         if (at == null) {
             statusHint = OFF_PLANE_NOTE
-            onChange()
+            changed()
             return null
         }
         gestureAt = at
@@ -999,7 +1167,7 @@ class Editor(
                 ""
             }
         if (applyToSelection()) return // it ran, and said what happened
-        onChange()
+        changed()
     }
 
     /**
@@ -1074,7 +1242,7 @@ class Editor(
                 "${tool!!.label}: $keptSlots pick${if (keptSlots == 1) "" else "s"} kept across the switch to " +
                 "${doc.spaceLabel(target)} — carry on picking here. ${tool.help}"
         }
-        onChange()
+        changed()
         return true
     }
 
@@ -1213,7 +1381,7 @@ class Editor(
                 statusHint = spaceNote(space)
             }
         }
-        onChange()
+        changed()
     }
 
     /** Parameters typed for the pending tool, not yet sealed by its checkpoint — see [commitTypedScalar]. */
@@ -1344,7 +1512,7 @@ class Editor(
         val now = doc.nameElement(el, name)
         if (now == null) {
             statusHint = "${doc.nameOf(el)} was not built by a step of its own, so the file has nowhere to put a name for it"
-            onChange()
+            changed()
             return null
         }
         if (now != (was ?: "")) {
@@ -1355,7 +1523,7 @@ class Editor(
                     else -> "${doc.nameOf(el)} is now \"$now\""
                 }
         }
-        onChange()
+        changed()
         return now
     }
 
@@ -1377,7 +1545,7 @@ class Editor(
                 } else {
                     "${doc.nameOf(el)} was not built by a step of its own, so the file has nowhere to put a material for it"
                 }
-            onChange()
+            changed()
             return null
         }
         if (now != (was ?: Appearance.DEFAULT)) {
@@ -1389,7 +1557,7 @@ class Editor(
                     "${doc.nameOf(el)}: ${now.color}, roughness ${Format.num(now.roughness)}, metallic ${Format.num(now.metallic)}"
                 }
         }
-        onChange()
+        changed()
         return now
     }
 
@@ -1405,7 +1573,7 @@ class Editor(
         val now = doc.renameGroup(g, name)
         if (now == null) {
             statusHint = "$was has no step of its own in the file, so renaming it could not be saved"
-            onChange()
+            changed()
             return null
         }
         if (now != was) {
@@ -1413,7 +1581,7 @@ class Editor(
             val asked = name.trim()
             statusHint = "Renamed group $was to $now" + if (asked.isNotEmpty() && now != asked) " (\"$asked\" was taken or not one word)" else ""
         }
-        onChange()
+        changed()
         return now
     }
 
@@ -1427,7 +1595,7 @@ class Editor(
         val n = doc.setElementsVisible(selectedElements, visible)
         if (n > 0) checkpoint()
         statusHint = if (n == 0) "Nothing to ${if (visible) "show" else "hide"}" else "${if (visible) "Shown" else "Hidden"} $n element${if (n == 1) "" else "s"}"
-        onChange()
+        changed()
         return n
     }
 
@@ -1443,19 +1611,19 @@ class Editor(
     ): Group? {
         if (selected.isEmpty()) {
             statusHint = "Select the elements to group first (Shift+click to add, or drag a box)"
-            onChange()
+            changed()
             return null
         }
         val clash = selected.firstNotNullOfOrNull { el -> doc.groupOf(el)?.let { el to it } }
         if (clash != null) {
             statusHint = "${doc.nameOf(clash.first)} is already in group ${clash.second.name} — an element is in at most one group; ungroup it first"
-            onChange()
+            changed()
             return null
         }
         val g = doc.createGroup(name, selectedElements)
         if (g == null) {
             statusHint = "Could not group that selection"
-            onChange()
+            changed()
             return null
         }
         selectedGroup = g // the selection now addresses the group it just became
@@ -1464,7 +1632,7 @@ class Editor(
         // both — see [confirmCreate].
         if (commit) checkpoint()
         statusHint = "Grouped ${g.members.size} elements as ${g.name}"
-        onChange()
+        changed()
         return g
     }
 
@@ -1486,7 +1654,7 @@ class Editor(
     fun beginCreate(mode: CreateMode): CreateDialog? {
         if (selected.isEmpty()) {
             statusHint = "Select the elements first (Shift+click to add, or drag a box)"
-            onChange()
+            changed()
             return null
         }
         val members = selectedElements
@@ -1501,14 +1669,14 @@ class Editor(
             )
         createDialog = d
         statusHint = d.help
-        onChange()
+        changed()
         return d
     }
 
     fun cancelCreate() {
         createDialog = null
         statusHint = ""
-        onChange()
+        changed()
     }
 
     /**
@@ -1524,11 +1692,11 @@ class Editor(
         val n = d.closure.size
         if (!d.includeClosure()) {
             statusHint = "Nothing more to include — this group already moves as one"
-            onChange()
+            changed()
             return false
         }
         statusHint = "Added $n element${if (n == 1) "" else "s"} the group is built on — ${d.members.size} in all, and it can be placed"
-        onChange()
+        changed()
         return true
     }
 
@@ -1542,7 +1710,7 @@ class Editor(
         val d = createDialog ?: return false
         if (!d.ready) {
             statusHint = d.blocker ?: "Nothing to create"
-            onChange()
+            changed()
             return false
         }
         val ok =
@@ -1589,7 +1757,7 @@ class Editor(
                 makeTool(d.name, d.members, d.checkedPoints, d.checkedScalars)
             }
         if (ok) createDialog = null
-        onChange()
+        changed()
         return ok
     }
 
@@ -1606,7 +1774,7 @@ class Editor(
         val def = doc.defineMacro(name, members, pointInputs, scalarInputs)
         if (def == null) {
             statusHint = "Could not make a tool from that selection"
-            onChange()
+            changed()
             return false
         }
         checkpoint()
@@ -1615,7 +1783,7 @@ class Editor(
         statusHint =
             "Tool ${def.name}: click ${pointInputs.size} point${if (pointInputs.size == 1) "" else "s"}$scalarNote " +
             "to place an instance — editing the original updates every instance"
-        onChange()
+        changed()
         return true
     }
 
@@ -1630,14 +1798,14 @@ class Editor(
             statusHint =
                 "Can't remove tool ${def.name}: ${instances.size} instance element${if (instances.size == 1) "" else "s"} " +
                 "still use it (${instances.take(4).joinToString(", ") { doc.nameOf(it) }}) — delete the instances first"
-            onChange()
+            changed()
             return false
         }
         if (!doc.removeMacro(def)) return false
         if (toolId == def.toolId) setTool(Tools.SELECT)
         checkpoint()
         statusHint = "Removed tool ${def.name} — the construction it was made from stays"
-        onChange()
+        changed()
         return true
     }
 
@@ -1649,7 +1817,7 @@ class Editor(
         checkpoint()
         val note = if (wasPlaced) " (its frame went with it)" else ""
         statusHint = "Ungrouped ${g.name}$note — its $n element${if (n == 1) "" else "s"} stay"
-        onChange()
+        changed()
         return true
     }
 
@@ -1708,19 +1876,19 @@ class Editor(
     ): Boolean {
         if (g.placed) {
             statusHint = "${g.name} is already placed — drag any member to move it, or Unplace it first"
-            onChange()
+            changed()
             return false
         }
         val analysis = doc.analysePlacement(g)
         placementRefusal(g, analysis)?.let {
             statusHint = "Can't place ${g.name}: $it"
-            onChange()
+            changed()
             return false
         }
         val result = doc.placeGroup(g)
         if (result == null) {
             statusHint = "Could not place ${g.name}"
-            onChange()
+            changed()
             return false
         }
         // false only when the group was *created* by the same operation — one checkpoint for both halves
@@ -1752,7 +1920,7 @@ class Editor(
         // someone types an angle
         val turn = doc.turnRefusal(g)?.let { " — it moves as one, but cannot be turned (${it.substringAfter("cannot be turned: ")})" } ?: ""
         statusHint = "Placed ${g.name}: ${carried.ifEmpty { "its own freedom" }} now frame-relative$deforms$turn"
-        onChange()
+        changed()
         return true
     }
 
@@ -1768,7 +1936,7 @@ class Editor(
         val unturns = doc.unturnsGroup(g)
         if (!doc.unplaceGroup(g)) {
             statusHint = "${g.name} is not placed"
-            onChange()
+            changed()
             return false
         }
         checkpoint()
@@ -1778,7 +1946,7 @@ class Editor(
             } else {
                 "Unplaced ${g.name} — its points are free again, exactly where they were"
             }
-        onChange()
+        changed()
         return true
     }
 
@@ -1807,7 +1975,7 @@ class Editor(
             } else {
                 "${selectionLabel()} selected — it is drawn in ${space.name}, so switch the space to see it"
             }
-        onChange()
+        changed()
     }
 
     /**
@@ -1864,7 +2032,7 @@ class Editor(
         // reason with a selection note, and the row would look as if it had done nothing
         groupFanRefusal(tool, g, members.size)?.let {
             statusHint = it
-            onChange()
+            changed()
             return true
         }
         pickedElements.addAll(members)
@@ -1876,7 +2044,7 @@ class Editor(
         } else {
             statusHint = "${groupFedNote(g)} ${tool.help} (${stillNeeded(tool)} more)"
         }
-        onChange()
+        changed()
         return true
     }
 
@@ -1894,7 +2062,7 @@ class Editor(
         resetCycle() // the panel picked this, not a click on the canvas
         val what = if (g.placed) " (placed — the panel shows its frame)" else ""
         statusHint = "Group ${g.name}: ${members.size} element${if (members.size == 1) "" else "s"} selected$what"
-        onChange()
+        changed()
     }
 
     /**
@@ -1911,7 +2079,7 @@ class Editor(
     ) {
         if (doc.setElementsVisible(doc.groupMembers(g), visible) > 0) checkpoint()
         statusHint = "Group ${g.name} ${if (visible) "shown" else "hidden"}"
-        onChange()
+        changed()
     }
 
     /** Whether every live member of [g] is currently drawn — the panel's toggle state. */
@@ -1933,7 +2101,7 @@ class Editor(
             selectedFrame()?.let { g ->
                 doc.turnRefusal(g)?.let {
                     statusHint = "Can't turn: $it"
-                    onChange()
+                    changed()
                 }
             }
             return false
@@ -1943,7 +2111,7 @@ class Editor(
         // a write the geometry **bounded** has something to say — an opening clamped to its leg (OP-21) — and
         // it is the same note the drag reports, since typing and dragging are one operation (OP-13)
         doc.takeNote()?.let { statusHint = it }
-        onChange()
+        changed()
         return true
     }
 
@@ -1986,7 +2154,7 @@ class Editor(
         // a parameter can drive a host's geometry (a leg length, an angle), so the same compensation applies
         compensating { doc.setParameter(e, quantityOf(dimensionOf(e.ref), value)) }
         if (commit) checkpoint()
-        onChange()
+        changed()
         return true
     }
 
@@ -2009,7 +2177,7 @@ class Editor(
                     "${e.name} belongs to the step that created it, which has no place for a name in the file — " +
                         "so renaming it could not be saved"
                 }
-            onChange()
+            changed()
             return null
         }
         if (now != was) {
@@ -2017,7 +2185,7 @@ class Editor(
             val asked = name.trim()
             statusHint = "Renamed $was to $now" + if (asked.isNotEmpty() && now != asked) " (\"$asked\" was taken or not one word)" else ""
         }
-        onChange()
+        changed()
         return now
     }
 
@@ -2115,7 +2283,7 @@ class Editor(
         // silently move where the next 2D click lands.
         if (pointing != null) return
         camera = camera.zoomAt(screen, if (deltaY < 0) 1.1 else 1.0 / 1.1)
-        onChange()
+        changed()
     }
 
     /**
@@ -2215,7 +2383,7 @@ class Editor(
                 // where in the pile this jamb stands: the first candidate on a fresh press, and the one the
                 // cycle is standing on when the press was primed by it
                 statusHint = cycleNote(pendingNote, pile, standing ?: 0)
-                onChange()
+                changed()
                 return
             }
             val movable = pile.movable
@@ -2228,7 +2396,7 @@ class Editor(
                 marqueeAdds = additive
                 pendingPile = null
                 resetCycle() // a press on empty space is nobody's repeat
-                onChange()
+                changed()
                 return
             }
             // A member of a **placed** group is addressed by the *gesture*, not by what the press does to
@@ -2269,7 +2437,7 @@ class Editor(
                 dragStart = anchor
                 statusHint = note
                 pendingNote = note
-                onChange()
+                changed()
                 return
             }
             // the primed subject, when the frame did not already take it: the cycled selection moves, or says
@@ -2278,7 +2446,7 @@ class Editor(
                 if (!primedElement.hasFreeDof) {
                     statusHint = explainImmovable(primedElement, doc.nameOf(primedElement), doc.ownFields(primedElement))
                     pendingNote = statusHint
-                    onChange()
+                    changed()
                     return
                 }
                 dragTarget = primedElement
@@ -2289,7 +2457,7 @@ class Editor(
                 dragRiders = doc.riderAnchors()
                 pendingNote = "Dragging ${elementLabel(primedElement)} — what is selected takes the grab"
                 statusHint = cycleNote(pendingNote, pile, standing ?: 0)
-                onChange()
+                changed()
                 return
             }
             if (movable != null) {
@@ -2321,13 +2489,13 @@ class Editor(
             // appended when there is more than one thing here
             pendingNote = statusHint
             if (pendingApplied) statusHint = cycleNote(statusHint, pile, 0)
-            onChange()
+            changed()
             return
         }
         if (toolId == Tools.ORTHO_PATH || toolId == Tools.WALL) {
             if (toolId == Tools.WALL && activePath == null && activeScalar == null) {
                 statusHint = "Wall: type a thickness (or click a parameter in the panel) first"
-                onChange()
+                changed()
                 return
             }
             pathClick(world)
@@ -2383,7 +2551,7 @@ class Editor(
                 else -> breakCurveAt(hit, world)
             }
         checkpoint()
-        onChange()
+        changed()
     }
 
     /**
@@ -2476,7 +2644,7 @@ class Editor(
             // dblclick then finishes the path — and must not leave a hairline leg behind
             val growing = (if (pathAtEnd) path.vertices.last() else path.vertices.first()).ref
             if (HitTest.nearest(doc, ev(), world, tolWorld()) { it.ref === growing } != null) {
-                onChange()
+                changed()
                 return
             }
             val v = doc.extendOrthoPath(path, pathAtEnd, world)
@@ -2488,7 +2656,7 @@ class Editor(
                     finishPath() // which marks the terminus and says the run is over — see [markTerminal]
                     // the same sentence, naming what was reached rather than the vertex that reached it
                     statusHint = "$what ends on ${s.target?.let { doc.nameOf(it) }} (${s.label})$RUN_FINISHED"
-                    onChange()
+                    changed()
                     return
                 }
                 // A connection that cannot be made **says so** (OP-20): the click looked exactly like the
@@ -2499,14 +2667,14 @@ class Editor(
                 hoverWorld = world
                 previewSeg = null
                 snapHint = null
-                onChange()
+                changed()
                 return
             }
         }
         hoverWorld = world
         previewSeg = null
         snapHint = null
-        onChange()
+        changed()
     }
 
     /**
@@ -2523,7 +2691,7 @@ class Editor(
             pathActive && digit -> {
                 numericEntry += key
                 refreshPreview()
-                onChange()
+                changed()
                 true
             }
             // the same digits, for the scalar a tool is missing: one mechanism for every scalar slot
@@ -2535,7 +2703,7 @@ class Editor(
                 // with it and the entry is echoed at the cursor, so what the next click will build is visible
                 // where the user is looking rather than only in the status bar (OP-13)
                 refreshToolPreviewAtHover()
-                onChange()
+                changed()
                 true
             }
             key == "Backspace" && numericEntry.isNotEmpty() -> {
@@ -2546,7 +2714,7 @@ class Editor(
                     statusHint = typedScalarPrompt()
                     refreshToolPreviewAtHover()
                 }
-                onChange()
+                changed()
                 true
             }
             key == "Escape" && numericEntry.isNotEmpty() -> {
@@ -2557,7 +2725,7 @@ class Editor(
                     statusHint = ""
                     refreshToolPreviewAtHover()
                 }
-                onChange()
+                changed()
                 true
             }
             key == "Enter" && numericEntry.isNotEmpty() -> if (pathActive) commitTypedLeg() else commitTypedScalar()
@@ -2568,7 +2736,7 @@ class Editor(
             key == "Escape" && !pathActive && (filledSlots > 0 || pendingTypedParams.isNotEmpty()) -> {
                 resetPicks()
                 statusHint = ""
-                onChange()
+                changed()
                 true
             }
             // With nothing pending, Escape drops what a click would otherwise have to un-click: the active
@@ -2584,7 +2752,7 @@ class Editor(
                         had -> "Selection cleared"
                         else -> NO_ACTIVE_PARAMETER
                     }
-                onChange()
+                changed()
                 true
             }
             // The keyboard twin of clicking the same spot again (OP-13: nothing is reachable one way and not
@@ -2600,7 +2768,7 @@ class Editor(
                 val id = Tools.byShortcut(key[0]) ?: return false
                 if (id != toolId) setTool(id)
                 statusHint = currentHelp()
-                onChange()
+                changed()
                 true
             }
             else -> false
@@ -2675,7 +2843,7 @@ class Editor(
         numericEntry = ""
         if (value == null) {
             statusHint = "That is not a number"
-            onChange()
+            changed()
             return true
         }
         typedScalars++
@@ -2696,7 +2864,7 @@ class Editor(
         if (pendingTypedParams.any { it === entry }) {
             statusHint = "${slot.name} = $value ${unitWord(slot.dim)} (parameter ${entry.name}) — edit it in the panel any time"
         }
-        onChange()
+        changed()
         return true
     }
 
@@ -2711,7 +2879,7 @@ class Editor(
         val placed = doc.addOrthoVertex(path, end) != null
         refreshPreview()
         statusHint = if (placed) "" else "That length would make a zero-length leg"
-        onChange()
+        changed()
         return true
     }
 
@@ -2834,12 +3002,12 @@ class Editor(
         val w = activeScalar
         if (w == null) {
             statusHint = "Opening: type a width (or click a parameter in the panel) first"
-            onChange()
+            changed()
             return
         }
         statusHint = if (doc.addIntervalAt(world, w.ref, tolWorld() * 2)) "Opening added" else "Click on a wall to place an opening"
         checkpoint()
-        onChange()
+        changed()
     }
 
     /** Finish the current path (Esc / double-click / close / tool switch); for WALL, thicken it. */
@@ -2858,7 +3026,7 @@ class Editor(
         pathThickness = null
         checkpoint() // the whole path — start, legs, close, footprint — commits as one operation
         statusHint = ended ?: ""
-        onChange()
+        changed()
     }
 
     /**
@@ -3056,7 +3224,7 @@ class Editor(
         statusHint = cycleNote(selectPick(pile.candidates[i]), pile, i)
         cycleIndex = i
         cycleCount = pile.candidates.size
-        onChange()
+        changed()
         return true
     }
 
@@ -3096,7 +3264,7 @@ class Editor(
         if (panning) {
             camera = camera.pan(screen.x - lastScreen.x, screen.y - lastScreen.y)
             lastScreen = screen
-            onChange()
+            changed()
             return
         }
         val world = enter(screen) ?: return
@@ -3107,7 +3275,7 @@ class Editor(
             if (snapHint != null) statusHint = ""
             hoverWorld = snapHint?.pos ?: world
             refreshPreview()
-            onChange()
+            changed()
             return
         }
         if (placesAPoint()) {
@@ -3115,7 +3283,7 @@ class Editor(
             if (snapHint != null) statusHint = ""
             // the click will land on the snap, so that is where the preview is drawn from
             refreshToolPreview(snapHint?.pos ?: world)
-            onChange()
+            changed()
             return
         }
         // Every other previewing tool: the same live preview. Handled before the drag cases and returning,
@@ -3123,7 +3291,7 @@ class Editor(
         // so there is nothing below this that a previewing tool could also want.
         if (doc.toolDef(toolId)?.preview != null) {
             refreshToolPreview(world)
-            onChange()
+            changed()
             return
         }
         when {
@@ -3132,7 +3300,7 @@ class Editor(
                 // O(1) move OP-16 is built around, and axis lock applies to it exactly as to a point
                 val g = dragFrame!!
                 g.frameHandle?.drag(axisLockedFrom(world - grabOffset), ev())
-                onChange()
+                changed()
             }
             // one opening slides along its leg (OP-21). No axis lock: the handle already has a single
             // direction of its own, exactly as an ortho leg does, so a lock could only make it inert
@@ -3142,7 +3310,7 @@ class Editor(
                 // the clamp is the document's to explain, and it appears and disappears as the drag crosses
                 // the leg's end rather than lingering afterwards
                 statusHint = doc.takeNote() ?: describeJamb(j)
-                onChange()
+                changed()
             }
             dragTarget != null -> {
                 val el = dragTarget!!
@@ -3164,11 +3332,11 @@ class Editor(
                     val n = flattened.size
                     statusHint = "Release to join — ${if (n == 1) "the flattened corner" else "$n flattened corners"} will be removed (Alt to keep)"
                 }
-                onChange()
+                changed()
             }
             marqueeFrom != null -> {
                 marqueeTo = world
-                onChange()
+                changed()
             }
         }
     }
@@ -3186,7 +3354,7 @@ class Editor(
             }
             resetCycle() // neither a marquee nor a deselect is a step of any pick cycle
             downScreen = null
-            onChange()
+            changed()
             return
         }
         // whether the gesture *moved* — read while [downScreen] still holds where the press landed, since
@@ -3223,7 +3391,7 @@ class Editor(
                 selection = toggle
             }
             statusHint = if (selected.isEmpty()) "Nothing selected" else "${selected.size} element${if (selected.size == 1) "" else "s"} selected"
-            onChange() // a release otherwise repaints only when the drag changed the model
+            changed() // a release otherwise repaints only when the drag changed the model
         }
         // The click half of the pick: this is where the cycle steps (and where a placed group's deferred pick
         // is applied at all). A press that *moved* is a drag and takes none of it — the same discipline
@@ -3235,7 +3403,7 @@ class Editor(
             // note is kept and only the deferred pick and the cycle's steps produce a new one.
             if (deferred || i != 0) {
                 statusHint = cycleNote(selectPick(pile.candidates[i]), pile, i)
-                onChange()
+                changed()
             }
             cycleAt = screen
             cycleWorld = leave(screen)
@@ -3261,11 +3429,11 @@ class Editor(
                 // too), so the note is consumed here rather than surfacing on the next unrelated operation
                 statusHint =
                     if (ok) doc.takeNote() ?: "Joined ${doc.nameOf(dragged)} onto ${doc.nameOf(weld)}" else joinRefused(dragged, weld)
-                onChange()
+                changed()
             } else if (attach != null) {
                 val ok = if (ortho) doc.attachOrthoEndpointToCurve(dragged, attach) else doc.attachToCurve(dragged, attach)
                 statusHint = if (ok) "Attached ${doc.nameOf(dragged)} to ${doc.nameOf(attach)}" else joinRefused(dragged, attach)
-                onChange()
+                changed()
             }
         }
         if (movedFrame != null && moved) {
@@ -3277,20 +3445,20 @@ class Editor(
             selectedGroup = movedFrame
             checkpoint()
             statusHint = "Moved ${movedFrame.name}"
-            onChange()
+            changed()
         }
         // an opening's slide commits like every other drag: one operation, one undo step. What the status
         // says is left as the last move left it — either the opening's values or the clamp that stopped them
         if (movedJamb != null && moved) {
             checkpoint()
-            onChange()
+            changed()
         }
         jambStoleFrame = null
         if (dragged != null) {
             joinFlattenedEnds(dragged)?.let {
                 select(listOf(it), it)
                 statusHint = "Joined into ${doc.nameOf(it)} — the flattened corner is gone"
-                onChange()
+                changed()
             }
             // the release is where a drag commits — moves, welds, attaches and joins are one operation
             checkpoint()
@@ -3549,7 +3717,7 @@ class Editor(
             doc.thickNetworkBase(tn) ?: run {
                 // an ortho-carrier wall names the tool that *does* extend it — never a silent refusal
                 statusHint = doc.takeNote() ?: "That wall cannot be extended with ${doc.toolDef(toolId)?.label}"
-                onChange()
+                changed()
                 return true
             }
         extending = tn
@@ -3566,7 +3734,7 @@ class Editor(
             "Extending wall ${doc.displayName(tn.footprint)} ($n carrier curve${if (n == 1) "" else "s"}, " +
             "thickness ${base.thickness.name}): click the curves to add — Enter (or the wall again) re-stamps " +
             "it, Esc leaves it as it is"
-        onChange()
+        changed()
         return true
     }
 
@@ -3596,7 +3764,7 @@ class Editor(
         if (text == null) {
             statusHint = said ?: "Extending $name was refused"
             resetPicks()
-            onChange()
+            changed()
             return true
         }
         val fresh =
@@ -3605,13 +3773,13 @@ class Editor(
             } catch (e: Exception) {
                 statusHint = "Extending $name failed: ${e.message}"
                 resetPicks()
-                onChange()
+                changed()
                 return true
             }
         adopt(fresh)
         checkpoint()
         statusHint = said ?: "Wall $name: $was -> ${tn.legCount} carrier curves"
-        onChange()
+        changed()
         return true
     }
 
@@ -3645,7 +3813,7 @@ class Editor(
                     }
                 if (refusal != null) {
                     statusHint = refusal
-                    onChange()
+                    changed()
                     return true
                 }
                 checkpoint()
@@ -3660,7 +3828,7 @@ class Editor(
                     "${tool.label}: needs at least ${tool.minPicks} pick${if (tool.minPicks == 1) "" else "s"} (${tool.roleOf(0)})"
         }
         resetPicks()
-        onChange()
+        changed()
         return true
     }
 
@@ -3829,7 +3997,7 @@ class Editor(
                     "${tool.label} works on a face: use Sketch on face to pick a solid's edge first, " +
                         "then draw and cut there"
                 }
-            onChange()
+            changed()
             return
         }
         pickRefusal = null
@@ -3982,7 +4150,7 @@ class Editor(
                             " ${tool.help}"
                     else -> "That click hit nothing pickable — ${tool.help}"
                 }
-            onChange()
+            changed()
             return
         }
         if (slot != null) {
@@ -4006,7 +4174,7 @@ class Editor(
             // two picks fix the direction, so from there the boundary can be followed wherever it is not
             // a choice — see [extendBoundaryPicks]
             if (tool.followsBoundary && filledSlots >= 2) extendBoundaryPicks()
-            onChange()
+            changed()
             return
         }
         if (filledSlots >= tool.slots.size) {
@@ -4018,7 +4186,7 @@ class Editor(
             val fed = pickedGroup?.let { groupFedNote(it) + " " } ?: ""
             statusHint = "${optionalTaken(tool, slot, slotIndex)}$fed${tool.help} (${stillNeeded(tool)} more)"
         }
-        onChange()
+        changed()
     }
 
     /**
@@ -4142,7 +4310,7 @@ class Editor(
             }
         if (refusal != null) {
             statusHint = refusal
-            onChange()
+            changed()
             return true
         }
         checkpoint() // the tool application — earlier slot clicks were only halves of it
@@ -4178,7 +4346,7 @@ class Editor(
                 // which is the one thing the canvas cannot show about a plane it is looking straight at
                 entered?.let { spaceNote(it) },
             ).joinToString(" — ")
-        onChange()
+        changed()
         return true
     }
 
