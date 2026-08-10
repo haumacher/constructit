@@ -16318,9 +16318,50 @@ rules before dispatch: any construction whose inputs ride a pattern's cells repl
 multi-element tools and including another pattern — counts staying structural, rides stored as rules, the
 journal re-stamped on count changes exactly as OP-23 already does for single-element rides.
 
-**Beyond those — the batch, the pattern entry and the long-standing small batch (the ULP creep and the
-number pad's sign) — the numbered queue is empty** (the session-59 entry above is closed). What remains is
-the parked list below, each item recorded at its source.
+**Queued in session 71, the order confirmed by the user — what this session's own machinery un-parks.**
+After the bug batch and the pattern entry above, in this order:
+
+3. **The small batch, at last** — the ULP save-creep fix and the number pad's minus sign, queued in
+   session 63 as "the plan for the next session" and deferred by every session since. Both are
+   regression-pinned already (`ChainCutReachTest.assertRoundTrips`; `RevolveIntervalTest`'s
+   panel-parameter detour); nothing about them changed except that their turn has come.
+4. **Edit-in-3D slice 2 — click-a-face working-plane selection, and what it un-parks.** The entry has
+   waited since session 21 on one thing: *naming a face durably*, the half of the *Manifold face-ID
+   provenance* item session 63 left parked. The blends built that machinery for every analytic feature:
+   ordered face lists whose indices never renumber (the stored `sketchspace … piece=` address), `Surface3`
+   typing, and — through `Feature3.Blend` — face lists that survive dressing. So the mechanism is now: a
+   ray hit resolves to a **face patch analytically** (which face contains the hit point is a question the
+   feature answers, not the triangles), the pick records the piece index as a durable choice (OP-1/OP-18),
+   and a mesh-route body refuses by name. Delivering it un-parks the two consumers the record parked with
+   it: **slice 3** (the cross-space boolean gesture in the 3D view; datum and loft-section placement as 3D
+   clicks) and **appearance Tier 3** (per-face material assignment) — one mechanism, three consumers,
+   exactly as recorded.
+5. **Shelling to a stated wall thickness.** Named in session 37 beside the blends ("a real member is
+   hollow — 0.8–15% of its bounding box — and the only route today is subtracting a hand-built inner
+   solid"), and the blends were the harder sibling. The same constant-offset tier that made the blend
+   analytic gives shelling its first honest tier: an offset profile for the prismatic walls, offset caps,
+   the typed-surface vocabulary for what can be said exactly and a refusal by name for what cannot —
+   face lists extending rather than forking, `assertManifold` everywhere. **Draft** stays behind it, as
+   the session-37 note ordered ("follows them and is meaningless before them").
+6. **The expression follow-ups, riding alongside (small).** (a) **Named coordinates**: the scalar half's
+   first cut — `P.x = w/2` needs the naming authority extended to coordinates, not more expression
+   machinery; the first thing an expression user reaches for. (b) **An expression-valued domain** for
+   function curves: `[t0, t1]` is two plain numbers today, so a gear flank's length cannot follow a
+   teeth-count parameter; the curve half's cut 4, closed. (c) **The chamfer-on-arc convention**, decided
+   once for both dimensions — the 2D parking now costs twice, since blend slice 2 inherited it verbatim
+   ("a chamfer across a curved leg refuses and points at the fillet"); it is decided in whichever of
+   these packages touches chamfer first, and recorded where the 2D note parked it.
+7. **The variable-section sweep — OP-26's parked question, newly speakable.** Session 42 parked it as
+   "the only thing that would relax the single derived reach", with no way to *state* a varying section.
+   The expression language is that missing vocabulary: a section dimension as a function of the station
+   parameter is one `Expr` over `t` — the same AST, symbolic derivative and dimension check the function
+   curves already use — so what was unstatable is now a sentence. Wants its own design pass against
+   OP-26's refusal criteria (the reach becomes a function of the station too) before dispatch.
+
+**Beyond those seven, the numbered queue is empty** (the session-59 entry above is closed). What remains —
+vertex blends, text as geometry, silhouette edges in the 3D view, the panel's scalar tiering,
+`transformArc`'s guard, the Apollonius and conic tangent families — is the parked list below, each item
+recorded at its source, none with a new enabler yet.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
 (it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and
