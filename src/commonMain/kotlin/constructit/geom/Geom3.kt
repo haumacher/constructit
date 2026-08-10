@@ -472,6 +472,44 @@ sealed interface Feature3 {
     ) : Feature3 {
         override val footprint: List<Region> get() = base.footprint
     }
+
+    /**
+     * A **shelled** body (session 75): [base] hollowed out to a wall of [thickness] mm, with the faces
+     * [openFaces] names left open (see [Shell3] for the construction and DESIGN.md for the ledger).
+     *
+     * The dress-up sibling of [Blend], and it is a feature of its own for the same one reason: **its face
+     * list extends the base's**. Every face of [base] keeps its **index** — an *open* one keeps it too and
+     * gains the cavity's own boundary as a hole, which is exactly what a rim is — and the **inner twin** of
+     * face `i` is appended at a stated offset, so the mapping outer→inner is structural rather than a
+     * search ([Shell3.faces]). A shelled part therefore still answers *sketch on this face*, still gives a
+     * working plane's section its inputs (now on both walls), and still refuses by name where the base did.
+     *
+     * **The cavity is the base offset inward, and at this tier that is exact** (OP-15): the walls are the
+     * profile's own pieces stepped in by [thickness] on their own carriers, lines to lines and arcs to arcs
+     * ([GeomMath.offsetCycle]), and the caps are inset by the same number. A piece whose face is **open**
+     * keeps its carrier, which is how the cavity reaches the surface and takes that face away.
+     *
+     * **The mesh is the boolean and deliberately so** — base minus cavity, through the one dispatch
+     * ([Geom3.combine]), which for an extrusion is the *exact* slab algebra (OP-22) and for a revolution the
+     * general engine. The feature answers faces analytically while the triangles come off that boolean, which
+     * is slice 3's own bargain restated: the mesh is a **sink** (OP-9), so nothing structural is ever read
+     * back out of it and a second emitter would be a second thing to keep in step ([Solid3.restated]).
+     *
+     * `(base, thickness, openFaces)` is enough to rebuild the identical body, which is what keeps
+     * [Solid3]'s purity claim verbatim. [openFaces] are indices into [Section3.faces] of [base], scored
+     * once by the click and restated by the step ever after (OP-1/OP-18) — never re-scored, or an edit that
+     * slid the body under the cursor would open a different face on reload.
+     *
+     * [footprint] is the **base's own plan**, as a dressing's is: analytic, free, and it forces no mesh.
+     */
+    data class Shell(
+        val base: Feature3,
+        val thickness: Double,
+        /** Which faces of [base] are left open — indices into [Section3.faces] of [base], in order. */
+        val openFaces: List<Int>,
+    ) : Feature3 {
+        override val footprint: List<Region> get() = base.footprint
+    }
 }
 
 /** Whether any boundary piece of [region] is curved — OP-15's question, asked structurally. */
@@ -2489,6 +2527,14 @@ object Geom3 {
             // refused rather than approximated by the base, which would silently give the exact algebra a
             // body that is not the body (OP-22's dispatch is a *predicate*, and it must not lie).
             is Feature3.Blend -> null to NOT_PRISMATIC
+            // A shelled extrusion **is** a stack of slabs — the full footprint under the floor, the wall ring
+            // above it — and it is refused here all the same, for [Feature3.Blend]'s reason said the other way
+            // round: this predicate decides whether the *exact* algebra runs, and the slabs it would have to
+            // run on are the shell's own erosion, not the base's areas. Answering with the base's would hand
+            // the exact path a solid body where the drawing has a hollow one. So a boolean against a shelled
+            // part takes the general engine and says so; the exact slab reading of a shell is a named future
+            // extension (DESIGN.md, session 75).
+            is Feature3.Shell -> null to NOT_PRISMATIC
             is Feature3.Extrusion -> oneSlab(feature, tolMm)
         }
 
@@ -2525,6 +2571,9 @@ object Geom3 {
             // would send a blended body down a path that then declines — and the exact path's refusals are
             // never retried on the mesh engine, by design ([combine]).
             is Feature3.Blend -> null
+            // …and null for the shell for exactly that reason: [prismatic] refuses it, so naming an axis here
+            // would send a hollow body down a path that then declines.
+            is Feature3.Shell -> null
         }
 
     private fun oneSlab(
@@ -3036,6 +3085,11 @@ object Geom3 {
             // case — a `MeshBoolean` refused here, and everything anchored on a face died when a blend was
             // added. The outline is corrected where a sketch reads one ([Section3.facePatchOfFootprintPiece]).
             is Feature3.Blend -> facePlane(feature.base, which)
+            // **The shelled part keeps its named faces too** (session 75): hollowing a body does not move a
+            // face's plane — an open one becomes a rim in the very same plane — so `TOP` of a shelled plate is
+            // the plate's own top face and anything anchored on it stays anchored. The outline is corrected
+            // where a sketch reads one ([Section3.facePatchOfFootprintPiece]).
+            is Feature3.Shell -> facePlane(feature.base, which)
         }
 
     // ---- side faces: the planar faces a boundary piece sweeps (OP-8 provenance, OP-17's frame) ----
@@ -3095,6 +3149,11 @@ object Geom3 {
             // deliberately not here, because the one thing that must not follow from this is a *prismatic*
             // reading of a rounded body — [prismatic] refuses one and this is not asked for it.
             is Feature3.Blend -> prismSpan(feature.base)
+            // The base's span, and for [sideFace]'s question only — *which plane a face is*. A shell does not
+            // move a wall, it hollows behind it, so the frame a sketch on a shelled part's side face is
+            // measured in must be the very frame it was measured in before (OP-18). As with the blend, this
+            // must not become a *prismatic* reading of a hollow body: [prismatic] refuses one.
+            is Feature3.Shell -> prismSpan(feature.base)
         }
 
     /**
@@ -3261,6 +3320,15 @@ object Geom3 {
                     "this solid is a blended body, so its horizontal cross-section is not one of the base's slabs — " +
                     "the rounding changes the area through the blend; cut it with a working plane instead, " +
                     "whose section of a dressed part is exact and offers inputs"
+            // The same sentence for the same reason, one feature over: the area at a height inside the cavity
+            // is a **wall ring**, not the base's area there, so answering with the base's slab would be a
+            // wrong area rather than a missing one. A working plane's section of a shelled part is exact and
+            // shows both walls ([Section3.sectionOf]).
+            is Feature3.Shell ->
+                return null to
+                    "this solid is a shelled body, so its horizontal cross-section is not one of the base's slabs — " +
+                    "the cavity takes the middle out of it; cut it with a working plane instead, whose section " +
+                    "of a shelled part is exact, shows both walls and offers inputs"
             is Feature3.Extrusion -> {
                 plane = feature.sketch.plane
                 // [Slab] is borrowed here as a plain (interval, areas) carrier and never escapes this

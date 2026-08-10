@@ -360,6 +360,26 @@ future extension it is. Two limits are stated rather than hidden: a corner where
 meet stays sharp, and a blend applied to a body that was **fused** with another one is a mesh body — it draws,
 measures, prints and exports, and its section offers no inputs.
 
+**Hollowing a solid to a wall thickness.** *Shell (open a face)* takes a wall thickness and one click on the
+body **on the face you want left open** — a cup, a box, a housing — and *Hollow (closed shell)* leaves the body
+closed all round, which is what a sealed vessel or a float wants. The cavity is the body's own profile stepped
+inward by the thickness, *exactly*: straight walls stay straight, round ones stay round, arcs offset to arcs, so
+nothing is approximated and the wall is that thickness everywhere. In the 3D view the face you open is the one
+your pointer is on; on a flat canvas it is the face you are looking at where you clicked, and that choice is
+recorded, so a reload never opens a different one. The thickness stays an ordinary parameter — retype it and the
+part re-hollows, feed one parameter to two shells and they stay equal *by construction*, bind it to `d/8` and it
+follows `d`.
+
+The result is a body with a **face list of its own**, exactly as a rounded one is: the outside is still there,
+still named, the face you opened becomes the wall's own **rim** (with the cavity's boundary as a hole in it),
+and the inner faces are added — so you can sketch on the outside, sketch on a **pocket floor**, drill a *Cut*
+through the wall, and a working plane's section of it shows **both** walls and offers both as inputs. What it
+declines, it declines by name and heals: a wall the body cannot host says so *and names the thickest that fits*,
+so the message is a number to type. Extruded bodies and bodies revolved the whole way round can be hollowed
+today; a partial revolve says why not (its wall would grow thicker with the radius), and a fused part, an
+imported mesh, a swept or lofted body and an already-rounded one each name the route that does work — shell the
+operands before fusing them, round the part after hollowing it, sweep a hollow section.
+
 **A helix — a spring, a coil, the path a thread runs on.** *Helix (centre, start point, right-hand)* and its
 left-hand twin take a rise per turn and — if you want more than one — a number of turns, then two clicks: the
 point the axis stands on, and the point the coil **starts** at. Those two clicks state the radius *and* where

@@ -106,6 +106,8 @@ import constructit.geom.RegionBool
 import constructit.geom.Revolve3
 import constructit.geom.Section3
 import constructit.geom.Segment
+import constructit.geom.Shell3
+import constructit.geom.Solid3
 import constructit.geom.SolidFace
 import constructit.geom.Stations3
 import constructit.geom.ThickBody
@@ -2416,6 +2418,13 @@ class Document {
         val whole = space.anchor?.let { (Evaluator().valueOf(it.ref) as? SolidValue)?.solid?.feature }
         val feature = whole?.let { Section3.undressed(it) }
         val piece = space.piece
+        // **The inside of a wall** (session 75) — asked first, because an inner face's address stands past the
+        // base's own ends and every sentence below would read it as one of those: a shelled revolve's inner
+        // faces are not the caps a partial turn has, and a shelled plate's pocket floor is not its own cap.
+        if (whole != null && Section3.facePatchOfFootprintPiece(whole, piece).first?.name is FaceName.ShellInner) {
+            return "the coordinates the footprint was drawn in, standing on the inside of this wall — so what you " +
+                "draw here lines up with the plan, one wall thickness in"
+        }
         if (feature is Feature3.Revolution) {
             val n = Geom3.boundaryPieces(feature).size
             if (piece >= n) {
@@ -11991,6 +12000,116 @@ class Document {
                 " — the ${kind.sizeWord} is an ordinary parameter, so retyping it re-rounds the body",
         )
         return el
+    }
+
+    /**
+     * **Hollow [solid] to a wall of [thickness]** (session 75): the shell, with the face the click named left
+     * open when [open], and closed when not ([Shell3]).
+     *
+     * **One walk, not two, and that is the difference from the blend.** A blend asks *whose edges am I naming*
+     * of the analytic body under the part and *what do I apply to* of the drawing's tip; a shell asks one
+     * question of one body, because its cavity is a function of the **whole** body being hollowed and a
+     * fused part's cavity is not one operand's (see `Construction.shell`). So [tipOfChain] applies — the
+     * sequential-feature rule OP-17 already states, so shelling after a Union hollows the fused part rather
+     * than forking the model — and where that tip has no offset profile of its own it refuses **by name**,
+     * naming the route that does work.
+     *
+     * The open face is **scored once and recorded** (OP-1/OP-18): in the 3D view by the pointer's own ray,
+     * through the face-pick seam edit-in-3D slice 2 built ([Section3.faceAt] — a ray hit resolved against the
+     * feature's own face list, never against a triangle's identity), and on a flat canvas by the same
+     * *nearest the eye* reading a blend's face pick uses ([faceUnderClick]). Whichever named it, the index goes
+     * into the step's `signs=` and every replay takes it verbatim.
+     */
+    fun shellSolid(
+        solid: Element,
+        thickness: ScalarRef,
+        open: Boolean,
+        at: Vec2,
+        view: PlaneProjection? = null,
+        signs: List<Int> = emptyList(),
+    ): Element? {
+        val what = if (open) "Shell" else "Hollow"
+        if (solid.kind != ElementKind.SOLID) {
+            note = "$what: ${nameOf(solid)} is ${kindWord(solid)}, not a solid — click the body you want hollowed"
+            return null
+        }
+        val ev = Evaluator()
+        val tipEl = tipOfChain(solid, ev) ?: solid
+        val body =
+            (ev.valueOf(tipEl.ref) as? SolidValue)?.solid ?: run {
+                note = "$what: ${nameOf(tipEl)} has no value right now, so there is nothing to hollow"
+                return null
+            }
+        Shell3.shellable(body.feature)?.let {
+            note = "$what: ${nameOf(tipEl)} — $it"
+            return null
+        }
+        // the face the note names, filled in by the open row and unread by the closed one
+        var openLabel = "a face"
+        val openFaces =
+            if (!open) {
+                emptyList()
+            } else {
+                val face =
+                    signs.getOrNull(0) ?: run {
+                        val (i, why) = faceForOpening(body, at, view, ev)
+                        i ?: run {
+                            note = "$what: ${nameOf(tipEl)} — $why"
+                            return null
+                        }
+                    }
+                Shell3.openFaceRefusal(body.feature, face)?.let {
+                    note = "$what: ${nameOf(tipEl)} — $it"
+                    return null
+                }
+                openLabel = Section3.faces(body.feature).first?.getOrNull(face)?.name?.label ?: "a face"
+                listOf(face)
+            }
+        val el = add(cx.shell(tipEl.ref as SolidRef, thickness, openFaces), ElementKind.SOLID, Styles.SOLID)
+        el.space = tipEl.space
+        registerSigns(el, openFaces)
+        madeSolid(
+            el,
+            "${nameOf(tipEl)} hollowed to a wall of ${lengthWord(thickness)}" +
+                (if (open) ", with $openLabel left open" else ", closed all round") +
+                " — the wall thickness is an ordinary parameter, so retyping it re-hollows the body",
+        )
+        return el
+    }
+
+    /**
+     * Which face of [body] a shell is to open, from the click at [at] — **the ray's answer where a 3D view is
+     * driving, the flat picture's where one is not**, as an index into [Section3.faces].
+     *
+     * The ray is asked first for the reason edit-in-3D slice 2 records: depth is evidence the flat pictures do
+     * not have, and the face somebody is looking at is the face they clicked. The seam is the feature's own —
+     * `Section3.faceAt` resolves a hit *point* against the analytic face list, so the answer cannot move with
+     * the mesh quality, which is exactly what lets it be recorded as a durable choice (OP-1/OP-18). Without a
+     * ray (the 2D canvas) the reading is the blend's: the flat face the click falls within as this space looks
+     * at the body, or the face the rim it landed on is seen from.
+     */
+    private fun faceForOpening(
+        body: Solid3,
+        at: Vec2,
+        view: PlaneProjection?,
+        ev: Evaluator,
+    ): Pair<Int?, String?> {
+        val feature = body.feature
+        val ray = view?.eyeRay(at)
+        if (ray != null) {
+            val t = Geom3.rayMesh(ray, body.mesh)
+            if (t != null) {
+                val (pick, why) = Section3.faceAt(feature, ray.at(t), ray.dir, Geom3.meshSag(body.mesh))
+                if (pick == null) return null to why
+                val faces = Section3.faces(feature).first ?: return null to why
+                val i = faces.indexOfFirst { it.name == pick.patch.name }
+                return if (i >= 0) i to null else null to "${pick.patch.name.label} is not a face this body can open"
+            }
+        }
+        val from =
+            (ev.valueOf(planeOfSpace(activeSpace.name)) as? PlaneValue)?.plane
+                ?: return null to "${activeSpace.name} has no value right now, so there is nothing to click on"
+        return faceUnderClick(feature, from, at)
     }
 
     /**

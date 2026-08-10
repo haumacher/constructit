@@ -15767,12 +15767,16 @@ revolution's rings and an extrusion's uprights, but nothing yet says "these two 
 for an arbitrary pair. That, not the surfaces, is now the first missing piece.)* *(Session 71 queues **and delivers** the
 blends whole — the mechanism settled in discussion and adopted, the 2D fillet run in the edge's own moving
 normal section, all three slices shipped including the dress-up feature that keeps a blended body's face
-addresses — see the numbered entry at the queue's tail and the three as-built notes under it; shelling, draft
+addresses — see the numbered entry at the queue's tail and the three as-built notes under it; draft
 and text below stay parked here.)*;
-and **shelling** to a stated wall thickness, since a real member is hollow (0.8–15% of its bounding box) and
-the only route today is subtracting a hand-built inner solid. **Draft** follows them and is meaningless
-before them. Also named: **text as geometry** (part marking, serial plates, signage) — a general capability,
-absent, and independent of everything else here.
+and ~~**shelling** to a stated wall thickness, since a real member is hollow (0.8–15% of its bounding box) and
+the only route today is subtracting a hand-built inner solid~~ — **delivered in session 75; the sentence
+retires.** A wall is now a stated thickness on a body of the constant-offset tier and the hand-built inner
+solid is gone (see queue entry 5 and *Shelling to a stated wall thickness, as built* at the queue's tail).
+**Draft** follows them and is meaningless before them — and, both siblings being built, it is now the next of
+these three and **stays parked here, stated**, with nothing else in front of it. Also named: **text as
+geometry** (part marking, serial plates, signage) — a general capability, absent, and independent of
+everything else here.
 
 **Queued in session 51 (user-directed, in this order):**
 
@@ -17043,13 +17047,15 @@ After the bug batch and the pattern entry above, in this order:
    it: **slice 3** (the cross-space boolean gesture in the 3D view; datum and loft-section placement as 3D
    clicks) and **appearance Tier 3** (per-face material assignment) — one mechanism, three consumers,
    exactly as recorded.
-5. **Shelling to a stated wall thickness.** Named in session 37 beside the blends ("a real member is
+5. **Shelling to a stated wall thickness — done, session 75; see *Shelling to a stated wall thickness, as
+   built* at this queue's tail.** Named in session 37 beside the blends ("a real member is
    hollow — 0.8–15% of its bounding box — and the only route today is subtracting a hand-built inner
    solid"), and the blends were the harder sibling. The same constant-offset tier that made the blend
    analytic gives shelling its first honest tier: an offset profile for the prismatic walls, offset caps,
    the typed-surface vocabulary for what can be said exactly and a refusal by name for what cannot —
    face lists extending rather than forking, `assertManifold` everywhere. **Draft** stays behind it, as
-   the session-37 note ordered ("follows them and is meaningless before them").
+   the session-37 note ordered ("follows them and is meaningless before them"), and is now the next of
+   that trio with nothing in front of it.
 6. **The expression follow-ups, riding alongside (small).** (a) **Named coordinates**: the scalar half's
    first cut — `P.x = w/2` needs the naming authority extended to coordinates, not more expression
    machinery; the first thing an expression user reaches for. (b) **An expression-valued domain** for
@@ -17096,3 +17102,132 @@ session 11 — **angles under a turned frame**: bind a polar offset's bearing an
 `frameAngle(frame) + local` so they turn with a placed group (needs a frame-angle accessor and a decision
 about which space the panel's number is in), plus imposing the along-line rider form at capture time so a
 rider on an axis-aligned host is rigid under rotation as well (both in the OP-16 note).
+
+### Shelling to a stated wall thickness, as built (session 75 — queue entry 5 closed)
+
+The session-37 sentence this closes: *"a real member is hollow (0.8–15% of its bounding box) and the only route
+today is subtracting a hand-built inner solid."* The hand-built inner solid is gone. What replaced it is the
+blends' own machinery read one level up: a blend takes a strip of **constant width** off one face, and a shell
+takes a wall of **constant thickness** off a whole profile — the same offset, the same exactness argument, and
+now literally the same code.
+
+**The mechanism, per feature kind.** The cavity is the base *offset inward by `t`*, stated as a feature of the
+base's own kind, and that is exact at this tier (OP-15: an offset of a line is a line, of an arc an arc):
+
+- An **extrusion**'s cavity is the offset profile extruded from `t` above the bottom cap to `t` below the top
+  (`Shell3.extrusionCavity`). Both operands are then prisms on one axis, so `Geom3.combine` takes the **exact
+  slab algebra** (OP-22) and the plate's figures are exact rather than banded.
+- A **complete revolution**'s cavity is the offset meridian revolved through the same turn
+  (`Shell3.revolutionCavity`). The operands share no axis the predicate can see, so the triangles come off the
+  general engine, and the cup's volume is asserted as an *inscribed* band with the direction stated.
+- The offset itself is `GeomMath.offsetCycle` — **extracted from `Blend3`**, which now calls it: each piece
+  onto its own carrier, every corner re-solved as an ordinary intersection (line/line, line/circle,
+  circle/circle), nothing sampled and nothing fitted. Inward is the piece's **left**, so one sign erodes an
+  outer ring and grows a hole (OP-14's normalisation doing the work); the codes it returns are wordless and
+  each caller keeps its own sentences (session 65's rule).
+- Two pieces are deliberately **not** offset, and both are structural rather than value-driven: a piece whose
+  face the shell leaves **open**, and a piece that sweeps **no surface at all** (a revolve profile edge lying on
+  the axis — a wall there would have bored a hole down the middle of the cup). So *"face #3 is open"* is
+  *"piece 3 keeps its carrier"*, with no case per feature and no mapping table.
+
+**The feature: `Feature3.Shell(base, thickness, openFaces)`, the dress-up sibling of `Feature3.Blend`.** Its
+face list *extends* the base's, which is the whole reason it is a feature and not the mesh boolean it would
+otherwise have been:
+
+- **Nothing renumbers and nothing drops out.** Face `i` of the base is face `i` of the shell — a shell moves no
+  face at all, so the outer entries are the base's own patches verbatim — and the **inner twin** of face `i` is
+  entry `faces(base).size + i` (`FaceName.ShellInner`). Outer→inner is therefore arithmetic, not a search.
+- **The open face keeps its index and becomes the rim.** Decided against the two alternatives: dropping it
+  would renumber (OP-21's law), and keeping it with only a *reason* would deny a face the body actually has —
+  after opening the top of a plate the material there is the wall's own rim, a planar face with a hole in it,
+  and it is exactly the base's outline plus the cavity's coincident boundary **reversed**. So it is stated, and
+  a sketch on the rim of a cup works. The *twin* of an open face is where the reason lives ("face #6 is open,
+  so there is no wall behind it"), because there is no wall behind an opening.
+- **The inner faces need no new address space.** They are `ShellInner`, hence not "over a footprint piece",
+  hence *ends* — so `Section3.FACE_ADDRESS_CONVENTION` reaches them unchanged, the base's own caps keep the
+  addresses they had, and every address the inner faces take was a **refusal** before, so no stored byte
+  changes meaning (OP-18). A pocket floor is therefore a face a sketch opens on, in the footprint's own
+  coordinates, at a stable index. `addressOfFace` needed **no** shell case at all; `facePatchOfFootprintPiece`
+  needed one line to route addresses past the base's ends to the shell's own list.
+- **The edge list extends too, and a shell consumes no edge** — the one clean difference from the blend, and a
+  fact rather than a choice: hollowing takes material from behind the faces and leaves every outer crease
+  where it was. So no entry carries a *rounded away* reason; the cavity's own edges append
+  (`EdgeName.ShellInner`), and the adjacency of the rim's inner boundary names the **rim** rather than a face
+  that is not there.
+- **The mesh is the boolean, restated** (`Solid3.restated`, slice 3's precedent): one mesh, two statements of
+  one body. The alternative — a native emitter stitching outer walls, inner walls and rims into one shell —
+  would make the body exact end to end and would mean a second emitter per feature kind to keep in step with
+  the first; rejected on doctrine, since the mesh is a **sink** (OP-9) and nothing structural is ever read back
+  out of it. Named as a future extension with a clear boundary.
+- A section of a shelled body **cuts as its base plus its cavity**: an outer face through the base's own exact
+  readings, an inner face by asking the *cavity* the same question one feature along (`Shell3.cavityFace`), the
+  answer restated in the shell's words. So a working plane's section shows **both** walls, exactly, and offers
+  both as inputs.
+
+**The gesture: two rows, and the open-vs-closed choice is structural.** *Shell (open a face)* and *Hollow
+(closed shell)* — the blends' four-row precedent one granularity down: whether the shell has an opening is a
+*statement*, not a reading of where a click landed, and the row a gesture used is the most durable thing a step
+can carry (OP-18). The alternative considered was one row that shells closed when the click finds no face; it
+was rejected because a mis-click is then indistinguishable from an intention. The open face is **scored once**
+and recorded in the step's `signs=` as the face-list index — the blend's own precedent — resolved either by the
+pointer's **ray** in the 3D view (`Section3.faceAt`, the session-74 seam, consumed here by the feature that knew
+nothing about it: depth is the evidence a flat picture has not, and a turned part's top disc has no drawing in
+the plan at all) or, on a flat canvas, by the same *nearest the eye* reading a blend's face pick uses. Nothing
+is re-scored on replay.
+
+**`tipOfChain` applies, and there is deliberately no second tier.** A blend has one — applied after an ordinary
+boolean it addresses the analytic body underneath and cuts the tip — because a rounding is local to an edge that
+survives the fusion. A shell's cavity is a function of the **whole** body being hollowed, so hollowing a fused
+part with one operand's cavity would leave a wall that is nowhere near one thickness. So the tip is addressed
+*and* hollowed, and a tip with no offset profile of its own refuses **by name** rather than forking the model
+(`ShellToolTest.aFusedPartRefusesByNameRatherThanForking`).
+
+**Honesty: the thickness that fits, and every refusal by name.** A thickness the body cannot host names the
+thickest that *does*, by halving (`Shell3.largestFitting`, the blends' precedent) — and it heals when a smaller
+one is typed. The geometric refusals are a piece consumed by the offset, two carriers that no longer meet, caps
+that would meet in the middle, a ring turned inside out, and an offset that leaves the profile
+(`Shell3.insideBase` — a sampled guard, and it says so: an offset that leaves the profile and returns within one
+chord is not caught there, which the consumption test and the boolean's own refusal stand behind). The kind gate
+refuses **before any geometry is made** and several of its sentences are constructive: shell the operands
+*before* fusing them, round the part *after* hollowing it, sweep a **hollow section**, revolve the whole way
+round.
+
+**Cuts, each whole, each named, none silent.** (1) **A partial revolve** — the inset from a radial cap is an
+*angular* one, whose wall grows thicker with the radius, so it would not be the thickness anybody typed;
+refused with that reason, and a future extension. (2) **A prism** (the exact boolean's own result) — a shell of
+one needs the slab stack's own erosion; `prismatic` therefore also refuses a *shelled* body, so a boolean
+against one takes the general engine and never the exact algebra, which is the blend's rule read the other way
+round (a predicate that lied there would hand the slab algebra a body that is not the body). (3) **A sweep, a
+loft, a general boolean's mesh, an import, a blended body, a shell of a shell** — each refused in its own words.
+(4) **A profile piece that is a spline, an ellipse or a function curve** — its offset is not a curve this
+drawing states exactly, so the shell declines rather than approximating (OP-15's line, held); told apart in the
+message from **an arc the wall has eaten** (a wall thicker than the corner it runs round), which is a *size* and
+therefore names the thickest that fits — the offset would have to **drop** the vanished piece, and the piece
+count is the face list's own index space (OP-21), so dropping one is a future extension rather than a silent
+renumber. (5) **A rim that
+cannot be stated** — an open face that is not a plane, or whose cavity twin is not: the index stays and the
+reason says so, the blend's own fallback. (6) **Variable-thickness shells** and **a live preview**: not built,
+parked by name. (7) `Geom3.sectionAt` — the *prismatic* horizontal cut — refuses a shelled body by name, because
+the area at a height inside the cavity is a wall ring and not the base's area there; the working plane's section
+is the exact reading that does work, and the refusal points at it.
+
+**What it buys, which is the acceptance and not the plumbing.** A 40×30×20 plate shelled to 3 mm with its top
+open measures `40·30·20 − 34·24·17` **exactly**; closed, `40·30·20 − 34·24·14`; opening a *side* face leaves a
+window in that wall and the wall itself becomes a frame; both caps open is a tube. A turned cup is the annular
+wall plus its floor, and its inner wall is a **typed** cylinder of radius `R − t` (`Surface3`, measured off the
+feature). A shelled body's outer face still answers a 3D pick with its stored address, a sketch opens on a wall
+of it, and a Cut drilled from that face takes the wall's own thickness and no more. The wall is an ordinary
+parameter: one parameter feeds two shells, and one bound to `d/8` follows `d`.
+
+Tests: `ShellTest` (21) — the two exact plate figures, the side-face window, the tube, the round wall whose
+bore is still a circle of `R − t`, the rounded corner that offsets to `R − t` (and the wall thicker than it,
+refused as a consumption), the bored plate whose hole is walled by **growing** it, the face list's
+extension and its inner twins, an inner face's stored address, the 3D face pick, a section showing both walls,
+the cup's volume and its typed inner cylinder, the thickness that fits (and the heal), a positive thickness, the
+partial revolve's refusal, every kind outside the tier, the edge list's extension, a face that sweeps nothing,
+`undressed`, and the base's own plan. `ShellToolTest` (12) — the two rows, the refusal that heals at the
+gesture, one parameter driving two shells, a thickness bound to `d/8`, the byte-equal round trip and one undo,
+the closed row recording no choice at all, the stored open face taken verbatim after a drag that would now score
+nothing, a sketch and a Cut through the wall, the face picked in the 3D view (and the bottom face picked from
+below), the fused part's refusal, and a turned cup shelled by the same gesture. `assertManifold` runs on every
+body in every one of them.

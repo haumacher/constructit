@@ -90,6 +90,7 @@ import constructit.geom.Ray
 import constructit.geom.Region
 import constructit.geom.Section3
 import constructit.geom.Segment
+import constructit.geom.Shell3
 import constructit.geom.Silhouette
 import constructit.geom.Sketch3
 import constructit.geom.Solid3
@@ -3120,6 +3121,54 @@ class Construction {
             EvalResult.Ok(SolidValue(dressed))
         }
     }
+
+    // ---- shelling: a wall of a stated thickness, hollowed out by construction (session 75) ----
+
+    /**
+     * [base] **hollowed to a wall of [thickness]**, with the faces [openFaces] names left open ([Shell3]).
+     *
+     * One node for the whole feature, exactly as an extrude is one, and both its inputs are nodes: retype the
+     * thickness and the wall changes with nothing rebuilt; edit anything the body is built from and the shell
+     * follows it. **The thickness is an ordinary parameter**, so *"the same wall everywhere on this part"* is
+     * one parameter feeding many shells — equality by sharing, the no-solver stance's own answer — and it is
+     * expression-bindable like any other scalar (`d/8` is a test of this).
+     *
+     * [openFaces] is **structure**, not a value: which face the click named is a discrete choice scored once
+     * and thereafter taken verbatim from the step's `signs=` (OP-1/OP-18). Re-scoring it on replay would open a
+     * different face as soon as an edit slid the body under the recorded click, which is the fillet's own
+     * lesson two features back.
+     *
+     * **There is no second tier here, and that is a decision** (see DESIGN.md, session 75). A blend has one —
+     * a blend applied *after* an ordinary boolean addresses the analytic body under the part and cuts the tip —
+     * because a rounding is a local operation on an edge that survives the fusion. A shell is not: its cavity
+     * is a function of the *whole* body being hollowed, so hollowing a fused part with one operand's cavity
+     * would leave a wall that is nowhere near one thickness. The tip is therefore addressed **and** hollowed,
+     * and a tip with no offset profile of its own refuses by name ([Shell3.shellable]) rather than quietly
+     * shelling something else.
+     *
+     * Invalid with a reason that heals (OP-3) for everything geometric — the thickness the body cannot host
+     * names the thickest that fits, and a face the cavity cannot open says why.
+     */
+    fun shell(
+        base: SolidRef,
+        thickness: ScalarRef,
+        openFaces: List<Int>,
+    ): SolidRef =
+        op(base, thickness) {
+            val body = (it[0] as SolidValue).solid
+            openShellOf(body)?.let { why -> return@op EvalResult.Invalid(why) }
+            val t = sc(it[1]).requireDim(Dimension.LENGTH, "wall thickness").mm
+            val (out, why) = Shell3.shelled(body, t, openFaces)
+            if (out == null) return@op EvalResult.Invalid(why ?: "cannot hollow this body")
+            // **The dress-up feature**: the triangles are the boolean's, restated under the analytic shell and
+            // sharing the very same derivation ([Solid3.restated]) — one mesh, two statements of one body. It
+            // must still say why if the shelled face list cannot be stated, or a body would claim faces it
+            // cannot produce and every reader downstream would meet the refusal instead of this node (OP-3).
+            val f = Feature3.Shell(body.feature, t, openFaces)
+            val (faces, whyFaces) = Section3.faces(f)
+            if (faces == null) return@op EvalResult.Invalid(whyFaces ?: "this shell has no faces to name")
+            EvalResult.Ok(SolidValue(out.restated(f)))
+        }
 
     /** Everything in either [a] or [b] (OP-22). */
     fun union(

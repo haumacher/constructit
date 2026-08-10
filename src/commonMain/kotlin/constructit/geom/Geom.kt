@@ -412,6 +412,152 @@ object GeomMath {
         ccw: Boolean,
     ): Loop = if ((signedArea(loop) >= 0.0) == ccw) loop else reverseLoop(loop)
 
+    // ---- the constant offset of a boundary, exactly (OP-15's exact tier) ----
+    //
+    // **The one piece of arithmetic two features share** (session 71's blend slice 3, session 75's shell).
+    // An offset of a line is a line and an offset of an arc is an arc, so a boundary made of those two moves
+    // *inward by a constant* with nothing sampled and nothing fitted: each piece is restated on its own
+    // offset carrier and every corner is re-solved as an ordinary intersection — line against line, line
+    // against circle, circle against circle. The blend takes a strip of constant width off a face
+    // ([Blend3]); a shell takes a wall of constant thickness off a whole profile ([Shell3]). Both are that
+    // sentence, so the sentence lives here once and each caller keeps its **own words** for the refusals
+    // (session 65's rule: a refusal speaks of the thing the user made).
+
+    /** How short a piece may get (mm) before the offset has consumed it rather than shortened it. */
+    const val CARRIER_EPS = 1e-7
+
+    /**
+     * The offset **carrier** of one boundary piece: `(line, null)` for a straight run, `(null, circle)` for
+     * an arc or a circle — and null where the piece is neither, or the offset consumes its radius.
+     *
+     * **Inward is the piece's left**, which on a normalised loop (OP-14 — outer counter-clockwise, holes
+     * clockwise) is the material's own side. So one sign serves a region's outer boundary and its holes
+     * alike: a positive [d] erodes the area either way, which is exactly what a wall thickness means.
+     */
+    fun offsetCarrier(
+        e: ProfileElement,
+        d: Double,
+    ): Pair<Line?, Circle?>? =
+        when (e) {
+            is ProfileElement.Seg -> {
+                val v = e.segment.b - e.segment.a
+                if (v.length() <= Vec2.EPS) {
+                    null
+                } else {
+                    val dir = v.normalized()
+                    Line(e.segment.a + dir.perp() * d, dir) to null
+                }
+            }
+            is ProfileElement.ArcE -> {
+                val r = e.arc.radius + (if (e.arc.ccw) -d else d)
+                if (r <= CARRIER_EPS) null else null to Circle(e.arc.center, r)
+            }
+            is ProfileElement.CircleE -> {
+                val r = e.circle.radius + (if (e.ccw) -d else d)
+                if (r <= CARRIER_EPS) null else null to Circle(e.circle.center, r)
+            }
+            else -> null
+        }
+
+    /** Where two carriers meet, taking the solution nearest the corner they replace. */
+    fun carrierJunction(
+        a: Pair<Line?, Circle?>,
+        b: Pair<Line?, Circle?>,
+        near: Vec2,
+    ): Vec2? {
+        val pts =
+            when {
+                a.first != null && b.first != null -> intersectLL(a.first!!, b.first!!).points
+                a.first != null && b.second != null -> intersectLC(a.first!!, b.second!!).points
+                a.second != null && b.first != null -> intersectLC(b.first!!, a.second!!).points
+                a.second != null && b.second != null -> intersectCC(a.second!!, b.second!!).points
+                else -> emptyList()
+            }
+        return pts.minByOrNull { (it - near).length() }
+    }
+
+    /**
+     * One piece restated on its (possibly offset) [carrier] between two re-solved corners — null when the
+     * offset **consumed** it: a straight run whose direction reversed, an arc with no carrier left.
+     */
+    fun onCarrier(
+        e: ProfileElement,
+        carrier: Pair<Line?, Circle?>,
+        from: Vec2,
+        to: Vec2,
+    ): ProfileElement? =
+        when (e) {
+            is ProfileElement.Seg -> {
+                val was = (e.segment.b - e.segment.a)
+                val now = to - from
+                if (now.length() <= CARRIER_EPS || now.dot(was) <= 0.0) null else ProfileElement.Seg(Segment(from, to))
+            }
+            is ProfileElement.ArcE -> {
+                val c = carrier.second
+                if (c == null) null else ProfileElement.ArcE(Arc(c.center, c.radius, (from - c.center).angle(), (to - c.center).angle(), e.arc.ccw))
+            }
+            else -> null
+        }
+
+    /**
+     * The **cyclic** chain [pieces] with each piece stepped onto its own offset carrier by [offsets] and
+     * every corner re-solved — the whole of the exact offset, in one function because a ring and a face's
+     * boundary chain want the very same arithmetic.
+     *
+     * Returns `null to code` with one of [OFFSET_NOT_A_CARRIER], [OFFSET_NO_JUNCTION] or
+     * [OFFSET_CONSUMED] — a **code, not a sentence**, because the caller says what was being offset and
+     * therefore owns the wording. A piece with offset `0` keeps its own carrier and is merely re-trimmed by
+     * its neighbours, which is how a shell leaves one face **open** and how a blend touches one piece of a
+     * ring without moving the rest.
+     */
+    fun offsetCycle(
+        pieces: List<ProfileElement>,
+        offsets: List<Double>,
+    ): Pair<List<ProfileElement>?, String?> {
+        val carriers = pieces.mapIndexed { k, e -> offsetCarrier(e, offsets[k]) }
+        // A missing carrier is two different facts and they must not share a sentence: a piece of a **kind**
+        // this offset cannot state (a spline, an ellipse, a function curve), or a perfectly good arc whose
+        // radius the offset has **eaten** — a wall thicker than the corner it runs round. The second is a size
+        // and heals, so it is reported as a consumption, which is what names the number to type.
+        for (k in pieces.indices) {
+            if (carriers[k] != null) continue
+            return null to if (statable(pieces[k])) OFFSET_CONSUMED else OFFSET_NOT_A_CARRIER
+        }
+        val n = pieces.size
+        if (n == 1) {
+            // a ring of one piece — a circle — has no corner to re-solve, so the offset **is** the answer
+            val c = carriers[0]!!.second ?: return null to OFFSET_NOT_A_CARRIER
+            val ccw = (pieces[0] as? ProfileElement.CircleE)?.ccw ?: true
+            return listOf(ProfileElement.CircleE(c, ccw)) to null
+        }
+        val corners = ArrayList<Vec2>(n)
+        for (k in 0 until n) {
+            val q = carrierJunction(carriers[k]!!, carriers[(k + 1) % n]!!, endOf(pieces[k]))
+            corners.add(q ?: return null to OFFSET_NO_JUNCTION)
+        }
+        val out = ArrayList<ProfileElement>(n)
+        for (k in 0 until n) {
+            val rebuilt =
+                onCarrier(pieces[k], carriers[k]!!, corners[(k + n - 1) % n], corners[k])
+                    ?: return null to OFFSET_CONSUMED
+            out.add(rebuilt)
+        }
+        return out to null
+    }
+
+    /** Whether [e] is a piece whose constant offset this vocabulary states exactly: a run, an arc, a circle. */
+    fun statable(e: ProfileElement): Boolean =
+        e is ProfileElement.Seg || e is ProfileElement.ArcE || e is ProfileElement.CircleE
+
+    /** [offsetCycle]: a piece beside the offset one is neither a straight run nor an arc. */
+    const val OFFSET_NOT_A_CARRIER = "not-a-carrier"
+
+    /** [offsetCycle]: two offset carriers do not meet, so a corner has no solution. */
+    const val OFFSET_NO_JUNCTION = "no-junction"
+
+    /** [offsetCycle]: a piece is consumed at that offset rather than shortened by it. */
+    const val OFFSET_CONSUMED = "consumed"
+
     /**
      * Chain [parts] into a closed loop, in the order given.
      *

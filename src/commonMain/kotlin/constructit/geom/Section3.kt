@@ -65,6 +65,19 @@ sealed interface FaceName {
     data class BlendBand(val edge: Int) : FaceName {
         override val label: String get() = "the rounded band along edge #${edge + 1}"
     }
+
+    /**
+     * The **inner twin** of one face of a shelled body (session 75): the cavity's own face standing behind
+     * face [face] of the base, at the wall's thickness.
+     *
+     * [face] is the index of the outer face in the base's own [Section3.faces] order — which is *also* this
+     * feature's order for it ([Feature3.Shell] keeps every base index) — so the one number names both walls
+     * of one wall. That is what makes outer→inner a **structural** mapping rather than a search: the inner
+     * twin of face `i` is the entry at `faces(base).size + i`.
+     */
+    data class ShellInner(val face: Int) : FaceName {
+        override val label: String get() = "the inner face behind face #${face + 1}"
+    }
 }
 
 /**
@@ -120,6 +133,19 @@ sealed interface EdgeName {
      */
     data class BlendRail(val edge: Int, val side: Int) : EdgeName {
         override val label: String get() = "tangent rail #${side + 1} of the rounded band along edge #${edge + 1}"
+    }
+
+    /**
+     * The **inner twin** of one edge of a shelled body (session 75): where the cavity's two faces behind
+     * [edge] meet.
+     *
+     * [edge] is the index of the outer edge in the base's own [Section3.edges] order, for
+     * [FaceName.ShellInner]'s reason and by the same structural mapping — the inner twin of edge `i` is the
+     * entry at `edges(base).size + i`. An edge the cavity does not have (a corner of an **open** face, whose
+     * inner twin is the rim's own inner boundary) keeps its index and states that instead.
+     */
+    data class ShellInner(val edge: Int) : EdgeName {
+        override val label: String get() = "the inner edge behind edge #${edge + 1}"
     }
 }
 
@@ -415,6 +441,10 @@ object Section3 {
             // corrected where the blend consumed an edge, one band appended per blended edge. The blend owns
             // that arithmetic, so it is stated once in [Blend3] and read from here.
             is Feature3.Blend -> Blend3.dressedFaces(feature)
+            // **The shelled list** (session 75): the base's faces at their own indices — an open one carrying
+            // the cavity's boundary as a hole, which is the rim it actually is — followed by the inner twin of
+            // every one of them. The shell owns that arithmetic, so it is stated once in [Shell3].
+            is Feature3.Shell -> Shell3.faces(feature)
         }
 
     /**
@@ -441,6 +471,10 @@ object Section3 {
             // A dressed part's faces are whole exactly when its base's are: the blend replaces a strip of two
             // faces with a band it appends, so nothing leaves the shell and nothing is added outside it.
             is Feature3.Blend -> facesAreWholeBoundary(feature.base)
+            // A shelled part's faces are whole exactly when its base's are: the outer boundary is the base's,
+            // the inner one is the cavity's, and there is nothing else — which is what lets a working plane's
+            // section of a hollow body be assembled from its named faces and show both walls.
+            is Feature3.Shell -> facesAreWholeBoundary(feature.base)
         }
 
     /**
@@ -451,12 +485,21 @@ object Section3 {
      * (`Document.capUnder`). Everything about the faces themselves goes through [faces], which corrects
      * them; this is only for the questions the dressing does not change.
      */
-    fun undressed(feature: Feature3): Feature3 = if (feature is Feature3.Blend) undressed(feature.base) else feature
+    fun undressed(feature: Feature3): Feature3 =
+        when (feature) {
+            is Feature3.Blend -> undressed(feature.base)
+            // A shell is a dressing by the same test: it takes material away behind the faces and moves none
+            // of them, so a shelled revolve is still a revolve for every question that is about *which kind of
+            // body this is* rather than about its faces (session 75).
+            is Feature3.Shell -> undressed(feature.base)
+            else -> feature
+        }
 
     /** Why a general section of [feature] cannot name its faces, or null when it can. */
     fun structuralRefusal(feature: Feature3): String? =
         when (feature) {
-            is Feature3.Extrusion, is Feature3.Loft, is Feature3.Revolution, is Feature3.Blend -> faces(feature).second
+            is Feature3.Extrusion, is Feature3.Loft, is Feature3.Revolution, is Feature3.Blend, is Feature3.Shell ->
+                faces(feature).second
             is Feature3.Prism -> PRISM_ONLY
             is Feature3.MeshBoolean -> MESH_ONLY
             is Feature3.Imported -> IMPORT_ONLY
@@ -876,6 +919,8 @@ object Section3 {
             // the dressed list: every base edge at its own index (a consumed one flagged with its reason and
             // never removed), then two tangent rails appended per blended edge — see [Blend3.dressedEdges]
             is Feature3.Blend -> Blend3.dressedEdges(feature)
+            // the base's edges at their own indices, then the cavity's own, appended — [Shell3.edges]
+            is Feature3.Shell -> Shell3.edges(feature)
         }
 
     /**
@@ -1064,6 +1109,20 @@ object Section3 {
             val trimmed =
                 faces(feature).first?.firstOrNull { it.name == base.name && it.plane != null && it.plane == base.plane }
             return (if (trimmed == null) base else base.copy(outline = trimmed.outline)) to null
+        }
+        // **A shelled part is sketched on exactly where its base was**, and its *inner* faces are reached past
+        // the base's own ends by the very address space that already reaches a cap (session 75, and
+        // [FACE_ADDRESS_CONVENTION] unchanged): a shell's face list is base-then-inner, so the base's ends keep
+        // their addresses and the inner faces take the ones after them — every one of which was a refusal
+        // before, so no stored byte changes meaning (OP-18). A side face's frame stays the base's, with the
+        // shell's own outline where the two frames are the same plane (the rim's hole).
+        if (feature is Feature3.Shell) {
+            if (piece >= Geom3.boundaryPieces(feature).size) return endFacePatch(feature, piece)
+            val (base, why) = facePatchOfFootprintPiece(feature.base, piece)
+            if (base == null) return null to why
+            val shelled =
+                faces(feature).first?.firstOrNull { it.name == base.name && it.plane != null && it.plane == base.plane }
+            return (if (shelled == null) base else base.copy(outline = shelled.outline)) to null
         }
         // A revolution's face is the band its profile piece sweeps, and indices past the profile's own
         // pieces are the two caps of a partial turn ([Revolve3.facePatchOf]) — one address space, so a
@@ -1577,6 +1636,21 @@ object Section3 {
             Blend3.bandCut(feature, n.edge, cut)?.let { return bandCutToEdge(label, it) }
             val strip = Blend3.bandStrip(feature, n.edge)
             if (strip != null) return cutRuledStrip(label, strip, cut)
+            return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
+        }
+        // **A shelled part cuts as its base plus its cavity** (session 75), which is slice 3's sentence with
+        // one word changed. An outer face is the base's own surface, so the base's exact readings answer it
+        // verbatim; an **inner** face is the *cavity's* own surface, so it is cut by asking the cavity — the
+        // same table, the same frame, one feature along — and the answer is restated in the shell's words.
+        if (feature is Feature3.Shell) {
+            val n = patch.name
+            if (n !is FaceName.ShellInner) return cutFace(feature.base, patch, cut)
+            val inner = Shell3.cavityFace(feature, n.face)
+            if (inner != null) {
+                val (cavity, cavPatch) = inner
+                val (edge, extra) = cutFace(cavity, cavPatch, cut)
+                return SectionEdge(label, edge.curve, edge.sampled, edge.reason?.replace(cavPatch.name.label, label)) to extra
+            }
             return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
         }
         // a revolution's bands have their own dispatch, decided by the plane's relation to the axis before
