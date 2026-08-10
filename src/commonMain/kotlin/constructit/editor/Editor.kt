@@ -442,6 +442,55 @@ class Editor(
     fun selectedPattern(): Pattern? = selectedElements.firstNotNullOfOrNull { doc.patternOf(it) }
 
     /**
+     * The **ride** the current selection addresses, when what it names is a count of that gesture's own
+     * (#18) — a nested pattern's, the sides of every polygon of a ring of polygons.
+     *
+     * The rule the whole re-stamp UI reads: *the selection names the innermost rule it belongs to.* A polygon's
+     * own geometry was built by the ride, so it names the ride's count; the ring the polygons sit on is reached
+     * by clicking a ring member, which the ride did not build. That is the same "more specific wins" the canvas
+     * already applies to a circle's centre against its outline.
+     */
+    fun selectedRide(): OrbitGesture? = selectedElements.firstNotNullOfOrNull { el -> doc.ridesOf(el).firstOrNull { it.count > 0 && doc.journal.any { s -> s === it.step } } }
+
+    /**
+     * **Re-stamp the count [g] carries** at [n] — a nested pattern's own count, and every copy of the ride
+     * with it (#18).
+     *
+     * The same journal rewrite [setPatternCount] is, with the literal being the ride's `count=` instead of a
+     * pattern step's: each level's count lives in its own step, so re-running the script *is* the update at
+     * every depth. Refused before anything happens when the tool itself would not accept the number.
+     */
+    fun setRideCount(
+        g: OrbitGesture,
+        n: Int,
+    ): Boolean {
+        val why = doc.gestureCountRefusal(g, n)
+        if (why != null) {
+            statusHint = why
+            changed()
+            return false
+        }
+        val was = g.count
+        val label = g.label
+        val at = doc.journal.indexOfFirst { it === g.step }
+        val result =
+            try {
+                DocumentFormat.restampRide(DocumentFormat.save(doc), at, g.pattern.name, n)
+            } catch (e: Exception) {
+                statusHint = "Re-stamp failed: ${e.message}"
+                changed()
+                return false
+            }
+        val (fresh, notes) = result
+        adopt(fresh)
+        checkpoint()
+        val lost = if (notes.isEmpty()) "" else " — ${notes.first()}${if (notes.size == 1) "" else " (and ${notes.size - 1} more)"}"
+        statusHint = "$label on pattern ${g.pattern.name}: $was -> $n$lost"
+        changed()
+        return true
+    }
+
+    /**
      * **Re-stamp** [p] at [n] instances: rebuild the ring and re-run every gesture that rides it (OP-23).
      *
      * A journal rewrite plus a replay — the delete machinery's move, with one literal changed instead of a
@@ -4695,19 +4744,26 @@ class Editor(
         val refusal =
             transacted(tool.label) {
                 // a tool that records its own steps is *not* wrapped in a `tool` step (OP-18): what it builds has
-                // degrees of freedom of its own that the steps it emits restate — see [ToolDef.recordsSteps]
-                if (tool.recordsSteps) {
-                    tool.build(doc, picks, scalars.map { it.ref })
-                } else if (plan?.gesture != null && !snapEnabled) {
+                // degrees of freedom of its own that the steps it emits restate — see [ToolDef.recordsSteps].
+                // Riding a pattern comes **first** all the same (#18): an orbit carries *any* geometry-creating
+                // gesture, the steps it would have emitted included, and the one `orbit` step is then what
+                // re-runs the lot. That is what makes a polygon — a pattern plus its orbits, internally —
+                // multiply with the ring it is drawn on without anything here being polygon-shaped.
+                val once = { if (tool.recordsSteps) tool.build(doc, picks, scalars.map { it.ref }) else doc.runTool(tool, picks, scalars) }
+                if (plan?.gesture != null && !snapEnabled) {
                     // Alt has always meant *leave the model as I put it*, and declining the orbit is the same
                     // sentence one level up: this feature is a one-off (a keyway, a single flat).
                     orbitNote = "not replicated: Alt keeps it a one-off on pattern ${plan.pattern.name}"
-                    doc.runTool(tool, picks, scalars)
+                    once()
                 } else if (plan?.gesture != null && doc.buildOrbit(plan, tool, scalars) != null) {
                     replicated = true
-                    orbitNote = "${tool.label}: ${plan.copies} copies round pattern ${plan.pattern.name}"
+                    val fan = if (plan.copies.size > 1) " (${plan.copies.joinToString(" x ")})" else ""
+                    // …and, when the gesture touched a level it could not be carried through, which one and why
+                    // (#18): losing depth is a surprise the same way a refusal to fan at all is
+                    val short = plan.deeper?.let { " — $it" } ?: ""
+                    orbitNote = "${tool.label}: ${plan.total} copies round pattern ${plan.pattern.name}$fan$short"
                 } else {
-                    doc.runTool(tool, picks, scalars)
+                    once()
                 }
             }
         if (refusal != null) {

@@ -1097,9 +1097,17 @@ private fun setupApp() {
     })
     // ...and the one place that count is *not* only a tool option: with a pattern member selected it
     // re-stamps that pattern (OP-23) — the count of a pattern is editable after the fact, because the
-    // pattern stores the rule and every gesture riding it can be re-run.
+    // pattern stores the rule and every gesture riding it can be re-run. With nesting, the selection names the
+    // **innermost** rule it belongs to (#18): a polygon that multiplied with a ring was built by the ride, so
+    // its own geometry re-stamps that ride's count (the sides of every copy), while the ring itself is reached
+    // by clicking a ring member, which the ride did not build.
     (document.getElementById("t-restamp") as HTMLElement).addEventListener("click", {
-        editor.selectedPattern()?.let { editor.setPatternCount(it, countField.value.toIntOrNull() ?: it.count) }
+        val ride = editor.selectedRide()
+        if (ride != null) {
+            editor.setRideCount(ride, countField.value.toIntOrNull() ?: ride.count)
+        } else {
+            editor.selectedPattern()?.let { editor.setPatternCount(it, countField.value.toIntOrNull() ?: it.count) }
+        }
         repaint()
     })
     (document.getElementById("f-copy") as HTMLElement).addEventListener("click", {
@@ -1383,11 +1391,16 @@ private fun renderPanel(
     (document.getElementById("e-redo") as org.w3c.dom.HTMLButtonElement).disabled = !editor.canRedo
     (document.getElementById("e-delete") as org.w3c.dom.HTMLButtonElement).disabled = editor.selection == null
 
-    // the pattern the selection addresses (OP-23), and whether the count field can re-stamp it
+    // the rule the selection addresses (OP-23, #18), and whether the count field can re-stamp it
     val pattern = editor.selectedPattern()
-    (document.getElementById("t-restamp") as org.w3c.dom.HTMLButtonElement).disabled = pattern == null
+    val ride = editor.selectedRide()
+    (document.getElementById("t-restamp") as org.w3c.dom.HTMLButtonElement).disabled = pattern == null && ride == null
     (document.getElementById("t-pattern") as HTMLElement).textContent =
-        pattern?.let { "Pattern ${it.name}: ${it.count} instances, ${it.gestures.size} gesture(s) riding it" } ?: ""
+        when {
+            ride != null -> "${ride.label} on pattern ${ride.pattern.name}: ${ride.count} each, ${ride.fanTotal} copies"
+            pattern != null -> "Pattern ${pattern.name}: ${pattern.count} instances, ${pattern.gestures.size} gesture(s) riding it"
+            else -> ""
+        }
 
     // the palette carries the document's own macros beside the built-in tools (OP-6), so it follows the
     // document rather than being built once at startup

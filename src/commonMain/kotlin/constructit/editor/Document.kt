@@ -1076,32 +1076,86 @@ class PatternOrbit internal constructor(
 }
 
 /**
- * How a replicated gesture finds its pick again in every copy (OP-23): either the member of [orbit] at
- * index `offset + j`, or the one [fixed] element that is **invariant** under the pattern's transform and
- * therefore the same in every copy.
+ * Where an element sits in a pattern (OP-23) — and, with nesting, it sits in one per level (#18).
+ *
+ * [orbitPos] is the orbit's position in its pattern's own list, which is the *copy-independent* name of it:
+ * every copy of a ride builds the same construction in the same order, so orbit 3 of copy 0's pattern and
+ * orbit 3 of copy 4's are the same orbit of the same rule.
+ */
+class MemberSite internal constructor(
+    val pattern: Pattern,
+    val orbit: PatternOrbit,
+    val orbitPos: Int,
+    val index: Int,
+) {
+    val level: Int get() = pattern.depth
+}
+
+/**
+ * How a replicated gesture finds its pick again in every copy (OP-23), at every level it rides (#18).
+ *
+ * Either the one [fixed] element **invariant** under every level's transform — the plain outside input OP-23
+ * admits — or a member, described by [anchor] (member 0 of its orbit in the all-zero copy, the element the
+ * step names), the orbit's copy-independent position, and [offsets]: one index per level up to its own, being
+ * a **copy shift** at each level outside it and *how far along its orbit* at its own.
+ *
+ * So a one-level pick is exactly what OP-23 recorded (`e2@1`), and one riding a pattern nested inside the
+ * pattern says which copy that pattern belongs to before saying where in it the pick lies (`e2@0@3`).
  */
 class OrbitPick internal constructor(
-    val orbit: PatternOrbit?,
-    val offset: Int,
+    val anchor: Element,
+    /** Which orbit of its own level's pattern, by position — meaningless for a [fixed] pick. */
+    val orbitPos: Int,
+    val offsets: List<Int>,
     val fixed: Element?,
-)
+) {
+    /** The level whose pattern owns this pick's orbit; -1 when it is [fixed] everywhere. */
+    val level: Int get() = offsets.size - 1
+
+    /** Whether an index shift moves this pick at all. */
+    val rides: Boolean get() = fixed == null
+
+    /** How far along its own orbit — the whole of a one-level pick, which most gestures are. */
+    val offset: Int get() = offsets.lastOrNull() ?: 0
+}
+
+/**
+ * One nesting level a replicated gesture rides (OP-23, #18): the **anchor** pattern at that depth — the one
+ * reached through copy 0 of every level outside it.
+ *
+ * Level 0 is the pattern the user drew. A deeper level exists because a gesture riding that pattern
+ * *carried a pattern of its own*: every copy of it built one, they are congruent by construction (copy *j*'s
+ * is the outer transform of copy 0's), and copy 0's is therefore the one that can speak for all of them —
+ * its count, whether it wraps, and the transform a cell-local click is carried by.
+ */
+class OrbitLevel internal constructor(
+    val pattern: Pattern,
+    /** How many copies the ride that built this level's patterns made *at* this level — 0 for level 0. */
+    val hostCopies: Int = 0,
+) {
+    val count: Int get() = pattern.count
+
+    val wraps: Boolean get() = pattern.wraps
+}
 
 /**
  * One **replicated gesture** (OP-23): the rule by which a tool application was stamped round a pattern.
  *
  * It is not a copy of geometry — it is the gesture itself, recorded as picks-by-index plus the clicks that
  * scored its choices, so re-running it at another count is re-running the same rule. [outputs] are the
- * orbits it produced, one per element each copy built.
+ * orbits it produced, one per element each copy built — at *every* level it rides, which is what makes the
+ * nesting compose (#18).
  */
 class OrbitGesture internal constructor(
-    val pattern: Pattern,
+    /** The levels this gesture rides, outermost first; `levels[0].pattern` is [pattern]. */
+    val levels: List<OrbitLevel>,
     val toolId: String,
     val points: List<OrbitPick>,
     val elements: List<OrbitPick>,
-    /** One per slot of the tool: that click, carried back to the cell of member index 0. */
+    /** One per slot of the tool: that click, carried back to the cell of index 0 at every level. */
     val cells: List<Vec2>,
-    /** One per slot: which member index the click of that slot belongs to in the base copy. */
-    val cellOffsets: List<Int>,
+    /** One per slot: the cell — one index per level — the click of that slot belongs to in the base copy. */
+    val cellIndices: List<List<Int>>,
     val scalars: List<ScalarEntry>,
     /** The discrete choices scored **once**, at the click that made the gesture (OP-1, OP-18). */
     val signs: List<Int>,
@@ -1115,14 +1169,36 @@ class OrbitGesture internal constructor(
      */
     val chainsPart: Boolean = false,
 ) {
+    /** The pattern this gesture rides outermost — the one its `orbit` step names. */
+    val pattern: Pattern get() = levels[0].pattern
+
     val outputs = ArrayList<PatternOrbit>()
+
+    /**
+     * The patterns this gesture's copies built, keyed by the copy's own index vector (#18) — the level a
+     * later gesture rides one step further in. The all-zero copy's are the **anchors**.
+     */
+    val inner = LinkedHashMap<List<Int>, MutableList<Pattern>>()
 
     /** The `orbit` step that records this gesture — what a re-stamp replays at another count. */
     var step: Step? = null
         internal set
 
-    /** Every pick that rides an orbit — the ones an index shift moves. */
-    val riding: List<OrbitPick> get() = (points + elements).filter { it.orbit != null }
+    /** How many copies it built at each level, outermost first — the fan as it stands (#18). */
+    var fan: List<Int> = emptyList()
+        internal set
+
+    /** …and the whole of it, which is the product over the levels. */
+    val fanTotal: Int get() = fan.fold(1) { a, b -> a * b }
+
+    /** Every pick that rides an orbit — the ones an index shift moves, at any level. */
+    val riding: List<OrbitPick> get() = (points + elements).filter { it.rides }
+
+    /** The picks whose **own** level is [level] — the ones whose span that level's count has to hold. */
+    internal fun ridingAt(level: Int): List<OrbitPick> = riding.filter { it.level == level }
+
+    /** …and those that merely shift copies there, on their way to a deeper orbit. */
+    internal fun shiftingAt(level: Int): List<OrbitPick> = riding.filter { it.level > level }
 
     /** What this gesture is called in a refusal: the tool it applied. */
     val label: String get() = toolId
@@ -1152,6 +1228,28 @@ class Pattern internal constructor(
     var step: Step? = null
         internal set
 
+    /**
+     * The replicated gesture whose copy built this pattern (#18), or null for one the user drew directly —
+     * *a pattern of a pattern*, which is what makes the addressing compose.
+     *
+     * A nested pattern has no `pattern` step of its own: it is one of the things a copy of [enclosing] does,
+     * and that gesture's single `orbit` step is what re-runs the lot. Its count therefore lives in that
+     * step's `count=` literal, which is the level's own literal exactly as OP-23 demands.
+     */
+    var enclosing: OrbitGesture? = null
+        internal set
+
+    /** Which copy of [enclosing] built it — one index per level of that gesture. */
+    var enclosingIndex: List<Int> = emptyList()
+        internal set
+
+    /** Which of that copy's patterns it is, when a copy builds more than one. */
+    var enclosingSlot: Int = 0
+        internal set
+
+    /** How deep the nesting is: 0 for a pattern the user drew, one more per level of its enclosing gesture. */
+    val depth: Int get() = enclosing?.levels?.size ?: 0
+
     /** Orbit 0: the reference point and its count-1 copies. */
     val ring: PatternOrbit get() = orbits[0]
 
@@ -1175,9 +1273,18 @@ class Pattern internal constructor(
 class Replication internal constructor(
     val pattern: Pattern,
     val gesture: OrbitGesture?,
-    val copies: Int,
+    /** How many copies each level contributes, outermost first — their product is the whole fan (#18). */
+    val copies: List<Int>,
     val refusal: String?,
-)
+    /**
+     * Why the gesture does **not** reach one level deeper, when it touches a nested pattern but cannot be
+     * stamped round it (#18). Not a refusal: the levels above it still fan, and this says what was left out.
+     */
+    val deeper: String? = null,
+) {
+    /** The whole fan — the product over the levels. */
+    val total: Int get() = copies.fold(1) { a, b -> a * b }
+}
 
 /**
  * A retained construction document: owns the [Construction] DAG plus display metadata, and
@@ -13606,14 +13713,30 @@ class Document {
     // ---- patterns as orbits (OP-23): a pattern is a rule, and every later gesture rides it ----
 
     private val patternList = ArrayList<Pattern>()
+
+    /**
+     * The patterns a replicated gesture's copies built (#18) — kept apart from [patternList] deliberately.
+     *
+     * A nested pattern is not a rule the *file* names: it has no `pattern` step, it is one of the things a
+     * copy of an `orbit` step does, and the drawing has one per copy. So it stays out of the list every
+     * `orbit` step resolves its name against ([patternNamed]) and out of the list the UI offers, while being
+     * a first-class [Pattern] everywhere the nesting is addressed ([allPatterns], [memberPath]).
+     */
+    private val nestedPatterns = ArrayList<Pattern>()
     private var patternCounter = 0
 
     /** Every pattern still standing — one whose reference member is gone is gone with it. */
     val patterns: List<Pattern> get() = patternList.filter { p -> elements.any { it === p.reference } }
 
+    /** The patterns a ride's copies built, still standing — one level of the nesting each (#18). */
+    val nested: List<Pattern> get() = nestedPatterns.filter { p -> elements.any { it === p.reference } }
+
+    /** …and both together, which is the list the composed addressing is resolved against (#18). */
+    internal fun allPatterns(): List<Pattern> = (patternList + nestedPatterns).filter { p -> elements.any { it === p.reference } }
+
     private fun uniquePatternName(): String {
         var i = patternCounter + 1
-        while (patternList.any { it.name == "P$i" }) i++
+        while (patternList.any { it.name == "P$i" } || nestedPatterns.any { it.name == "P$i" }) i++
         patternCounter = i
         return "P$i"
     }
@@ -13622,18 +13745,83 @@ class Document {
     fun patternNamed(name: String): Pattern? = patterns.firstOrNull { it.name == name }
 
     /** Which orbit [el] is a member of, and at which index — null when it is outside every pattern. */
-    fun memberSlot(el: Element): Pair<PatternOrbit, Int>? {
-        for (p in patterns) {
-            for (o in p.orbits) {
+    fun memberSlot(el: Element): Pair<PatternOrbit, Int>? = memberSites(el).firstOrNull()?.let { it.orbit to it.index }
+
+    /**
+     * Where [el] sits in the **nesting** (OP-23, #18): one site per level, outermost first.
+     *
+     * A pattern nested inside a replicated gesture adds a level, so an element built inside copy *j* of a
+     * gesture that carries a pattern is a member twice over — of that gesture's output orbit at *j*, and of
+     * copy *j*'s own inner orbit at *k*. That pair is what makes a gesture on it fan over both, and the
+     * addressing needs no new case anywhere: the pick is the same element reference it always was, with one
+     * index per depth.
+     *
+     * At most one orbit per pattern, since a pattern's orbits partition what its gestures built. The levels of
+     * a real element are contiguous from 0 by construction — everything a copy builds is a member of the ride
+     * that built it — except while that ride is *mid-build*, where its outputs are not orbits yet; that is the
+     * one place a site can exist at depth 1 with none at depth 0, and it is exactly what makes a gesture
+     * inside a copy ride the copy's own pattern rather than the outer one.
+     */
+    fun memberSites(el: Element): List<MemberSite> {
+        var found: ArrayList<MemberSite>? = null
+        for (p in allPatterns()) {
+            for ((pos, o) in p.orbits.withIndex()) {
                 val i = o.members.indexOfFirst { it === el }
-                if (i >= 0) return o to i
+                if (i >= 0) {
+                    (found ?: ArrayList<MemberSite>().also { found = it }).add(MemberSite(p, o, pos, i))
+                    break
+                }
             }
         }
-        return null
+        val hits = found ?: return emptyList()
+        if (hits.size == 1) return hits
+        return hits.sortedBy { it.level }
     }
 
-    /** The pattern [el] belongs to as a member, or null. */
-    fun patternOf(el: Element): Pattern? = memberSlot(el)?.first?.pattern
+    /** The pattern [el] belongs to as a member, outermost first, or null. */
+    fun patternOf(el: Element): Pattern? = memberSites(el).firstOrNull()?.pattern
+
+    /**
+     * The **innermost** rule [el] belongs to (#18).
+     *
+     * A pattern is reached through its geometry (OP-23), and with nesting one element belongs to two rules at
+     * once: a rounded polygon's vertex is a member of the ring the polygons sit on *and* of that polygon's
+     * own corner ring.
+     */
+    fun innermostPatternOf(el: Element): Pattern? = memberSites(el).lastOrNull()?.pattern
+
+    /**
+     * The pattern at [level] of [g]'s nesting for the copy whose outer indices are [outer] (#18).
+     *
+     * Level 0's is the pattern the gesture rides outermost; a deeper one is *whichever copy's* pattern the
+     * outer indices name, looked up in the ride that built them — which is the whole of how a nested address
+     * resolves, and why nothing has to be transformed to find it.
+     */
+    internal fun patternAt(
+        g: OrbitGesture,
+        level: Int,
+        outer: List<Int>,
+    ): Pattern? {
+        val anchor = g.levels.getOrNull(level)?.pattern ?: return null
+        if (level == 0) return anchor
+        if (outer.all { it == 0 }) return anchor
+        return anchor.enclosing?.inner?.get(outer)?.getOrNull(anchor.enclosingSlot)
+    }
+
+    /**
+     * Every replicated gesture that created [el] — how a selection reaches the rules that built it (#18).
+     *
+     * More than one, because a nested creation is registered at every level: a side of a polygon that
+     * multiplied with a ring is an output of the ride *and* of that polygon's own side orbit. Ordered
+     * outermost first, so the ride whose `count=` a re-stamp rewrites comes before the rules inside it.
+     */
+    fun ridesOf(el: Element): List<OrbitGesture> =
+        allPatterns().flatMap { p ->
+            p.gestures.filter { g -> g.outputs.any { o -> o.members.any { it === el } } }
+        }
+
+    /** The outermost replicated gesture that created [el], or null. */
+    fun gestureOf(el: Element): OrbitGesture? = ridesOf(el).firstOrNull()
 
     /**
      * Where a position of cell 0 lands in cell [k] — the pattern's **own transform**, and the only thing a
@@ -13660,6 +13848,45 @@ class Document {
             }
             PatternKind.LINEAR -> at + (about - origin) * k.toDouble()
         }
+    }
+
+    /**
+     * Where a position of the all-zero cell lands in cell [index] of [g]'s nesting — the **composed**
+     * transform (#18), and still the only thing a replicated gesture transforms at all.
+     *
+     * The order is forced by the geometry rather than chosen: copy *j*'s inner pattern *is* the outer
+     * transform of copy 0's, so `T_out^j ∘ T_in0^k` and `T_inj^k ∘ T_out^j` are the same map — and taking the
+     * first of the two means every level can be read off the **anchor** pattern alone. Hence innermost first
+     * going out, and outermost first coming back ([composedCellBack]), which is how a click ends up stored
+     * cell-locally at every depth.
+     */
+    private fun composedCell(
+        g: OrbitGesture,
+        index: List<Int>,
+        at: Vec2,
+        ev: Evaluator,
+    ): Vec2 {
+        var p = at
+        for (l in index.indices.reversed()) {
+            val level = g.levels.getOrNull(l) ?: continue
+            p = patternCell(level.pattern, if (level.wraps) index[l] % level.count else index[l], p, ev)
+        }
+        return p
+    }
+
+    /** The same map inverted: a click carried back to the cell of index 0 at every level (#18). */
+    private fun composedCellBack(
+        g: OrbitGesture,
+        index: List<Int>,
+        at: Vec2,
+        ev: Evaluator,
+    ): Vec2 {
+        var p = at
+        for (l in index.indices) {
+            val level = g.levels.getOrNull(l) ?: continue
+            p = patternCell(level.pattern, -(if (level.wraps) index[l] % level.count else index[l]), p, ev)
+        }
+        return p
     }
 
     /**
@@ -13712,11 +13939,30 @@ class Document {
                 members.add(elements.last())
             }
             p.orbits.add(PatternOrbit(p, members))
-            patternList.add(p)
+            // …and *whose* pattern it is: one a copy of a replicated gesture built is nested in it (#18), so
+            // it is not a rule the file names and not one the UI offers — it is part of what that gesture does
+            val host = building
+            if (host == null) {
+                patternList.add(p)
+            } else {
+                p.enclosing = host.gesture
+                p.enclosingIndex = host.index
+                p.enclosingSlot = host.gesture.inner.getOrPut(host.index) { ArrayList() }.size
+                host.gesture.inner.getValue(host.index).add(p)
+                nestedPatterns.add(p)
+            }
             note = "Pattern ${p.name}: $count instances — anything built on its members now repeats round it"
             p
         }.also { p -> p.step = journal.lastOrNull()?.takeIf { it.kind == "pattern" } }
     }
+
+    /** The copy of a replicated gesture being built right now — the nesting context a pattern is born into (#18). */
+    private class Building(
+        val gesture: OrbitGesture,
+        val index: List<Int>,
+    )
+
+    private var building: Building? = null
 
     /**
      * Whether [tool] fanning over a pattern is even on the table, and if so how — **the replication trigger**
@@ -13760,49 +14006,57 @@ class Document {
             clickIx.add(if (Tools.isOptionalSlot(slot) && slotEl.last() == null) null else ci++)
         }
         if (pi != picks.points.size || ei != picks.elements.size) return null // a fan, or a part operand
-        val found = slotEl.mapIndexed { i, el -> i to el?.let { memberSlot(it) } }
-        val p = found.firstNotNullOfOrNull { it.second }?.first?.pattern ?: return null
-        // the picks, resolved against that one pattern
-        val indexOf = HashMap<Int, Int>() // slot -> member index
-        for ((i, slot) in found) {
-            val el = slotEl[i] ?: continue
-            if (slot != null && slot.first.pattern !== p) {
-                return Replication(p, null, 0, "not replicated: ${nameOf(el)} belongs to pattern ${slot.first.pattern.name}")
+        val sites = slotEl.map { el -> el?.let { memberSites(it) } ?: emptyList() }
+        val outermost = sites.firstOrNull { it.isNotEmpty() }?.first()?.pattern ?: return null
+        // **The level stack** (#18). A level is ridable when every pick is, there, either a member of that
+        // level's pattern or invariant under it — OP-23's own rule, asked once per depth. The deepest ridable
+        // level and every ridable level outside it make the run; the first level that stops it says which pick
+        // and which pattern did, and the levels outside it still fan. So a gesture mixing levels loses depth
+        // rather than losing the replication.
+        val deepest = sites.maxOf { row -> row.maxOfOrNull { it.level } ?: -1 }
+        // A gesture built **inside a copy of a ride** may not ride the levels that ride is already stamping
+        // (#18): those cells are exactly what the enclosing ride re-runs this gesture in, so riding them again
+        // would square the fan — and the ride's outputs are not orbits yet anyway. So the polygon's own inner
+        // segment and fillet ride the copy's own pattern, which is the composition OP-23 already described.
+        val floor = building?.gesture?.levels?.size ?: 0
+        var top = deepest
+        var run: LevelRun? = null
+        var deeper: String? = null
+        while (top >= floor) {
+            val here = levelRun(tool, slotEl, sites, top, floor)
+            if (here != null) {
+                run = here
+                break
             }
-            if (slot != null) {
-                indexOf[i] = slot.second
-            } else if (p.invariants.none { it === el } && el.kind != ElementKind.SOLID) {
-                return Replication(p, null, 0, "not replicated: ${nameOf(el)} is outside the pattern")
-            }
-            // ...a **solid** being the one admitted exception, because it is the body a feature is applied
-            // *to* rather than a geometric input that must travel with the copy. Whether the same body in
-            // every copy means a chain or a fan is the tool's own declaration: a face-part tool re-resolves
-            // the tip per copy (a chain of pockets), while *Extrude on face* raises one boss per member off
-            // the one base (a fan of independent solids). See the orbit-rule table in DESIGN.md.
+            // the level nobody could be carried through: report the outermost such reason, which is the one
+            // about the level the gesture *nearly* reached
+            deeper = levelRefusal(tool, slotEl, sites, top) ?: deeper
+            top--
         }
-        // the base copy is the gesture shifted down to the lowest index it touches, so offsets are >= 0 and
-        // the recorded rule says nothing about *which* copy the user happened to click
-        val anchor = indexOf.values.min()
+        val plan = run ?: return Replication(outermost, null, emptyList(), deeper ?: "not replicated: ${nameOf(slotEl.first { it != null }!!)} is outside the pattern")
+        if (plan.base > floor && building == null) {
+            // a run that starts *inside* a nested pattern has no step form of its own — the `orbit` step names
+            // the pattern, and a nested one is not a name the file resolves. Unreachable in practice (every
+            // element a ride built is a member of that ride too), and refused rather than written unloadably.
+            return Replication(outermost, null, emptyList(), "not replicated: ${plan.levels[0].pattern.name} is a pattern inside a pattern, which only the gesture that carries it can ride")
+        }
+        val p = plan.levels[0].pattern
+        val levels = plan.levels
         val cells = ArrayList<Vec2>()
-        val cellOffsets = ArrayList<Int>()
+        val cellIndices = ArrayList<List<Int>>()
         val ev = Evaluator()
+        val bare = OrbitGesture(levels, tool.id, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), 0)
         for (i in tool.slots.indices) {
             val click = clickIx[i]?.let { picks.clicks.getOrNull(it) } ?: Vec2(0.0, 0.0)
-            val at = indexOf[i] ?: anchor
-            cells.add(patternCell(p, -at, click, ev))
-            cellOffsets.add(at - anchor)
+            val absolute = levels.indices.map { l -> plan.indexAt(i, l) ?: plan.anchors[l] }
+            cells.add(composedCellBack(bare, absolute, click, ev))
+            cellIndices.add(absolute.mapIndexed { l, v -> v - plan.anchors[l] })
         }
         val pointPicks = ArrayList<OrbitPick>()
         val elementPicks = ArrayList<OrbitPick>()
         for ((i, slot) in tool.slots.withIndex()) {
             val el = slotEl[i]
-            val orbit = found[i].second?.first
-            val pick =
-                when {
-                    orbit != null -> OrbitPick(orbit, indexOf.getValue(i) - anchor, null)
-                    el != null -> OrbitPick(null, 0, el)
-                    else -> null
-                }
+            val pick = if (el == null) null else plan.pickFor(i, el)
             when (slot) {
                 SlotKind.PLACE_POINT, SlotKind.POINT -> pointPicks.add(pick ?: return null)
                 // an optional slot contributes a pick only when the gesture filled it, so a fan of
@@ -13814,32 +14068,215 @@ class Document {
         }
         val gesture =
             OrbitGesture(
-                p, tool.id, pointPicks, elementPicks, cells, cellOffsets, emptyList(), picks.signs, picks.count,
+                levels, tool.id, pointPicks, elementPicks, cells, cellIndices, emptyList(), picks.signs, picks.count,
                 chainsPart = tool.facePartOperand,
             )
-        val copies = copiesFor(gesture, p.count) ?: return Replication(p, null, 0, "not replicated: the pattern has no room for it")
-        if (copies < 2) return Replication(p, null, 0, "not replicated: the pattern has no room for a second copy of it")
-        return Replication(p, gesture, copies, null)
+        val copies = copiesFor(gesture, p.count) ?: return Replication(p, null, emptyList(), "not replicated: the pattern has no room for it")
+        if (copies.fold(1) { a, b -> a * b } < 2) {
+            return Replication(p, null, emptyList(), "not replicated: the pattern has no room for a second copy of it")
+        }
+        return Replication(p, gesture, copies, null, deeper)
     }
 
     /**
-     * How many copies [g] gets, with the ring [count] members long and [sizes] overriding the orbit lengths a
-     * re-stamp will change.
+     * The levels a gesture rides, as chosen by [replicationOf] — with, per slot, the index it sits at in each
+     * of them, and the anchor each level is normalized by (#18).
+     */
+    private class LevelRun(
+        val levels: List<OrbitLevel>,
+        /** The depth the outermost level of the run sits at; 0 for every gesture but one inside a copy build. */
+        val base: Int,
+        val anchors: List<Int>,
+        private val ownLevel: Map<Int, Int>,
+        private val orbitPos: Map<Int, Int>,
+        private val anchorEl: Map<Int, Element>,
+        private val indices: Map<Int, List<Int>>,
+    ) {
+        /** Slot [slot]'s index at level [level], or null where nothing puts it in a cell of that level. */
+        fun indexAt(
+            slot: Int,
+            level: Int,
+        ): Int? = indices[slot]?.getOrNull(level)
+
+        /** The recorded pick for slot [slot]: its orbit by position, and one offset per level up to its own. */
+        fun pickFor(
+            slot: Int,
+            el: Element,
+        ): OrbitPick {
+            val own = ownLevel[slot] ?: return OrbitPick(el, -1, emptyList(), el)
+            val row = indices.getValue(slot)
+            return OrbitPick(
+                anchorEl.getValue(slot),
+                orbitPos.getValue(slot),
+                (0..own).map { l -> row[l] - anchors[l] },
+                null,
+            )
+        }
+    }
+
+    /**
+     * The run of levels ending at [top] that every pick can be carried through, or null when [top] itself
+     * cannot be ridden (#18).
+     *
+     * Extended outward from [top] while each level holds, because a level nobody can be carried through does
+     * not stop the *inner* ones from fanning — a segment inside one copy of a ride rides that copy's own
+     * pattern while the ride is still being built, and its outer level does not exist yet.
+     */
+    private fun levelRun(
+        tool: ToolDef,
+        slotEl: List<Element?>,
+        sites: List<List<MemberSite>>,
+        top: Int,
+        floor: Int,
+    ): LevelRun? {
+        var from = top
+        while (from > floor && holdsAt(tool, slotEl, sites, from - 1, top)) from--
+        if (!holdsAt(tool, slotEl, sites, top, top)) return null
+        // a run that does not reach the outermost pattern is kept to one level: the deeper levels of such a
+        // run would need copy indices from levels the gesture is not riding, which is a rule nothing states
+        if (from > floor) from = top
+        val levels = ArrayList<OrbitLevel>()
+        for (l in from..top) {
+            // normalized to the all-zero copy only when the run rides the levels outside it: a run that starts
+            // *inside* a nested pattern rides nothing outside, so there is no copy to normalize against and the
+            // pattern the picks actually sit in is the one — which is what makes a gesture inside a ride's copy
+            // build on that copy's own pattern (#18)
+            val q = anchorPatternAt(sites, l, normalize = from == 0) ?: return null
+            levels.add(OrbitLevel(q, q.enclosing?.let { h -> (h.inner.keys.maxOfOrNull { it.getOrElse(l - 1) { 0 } } ?: 0) + 1 } ?: 0))
+        }
+        // per slot: the deepest level of the run it is a member of, and its index in every level up to there
+        val ownLevel = HashMap<Int, Int>()
+        val orbitPos = HashMap<Int, Int>()
+        val anchorEl = HashMap<Int, Element>()
+        val indices = HashMap<Int, List<Int>>()
+        for (i in tool.slots.indices) {
+            if (slotEl[i] == null) continue
+            val site = sites[i].lastOrNull { it.level in from..top } ?: continue
+            val row = ArrayList<Int>()
+            for (l in from until site.level) row.add(site.pattern.enclosingIndex.getOrElse(l) { 0 })
+            row.add(site.index)
+            ownLevel[i] = site.level - from
+            orbitPos[i] = site.orbitPos
+            val q = anchorPatternAt(sites, site.level, normalize = from == 0) ?: return null
+            anchorEl[i] = q.orbits.getOrNull(site.orbitPos)?.members?.firstOrNull() ?: return null
+            indices[i] = row
+        }
+        if (ownLevel.isEmpty()) return null
+        // the base copy is the gesture shifted down to the lowest index it touches at every level, so the
+        // recorded rule says nothing about *which* copy the user happened to click (OP-23)
+        val anchors = levels.indices.map { l -> indices.values.mapNotNull { it.getOrNull(l) }.minOrNull() ?: 0 }
+        val padded = indices.mapValues { (_, row) -> levels.indices.map { l -> row.getOrNull(l) ?: anchors[l] } }
+        return LevelRun(levels, from, anchors, ownLevel, orbitPos, anchorEl, padded)
+    }
+
+    /** The pattern of level [level] — as it stands in the all-zero copy when the outer levels are ridden (#18). */
+    private fun anchorPatternAt(
+        sites: List<List<MemberSite>>,
+        level: Int,
+        normalize: Boolean,
+    ): Pattern? {
+        val q = sites.firstNotNullOfOrNull { row -> row.firstOrNull { it.level == level }?.pattern } ?: return null
+        if (!normalize) return q
+        val host = q.enclosing ?: return q
+        return host.inner[List(level) { 0 }]?.getOrNull(q.enclosingSlot) ?: q
+    }
+
+    /**
+     * Whether every pick can be carried round level [level] — OP-23's invariance rule, asked at one depth.
+     *
+     * A pick is carried when it is a member of that level's pattern, when the pattern's transform leaves it
+     * where it is (a rotation's centre), or when it is a **solid** — the one non-member, non-invariant input a
+     * replicated gesture may touch, because it is the body a feature is applied *to* rather than a geometric
+     * input that has to travel with the copy. A pick that is a member at a level *deeper* than this one is
+     * carried by that level's own copy shift and needs nothing here.
+     *
+     * The invariance is tested against the pattern of the copy the deeper picks name, because that is the copy
+     * the recorded rule is written in: with a nested level, "the centre" is a different point per copy.
+     */
+    private fun holdsAt(
+        tool: ToolDef,
+        slotEl: List<Element?>,
+        sites: List<List<MemberSite>>,
+        level: Int,
+        top: Int,
+    ): Boolean = levelRefusalAt(tool, slotEl, sites, level, top) == null
+
+    private fun levelRefusal(
+        tool: ToolDef,
+        slotEl: List<Element?>,
+        sites: List<List<MemberSite>>,
+        top: Int,
+    ): String? = levelRefusalAt(tool, slotEl, sites, top, top)
+
+    private fun levelRefusalAt(
+        tool: ToolDef,
+        slotEl: List<Element?>,
+        sites: List<List<MemberSite>>,
+        level: Int,
+        top: Int,
+    ): String? {
+        val ref =
+            sites.firstNotNullOfOrNull { row -> row.firstOrNull { it.level == level }?.pattern }
+                ?: return "not replicated: nothing rides that pattern"
+        for (i in tool.slots.indices) {
+            val el = slotEl[i] ?: continue
+            val here = sites[i].firstOrNull { it.level == level }
+            // **One level is one transform** (#18), so a pick rides this level only if it sits in *this*
+            // pattern: a member of a sibling copy's pattern is carried by a rotation about a different centre,
+            // which is no rigid motion of the gesture at all, so it counts as an outside input here.
+            if (here != null && here.pattern === ref) continue
+            if (el.kind == ElementKind.SOLID) continue
+            // …and an outside input has to be one this level's transform leaves alone
+            if (ref.invariants.none { it === el }) {
+                return when {
+                    level > 0 -> "not replicated inside ${ref.name}: ${nameOf(el)} is outside it"
+                    here != null -> "not replicated: ${nameOf(el)} belongs to pattern ${here.pattern.name}"
+                    else -> "not replicated: ${nameOf(el)} is outside the pattern"
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * How many copies [g] gets **at each level**, with the ring [count] members long and [sizes] overriding
+     * the orbit lengths a re-stamp will change (OP-23, #18).
      *
      * A ring wraps, so every member is the start of a copy and there are exactly as many copies as members.
      * A row does not: a gesture spanning m+1 neighbours makes n-m copies, which is why a row of holes drawn
-     * between neighbours gives one fewer segment than there are holes.
+     * between neighbours gives one fewer segment than there are holes. Stated per level, so the whole fan is
+     * the product — the count of a nested pattern is as structural as the outer one's.
      */
     private fun copiesFor(
         g: OrbitGesture,
         count: Int,
         sizes: Map<PatternOrbit, Int> = emptyMap(),
-    ): Int? {
-        val riding = g.riding
-        if (riding.isEmpty()) return null
-        if (g.pattern.wraps) return count
-        return riding.minOf { (sizes[it.orbit] ?: it.orbit!!.size) - it.offset }
+    ): List<Int>? {
+        val out = ArrayList<Int>()
+        for (l in g.levels.indices) {
+            val own = g.ridingAt(l)
+            val through = g.shiftingAt(l)
+            if (own.isEmpty() && through.isEmpty()) return null
+            val level = g.levels[l]
+            val n = if (l == 0) count else level.count
+            if (level.wraps) {
+                out.add(n)
+            } else {
+                // a row does not wrap, so what limits the fan is the longest span: an orbit's own length for a
+                // pick that rides it, and how many copies the level has for one merely shifted through it
+                val byOwn = own.minOfOrNull { orbitOf(g, it)?.let { o -> (sizes[o] ?: o.size) - it.offset } ?: 0 }
+                val byShift = through.minOfOrNull { (if (l == 0) n else level.hostCopies) - it.offsets[l] }
+                out.add(listOfNotNull(byOwn, byShift).minOrNull() ?: 0)
+            }
+        }
+        return out.takeIf { it.all { c -> c >= 1 } }
     }
+
+    /** The orbit a pick rides, as it stands in the all-zero copy — its size is what a span is measured against. */
+    private fun orbitOf(
+        g: OrbitGesture,
+        pick: OrbitPick,
+    ): PatternOrbit? = g.levels.getOrNull(pick.level)?.pattern?.orbits?.getOrNull(pick.orbitPos)
 
     /**
      * Run [tool] once **per copy** and record the whole fan as one `orbit` step (OP-23).
@@ -13867,12 +14304,13 @@ class Document {
         val p = plan.pattern
         val g =
             OrbitGesture(
-                p, g0.toolId, g0.points, g0.elements, g0.cells, g0.cellOffsets, scalars, g0.signs, g0.count,
+                g0.levels, g0.toolId, g0.points, g0.elements, g0.cells, g0.cellIndices, scalars, g0.signs, g0.count,
                 chainsPart = g0.chainsPart,
             )
         var scored: List<Int> = g0.signs
-        val perCopy = ArrayList<List<Element>>()
+        val perCopy = LinkedHashMap<List<Int>, List<Element>>()
         val journalBefore = journal.size
+        val outerBuilding = building
         recording(
             "orbit",
             *orbitArgs(g),
@@ -13881,30 +14319,82 @@ class Document {
         ) {
             // once, before the loop: the freedoms belong to the gesture, not to a copy of it
             val refs = toolScalarRefs(tool, dofs, scalars)
-            for (j in 0 until plan.copies) {
+            var first = true
+            for (index in cells(plan.copies)) {
                 val before = elements.toHashSet()
                 // a fresh pass per copy: a chained gesture resolves its base against what the copy before it
                 // just built, so this loop is the one place a cached pass would be looking at the wrong document
-                val copyPicks = picksFor(g, j, scored, Evaluator()) ?: break
-                tool.build(this, copyPicks, refs)
+                val copyPicks = picksFor(g, index, scored, Evaluator()) ?: break
+                // …and *which* copy is being built, so a pattern this one creates is born into the nesting (#18)
+                building = Building(g, index)
+                try {
+                    tool.build(this, copyPicks, refs)
+                } finally {
+                    building = outerBuilding
+                }
                 val made = elements.filter { it !in before }
                 // the first copy scores its choices from its own clicks; every other copy is handed the
                 // result, and the step writes it down — so a reload never scores again (OP-1)
-                if (j == 0 && scored.isEmpty()) scored = storedSigns(made)
-                perCopy.add(made)
+                if (first && scored.isEmpty()) scored = storedSigns(made)
+                first = false
+                perCopy[index] = made
             }
         }
-        // nothing recorded means the gesture built nothing at all: the caller falls back to applying it once
-        if (journal.size == journalBefore) return null
-        g.step = journal.lastOrNull()
-        registerOrbits(g, perCopy)
+        // nothing built means the gesture had no effect at all: the caller falls back to applying it once.
+        // Asked of what the copies *made* rather than of the journal, because a ride nested inside another one
+        // is absorbed into the outer `orbit` step (#18) and so adds no step of its own — which is exactly the
+        // rule [recording] has always followed for a tool that calls several document operations.
+        if (perCopy.values.all { it.isEmpty() }) return null
+        // …and the step that re-runs it: its own when it has one, and otherwise the enclosing ride's, stamped in
+        // by that ride's [adoptSteps] once its step exists
+        g.step = if (journal.size > journalBefore) journal.lastOrNull() else null
+        // a nested pattern has no step of its own — the one `orbit` step that re-runs the whole ride is what
+        // owns it, and every rule inside it (#18)
+        adoptSteps(g, g.step)
+        g.fan = plan.copies
+        registerOrbits(g, perCopy, plan.copies)
         p.gestures.add(g)
         return g
     }
 
-    /** The `orbit` step's arguments — the gesture's rule, with the member picks written as `e2@1`. */
+    /** Give every rule a copy of [g] built the step that re-runs it — [g]'s own `orbit` step (#18). */
+    private fun adoptSteps(
+        g: OrbitGesture,
+        step: Step?,
+    ) {
+        for (patterns in g.inner.values) {
+            for (q in patterns) {
+                q.step = step
+                for (inner in q.gestures) {
+                    inner.step = step
+                    adoptSteps(inner, step)
+                }
+            }
+        }
+    }
+
+    /** A copy index folded into the level's own range: a ring wraps, a row does not (OP-23, per level). */
+    private fun wrapAt(
+        g: OrbitGesture,
+        level: Int,
+        i: Int,
+    ): Int {
+        val l = g.levels.getOrNull(level) ?: return i
+        if (!l.wraps) return i
+        val n = if (level == 0) l.count else maxOf(l.hostCopies, 1)
+        return ((i % n) + n) % n
+    }
+
+    /** Every cell of a nesting [counts] deep, outer index major — so names line up from the start (OP-23). */
+    private fun cells(counts: List<Int>): List<List<Int>> {
+        var out = listOf(emptyList<Int>())
+        for (n in counts) out = out.flatMap { prefix -> (0 until n).map { prefix + it } }
+        return out
+    }
+
+    /** The `orbit` step's arguments — the gesture's rule, with the member picks written as `e2@1` (or `e2@0@3`). */
     private fun orbitArgs(g: OrbitGesture): Array<Arg> {
-        fun ref(pick: OrbitPick): Arg = pick.fixed?.let { Arg.El(it) } ?: Arg.Member(pick.orbit!!.members[0], pick.offset)
+        fun ref(pick: OrbitPick): Arg = pick.fixed?.let { Arg.El(it) } ?: Arg.Member(pick.anchor, pick.offsets)
         return listOfNotNull(
             Arg.Label(g.pattern.name),
             Arg.Text(g.toolId),
@@ -13920,19 +14410,23 @@ class Document {
         ).toTypedArray()
     }
 
-    /** The picks copy [j] of [g] applies to: members shifted by j, clicks carried into cell `offset + j`. */
+    /** The picks copy [index] of [g] applies to: members shifted per level, clicks carried into that cell. */
     private fun picksFor(
         g: OrbitGesture,
-        j: Int,
+        index: List<Int>,
         signs: List<Int>,
         ev: Evaluator,
     ): Picks? {
-        val p = g.pattern
-
+        // The composed address, resolved outermost inward (#18): the outer indices name *which copy's* pattern
+        // this pick's orbit belongs to, and the innermost index says where along that orbit it sits. Nothing is
+        // transformed and nothing is searched — the ride that built the nested patterns kept them by copy.
         fun at(pick: OrbitPick): Element? {
-            val o = pick.orbit ?: return pick.fixed
-            val i = if (p.wraps) (pick.offset + j) % o.size else pick.offset + j
-            return o.members.getOrNull(i)
+            pick.fixed?.let { return it }
+            val outer = (0 until pick.level).map { l -> wrapAt(g, l, pick.offsets[l] + index[l]) }
+            val pat = patternAt(g, pick.level, outer) ?: return null
+            val o = pat.orbits.getOrNull(pick.orbitPos) ?: return null
+            val i = pick.offsets[pick.level] + index[pick.level]
+            return o.members.getOrNull(if (g.levels[pick.level].wraps) ((i % o.size) + o.size) % o.size else i)
         }
 
         @Suppress("UNCHECKED_CAST")
@@ -13944,8 +14438,8 @@ class Document {
         val els = part + g.elements.map { at(it) ?: return null }
         val clicks =
             g.cells.mapIndexed { i, c ->
-                val k = g.cellOffsets.getOrElse(i) { 0 } + j
-                patternCell(p, if (p.wraps) k % p.count else k, c, ev)
+                val base = g.cellIndices.getOrElse(i) { List(index.size) { 0 } }
+                composedCell(g, index.mapIndexed { l, j -> base.getOrElse(l) { 0 } + j }, c, ev)
             }
         return Picks(points, els, clicks.lastOrNull() ?: Vec2(0.0, 0.0), clicks, count = g.count, signs = signs)
     }
@@ -13954,24 +14448,41 @@ class Document {
      * Turn what the copies built into orbits: element *s* of every copy is one orbit, indexed by copy — so
      * the outputs of a replicated gesture are members at their own index and the orbit **grows**.
      *
+     * **One orbit per level** (#18), because a nested copy is indexed twice: element *s* of copy (*j*, *k*) is
+     * a member of the outer pattern at *j* (holding *k* fixed) and of copy *j*'s inner pattern at *k* (holding
+     * *j* fixed). Registering both is what makes `e@j@k` resolvable — and each orbit is owned by the pattern
+     * of *its* level, so the inner ones hang off the very patterns this gesture's copies built.
+     *
      * A copy that built a different number of elements than its siblings is refused as a member set rather
      * than half-registered: the structure of a step is fixed at build (OP-5), so an uneven fan means the
      * geometry gave out somewhere, and saying so is more use than a ragged pattern.
      */
     private fun registerOrbits(
         g: OrbitGesture,
-        perCopy: List<List<Element>>,
+        perCopy: Map<List<Int>, List<Element>>,
+        counts: List<Int>,
     ) {
-        val k = perCopy.firstOrNull()?.size ?: return
+        val k = perCopy.values.firstOrNull()?.size ?: return
         if (k == 0) return
-        if (perCopy.any { it.size != k } || perCopy.size < 2) {
+        if (perCopy.values.any { it.size != k } || perCopy.size != counts.fold(1) { a, b -> a * b } || perCopy.size < 2) {
             note = "Pattern ${g.pattern.name}: ${g.label} did not build the same geometry at every index, so its results are not pattern members"
             return
         }
-        for (s in 0 until k) {
-            val o = PatternOrbit(g.pattern, perCopy.map { it[s] })
-            g.pattern.orbits.add(o)
-            g.outputs.add(o)
+        for (l in counts.indices) {
+            val others = cells(counts.filterIndexed { i, _ -> i != l })
+            for (rest in others) {
+                val prefix = rest.take(l)
+                val owner = patternAt(g, l, prefix) ?: continue
+                for (s in 0 until k) {
+                    val members =
+                        (0 until counts[l]).map { i ->
+                            perCopy[rest.take(l) + i + rest.drop(l)]?.get(s) ?: return
+                        }
+                    val o = PatternOrbit(owner, members)
+                    owner.orbits.add(o)
+                    g.outputs.add(o)
+                }
+            }
         }
     }
 
@@ -13981,12 +14492,16 @@ class Document {
      * Nothing is discovered here — the offsets, the cell-local clicks, the scalars and the scored signs all
      * come from the step, and the only thing recomputed is where a cell-local click lands, which follows the
      * pattern's *current* shape and is exactly what makes a re-stamped count come out right.
+     *
+     * The **levels** are read off the picks' own depth (#18): a pick written `e@j@k` names an element two
+     * levels deep, so the gesture rides two, and a pick with fewer offsets is invariant in the levels it does
+     * not mention. Nothing about the nesting is stored twice.
      */
     internal fun replayOrbit(
         p: Pattern,
         tool: ToolDef,
-        points: List<Pair<Element, Int?>>,
-        els: List<Pair<Element, Int?>>,
+        points: List<Pair<Element, List<Int>?>>,
+        els: List<Pair<Element, List<Int>?>>,
         cells: List<Vec2>,
         scalars: List<ScalarEntry>,
         signs: List<Int>,
@@ -13994,16 +14509,31 @@ class Document {
         chainsPart: Boolean,
         dofs: List<Quantity> = emptyList(),
     ): OrbitGesture? {
-        fun pick(spec: Pair<Element, Int?>): OrbitPick? {
-            val off = spec.second ?: return OrbitPick(null, 0, spec.first)
-            val o = memberSlot(spec.first)?.first ?: return null
-            return OrbitPick(o, off, null)
+        val depth = (points + els).maxOfOrNull { it.second?.size ?: 0 } ?: 0
+        if (depth == 0) return null
+        // the levels, read off the picks' own depth: level 0 is the pattern the step names, and each deeper one
+        // is the anchor pattern of the orbit the pick at that depth is member 0 of
+        val levels = ArrayList<OrbitLevel>()
+        levels.add(OrbitLevel(p))
+        for (l in 1 until depth) {
+            val q =
+                (points + els).firstNotNullOfOrNull { spec ->
+                    if ((spec.second?.size ?: 0) <= l) null else memberSites(spec.first).firstOrNull { it.level == l }?.pattern
+                } ?: return null
+            val anchor = q.enclosing?.let { h -> h.inner[List(l) { 0 }]?.getOrNull(q.enclosingSlot) } ?: q
+            levels.add(OrbitLevel(anchor, anchor.enclosing?.let { h -> (h.inner.keys.maxOfOrNull { it.getOrElse(l - 1) { 0 } } ?: 0) + 1 } ?: 0))
+        }
+
+        fun pick(spec: Pair<Element, List<Int>?>): OrbitPick? {
+            val offs = spec.second ?: return OrbitPick(spec.first, -1, emptyList(), spec.first)
+            val site = memberSites(spec.first).firstOrNull { it.level == offs.size - 1 } ?: return null
+            return OrbitPick(spec.first, site.orbitPos, offs, null)
         }
 
         val pointPicks = points.map { pick(it) ?: return null }
         val elPicks = els.map { pick(it) ?: return null }
         // the click cells, derived from the tool's slots exactly as the recording derived them
-        val offsets = ArrayList<Int>()
+        val cellIndices = ArrayList<List<Int>>()
         var pi = 0
         var ei = 0
         for (slot in tool.slots) {
@@ -14015,9 +14545,9 @@ class Document {
                     SlotKind.SIDE -> null
                     else -> elPicks.getOrNull(ei++)
                 }
-            offsets.add(pick?.takeIf { it.orbit != null }?.offset ?: 0)
+            cellIndices.add((0 until depth).map { l -> pick?.offsets?.getOrNull(l) ?: 0 })
         }
-        val g = OrbitGesture(p, tool.id, pointPicks, elPicks, cells, offsets, scalars, signs, count, chainsPart)
+        val g = OrbitGesture(levels, tool.id, pointPicks, elPicks, cells, cellIndices, scalars, signs, count, chainsPart)
         val copies = copiesFor(g, p.count) ?: return null
         val plan = Replication(p, g, copies, null)
         return buildOrbit(plan, tool, scalars, dofs)
@@ -14029,6 +14559,10 @@ class Document {
      * The one thing mod-n arithmetic cannot absorb: a gesture that spans **more neighbours than the new count
      * has members**. "Member 0 to member 4" is a pair at six; at three it is not a pair at all, and folding it
      * to (0, 1) would silently make a different drawing. So it is refused, by name.
+     *
+     * Checked at **level 0 only**, and deliberately (#18): a deeper level's count is not what this edit
+     * changes, so its spans mean at the new count exactly what they meant at the old one. What a smaller outer
+     * count genuinely loses inside a nested ride is caught by the replay's own drop rule, which names it.
      */
     fun restampRefusal(
         p: Pattern,
@@ -14039,15 +14573,36 @@ class Document {
         val sizes = HashMap<PatternOrbit, Int>()
         sizes[p.ring] = n
         for (g in p.gestures) {
-            val over = g.riding.firstOrNull { (sizes[it.orbit] ?: 0) <= it.offset }
+            val over = g.ridingAt(0).firstOrNull { (sizes[orbitOf(g, it)] ?: 0) <= it.offset }
             if (over != null) {
                 return "can't re-stamp pattern ${p.name} at $n: its ${g.label} spans ${over.offset + 1} members " +
-                    "of a ${sizes[over.orbit] ?: 0}-member orbit — use the tool again instead"
+                    "of a ${sizes[orbitOf(g, over)] ?: 0}-member orbit — use the tool again instead"
             }
             val copies = copiesFor(g, n, sizes) ?: return "can't re-stamp pattern ${p.name}: its ${g.label} rides nothing"
-            if (copies < 2) return "can't re-stamp pattern ${p.name} at $n: its ${g.label} would have no second copy"
-            for (o in g.outputs) sizes[o] = copies
+            if (copies[0] < 2) return "can't re-stamp pattern ${p.name} at $n: its ${g.label} would have no second copy"
+            for (o in g.outputs) sizes[o] = if (o.pattern === p) copies[0] else o.size
         }
+        return null
+    }
+
+    /**
+     * Why the count [g] carries — a nested pattern's own, the sides of every polygon of a ride (#18) — cannot
+     * become [n], or null when it can.
+     *
+     * The subject is the **gesture**, not a pattern, because that is where the literal lives: a ride's `count=`
+     * is one number for the whole fan, so changing it re-runs the ride and every copy re-stamps together. What
+     * the count may be is the tool's own business ([ToolDef.minCount]), exactly as it is when the tool is used.
+     */
+    fun gestureCountRefusal(
+        g: OrbitGesture,
+        n: Int,
+    ): String? {
+        val tool = toolDef(g.toolId)
+        val least = maxOf(tool?.minCount ?: 2, 2)
+        if (g.count <= 0) return "${g.label} has no count of its own to re-stamp"
+        if (n < least) return "${g.label} needs at least $least"
+        if (n == g.count) return "${g.label} already has $n"
+        if (g.step == null) return "${g.label} has no step to re-run"
         return null
     }
 

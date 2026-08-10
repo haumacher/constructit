@@ -44,13 +44,17 @@ sealed interface Arg {
 
     /**
      * A pick of a **replicated gesture** (OP-23), written `e2@1`: the member of [el]'s orbit at index
-     * [offset], where [el] is that orbit's member 0 — the one member every count has.
+     * [offsets]`[0]`, where [el] is that orbit's member 0 — the one member every count has.
+     *
+     * **One offset per nesting level, outermost first** (#18): `e2@1@3` is the member of copy 1's own inner
+     * orbit at index 3, with [el] the anchor at index 0 of *every* level. So depth costs one more number and
+     * no new syntax, and every file ever written — one offset, one level — reads exactly as it always did.
      *
      * An element reference, deliberately: it is what makes an orbit's picks travel through the delete
-     * cascade and the name map like every other reference, while the offset says the gesture's *rule*
+     * cascade and the name map like every other reference, while the offsets say the gesture's *rule*
      * rather than one of its copies.
      */
-    class Member(val el: Element, val offset: Int) : Arg
+    class Member(val el: Element, val offsets: List<Int>) : Arg
 
     /** A comma-separated list of mixed references — a replicated gesture's picks (`e2@0,e1`). */
     class Refs(val items: List<Arg>) : Arg
@@ -501,7 +505,7 @@ object DocumentFormat {
         when (arg) {
             is Arg.El -> names[arg.el.id] ?: "?${arg.el.id}"
             is Arg.Els -> arg.els.joinToString(",") { names[it.id] ?: "?${it.id}" }
-            is Arg.Member -> "${names[arg.el.id] ?: "?${arg.el.id}"}@${arg.offset}"
+            is Arg.Member -> (names[arg.el.id] ?: "?${arg.el.id}") + arg.offsets.joinToString("") { "@$it" }
             is Arg.Refs -> arg.items.joinToString(",") { encode(it, names) }
             is Arg.Sc -> quote(arg.entry.name)
             is Arg.Scs -> arg.entries.joinToString(",") { quote(it.name) }
@@ -584,6 +588,16 @@ object DocumentFormat {
     class Restamp internal constructor(
         val pattern: String,
         val count: Int,
+        /**
+         * Which step's own `count=` is rewritten instead of the pattern step's — the journal index of an
+         * `orbit` step whose ride carries a count of its own (#18), or -1 for OP-23's pattern re-stamp.
+         *
+         * A **positional** reference, of the same kind the ortho steps have always used for "the current
+         * path": the script prefix before it is the same on every replay, so the *n*-th step is the *n*-th
+         * step. The pattern is still named, because everything a nested count changes rides that pattern and
+         * so may legitimately come back a different size ([resized]).
+         */
+        internal val step: Int = -1,
     ) {
         val notes = ArrayList<String>()
 
@@ -623,9 +637,28 @@ object DocumentFormat {
         text: String,
         pattern: String,
         count: Int,
+    ): Pair<Document, List<String>> = restamped(text, Restamp(pattern, count))
+
+    /**
+     * Replay [text] with the **ride** recorded by step [step] re-stamped at [count] (#18).
+     *
+     * The identical journal rewrite, one literal further in: a gesture that carries a pattern of its own keeps
+     * that pattern's count in its `orbit` step, so re-running the script with that number changed re-stamps
+     * every copy of the ride at once. [pattern] is the ride's own pattern, named so its steps may come back a
+     * different size while every other step is held to the strict count check (OP-18).
+     */
+    fun restampRide(
+        text: String,
+        step: Int,
+        pattern: String,
+        count: Int,
+    ): Pair<Document, List<String>> = restamped(text, Restamp(pattern, count, step))
+
+    private fun restamped(
+        text: String,
+        ctx: Restamp,
     ): Pair<Document, List<String>> {
         val doc = Document()
-        val ctx = Restamp(pattern, count)
         val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
         doc.replayingVersion = versionOf(lines.firstOrNull() ?: throw LoadError("empty document"))
         try {
@@ -680,8 +713,10 @@ object DocumentFormat {
         for ((lineNo, line) in lines.drop(1).withIndex()) {
             val (body, declared) = split(line)
             var words = splitWords(body)
-            // the one literal a re-stamp rewrites: the count of the pattern being re-stamped (OP-23)
-            if (restamp != null && words.firstOrNull() == "pattern" && words.getOrNull(1)?.let { unquote(it) } == restamp.pattern) {
+            // the one literal a re-stamp rewrites: the count of the pattern being re-stamped (OP-23) — or, one
+            // level in, the count of the ride whose own step this is (#18)
+            val target = restamp != null && (if (restamp.step >= 0) restamp.step == lineNo else words.firstOrNull() == "pattern" && words.getOrNull(1)?.let { unquote(it) } == restamp.pattern)
+            if (restamp != null && target) {
                 words = words.map { if (it.startsWith("count=")) "count=${restamp.count}" else it }
             }
             val before = doc.elements.toHashSet()
@@ -1140,10 +1175,11 @@ object DocumentFormat {
     /**
      * Replay one **replicated gesture** (OP-23): `orbit "P1" segment pts=e2@0,e2@1 cells=…`.
      *
-     * A pick is either `name@offset` — the member of that element's orbit at that index — or an ordinary
-     * element reference, which the pattern's transform must leave alone. `cells=` are the gesture's clicks
-     * carried back to the cell of member 0, so where each copy's click lands follows the pattern's *current*
-     * shape; `signs=` are the choices its first copy scored, taken verbatim by all of them (OP-1).
+     * A pick is either `name@offset` — the member of that element's orbit at that index, with **one offset per
+     * nesting level** (`name@j@k`, #18) — or an ordinary element reference, which the pattern's transform must
+     * leave alone. `cells=` are the gesture's clicks carried back to the cell of member 0 at every level, so
+     * where each copy's click lands follows the pattern's *current* shape; `signs=` are the choices its first
+     * copy scored, taken verbatim by all of them (OP-1).
      */
     private fun applyOrbit(
         doc: Document,
@@ -1155,8 +1191,8 @@ object DocumentFormat {
         if (restamp != null && name == restamp.pattern) restamp.resized = true
         val pattern = doc.patternNamed(name) ?: throw LoadError("unknown pattern '$name'")
         val tool = doc.toolDef(words.getOrElse(2) { throw LoadError("orbit is missing a tool") }) ?: throw LoadError("unknown tool '${words[2]}'")
-        var points = emptyList<Pair<Element, Int?>>()
-        var elements = emptyList<Pair<Element, Int?>>()
+        var points = emptyList<Pair<Element, List<Int>?>>()
+        var elements = emptyList<Pair<Element, List<Int>?>>()
         var cells = emptyList<Vec2>()
         var scalars = emptyList<ScalarEntry>()
         var signs = emptyList<Int>()
@@ -1164,12 +1200,17 @@ object DocumentFormat {
         var chainsPart = false
         var dofs = emptyList<Quantity>()
 
-        fun specs(v: String): List<Pair<Element, Int?>> =
+        fun specs(v: String): List<Pair<Element, List<Int>?>> =
             v.split(',').filter { it.isNotEmpty() }.map { token ->
-                val at = token.indexOf('@')
-                val n = if (at < 0) token else token.substring(0, at)
-                val el = byName[n] ?: throw LoadError("unknown element '$n'")
-                el to if (at < 0) null else (token.substring(at + 1).toIntOrNull() ?: throw LoadError("malformed member index '$token'"))
+                val parts = token.split('@')
+                val el = byName[parts[0]] ?: throw LoadError("unknown element '${parts[0]}'")
+                // one index per nesting level, outermost first (#18) — a single one is the whole of OP-23
+                el to
+                    if (parts.size == 1) {
+                        null
+                    } else {
+                        parts.drop(1).map { it.toIntOrNull() ?: throw LoadError("malformed member index '$token'") }
+                    }
             }
         for (w in words.drop(3)) {
             val v = w.substringAfter('=', "")

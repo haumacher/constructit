@@ -2712,11 +2712,136 @@ the count, press Re-stamp) where it used to be "draw it again".
 
 ### What is deliberately not here
 
-- **A pattern of a pattern.** The pattern tools do not replicate (what they build *is* a pattern), so patterns
-  do not nest. Nothing in the model forbids it; nothing has asked for it.
+- ~~**A pattern of a pattern.**~~ **Retired in session 73 (GitHub #18)** — the user asked for it, and the note's
+  own reasoning was what made it cheap: *nothing in the model forbids it.* The reading that this parking note
+  gave ("the pattern tools do not replicate, because what they build *is* a pattern") turned out to be a
+  statement about the **encoding**, not about the gesture: an `orbit` step could carry one `tool` step, so a
+  tool that records a `pattern` plus the orbits riding it had nowhere to go. Lifting that — an orbit carries any
+  geometry-creating recorded step — makes a pattern of a pattern an ordinary ride, and the polygon shortcut
+  multiply with a ring for free. See *A pattern multiplies what rides it* below.
 - **A pattern as a tool operand, or a whole group as a pattern's reference** (OP-16's `groupOperand`): the
   reference is one point. A group *ring* would be the natural next demand, and it is the arrays' territory
-  today.
+  today. **This half of the note stays parked, deliberately**, and #18 did not touch it: a group lives in its
+  own namespace (OP-16), no `pattern` or `orbit` step ever names one, and that wall is what keeps a pattern's
+  rule addressable by plain element references. Recorded here so it is not looked for in the nesting.
+
+### A pattern multiplies what rides it — recursively (GitHub #18, session 73)
+
+The user's report was a *missing abstraction*, not a defect: a circle drawn on pattern members multiplies with
+the pattern, a **polygon** drawn the same way does not, and their own words named the mechanism — *"what about
+multiplying a pattern with a pattern recursively?"* The ground truth sharpened it: the polygon is **already**
+this OP's composition internally (a `pattern` step plus the orbits riding it — that is what makes a rounded
+polygon's count re-stampable), and it was declared `replicates = false` only because an orbit could carry a
+single `tool` gesture. So the fix is **the orbit rule applied to the `pattern` step itself**, and nothing in it
+is polygon-shaped.
+
+**An `orbit` may carry any geometry-creating recorded step.** `Editor.maybeCompleteTool` consults the
+replication plan *before* the `recordsSteps` branch, so a tool that would have emitted its own steps emits them
+**inside** the fan, where `Document.recording` absorbs them into the one `orbit` step exactly as it already
+absorbs a multi-operation tool. One step, so one checkpoint and one undo removes the whole nested creation;
+`buildOrbit` therefore stops asking the journal whether anything happened (a nested ride adds no step of its
+own) and asks what the copies *made*.
+
+**A nested pattern is not a rule the file names.** Every copy of a ride that carries a pattern builds one, so
+the drawing has *n* of them; they are congruent by construction (copy *j*'s is the outer transform of copy 0's),
+they carry `enclosing` / `enclosingIndex` / `enclosingSlot`, and they live in `Document.nested` rather than in
+the list an `orbit` step resolves a name against. Hence no name collisions, no new step kind, and the UI's
+pattern list is unchanged.
+
+**Member addressing composes: `e@j@k`.** A pick is `Arg.Member(anchor, offsets)` with **one index per level up
+to its own** — a *copy shift* at each level outside it, and how far along its orbit at its own. The anchor is
+member 0 of that orbit in the all-zero copy, so `e2@1` is byte-for-byte what OP-23 always wrote and `e3@0@0`
+says one level deeper. It is still an ordinary element reference, so it travels the delete cascade, the name map
+and `Arg.Member` **with no new case** (`referencedElements` is untouched), and the number of `@`s is what tells
+the reader the depth — nothing about the nesting is stored twice. A sample, a hexagonal ring of rounded squares
+with one gesture riding a square's own corner ring:
+
+```
+pattern "P1" circular ref=e2 centre=e1 count=6 -> e3,e4,e5,e6,e7
+param "corner" = 8mm
+orbit "P1" polygon pts=e2@0,e2@1 cells=100,0;100,0.0000000000000071 scalar="corner" count=4 signs=-1;1;… -> e8,…,e73
+orbit "P1" segment pts=e3@0@0,e3@0@1 cells=50,86.60254037844386;50.00000000000002,86.60254037844386 -> e74,…,e97
+```
+
+**Three rules the composition needed, each falling out of the geometry:**
+
+- **One level is one transform.** A pick rides level *L* only if it sits in *that* pattern; a member of a
+  sibling copy's pattern is carried by a rotation about a **different centre**, which is no rigid motion of the
+  gesture, so it is judged there as an outside input and must be invariant (a polygon's centre is, its
+  neighbour's is not). This is why the copy shifts of a deeper pick come out zero: all its levels name one copy.
+- **The levels are resolved outermost inward, and the cells innermost outward.** Resolution: the outer indices
+  name *which copy's* pattern the pick's orbit belongs to, the innermost index says where along it — nothing is
+  transformed and nothing is searched, because the ride kept its patterns by copy. Cells: `T_out^j ∘ T_in0^k`
+  and `T_inj^k ∘ T_out^j` are the *same* map, so a click can be carried by the **anchor** pattern's transform
+  alone and stored cell-locally at every depth. *Rejected*: walking the anchor element inward and then outward
+  (elegant, and wrong — a nested ring's member 0 is a shared *outer* member at a different outer index, so the
+  two shifts do not commute on elements the way they do on points).
+- **A gesture built inside a copy of a ride may not ride the levels that ride is stamping.** Those cells are
+  exactly what the enclosing ride re-runs it in, so riding them again would square the fan. That one line is
+  what makes the polygon's own inner segment and fillet ride the *copy's* pattern — the composition this OP
+  already described — while the ride round the ring is the outer gesture's business.
+
+**Counts stay structural at every level, each in its own step's literal.** The outer count is the `pattern`
+step's, as before; a nested pattern's is the carrying `orbit` step's `count=` — one number for the whole fan, so
+changing it re-runs the ride and **every copy re-stamps together**. `DocumentFormat.restampRide` is the same
+journal rewrite keyed by the step's **journal index**, a positional reference of the kind the ortho steps have
+always used (the script prefix before it is the same on every replay), with the ride's pattern still named so
+its steps may legitimately come back a different size while every other step is held to the strict count check
+(OP-18). The UI reads one rule: **the selection names the innermost rule it belongs to** — geometry a ride built
+re-counts that ride (the sides of every copy), and the ring is reached by clicking a ring member, which the ride
+did not build.
+
+**Everything else is unchanged, applied per level.** Scalars by reference (one radius rounds every corner of
+every copy); `signs=` scored once by the first copy and handed on verbatim, so a replay never re-scores; Alt
+suppresses **at the level of the gesture it is pressed in** — and OP-23's two halves still agree, since on a
+slot that *places* a point Alt declines the snap and the one-off is one by construction, while on a slot that
+*picks* geometry Alt is what declines the fan out loud. The span refusal is checked at level 0 only, and
+deliberately: a deeper level's count is not what an outer re-stamp changes, so its spans mean at the new count
+what they meant at the old one, and what a smaller outer count genuinely loses inside a nested ride is caught by
+the replay's own drop rule, which names it.
+
+**Which `replicates = false` rows were retired.** Three: *Regular polygon*, *Circular pattern*, *Linear
+pattern* — all three for the one reason above (theirs was a limit of the encoding, not a property of the
+gesture). The other thirty-five stand, each with a reason **about the gesture**: a tool owning a degree of
+freedom whose value is absolute (the point-on-curve riders, *Place solid* / *Place curve*, the dimensions), a
+re-parameterization (join, make relative/absolute, unlink), a measurement (a reading, where one number is the
+answer), a sketch space (organisation, not geometry), a plain **point** (placed *on* a member it already *is*
+that member), and the **arrays**, which copy geometry rather than state a rule and are this OP's deliberate
+opposite.
+
+**Format: new step *forms* only, no version bump.** An `orbit` step whose tool records steps, and a member
+reference with more than one `@` — syntax no earlier build ever wrote. No stored literal changes meaning, and
+`save → load → save` byte-equality is asserted at every stage of the flow, both count changes included.
+
+**Refusals added, verbatim:** *"not replicated inside P2: e17 is outside it"* (a pick the nested level's
+transform does not leave alone — the levels outside it still fan, and the status line says what was left out);
+*"not replicated: P2 is a pattern inside a pattern, which only the gesture that carries it can ride"* (a run
+that starts inside a nested pattern has no step form of its own — unreachable in practice, refused rather than
+written unloadably); *"polygon has no count of its own to re-stamp"* / *"polygon needs at least 3"* /
+*"polygon has no step to re-run"* (`Document.gestureCountRefusal`).
+
+**Regressions** (`PatternOfPatternTest`, 17): `aPolygonDrawnOnPatternMembersMultipliesWithThePattern`,
+`everyCopySitsWhereTheCellsAngleCarriesTheReferenceCopy`, `oneUndoRemovesTheWholeRideHoweverMuchItBuilt`,
+`theRingsCountRestampsHowManyPolygonsThereAre`, `theRidesOwnCountRestampsEveryCopy`,
+`aRideSpanningMoreMembersThanTheNewCountHasIsRefusedByName`, `replayTakesTheScoredChoicesVerbatim`,
+`theTwoCountsAreIndependent`, `aRoundedPolygonRidingAPatternIsAPatternOfAPattern`,
+`aGestureOnTheNestedRingFansOverBothLevelsAndWritesTheComposedAddress`,
+`aComposedAddressSurvivesARestampAtEitherLevel`, `aPickOutsideThePatternRefusesTheRideAndNamesIt`,
+`aGestureMixingLevelsKeepsTheOuterLevelAndNamesWhatCostItTheInner`,
+`altKeepsTheRideAOneOffWithoutTouchingWhatItBuildsInside`, `altDeclinesTheFanOnGeometryThatARideBuilt`,
+`aPatternDrawnOnAPatternsMembersIsMultipliedByIt`, `aComposedAddressTravelsTheDeleteCascadeAndTheNameMap`,
+plus the reporter's own script as two tests (`theUsersScriptStillMeansWhatItMeant` — it still loads to exactly
+what it always meant, since replay discovers no replication; `theUsersSecondPolygonNowMultipliesWithTheRing` —
+re-performed as gestures, six hexagons, each copy the reference copy carried round by its cell's angle to
+1e-9). Every pre-existing pattern, orbit and re-stamp test is green **unchanged**.
+
+**Cuts, stated.** (1) A gesture whose level-*L* picks come from **two different copies'** nested patterns rides
+level 0 only, refused by name at the inner level — it is not a rigid motion of the gesture, as above, and the
+outer fan is still six copies. (2) A run that does not reach the outermost pattern is kept to **one** level (its
+deeper levels would need copy indices from levels the gesture is not riding, which is a rule nothing states);
+this is only reachable inside a copy build, where it is exactly what is wanted. (3) A **plain** polygon's side
+count remains structural in the sense OP-18 means for a `tool` step *when it does not ride a pattern* — riding
+one, it is the ride's `count=` and re-stampable; drawn alone it is "use the tool again", exactly as before.
 - **Angular spacing other than the full turn** (a 90° sector of six). The count means *evenly round*, exactly
   as the circular array's does; a partial pattern needs an angle input and a decision about whether the ring
   closes, which is a design question and not an omission.
@@ -13283,6 +13408,24 @@ the composition table is driven generically as well as by its own test.
   too, where it used to drop silently), an expression for the domain, and a placed coordinate for the rider.
   **2165 → 2198 green**, nothing else cut, no golden moved. See the curve half's as-built note under the
   expressions entry.
+- **Session 73** — Delivered GitHub #18, the user's own design: **a pattern multiplies what rides it,
+  recursively.** The report was that a circle drawn on pattern members fans out while a *polygon* drawn the same
+  way does not, and their phrase for the missing abstraction — *"multiplying a pattern with a pattern"* — turned
+  out to be the mechanism literally: the polygon *is* OP-23's composition internally, and its
+  `replicates = false` was a statement about the **encoding** (an orbit could carry one `tool` step), not about
+  the gesture. So an `orbit` step now carries any geometry-creating recorded step, a `pattern` and the orbits
+  riding it included; member addressing gained one index per nesting level (`e@j@k`, the anchor member 0 at
+  every level, still an ordinary element reference so the delete cascade and the name map needed no new case);
+  each level's count lives in its own step's literal, and a change to either is the same journal re-stamp. Three
+  rules the composition forced, each geometric rather than legislated: *one level is one transform* (a member of
+  a sibling copy's nested pattern is carried about a different centre, so it counts as an outside input there),
+  *resolve outermost inward but carry cells innermost outward* (the two orders commute on points, not on
+  elements — which killed the more elegant anchor-walking scheme), and *a gesture built inside a copy of a ride
+  may not ride the levels that ride is stamping*, which is what makes the polygon's own inner segment and fillet
+  the copy's business and the ring's fan the outer gesture's. Three `replicates = false` rows retired, the other
+  thirty-five kept with reasons about the gesture. New step forms only, so no version bump. **2232 → 2247
+  green**, no golden moved; cuts recorded in the as-built note under OP-23, and the *group as a pattern's
+  reference* half of that OP's parked note deliberately left parked.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -16562,7 +16705,16 @@ the on-axis piece sweeps a `Band.Degenerate` (session 69) and a crack at the axi
    moved deliberately: `editor_scale_bar` (label text only, geometry byte-identical), two rows of
    `ScaleBarTest`, one accept-set in `PolishProbe2Test`.
 
-**Queued behind the batch (user-designed, GitHub #18): a pattern multiplies what rides it — recursively.**
+**Queued behind the batch (user-designed, GitHub #18): a pattern multiplies what rides it — recursively.
+— done, session 73.** *As built*: the full note is *A pattern multiplies what rides it — recursively* under
+OP-23, which also retires that OP's parked "a pattern of a pattern" half and records why the **group** half
+stays parked. In one line: an `orbit` step may carry any geometry-creating recorded step — a `pattern` and the
+orbits riding it included — member addressing gained one index per level (`e@j@k`, the anchor member 0 at every
+level), each level's count lives in its own step's literal and a change to either is the same journal re-stamp
+(`DocumentFormat.restampRide` for the nested one, keyed by the step's journal index), and the three
+`replicates = false` rows whose reason was the *encoding* rather than the gesture were retired (*Regular
+polygon*, *Circular pattern*, *Linear pattern*) while the other thirty-five stand with their reasons. New step
+forms only, so no version bump. Regressions: `PatternOfPatternTest` (17, the reporter's script among them).
 The circle multiplies because it was drawn riding pattern members (an orbit step re-runs per cell); the
 *polygon* does not, because a tool that creates **several** elements from picked points has no orbit path —
 and the user named the missing abstraction: *"what about multiplying a pattern with a pattern

@@ -468,6 +468,17 @@ class ToolDef(
      * where they belong — a handful of `false`s below, each with its reason. Two of them are structural and
      * enforced by [Document.replicationOf] rather than declared: a [repeating] tool already collects the whole
      * ring in one gesture, and a tool with no [slots] cannot touch a member.
+     *
+     * **What the exceptions are, after #18.** Three rows lost their `false`, and all three for the same reason:
+     * theirs was never a property of the *gesture* but a limit of the encoding — an orbit could carry one
+     * `tool` step, so a tool that recorded a `pattern` plus the orbits riding it had nowhere to go. That limit
+     * is gone, so *Regular polygon* and both *pattern* tools replicate, and a pattern of a pattern is an
+     * ordinary ride. Every remaining `false` has a reason about the gesture itself and stands: a tool owning a
+     * degree of freedom whose value is **absolute** (the point-on-curve riders, *Place solid* / *Place curve*,
+     * the dimensions), a **re-parameterization** (join, make relative/absolute, unlink — they rewire one named
+     * point), a **measurement** (a reading, where one number is the answer and six are clutter), a **sketch
+     * space** (organisation, not geometry), a plain **point** (placed *on* a member it already is that member),
+     * and the **arrays**, which copy geometry instead of stating a rule and are this OP's deliberate opposite.
      */
     val replicates: Boolean = true,
     /**
@@ -1278,8 +1289,11 @@ object Tools {
             // same two clicks into OP-23's composition — a circular pattern of the vertex, one replicated side
             // and one replicated fillet. So the everyday shortcut and the general mechanism are one
             // construction, and the tool records the steps that say which (see [Document.regularPolygonGesture]).
-            // It does not itself replicate: what it builds *is* a pattern.
-            ToolDef(POLYGON, "Regular polygon", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(choiceLen("corner radius", 0.0)), minCount = 3, recordsSteps = true, replicates = false, preview = Previews::polygon, help = "Set the number of sides, then click the centre and one vertex; the other vertices are that one rotated about the centre. Type a corner radius first to get a rounded polygon — a live pattern whose count you can re-stamp.", slotNames = listOf("centre", "vertex"), icon = Icons.POLYGON) { d, p, s -> d.regularPolygonGesture(p, s) },
+            // It **does** replicate (#18): an orbit carries any geometry-creating gesture, a `pattern` and the
+            // orbits riding it included, so a polygon drawn on a pattern's members multiplies with it — and its
+            // former `replicates = false` (whose reason was only that an orbit could carry one `tool` step) is
+            // retired rather than special-cased.
+            ToolDef(POLYGON, "Regular polygon", ToolCategory.CURVES, listOf(SlotKind.POINT, SlotKind.POINT), scalars = listOf(choiceLen("corner radius", 0.0)), minCount = 3, recordsSteps = true, preview = Previews::polygon, help = "Set the number of sides, then click the centre and one vertex; the other vertices are that one rotated about the centre. Type a corner radius first to get a rounded polygon — a live pattern whose count you can re-stamp. Drawn on a pattern's members it multiplies with the pattern, one polygon per cell.", slotNames = listOf("centre", "vertex"), icon = Icons.POLYGON) { d, p, s -> d.regularPolygonGesture(p, s) },
             // ----- Solids: the 2D->3D seam (OP-17). The sketch plane is the world XY plane in this
             // slice; the depth/angle is a panel parameter, which is where the feature's DOF is edited
             // (OP-13) since the 3D view has no picking yet.
@@ -1468,9 +1482,10 @@ object Tools {
             // patterns (OP-23). A pattern is **not** an array: an array copies geometry, a pattern states a
             // rule that later gestures ride, and its members are shared points the copies are built *on*. Both
             // record their own `pattern` step, because a pattern is a named object whose count can be
-            // re-stamped — and neither replicates, since what it builds is the pattern itself.
-            ToolDef(PATTERN_CIRCULAR, "Circular pattern", ToolCategory.TRANSFORM, listOf(SlotKind.POINT, SlotKind.POINT), minCount = 2, recordsSteps = true, replicates = false, preview = Previews::circularPattern, help = "Set the number of instances, then click the centre and one reference point: the point is repeated evenly round the centre. Anything you build on its members afterwards is repeated round it too — one segment makes every side, one fillet rounds every corner.", slotNames = listOf("centre", "reference point"), icon = Icons.PATTERN_CIRCULAR) { d, p, _ -> d.createPattern(PatternKind.CIRCULAR, p.points[1], p.points[0], p.count) },
-            ToolDef(PATTERN_LINEAR, "Linear pattern", ToolCategory.TRANSFORM, listOf(SlotKind.POINT, SlotKind.POINT), minCount = 2, recordsSteps = true, replicates = false, preview = Previews::linearPattern, help = "Set the number of instances, then click the base point and the step vector's end: the base is repeated along that vector. Anything you build on its members afterwards is repeated along it too (a row of holes, one circle).", slotNames = listOf("base point", "step to"), icon = Icons.PATTERN_LINEAR) { d, p, _ -> d.createPattern(PatternKind.LINEAR, p.points[0], p.points[1], p.count) },
+            // re-stamped. Both **do** replicate (#18): a pattern drawn on another pattern's members is a
+            // *pattern of a pattern* — the recursion the closing note of OP-23 parked and GitHub #18 asked for.
+            ToolDef(PATTERN_CIRCULAR, "Circular pattern", ToolCategory.TRANSFORM, listOf(SlotKind.POINT, SlotKind.POINT), minCount = 2, recordsSteps = true, preview = Previews::circularPattern, help = "Set the number of instances, then click the centre and one reference point: the point is repeated evenly round the centre. Anything you build on its members afterwards is repeated round it too — one segment makes every side, one fillet rounds every corner. Built on another pattern's members it multiplies with that pattern, giving a pattern of patterns.", slotNames = listOf("centre", "reference point"), icon = Icons.PATTERN_CIRCULAR) { d, p, _ -> d.createPattern(PatternKind.CIRCULAR, p.points[1], p.points[0], p.count) },
+            ToolDef(PATTERN_LINEAR, "Linear pattern", ToolCategory.TRANSFORM, listOf(SlotKind.POINT, SlotKind.POINT), minCount = 2, recordsSteps = true, preview = Previews::linearPattern, help = "Set the number of instances, then click the base point and the step vector's end: the base is repeated along that vector. Anything you build on its members afterwards is repeated along it too (a row of holes, one circle). Built on another pattern's members it multiplies with that pattern, giving a pattern of patterns.", slotNames = listOf("base point", "step to"), icon = Icons.PATTERN_LINEAR) { d, p, _ -> d.createPattern(PatternKind.LINEAR, p.points[0], p.points[1], p.count) },
             // ----- Measure -----
             // a measurement is a **reading**, not geometry: six of the same number is clutter where one is the
             // answer, so the measure and annotate tools decline the orbit (OP-23)
