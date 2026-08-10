@@ -110,6 +110,18 @@ data class Frame3(
     val bend: Vec3 = Vec3.ZERO,
     /** Whether the *curve* turns discontinuously here — a join of two pieces whose tangents differ. */
     val corner: Boolean = false,
+    /**
+     * **Where on the path this station was sampled** — the piece and its parameter — or null for a station
+     * that no piece stands behind (a run-on beyond an open route's end, `Chains.runOn`).
+     *
+     * Carried per station rather than in one list beside them (GitHub #20), and that is the point: a caller
+     * may take a **sub-run** of the stations, rotate a closed one about a new start, or add synthetic ones at
+     * the ends, and a parallel list would silently fall out of step with any of those. Held here, the
+     * position on the analytic curve travels with the station it belongs to, which is what lets
+     * [Embedding.cornerFold] ask the *curve* what it does either side of a corner instead of asking the
+     * chords the spine walks.
+     */
+    val param: Pair<Int, Double>? = null,
 ) {
     /** The frame's second in-plane axis: `tangent × ref`, so (ref, bi, tangent) is right-handed. */
     val bi: Vec3 get() = tangent.cross(ref)
@@ -176,6 +188,16 @@ class MovingFrame(
      * placement's re-projection nor a plan hint needs to know where the statement was made.
      */
     val startRef: Vec3,
+    /**
+     * The **analytic path** these stations were sampled from, where the frame's owner has one (GitHub #20).
+     *
+     * What [Embedding.cornerFold]'s bend term reads, together with [Frame3.param]: a corner's mitre is the
+     * trim two *straight* tubes make of each other, so whether it is honest depends on what the run does over
+     * the stretch the trim reaches — and that is a question for the curve, not for the spine that approximates
+     * it. Optional, because a frame may be assembled from stations directly (a swept cut's run-on beyond the
+     * body), and a frame with no path simply has no bend term to answer.
+     */
+    val path: Path3? = null,
 )
 
 /**
@@ -380,10 +402,11 @@ object Frames3 {
                     curvatures[k],
                     sampled.bends[k],
                     sampled.corners[k],
+                    sampled.params[k],
                 ),
             )
         }
-        return MovingFrame(stations, length, path.closed, seam, refs[0]) to null
+        return MovingFrame(stations, length, path.closed, seam, refs[0], path) to null
     }
 
     /**
@@ -856,6 +879,26 @@ object Embedding {
     private const val CONE_EPS = 1e-9
 
     /**
+     * How many points the bend term reads off each piece a corner joins ([cornerBend], GitHub #20).
+     *
+     * A **fixed** number, and that is the load-bearing part: it is the criterion's own resolution and owes
+     * nothing to how finely the drawing is meshed, so no refusal here can ever appear because a picture was
+     * refined. Sixteen because the wander over a trimmed span is monotone on anything convex and the last
+     * sample sits exactly at the end of the span, where it is largest — the ones between it only catch a
+     * piece that wanders and comes back.
+     */
+    private const val BEND_SAMPLES = 16
+
+    /**
+     * How deep a corner's cut may go into the wall behind it before it is a fold worth naming — twice
+     * [GeomMath.TESS_TOL_MM], the very slack [check]'s global term compares against.
+     *
+     * A constant rather than the caller's `tolMm`, deliberately: tying it to the tessellation the caller asked
+     * for would let a finer mesh lower the bar, which is the one thing this family's refusals may never do.
+     */
+    private const val BEND_SLACK = 2.0 * GeomMath.TESS_TOL_MM
+
+    /**
      * **Which bend of the run station [i] is, in words** — read off the station's *identity*, not measured
      * against a tolerance, which is why the two ends can say so exactly.
      *
@@ -1042,10 +1085,22 @@ object Embedding {
      * read off the station's own mitre plane, which is the plane the ring is actually built on, so the
      * numbers a refusal quotes are the numbers the built geometry has rather than an idealization of them.
      *
-     * **What it does not claim.** A corner whose trim exceeds one *sampling step* of a **curved** leg, but
-     * not the leg, pushes its ring past the next station and leaves a local artefact in the mesh which this
-     * does not name — naming it would be the mesh speaking again, and would make a refusal appear when a
-     * drawing is meshed more finely. The honest cure there is the same one this refusal offers.
+     * **And the trim has to land on run the mitre's own arithmetic is true of** — the second term
+     * ([cornerBend], GitHub #20), which is what session 65's own parked note above ("*a corner whose trim
+     * exceeds one sampling step of a curved leg …*") turned out to be hiding. The mitre is the trim two
+     * **straight** tubes make of each other: the curtain between the corner ring where it is built and where
+     * it is pushed to lies exactly *on* a straight leg's own surface, which is why a mitred polyline is exact
+     * and why the leg term above is the only question a polyline can raise. Where the leg **bends** inside the
+     * trimmed span that curtain leaves the tube's wall and cuts across the run behind it, and the body folds —
+     * watertight and positively volumed, and folded, which is the report that opened GitHub #20.
+     *
+     * The parked note read that as the mesh speaking, because the artefact appears in the picture exactly when
+     * the trim reaches past the next station. It is not: refine the spine and the fold does not go away, it is
+     * drawn with more triangles; coarsen it until no station stands inside the trim and the fold is merely
+     * *hidden*. So the question is asked of the curve — how far the analytic run wanders off the straight line
+     * the cut is made on, over the run that cut eats — and the answer is compared against the tolerance the
+     * spine itself is built to. A fold shallower than that is under the picture's own accuracy and is not
+     * named; a finer mesh cannot make this refuse more, because nothing in it reads the mesh.
      *
      * [subject] and [cure] are the caller's words, the same courtesy [check] does the swept cut, whose route
      * runs through the identical mitre and is judged by the identical arithmetic against its own clipped
@@ -1087,8 +1142,166 @@ object Embedding {
             if (need < len) continue
             return foldRefusal(st, a, b, need, len, subject, cure)
         }
+        return cornerBend(frame, reach, section, subject, cure)
+    }
+
+    /**
+     * **Does a corner mitre into run that bends?** — [cornerFold]'s second term (GitHub #20), and the one that
+     * reads the *curve* either side of the corner rather than the leg's bare length.
+     *
+     * What is measured, per corner: the trim reaches [trimOf] mm along the corner's own tangent, in both
+     * directions, since the ring is pushed back on the inside of the turn and forward on the outside. Over
+     * exactly that much run either side, the analytic piece is asked how far it wanders off the straight line
+     * through the corner — the line the mitre cut is made on. A segment answers zero, to the bit, so a mitred
+     * polyline is untouched by this and every fixture the leg term owns keeps its own words.
+     *
+     * **The sampling is this criterion's own and fixed** ([BEND_SAMPLES]), which is the whole of the answer to
+     * *"is this the mesh speaking?"*: it does not read the spine's step, so meshing a drawing more finely
+     * cannot make it refuse — the same discipline [Frames3.cornersOf] follows when it reads corners off the
+     * analytic pieces instead of off the chords. It samples in **arc length** ([Curves3.paramAtLength]), so
+     * the span asked about is the span the trim eats however the piece is parameterized, and it includes the
+     * far end of that span, where the wander is largest on anything convex.
+     *
+     * **The threshold is the picture's own accuracy** ([GeomMath.TESS_TOL_MM], doubled — the slack
+     * [check]'s global term already uses, and a constant rather than the caller's `tolMm` so that a finer
+     * mesh cannot lower the bar). A curtain that cuts a hundredth of a millimetre into the wall is a fold no
+     * mesh built to two hundredths can draw and no user can see; one that cuts millimetres in is the
+     * artefact in the report.
+     */
+    private fun cornerBend(
+        frame: MovingFrame,
+        reach: Double,
+        section: List<Vec2>?,
+        subject: String,
+        cure: String,
+    ): String? {
+        val path = frame.path ?: return null
+        val els = path.elements
+        val st = frame.stations
+        for (c in st.indices) {
+            if (!st[c].corner) continue
+            val join = jointAt(frame, c) ?: continue
+            val trim = trimOf(st[c], els[join.first], els[join.second], section, reach)
+            if (trim <= Vec3.EPS) continue
+            val into = wanderOf(els[join.first], trim, fromEnd = true)
+            val outOf = wanderOf(els[join.second], trim, fromEnd = false)
+            val bend = maxOf(into, outOf)
+            if (bend <= BEND_SLACK) continue
+            return bendRefusal(st[c].s, trim, bend, subject, cure)
+        }
         return null
     }
+
+    /**
+     * How much run a corner's mitre reaches over, either way along its own tangent — see [cornerBend].
+     *
+     * The turn is read from the **analytic** tangents of the two pieces the corner joins, not from the mitre
+     * plane the chords built, and that is deliberate and the one place this term parts company with the leg
+     * term above. The leg term quotes the numbers the built geometry has, which is right for a claim about
+     * the built band; this term's whole business is *"what does the curve do here"*, and a chord-derived turn
+     * would make the number — and, at the boundary, the refusal — move when the drawing was meshed more
+     * finely. For a round tube nothing but the analytic turn enters at all; for an outlined section the
+     * ring's own axes are the frame's, which is the orientation the section is actually built in.
+     */
+    private fun trimOf(
+        st: Frame3,
+        into: Curve3Element,
+        outOf: Curve3Element,
+        section: List<Vec2>?,
+        reach: Double,
+    ): Double {
+        val g = analyticBite(st, into, outOf) ?: return 0.0
+        if (g.length() <= Vec2.EPS) return 0.0
+        val back = worstVertex(g, section, reach)?.dot(g) ?: 0.0
+        val forward = worstVertex(g * -1.0, section, reach)?.dot(g * -1.0) ?: 0.0
+        return maxOf(back, forward)
+    }
+
+    /**
+     * [biteOf]'s analytic twin: `tan(θ/2)` towards the inside of the turn, in the ring's own axes, with the
+     * turn taken from the two pieces' own end tangents rather than from the chords the spine walks.
+     */
+    private fun analyticBite(
+        st: Frame3,
+        into: Curve3Element,
+        outOf: Curve3Element,
+    ): Vec2? {
+        val a = Curves3.tangentAt(into, 1.0) ?: return null
+        val b = Curves3.tangentAt(outOf, 0.0) ?: return null
+        val sum = a + b
+        if (sum.length() <= Vec3.EPS) return null
+        val mitre = sum.normalized()
+        val c = mitre.dot(a)
+        if (c <= 0.0) return null
+        val m = mitre - a * c
+        // the **length** is the analytic tan(θ/2) and nothing else; the ring's axes give only the direction,
+        // and they stand perpendicular to the chord rather than to the tangent, so projecting onto them and
+        // keeping the projection's length would let the mesh back into the number by the back door
+        val inPlane = Vec2(m.dot(st.ref), m.dot(st.bi))
+        if (inPlane.length() <= Vec2.EPS) return null
+        return inPlane.normalized() * (m.length() / c)
+    }
+
+    /**
+     * Which two pieces the corner at station [c] is the join of, or null where no join stands there.
+     *
+     * Read off the station's own [Frame3.param] by exactly the rule that marked it a corner
+     * (`Frames3.cornersOf`): a join is a sample at the end of a piece that is not the last, and a closed
+     * path's seam is its last piece against its first, which lands on the run's first station.
+     */
+    private fun jointAt(
+        frame: MovingFrame,
+        c: Int,
+    ): Pair<Int, Int>? {
+        val els = frame.path?.elements ?: return null
+        val (piece, t) = frame.stations[c].param ?: return null
+        return when {
+            t >= 1.0 && piece < els.lastIndex -> piece to piece + 1
+            frame.closed && c == 0 && els.size > 1 -> els.lastIndex to 0
+            frame.closed && c == 0 -> 0 to 0
+            else -> null
+        }
+    }
+
+    /**
+     * How far [el] wanders off its own end tangent over the last (or first) [span] mm of its arc length — the
+     * bend the mitre's straight-tube arithmetic does not know about.
+     *
+     * Zero for a segment, exactly. Clamped to the piece, because a trim that reaches past a whole piece is the
+     * leg term's business and not this one's.
+     */
+    private fun wanderOf(
+        el: Curve3Element,
+        span: Double,
+        fromEnd: Boolean,
+    ): Double {
+        val len = Curves3.arcLength(el)
+        if (len <= Vec3.EPS) return 0.0
+        val reachSpan = min(span, len)
+        val t0 = if (fromEnd) 1.0 else 0.0
+        val origin = Frames3.pointAt(el, t0)
+        val dir = Curves3.tangentAt(el, t0) ?: return 0.0
+        var worst = 0.0
+        for (i in 1..BEND_SAMPLES) {
+            val at = reachSpan * i / BEND_SAMPLES
+            val p = Frames3.pointAt(el, Curves3.paramAtLength(el, if (fromEnd) len - at else at))
+            val v = p - origin
+            worst = max(worst, (v - dir * v.dot(dir)).length())
+        }
+        return worst
+    }
+
+    /** The refusal a corner cutting into bent run speaks — the corner, both sizes, and the way out. */
+    private fun bendRefusal(
+        s: Double,
+        trim: Double,
+        bend: Double,
+        subject: String,
+        cure: String,
+    ): String =
+        "the corner ${Frames3.mm(s)} mm along the path mitres ${Frames3.mm(trim)} mm of run, and the path " +
+            "bends ${Frames3.mm(bend)} mm off the straight line that cut is made on within that — so $subject " +
+            "would fold back on itself; $cure"
 
     /**
      * What one corner **bites** off each of its two legs, as a 2D vector in that station's own axes:

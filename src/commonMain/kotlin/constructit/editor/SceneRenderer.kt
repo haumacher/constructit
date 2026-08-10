@@ -1068,15 +1068,26 @@ object SceneRenderer {
     /**
      * The bar's label: the base unit (mm), converted upward exactly when the number would stop reading as
      * a length — "10000 mm" is a digit count, "10 m" is a distance (issue #12; the original never-convert
-     * decision is reversed where it was recorded). Steps are powers of 1000 (µm, mm, m, km), so a
-     * 1/2/5-round length stays 1/2/5-round in whichever unit it is shown in; mm holds down to 0.1 because
-     * "0.5 mm" is the familiar spelling and "500 µm" is not.
+     * decision is reversed where it was recorded).
+     *
+     * **The ladder is µm, mm, cm, m, km, and the rule for choosing a rung is one sentence**: the largest unit
+     * the number is still at least 1 in. That is what "10 mm = 1 cm" asks for (GitHub #16) — the centimetre is
+     * the unit a person actually reaches for between a fingernail and a table, and skipping it made the bar
+     * say "500 mm" where every ruler in the room says 50 cm. The one exception is the bottom of the ladder:
+     * **mm holds down to 0.1**, because "0.5 mm" is the familiar spelling and "500 µm" is not.
+     *
+     * Nothing about the **rounding** changes, and that is the point of putting the rung choice here and
+     * nowhere else ([niceLength]): the bar still states a 1/2/5 × 10^k *millimetre* length, shared with the
+     * grid and the 3D ground, so a bar and the grid under it can never round differently. A cm rung leaves
+     * that ladder 1/2/5-round as well (10 mm → 1 cm, 20 → 2, 50 → 5, 100 → 10, 200 → 20, 500 → 50), so the
+     * unit changed and the number a person reads did not.
      */
     fun scaleBarLabel(scale: Double): String {
         val mm = scaleBarLength(scale)
         return when {
             mm >= 1e6 -> "${Format.num(mm / 1e6)} km"
             mm >= 1e3 -> "${Format.num(mm / 1e3)} m"
+            mm >= 10.0 -> "${Format.num(mm / 10.0)} cm"
             mm >= 0.1 -> "${Format.num(mm)} mm"
             else -> "${Format.num(mm * 1e3)} µm"
         }

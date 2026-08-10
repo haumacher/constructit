@@ -24,7 +24,8 @@ import kotlin.test.assertTrue
  * an eyeball.
  */
 class DiscTwoWaysTest {
-    private val script = """
+    private val script =
+        """
 constructit 2
 point -35.33896388499252,-20.515316766172162 -> e1
 point -11.862690931735507,-6.57460001576257 -> e2

@@ -541,6 +541,21 @@ class Element(
  */
 class Joint(val a: Element, val b: Element, val at: PointRef)
 
+/**
+ * A **stated incidence** (OP-14, GitHub #19): the construction says this point lies on that circle — because
+ * the point is the circle's own radius-defining point, one of the three a circle was fitted through, an end
+ * of an arc, a crossing that has the circle among its operands, or a tangency taken from a point.
+ *
+ * The circle is held as its **carrier** [CircleRef] and not as a coordinate, for [Joint]'s own reason: what
+ * a tangent at the point needs is the node, so the line keeps following every later edit of the circle. The
+ * [host] is the element the user sees and the refusals name (`e4`), which is why both are kept — a carrier
+ * derived from an arc has no element of its own.
+ *
+ * Read by *Tangent at point*, which is the honest form of "click a point on a circle": lying on the circle is
+ * a fact about the construction, not a measurement of two numbers agreeing (`Document.circlesThrough`).
+ */
+class OnCircle(val point: Node, val carrier: CircleRef, val host: Element?)
+
 /** One way a boundary can carry on from a piece: the next [piece], and the position [at] which it takes over. */
 class Continuation(val piece: Element, val at: Vec2)
 
@@ -7199,7 +7214,23 @@ class Document {
             if (c.branches > 1) refs.add(cx.select(c.set, -1))
         }
         refs.forEach { addDerived(it) }
+        stateCrossingOnCircles(refs, a, b)
         return refs
+    }
+
+    /**
+     * A crossing lies on **both** its operands, so where either is a circle or an arc the incidence is stated
+     * (GitHub #19): a circle ∩ line point carries its circle exactly as a rider does, and a circle ∩ circle
+     * point carries *two*, which is the one case where a tangent there has to be told which.
+     */
+    private fun stateCrossingOnCircles(
+        refs: List<PointRef>,
+        a: Element,
+        b: Element,
+    ) {
+        for (el in listOf(a, b)) {
+            if (el.isCentric) stateAllOnCircle(refs, carrierCircle(el), el)
+        }
     }
 
     /**
@@ -7320,6 +7351,7 @@ class Document {
         ): PointRef {
             val out = addDerived(ref)
             if (remember) elements.lastOrNull()?.let { registerSigns(it, listOf(sign)) }
+            stateCrossingOnCircles(listOf(out), a, b)
             return out
         }
         // a restated branch is taken as it stands — invalid included, which is ordinary invalidity (OP-3) and
@@ -7387,10 +7419,16 @@ class Document {
         // passes through moves it, and one route serves the coil, the curve through points, the connect, the
         // combined view, the intersection curve and the imported wireframe alike.
         if (el.kind == ElementKind.SPACE_CURVE) return spaceCurveKeyPoints(el)
-        if (el.kind == ElementKind.AREA) {
-            val region = el.ref as RegionRef
-            val n = cx.regionCornerCount(region, Evaluator())
-            if (n == 0) {
+        // **Anything that bounds an area hands back its corners** — a thick path's footprint *and* a traced
+        // outline, through the one coercion that already exists for the seam's own slot ([regionOf]). It used
+        // to be `kind == AREA` alone, so a traced outline — which [Element.isArea] accepts, and which the pick
+        // therefore took — reached the `when` below, found no branch, and **created nothing while saying
+        // nothing** (the session-33 class: an unspoken null becomes an empty status line). One predicate, both
+        // kinds, no case per element.
+        if (el.isArea) {
+            val region = regionOf(el)
+            val n = region?.let { cx.regionCornerCount(it, Evaluator()) } ?: 0
+            if (region == null || n == 0) {
                 note = "${nameOf(el)} has no corners to extract right now"
                 return emptyList()
             }
@@ -7422,7 +7460,21 @@ class Document {
                     )
                 else -> emptyList()
             }
+        // **A pick that yields nothing says so** (OP-3's rule about refusals, and the session-33 class named
+        // above): an *infinite* line and a ray reaching past their origin have no ends to take, and a silent
+        // no-op there is indistinguishable from a missed click. Named rather than guessed at, and stated once
+        // for every kind that reaches here rather than per branch, so a kind added later cannot be silent.
+        if (refs.isEmpty()) {
+            note =
+                "${nameOf(el)}: ${kindWord(el)} has no defining points to take — its own points are the ones " +
+                "it was drawn through, which are already in the drawing; a segment, an arc, a circle, a " +
+                "spline, a conic, a function curve, an outline or an area each hand back theirs"
+            return emptyList()
+        }
         refs.forEach { addDerived(it) }
+        // an arc's own two ends lie on its carrier circle by construction (GitHub #19) — its centre does not,
+        // which is why the incidence is stated per point rather than for everything an extraction hands back
+        if (el.kind == ElementKind.ARC) stateAllOnCircle(refs.drop(1), carrierCircle(el), el)
         return refs
     }
 
@@ -7490,9 +7542,12 @@ class Document {
         p: PointRef,
         circle: Element,
     ): List<PointRef> {
-        val set = cx.tangentPointsFromPoint(p, carrierCircle(circle))
+        val carrier = carrierCircle(circle)
+        val set = cx.tangentPointsFromPoint(p, carrier)
         val refs = listOf(cx.select(set, +1), cx.select(set, -1))
         refs.forEach { addDerived(it) }
+        // a tangency is on the circle by construction, like every other point derived onto it (GitHub #19)
+        stateAllOnCircle(refs, carrier, circle)
         return refs
     }
 
@@ -8705,6 +8760,68 @@ class Document {
         a: Element,
         b: Element,
     ): PointRef? = jointRegistry.firstOrNull { (it.a === a && it.b === b) || (it.a === b && it.b === a) }?.at
+
+    // ---- the incidence registry: which points the construction put on a circle (OP-14, GitHub #19) ----
+
+    /**
+     * Every point this document's constructions **stated** to be on a circle — see [OnCircle].
+     *
+     * The joint registry's twin, and for the same reason: whether a point lies on a circle is a fact the
+     * construction knows and the picture cannot be asked. Measuring `|p − c| = r` would accept a point that
+     * merely happens to sit there today and would drop it the moment a parameter moved, which is the very
+     * thing OP-5 says a drawing must not do. So the fact is recorded where it is made, by the routes that
+     * make it, and read by *Tangent at point*.
+     *
+     * Synthetic like the joints (OP-18): every one of those routes is a step, so a replay states them again
+     * and nothing about this is in the file.
+     */
+    private val onCircleRegistry = ArrayList<OnCircle>()
+
+    /**
+     * Record that [point] lies on [host]'s carrier circle [carrier] — because the construction that just ran
+     * put it there.
+     *
+     * Keyed on the **node** rather than on an element, so it is recorded at the construction (where the
+     * carrier is in hand) whether or not the point has become an element yet, and so a second element over
+     * the same node reads the same fact.
+     */
+    private fun stateOnCircle(
+        point: PointRef,
+        carrier: CircleRef,
+        host: Element?,
+    ) {
+        onCircleRegistry.add(OnCircle(point.node, carrier, host))
+    }
+
+    /** [refs] all lie on [host]'s carrier — the plural of [stateOnCircle], for the fits and the crossings. */
+    private fun stateAllOnCircle(
+        refs: List<PointRef>,
+        carrier: CircleRef,
+        host: Element?,
+    ) {
+        refs.forEach { stateOnCircle(it, carrier, host) }
+    }
+
+    /**
+     * The circles [el] lies on **by construction** — empty for a point that merely looks as if it does.
+     *
+     * Two sources, one answer. The registry above holds what a construction stated; a **rider** carries its
+     * circle in its own handle instead ([OnCircleHandle]), because attaching a point to a curve by dragging
+     * it is a gesture rather than a construction and there is no build to record anything. Deduplicated by
+     * the carrier node, since sharing a node *is* equality here (OP-5) — the same circle reached twice is one
+     * candidate, and only genuinely different circles make the tangent ambiguous.
+     */
+    fun circlesThrough(el: Element): List<OnCircle> {
+        if (!el.isPoint) return emptyList()
+        val out = ArrayList<OnCircle>()
+        for (on in onCircleRegistry) {
+            if (on.point === el.ref.node && out.none { it.carrier.node === on.carrier.node }) out.add(on)
+        }
+        (el.handle as? OnCircleHandle)?.let { h ->
+            if (out.none { it.carrier.node === h.circle.node }) out.add(OnCircle(el.ref.node, h.circle, elementFor(h.circle)))
+        }
+        return out
+    }
 
     /**
      * Where [a] and [b] still meet end to end, **the corners a fillet or chamfer took excluded**.
@@ -12745,27 +12862,39 @@ class Document {
         b: PointRef,
     ) = add(cx.ray(a, b), ElementKind.RAY, Styles.CURVE)
 
+    /**
+     * The circle centred at [center] through [through] — whose second point **lies on it by construction**,
+     * which is the fact the incidence registry records (GitHub #19): the radius point is exactly as good a
+     * place to raise a tangent as a rider is, and refusing it was the tool asking for the wrong thing.
+     */
+    @Suppress("UNCHECKED_CAST")
     fun circle(
         center: PointRef,
         through: PointRef,
     ) = add(cx.circleCP(center, through), ElementKind.CIRCLE, Styles.CURVE)
+        .also { stateOnCircle(through, it.ref as CircleRef, it) }
 
     fun circleCR(
         center: PointRef,
         radius: ScalarRef,
     ) = add(cx.circleCR(center, radius), ElementKind.CIRCLE, Styles.CURVE)
 
+    /** The circle through three points — all three of which lie on it by construction ([circle]'s note). */
+    @Suppress("UNCHECKED_CAST")
     fun circle3(
         a: PointRef,
         b: PointRef,
         c: PointRef,
     ) = add(cx.circle3(a, b, c), ElementKind.CIRCLE, Styles.CURVE)
+        .also { stateAllOnCircle(listOf(a, b, c), it.ref as CircleRef, it) }
 
+    /** The arc through three points — all three of which lie on its **carrier** circle by construction. */
     fun arc3(
         a: PointRef,
         b: PointRef,
         c: PointRef,
     ) = add(cx.arc3(a, b, c), ElementKind.ARC, Styles.CURVE)
+        .also { stateAllOnCircle(listOf(a, b, c), carrierCircle(it), it) }
 
     fun arcCenterStartEnd(
         center: PointRef,
@@ -12981,10 +13110,58 @@ class Document {
         p: PointRef,
     ) = add(cx.perpendicularThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
 
-    /** Tangent at a point-on-circle — the circle is inferred from the point's handle. */
-    fun tangentAtPointOnCircle(pointEl: Element) {
-        val c = pointEl.handle
-        if (c is OnCircleHandle) add(cx.tangentAtCircle(c.circle, pointEl.ref as PointRef), ElementKind.LINE, Styles.CONSTRUCT)
+    /**
+     * The tangent to a circle at a point that lies on it **by construction** (GitHub #19).
+     *
+     * The criterion is the construction's, not the picture's ([circlesThrough]): a rider, the radius-defining
+     * point of a circle drawn from two points, one of the three a circle was fitted through, an end of an
+     * arc, a crossing with a circle among its operands, a tangency. It used to be *"the point's handle is an
+     * [OnCircleHandle]"*, i.e. **a rider and nothing else**, which refused the very point that defines the
+     * radius — a point that determines the tangent as unambiguously as any rider does.
+     *
+     * *Unambiguously* fails in exactly one place, and it is a fact about the geometry rather than about this
+     * tool: a **circle ∩ circle** point lies on two circles, and there are two different tangents there. So
+     * the tool asks for one more click ([Tools] declares that second slot conditional) and the pick is the
+     * record — `els=` names the circle, replay takes it verbatim, and nothing is ever scored again (OP-1,
+     * OP-18). Where a replay finds an ambiguity nobody resolved, it refuses by name rather than choosing.
+     */
+    fun tangentAtPointOnCircle(
+        pointEl: Element,
+        circleEl: Element? = null,
+    ) {
+        val on = circlesThrough(pointEl)
+        val chosen =
+            when {
+                on.isEmpty() -> {
+                    note =
+                        "Tangent at point: ${nameOf(pointEl)} does not lie on a circle by construction — a " +
+                        "tangent needs a point the drawing puts on one: a circle's own radius point, a point " +
+                        "of a circle fitted through three, an end of an arc, a crossing with a circle, a " +
+                        "tangency, or a point riding a circle"
+                    null
+                }
+                circleEl != null ->
+                    on.firstOrNull { it.host === circleEl } ?: run {
+                        note =
+                            "Tangent at point: ${nameOf(pointEl)} does not lie on ${nameOf(circleEl)} by " +
+                            "construction — it lies on ${namesOf(on)}; click one of those"
+                        null
+                    }
+                on.size == 1 -> on[0]
+                else -> {
+                    note =
+                        "Tangent at point: ${nameOf(pointEl)} lies on ${namesOf(on)}, so the tangent there is " +
+                        "two different lines — click the circle the tangent is to"
+                    null
+                }
+            } ?: return
+        add(cx.tangentAtCircle(chosen.carrier, pointEl.ref as PointRef), ElementKind.LINE, Styles.CONSTRUCT)
+    }
+
+    /** The circles of [on], named the way a refusal has to name them — "e4 and e7", "e4, e7 and e9". */
+    private fun namesOf(on: List<OnCircle>): String {
+        val names = on.map { it.host?.let { h -> nameOf(h) } ?: "the circle it rides" }
+        return if (names.size <= 1) names.joinToString() else names.dropLast(1).joinToString(", ") + " and " + names.last()
     }
 
     fun parallelThrough(

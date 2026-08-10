@@ -551,10 +551,32 @@ class ToolDef(
      * click would be a tool that declined without saying so.
      */
     val fromSelection: Boolean = false,
+    /**
+     * How many of this tool's [slots] the picks made so far actually call for — null for the ordinary tool,
+     * every slot of which is always needed.
+     *
+     * Declared by exactly one tool, *Tangent at point*, and it is a fact about the geometry rather than a
+     * preference (GitHub #19). A point that lies on **one** circle by construction determines the tangent
+     * there, and a second click would say nothing; a point that lies on **two** — a circle ∩ circle crossing —
+     * stands on two different tangents, and a click on the circle is the only thing that can say which. So the
+     * trailing slot is asked for exactly when the drawing has not already answered it, and where it *is*
+     * asked, the pick is recorded in the step's own `els=` like every other pick: a durable choice, taken
+     * verbatim on replay and never scored again (OP-1, OP-18).
+     *
+     * Only **trailing** slots may be dropped, for [requiredScalars]'s reason: the picks fill the slots as a
+     * prefix, so a hole in the middle would shift every slot behind it.
+     */
+    val slotsNeeded: ((Document, List<Element>) -> Int)? = null,
     val build: (Document, Picks, List<ScalarRef>) -> Unit,
 ) {
     /** What slot [i] is for: this tool's own word ([slotNames]) or the slot kind's generic one. */
     fun roleOf(i: Int): String = slotNames.getOrNull(i) ?: Tools.roleOfKind(slots.getOrNull(i))
+
+    /** How many slots this tool waits for, given what has been picked into it — see [slotsNeeded]. */
+    fun slotCount(
+        doc: Document,
+        picked: List<Element>,
+    ): Int = slotsNeeded?.invoke(doc, picked) ?: slots.size
 
     /**
      * How many of this tool's scalars it **cannot do without** — the ones with no [ScalarSlot.default].
@@ -1417,7 +1439,10 @@ object Tools {
             ToolDef(PARALLEL, "Parallel", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.POINT), help = "Click a line, then a point, for the parallel through it.", slotNames = listOf("line", "through"), icon = Icons.PARALLEL) { d, p, _ -> d.parallelThrough(p.elements[0], p.points[0]) },
             ToolDef(PARALLEL_AT, "Parallel at distance", ToolCategory.CONSTRUCT, listOf(SlotKind.LINE, SlotKind.SIDE), scalars = listOf(len("distance")), help = "Type a distance (or pick a parameter in the panel), click the base line, then click the side you want the parallel on.", slotNames = listOf("line", "side"), icon = Icons.PARALLEL_AT) { d, p, s -> d.parallelAtDistance(p.elements[0], s[0], p.at) },
             ToolDef(TANGENT, "Tangent from point", ToolCategory.CONSTRUCT, listOf(SlotKind.POINT, SlotKind.CIRCLE), help = "Click an external point, then a circle or arc (an arc counts as its whole circle).", slotNames = listOf("from", "circle"), icon = Icons.TANGENT) { d, p, _ -> d.tangentFromPoint(p.points[0], p.elements[0]) },
-            ToolDef(TANGENT_AT, "Tangent at point", ToolCategory.CONSTRUCT, listOf(SlotKind.ON_CIRCLE_POINT), help = "Click a point that lies on a circle for the tangent there (use Point on circle).", slotNames = listOf("point on circle"), icon = Icons.TANGENT_AT) { d, p, _ -> d.tangentAtPointOnCircle(p.elements[0]) },
+            // Two slots, the second of them asked for only where the drawing has not already answered it
+            // ([ToolDef.slotsNeeded], GitHub #19): a point on one circle by construction needs one click, a
+            // circle ∩ circle crossing needs the circle named as well.
+            ToolDef(TANGENT_AT, "Tangent at point", ToolCategory.CONSTRUCT, listOf(SlotKind.ON_CIRCLE_POINT, SlotKind.CIRCLE), help = "Click a point that lies on a circle by construction — a circle's radius point, a crossing with a circle, an arc's end, a point riding one; where it lies on two circles, click the circle as well.", slotNames = listOf("point on circle", "circle"), slotsNeeded = { d, els -> if (els.isNotEmpty() && d.circlesThrough(els[0]).size > 1) 2 else 1 }, icon = Icons.TANGENT_AT) { d, p, _ -> d.tangentAtPointOnCircle(p.elements[0], p.elements.getOrNull(1)) },
             ToolDef(FILLET, "Fillet", ToolCategory.CONSTRUCT, listOf(SlotKind.CARRIER, SlotKind.CARRIER), scalars = listOf(len("radius")), preview = Previews::fillet, help = "Type a radius (or pick a parameter in the panel), then click the two legs — lines, segments, circles or arcs — where you want the rounding to touch them.", slotNames = listOf("leg", "leg"), icon = Icons.FILLET) { d, p, s -> d.filletBetweenCurves(p.elements[0], p.elements[1], s[0], p.clicks[0], p.clicks[1], p.signs) },
             // line-only, deliberately: a bevel across a round leg has two honest readings (a chord, or an
             // arc of the same length), and until the convention is stated a tool that picked one silently

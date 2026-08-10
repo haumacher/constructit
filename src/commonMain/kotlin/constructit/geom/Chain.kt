@@ -517,7 +517,7 @@ object Chains {
         if (mode == CarryMode.ROTATING) {
             Embedding
                 .cornerFold(
-                    MovingFrame(run, run.last().s - run.first().s, closed = false, seam = 0.0, startRef = run.first().ref),
+                    MovingFrame(run, run.last().s - run.first().s, closed = false, seam = 0.0, startRef = run.first().ref, path = directrix),
                     reach,
                     listOf(boxLo, Vec2(boxHi.x, boxLo.y), boxHi, Vec2(boxLo.x, boxHi.y))
                         .map { Vec2(it.x, carry.handed * it.y) },

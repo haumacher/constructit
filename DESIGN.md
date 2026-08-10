@@ -870,7 +870,8 @@ auto-uniquified so wiring is unambiguous — see *Usability — click budgets*):
   Break curve (one tool over an ortho leg, a segment, an arc and a Bézier —
   see *Break and join legs*, OP-19)
 - Construct: Perp/Parallel-through, Perp-bisector, Angle-bisector, Parallel-at-distance,
-  Tangent-from-point, Tangent-at-point (1 click), Fillet, Chamfer, Outer/Inner common tangents
+  Tangent-from-point, Tangent-at-point (1 click — 2 only where the point lies on two circles, GitHub #19),
+  Fillet, Chamfer, Outer/Inner common tangents
 - Transform: Mirror, Rotate, Scale, Translate-by-vector, Linear array, Circular array, and **Circular /
   Linear pattern** — a *rule* later gestures ride rather than a copy of geometry (OP-23)
 - Measure: Distance, Angle (3pt), Angle (2 lines), Length, Radius, X/Y coordinate, and of a solid
@@ -931,6 +932,101 @@ line–line fillet — its tangencies are registered as *joints* instead (below)
 tracer needs and the drawing does not. And **chamfer stays line-only**: a bevel across a round leg has two
 honest readings, a chord and an arc of the same length, and until that convention is stated a tool that
 silently picked one would be guessing. Recorded here rather than half-built.
+
+#### On a circle *by construction* — the tangent's own slot (GitHub #19, session 72)
+
+**The report.** Draw a circle from two points, then *Tangent at point* on the point that gives it its radius:
+the click is rejected (*"needs an existing point on circle — click one (use Point on circle)"*). Same at a
+circle ∩ line crossing. And the reporter's own third case, which is the design boundary: at a crossing of **two**
+circles the point does not say which circle the tangent is to.
+
+**The defect was the criterion, not the message.** The slot asked *"is this point's handle an `OnCircleHandle`?"*
+— i.e. *is it a rider* — and a rider is one of the ways a drawing puts a point on a circle. The honest question
+is construction-level: **did something build this point onto that circle?** The radius point of
+`circle(centre, through)` answers yes as unambiguously as any rider, and so do the three points a circle was
+fitted through, an arc's own two ends, a crossing that has a circle among its operands, and a tangency taken
+from a point.
+
+*Rejected: measuring it* — `|p − c| = r` to a tolerance. That is exactly the thing OP-5 exists to forbid: it
+would accept a point that merely happens to sit there today and drop it the moment a parameter moved, and it
+would make a construction's validity a function of a tolerance. So the fact is **recorded where it is made**, in
+an incidence registry that is OP-14's joint registry one relation on (`Document.circlesThrough`, `OnCircle`):
+the point's node, the carrier circle's node, and the element a refusal names. Synthetic like the joints and the
+handles (OP-18) — every route that records one is a step, so a replay states them again and nothing about this is
+in the file. A rider stays outside the registry deliberately and is read from its handle: attaching a point to a
+curve by dragging it is a gesture rather than a construction, so there is no build to record anything, and the
+one lookup unions the two and deduplicates by carrier node (sharing a node *is* equality here).
+
+**The ambiguity is answered by a click, and the click is the record.** Where the point lies on two circles there
+are two different tangents, and no scoring can choose between them — so the tool asks for the circle as well.
+Mechanically that is one new declaration in the tool table, `ToolDef.slotsNeeded`: *how many of my slots do the
+picks so far actually call for*. The trailing slot is asked for exactly when the drawing has not already
+answered it, so the everyday gesture is **still one click** and the ambiguous one is two. The choice is durable
+without a new file argument: the circle is an ordinary pick, so `els=` names it and replay takes it verbatim
+(OP-1, OP-18) — stronger than a `signs=` index, which would name an ordering rather than a circle. Where a
+replay finds an ambiguity nobody resolved, the build refuses by name rather than choosing.
+
+*Rejected: refusing the two-circle case outright and naming both candidates* (the reporter's alternative, and
+the tool would then be unable to do a construction the geometry supports). *Rejected: a second tool row for the
+ambiguous case* — the same gesture split in two, and the user would have to know which before clicking.
+*Rejected: an `OPTIONAL_CIRCLE` slot on the existing optional-slot machinery* — that skip is a reading of the
+**click** (a click that hits no point is offered to the slot behind it), and there is no slot behind this one;
+what decides here is the drawing, not the click.
+
+**The refusal stopped prescribing one route.** The help line — which is what the status bar ends with — now
+states the criterion and names the ways in, so a miss reads *"Tangent at point needs an existing point on
+circle — click one; nothing was placed. Click a point that lies on a circle by construction — a circle's radius
+point, a crossing with a circle, an arc's end, a point riding one; where it lies on two circles, click the
+circle as well."* The build's own refusal is the same sentence from the other side: *"e5 does not lie on a circle
+by construction — a tangent needs a point the drawing puts on one: …"*, and for a wrong circle pick, *"e9 does
+not lie on e12 by construction — it lies on e3 and e5; click one of those"*.
+
+Tests (`TangentAtPointTest`, 8 new): the report verbatim, with the tangent following the radius point as it is
+dragged; a circle ∩ line crossing; an arc's own end through *Key points*; the two-circle crossing answered by
+each of its two circles in turn, giving two different tangents; the recorded pick restated in `els=`, byte-equal
+save → load → save, and the reloaded line identical to the bit; the refusal that no longer prescribes *Point on
+circle*; the build's refusal for a point (a circle's centre) nothing built onto a circle; and the rider, still
+one click.
+
+##### The derived circle, and what the probe review found there (session 72)
+
+The review asked the composition the delivery had not seen: *a **mirrored** circle has no radius point of its
+own — is the tangent reachable at all?* Three findings, and they did not all point the same way.
+
+**The registry is general over derived geometry, and over patterns for free** (3 more tests). A **mirrored arc**
+publishes its own two ends through *Key points*, and those are registered, so the tangent stands at the copy's
+end in one click (`aMirroredArcsEndsTakeTheTangent`). A **patterned** circle is stronger than that: an orbit
+*re-runs the gesture* per cell (OP-23), so the same `Document.circle` call states the same incidence for every
+copy, and the tangent at a copy's own radius point is one click with nothing in the registry knowing that
+patterns exist (`aPatternedCirclesRadiusPointTakesTheTangentOnEveryCopy`). A **mirrored circle** has no radius
+point because a mirror copies the *circle* — its inputs are the original and the axis — and no registry can
+invent one; what puts a point on it is *Point on circle*, and the tangent then stands there in one click
+(`aMirroredCirclesTangentIsReachableThroughARiderOnTheCopy`). So the route the old refusal used to prescribe is
+the right route for exactly this case, which is why it is still *named* in the help rather than removed from it.
+
+**Two real silences, fixed with the batch** (`KeyPointsSpeakTest`, 2 tests). *Key points* on a **traced
+outline** created nothing and said nothing: `Element.isArea` is true of an `OUTLINE` and of an `AREA`, so the
+slot took the pick either way, but the build served only `AREA` and an outline fell through the per-kind table
+to `else -> emptyList()`. One predicate (`isArea`) and the coercion that already existed for the seam's own slot
+(`regionOf`) serve both, so no element kind has a case of its own — an outline now hands back its corners like
+any footprint. And a pick with **genuinely nothing to take** — an infinite line has no ends — was silent as
+well; it now refuses by name and lists what does publish points. Both are the class the session-33 note names
+(*"the generic tool path still turns an unspoken null into an empty status line"*), and neither can change a
+stored file: a step that created nothing was never written (`skipIfEmpty`).
+
+**Parked, with the reason: a circle publishes only its centre.** An arc's key points are centre + start + end; a
+circle's are the centre alone, so *Key points* gives no point **on** a circle, and the asymmetry is worth
+closing — a circle is determined by its centre and one point of it, and the rim point needs no new op
+(`pointOnCircle(carrier, const(0 rad))`, the rider's own op with a constant angle instead of a free one). It is
+**not** done here because it is a format change with a trap in it, not a one-liner: a stored
+`tool keypoints els=<circle> -> e8` declares **one** creation, and a build that creates two makes that file a
+`LoadError` (OP-18's count check). Version-gating on `replayingVersion` fixes the load and then breaks the
+*re-save*: the migrated file is written as v4 with one name and reloads under the new rule. Closing it honestly
+means the extraction's count becoming self-describing in the step (`count=`, which `Picks.count` already exists
+for) plus the version bump and a load note — a format slice of its own, and one that would also retire the
+same latent fragility for an **area** whose corner count has changed since it was saved. Queued rather than
+half-built; nothing is reachable-only-through-it, since the rider route above gives a point on any circle in one
+click and is draggable besides.
 
 #### Circle from three tangents — and the Apollonius family (as built)
 
@@ -1352,6 +1448,23 @@ of one view.
 > length stays 1/2/5-round in whichever unit it is shown in. What survives of the old reasoning is its scope:
 > this is still only the *bar's* spelling — the model, the panel and the file remain in mm, and the general
 > display-unit question (OP-7) remains open, not answered in one corner of one view.
+
+> **cm joins the ladder in session 72 (GitHub #16, "10mm = 1cm").** The powers-of-1000 phrasing above skipped
+> the unit a person actually reaches for between a fingernail and a table: the bar said `500 mm` where every
+> ruler in the room says 50 cm. The ladder is now µm, mm, **cm**, m, km, and the rung rule is one sentence —
+> *the largest unit the number is still at least 1 in* — with the single exception the entry above already
+> had, that **mm holds down to 0.1** because "0.5 mm" is the familiar spelling and "500 µm" is not. That rule
+> is asserted as a rule and not as a list (`everyLabelIsOnTheLargestUnitItReadsAtLeastOneIn`, over four
+> decades of zoom), so a later rung cannot be added on a different principle without a test saying so.
+>
+> **The rounding did not change, and that is the whole reason this cost one `when` branch.** `niceLength`
+> still hands out a 1/2/5 × 10^k **millimetre** length, shared unchanged by the 2D grid, the 3D ground and the
+> bar, so a bar and the grid under it still cannot round differently; only the unit the same number is spoken
+> in moved. A cm rung leaves the ladder 1/2/5-round as well (10 mm → 1 cm, 20 → 2, 50 → 5, 100 → 10,
+> 200 → 20, 500 → 50), so no label gained a digit. Three green rows moved with it, deliberately and
+> inspected: two in `ScaleBarTest` (`50 mm` → `5 cm`, `20 mm` → `2 cm`, `500 mm` → `50 cm`), one in
+> `PolishProbe2Test`'s accept-set, and the `editor_scale_bar` golden, whose only changed byte-run is the
+> label text — the bar's geometry is identical.
 > `ScaleBarTest.farOutTheBarSpeaksMetresNotThousandsOfMillimetres` is the regression.
 
 #### Usability — click budgets (as built)
@@ -8545,10 +8658,14 @@ is session 61's recorded choice ("the number in the refusal is the number the *b
 idealization of it") and is kept: the mesh may say **how much**, the curve says **whether**. The three terms
 are consistent because they divide those two questions the same way.
 
-**Two consequences, both stated rather than left to be found.** A corner whose trim exceeds one *sampling
+**Two consequences, both stated rather than left to be found.** ~~A corner whose trim exceeds one *sampling
 step* of a curved leg — but not the leg — pushes its ring past the next station and leaves a local artefact
 the corner term does not name; naming it would be the mesh speaking, and would make a refusal appear when a
-drawing is meshed more finely. And the **swept cut** used to answer this question the other way: its
+drawing is meshed more finely.~~ **The first is retired in session 72 (GitHub #20): the artefact is a real
+fold, and it is nameable without the mesh — ask the analytic leg how far it bends inside the span the cut is
+made across, which is a statement about the curve and is byte-identical over two decades of tessellation
+tolerance. See *a corner mitres into run that bends* below.** The second stands: the **swept cut** used to
+answer this question the other way, and its
 `foldDefect` was a per-span test, so on a smooth route it would have refused at `h ≥ R·cos(Δ/2)` — exactly the
 band this decision rules out. It has been brought into line (see below); its *translational* half stays per
 station, because that statement has no mitre and no sampling in it at all (the sign of `tangent · normal` is
@@ -8658,11 +8775,13 @@ that space — and stays per station for the reason given above. Riding it, one 
 losing: `openedAwayFrom` rebuilt each `Frame3` without its `bend`, so a *closed* route's local term fell back to
 the isotropic reach session 61 retired; it now carries the bend and the corner flag through.
 
-**What it does not claim**, stated rather than left to be discovered. A corner whose trim exceeds one sampling
+**What it does not claim**, stated rather than left to be discovered. ~~A corner whose trim exceeds one sampling
 step of a **curved** leg, but not the leg, pushes its ring past the next station and leaves a local artefact in
-the mesh that this does not name — see the decision above for why naming it would be the mesh speaking. And the
-criterion is about the mitre and nothing else: a section that is fine at every corner and still passes through
-itself somewhere is the other two terms' business.
+the mesh that this does not name — see the decision above for why naming it would be the mesh speaking.~~
+**Retired in session 72 by GitHub #20: that parked note was wrong about whose voice the artefact was in, and it
+was hiding a real fold** — see *a corner mitres into run that bends* below, which is this criterion's second
+term. What stands is the other half: the criterion is about the mitre and nothing else, so a section that is
+fine at every corner and still passes through itself somewhere is the other two terms' business.
 
 Tests: `SweepCornerTest` (14 new) — the three reproductions verbatim, each refused with the corners named by
 where they stand and the numbers read out of the sentence, and each **healed** by a live parameter (the tube's
@@ -8678,6 +8797,93 @@ user's pillar border**, loaded from their file, has no corner at any of its eigh
 swept round it is untouched. `assertManifold` on every body that builds. **1947 → 1962 green**, no new golden,
 no version bump, no existing golden changed, and **no existing test changed** — which is worth saying because
 sessions 59 and 61 each had to change several: nothing green was pinning a folded body this time.
+
+### As built: a corner mitres into run that bends (the fold session 65 parked, GitHub #20, session 72)
+
+**The report.** A tube of radius 10 mm round a closed outline of four Béziers — two drawn, two mirrored, meeting
+at two sharp corners on the mirror axis — *"does not refuse, but it produces some artifacts on the sharp corners
+that look like a bug"*. It came out **watertight, edge-manifold and +116781 mm³**, which is why nothing refused,
+and it ranks with the silent-wrong-output family rather than with cosmetics.
+
+**It is a real self-intersection, and that was established before anything was changed.** The fixture carries a
+triangle-against-triangle test (edge-versus-triangle both ways, Möller–Trumbore, restricted to the corner's
+neighbourhood): **209 and 265 intersecting pairs** at the two corners of the user's own body. Not a legitimate
+mitre reading that merely looks wrong.
+
+**Why the leg term could not see it.** The mitre is the trim two **straight** tubes make of each other. Write
+the corner's ring where it is *built* (in the plane perpendicular to the arriving chord) and where it is
+*pushed to* (onto the mitre plane): the ruled curtain between the two lies exactly **on a straight leg's own
+surface** — `at + q + tangent·λ·push(q)` is a parametrization of the straight cylinder — which is why a mitred
+polyline is exact to the bit, and why session 65's question (*is there enough run between the two corners?*) was
+the only one a polyline could raise. On a leg that **bends**, that curtain leaves the wall and cuts across the
+run behind it. The user's sharp corner mitres 9.9 mm of run and the Bézier wanders 0.83 mm off the line the cut
+is made on inside that: the curtain crosses a dozen of the leg's own rings.
+
+**Session 65 parked exactly this and read it as the mesh speaking. That reading was wrong.** The parked note
+observed that the artefact appears in the picture precisely when the trim reaches past the next station, and
+concluded that naming it would make a refusal appear when a drawing was meshed more finely. What the evidence
+says: refine the spine and the fold does not go away — the same curtain is drawn with more triangles; **coarsen**
+it until no station stands inside the trim and the fold is merely *hidden*. So the artefact is in the geometry
+and the sampling only decides whether it is drawn. The law session 65 wrote down (*a finer mesh may not refuse
+more*) is kept in full, by asking the **curve**.
+
+**The second term** (`Embedding.cornerBend`). Per corner: the trim reaches `support(±g)` along the corner's own
+tangent, both ways, since the ring is pushed back on the inside of the turn and forward on the outside. Over
+exactly that much run either side, the **analytic** piece is asked how far it wanders off the straight line
+through the corner — the line the cut is made on — and the deeper of the two is compared against
+`2·TESS_TOL_MM`. Three choices, each deliberate:
+
+- **The turn is read analytically here, and that is the one place this term parts company with the leg term.**
+  The leg term takes `tan(θ/2)` off the station's own mitre plane, which is right for a claim about the band
+  that was built; this term's whole business is *what does the curve do here*, and a chord-derived turn made
+  the quoted number — and, at the boundary, the refusal itself — move with `tolMm` (measured: 8.96 → 9.79 mm
+  over a 40× range, i.e. finer meshes refusing more, the forbidden direction). With the analytic turn the
+  refusal is byte-identical across `tolMm` 0.2 → 0.005, which is asserted.
+- **The sampling is the criterion's own and fixed** (16 points per side, in arc length via
+  `Curves3.paramAtLength`, the far end of the span included, where the wander is largest on anything convex).
+  Nothing in it reads the spine's step, so no refusal here can be produced by refining a picture. A segment
+  answers **zero**, to the bit, so every straight-legged fixture session 65 owns keeps its own words.
+- **The threshold is the picture's own accuracy** — the slack the global term already uses, and a constant
+  rather than the caller's `tolMm`, deliberately: tying it to the tessellation asked for would let a finer mesh
+  lower the bar. A curtain cutting a hundredth of a millimetre into the wall is a fold no mesh built to two
+  hundredths can draw; one cutting millimetres in is the report.
+
+*Rejected: measuring the wander on the spine's stations* (mesh-dependent by construction — the deviation inside
+one span is exactly zero, so a finer spine would refuse more). *Rejected: the closed form `κ·d²/2` from the
+station's own analytic curvature* — no path needed, no sampling, and it agreed with the sampled answer to ~5%
+on the user's drawing, but it reads the curvature **at the corner only**, so a leg that leaves straight and
+bends hard 5 mm later would pass. *Rejected: refusing any trim that reaches into a non-`Seg3` piece at all* —
+that refuses a body which demonstrably builds (the same drawing at 0.5 mm has zero intersecting pairs).
+
+**Calibration against the ground truth.** The criterion was checked cell by cell against the triangle counts,
+at six radii × two corners: it refuses exactly the twelve cells that fold and accepts exactly the ones that do
+not, including the two cells where one corner folds and the other does not. **The boundary is a curve statement
+that tracks the mesh's own for a reason**: the station spacing on a bend of radius `R` is about `2√(2R·tol)` and
+the wander over a trim `d` is about `d²/2R`, so *wander > 2·tol* is *d > 2√(R·tol)* — the same boundary as *the
+trim reaches past the next station*, at 71% of it, i.e. erring towards refusing.
+
+**How it reaches the model.** `Frame3` gained the `(piece, parameter)` it was sampled at and `MovingFrame` the
+`Path3` it came from, so the term can address the analytic curve. Per station rather than in one list beside
+them, and that is the point: the swept cut takes a **sub-run** of the stations, rotates a closed one about a new
+start (`openedAwayFrom`) and appends synthetic ones (`runOn`), and a parallel list would fall out of step with
+any of those. A station no piece stands behind carries `null` and is skipped, so the cut's run-ons are silent
+rather than guessed at; the cut passes its own directrix through and gets the term in its own words for free.
+
+**Tests** (`TubeCornerBendTest`, 6 new): the user's script verbatim, refused naming the corner, the mitre, the
+bend and the way out (`theUsersTubeIsRefusedAtTheCornerItFoldsAt`); the fold itself counted in the triangles of
+the body the old criterion handed back, at **both** corners
+(`theBodyTheOldCriterionAcceptedCutsThroughItselfAtBothCorners` — built through `Geom3.sweptShells` on the very
+frame and section the sweep would have used, so it is the reported geometry and not a re-creation); the healing
+path — type 0.5 mm and the body appears, is manifold, positively volumed and has **zero** intersecting pairs at
+either corner, and the fold comes back with the radius (`aSmallerRadiusBuildsAndIsFoldFree`); the law itself,
+one refusal over four tessellation tolerances spanning two decades
+(`theRefusalIsTheSameHoweverFinelyTheDrawingIsMeshed`); a mitred right-angled elbow of straights with nothing
+for the term to find (`aMitredPolylineHasNoBendForTheTermToFind`); and the refused drawing still saving, loading
+and refusing in the same words (`theRefusedDrawingStillRoundTrips` — byte equality is deliberately *not* claimed
+on this drawing, because it ends in `attach e9 e19` and that point's coordinates creep by one unit in the last
+place per round trip, which is the ULP-creep item parked in the small batch and visible on any drawing with an
+attachment in it). Every existing sweep, embedding, mitre and swept-cut fixture keeps its recorded wording
+unchanged.
 
 ### As built: the lift — a curve drawn in a plane is the run it already is (step 1's missing source, session 61)
 
@@ -16292,21 +16498,69 @@ arrived in one evening, triaged with a diagnosis comment each before anything wa
 ways creating a disc*) closed at triage: the extruded circle and the outline revolved about its own on-axis
 side are the same object to 1e-11 relative and both watertight — the feared 0 mm hole cannot exist because
 the on-axis piece sweeps a `Band.Degenerate` (session 69) and a crack at the axis would fail
-`assertManifold`; `DiscTwoWaysTest` carries the user's drawing verbatim. The batch, in flight:
+`assertManifold`; `DiscTwoWaysTest` carries the user's drawing verbatim. **The batch is delivered in session
+72 — all three, as one package:**
 
-1. **#19 — the tangent's slot asks for a rider where the construction already answers.** *Tangent at
-   point* refuses the radius-defining point of a circle (and a circle ∩ line intersection) although both
-   lie on the circle **by construction**; only a circle ∩ circle intersection is genuinely ambiguous, and
+1. **#19 — the tangent's slot asks for a rider where the construction already answers. — done, session 72.**
+   *Tangent at point* refuses the radius-defining point of a circle (and a circle ∩ line intersection) although
+   both lie on the circle **by construction**; only a circle ∩ circle intersection is genuinely ambiguous, and
    there the user's own suggestion is the design — an explicit pick of the circle, recorded as a durable
    choice. The refusal must also stop prescribing *Point on circle* where no rider is needed.
-2. **#20 — a curved leg folds inside the mitre the tangent arithmetic clears.** The tube over a
-   mirrored-Bézier outline builds watertight and positively-volumed yet folds locally at the sharp
+   *As built* (full note: *On a circle by construction — the tangent's own slot*, under the 2D tools): the
+   criterion became an **incidence registry**, OP-14's joint registry one relation on
+   (`Document.circlesThrough`) — the radius point, a three-point circle's three, an arc's ends, a crossing with
+   a circle, a tangency; a rider still read from its handle, since a drag is a gesture and has no build to
+   record. *Rejected*: measuring `|p − c| = r`, which OP-5 forbids — it would accept a coincidence and drop it
+   on the next edit. The ambiguity is answered by one more click, declared as `ToolDef.slotsNeeded` (*how many
+   slots do the picks so far call for*), so the everyday gesture stays **one** click; the circle is an ordinary
+   pick, so `els=` is the durable record and no new file argument exists. *Rejected*: refusing and naming both
+   candidates; a second tool row; hanging it on the optional-slot machinery, whose skip is a reading of the
+   click and not of the drawing. Regressions: `TangentAtPointTest` — `theRadiusDefiningPointTakesTheTangent`,
+   `aCrossingOfACircleAndALineTakesTheTangent`, `anArcsEndTakesTheTangent`,
+   `aCrossingOfTwoCirclesTakesTheCircleAsASecondClick`, `theCircleClickedIsRestatedAndReplayNeverScoresAgain`
+   (byte-equal round trip, identical line on reload), `aPointOnNoCircleIsRefusedAndTheHelpNamesEveryRoute`,
+   `theBuildItselfRefusesAPointNoCircleWasBuiltThrough`, `aRiderIsStillOneClick`.
+   **Probe review, same session** (see *The derived circle* under that note): the registry is general over
+   mirrored arcs and — for free, since an orbit re-runs the gesture — over **patterns**; a mirrored *circle*
+   has no radius point to give and takes its tangent through a rider, which is why the help still names that
+   route. Two genuine silences were found beside it and fixed: *Key points* on a **traced outline** created
+   nothing while saying nothing (now its corners, through `regionOf`, one predicate for both area kinds), and
+   a pick with nothing to take was silent (now refused by name) — `KeyPointsSpeakTest`. One item is **parked
+   with its reason**: a circle publishes only its centre, and adding the rim point changes the element count
+   of a stored `keypoints` step, so it needs `count=` in the step plus a version bump, not a one-liner.
+2. **#20 — a curved leg folds inside the mitre the tangent arithmetic clears. — done, session 72.** The tube
+   over a mirrored-Bézier outline builds watertight and positively-volumed yet folds locally at the sharp
    corners: the session-65 criterion measures the corner trim **along the leg's tangent**, and a Bézier
    that curls back into the mitre wedge within the trim distance passes it while self-intersecting. The
    criterion must ask where the curved run actually is inside the trimmed span. User's script verbatim as
    the regression; silent-wrong-output family, so it outranks everything below.
+   *As built* (full note: *a corner mitres into run that bends*, under OP-26): the fold was **verified first**,
+   with a triangle-against-triangle count on the user's own body (209 and 265 intersecting pairs at the two
+   corners), so this is not a mitre that merely looks wrong. The diagnosis sharpened in the doing: the curtain
+   between the corner ring as built and as pushed lies exactly *on* a straight leg's surface, so what fails is
+   not "the Bézier curls back" but "**the leg bends inside the span the cut is made across**" — measured, at
+   the corner the report is about, as 0.83 mm of wander over 9.9 mm of mitred run. `Embedding.cornerFold`
+   gained a second term that asks the **analytic** piece how far it wanders off that line and compares it
+   against the picture's own accuracy (`2·TESS_TOL_MM`), with the turn read analytically too — a chord-derived
+   turn made the refusal move with `tolMm`, which is the forbidden direction. This **retires session 65's own
+   parked note** ("naming it would be the mesh speaking"): a finer spine draws the same fold with more
+   triangles, a coarser one hides it. *Rejected*: measuring the wander on the spine's stations (zero inside one
+   span by construction, so a finer mesh would refuse more); the closed form `κd²/2` from the station's
+   curvature (reads the corner only, misses a leg that bends 5 mm later); refusing any trim that reaches into a
+   curved piece at all (refuses a body that demonstrably builds). Calibrated cell by cell against the triangle
+   counts at six radii × two corners, with no disagreement. Regressions: `TubeCornerBendTest` —
+   `theUsersTubeIsRefusedAtTheCornerItFoldsAt`, `theBodyTheOldCriterionAcceptedCutsThroughItselfAtBothCorners`,
+   `aSmallerRadiusBuildsAndIsFoldFree` (0.5 mm builds, manifold, zero intersecting pairs, and the fold returns
+   with the radius), `theRefusalIsTheSameHoweverFinelyTheDrawingIsMeshed`,
+   `aMitredPolylineHasNoBendForTheTermToFind`, `theRefusedDrawingStillRoundTrips`.
 3. **#16 — cm joins the scale ladder** (mm, m, km today), on the one rounding rule all three consumers of
-   the scale share.
+   the scale share. **— done, session 72.** *As built* (full note: the third quote-block under *A corner scale
+   bar*): one `when` branch on `SceneRenderer.scaleBarLabel`, and the rung rule stated as a sentence — *the
+   largest unit the number is at least 1 in*, mm still holding down to 0.1 — asserted as a rule rather than a
+   list (`everyLabelIsOnTheLargestUnitItReadsAtLeastOneIn`). `niceLength` is **untouched**, so all three
+   consumers still round identically and only the unit the same number is spoken in moved. Goldens/rows that
+   moved deliberately: `editor_scale_bar` (label text only, geometry byte-identical), two rows of
+   `ScaleBarTest`, one accept-set in `PolishProbe2Test`.
 
 **Queued behind the batch (user-designed, GitHub #18): a pattern multiplies what rides it — recursively.**
 The circle multiplies because it was drawn riding pattern members (an orbit step re-runs per cell); the

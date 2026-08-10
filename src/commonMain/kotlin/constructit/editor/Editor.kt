@@ -2215,7 +2215,7 @@ class Editor(
         pickedGroup = g
         filledSlots++
         pickedClicks.add(at)
-        if (filledSlots >= tool.slots.size) {
+        if (filledSlots >= tool.slotCount(doc, pickedElements)) {
             if (!maybeCompleteTool(at)) statusHint = scalarPrompt(tool)
         } else {
             statusHint = "${groupFedNote(g)} ${tool.help} (${stillNeeded(tool)} more)"
@@ -4438,7 +4438,9 @@ class Editor(
                     }
                 SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
                 SlotKind.GEOMETRY -> pickGeometry(world, tool)
-                SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.handle is OnCircleHandle }
+                // …and the point slot of *Tangent at point* (GitHub #19): any point the **construction** puts
+                // on a circle, which a rider is one case of — see [Document.circlesThrough]
+                SlotKind.ON_CIRCLE_POINT -> pickElement(world) { doc.circlesThrough(it).isNotEmpty() }
                 SlotKind.CENTRIC -> pickElement(world) { it.isCentric }
                 // a fillet leg: either carrier will do, since all the rounding needs is something to be
                 // tangent to
@@ -4573,7 +4575,7 @@ class Editor(
             changed()
             return
         }
-        if (filledSlots >= tool.slots.size) {
+        if (filledSlots >= tool.slotCount(doc, pickedElements)) {
             // A tool still missing a scalar **keeps its picks** and says what it wants: the number can then
             // be typed (or a parameter picked) and the tool finishes with the clicks already in. Throwing
             // the picks away was the older answer, and it made the geometry pay for a value's absence.
@@ -4609,7 +4611,11 @@ class Editor(
      * the optional ones ([SlotKind.OPTIONAL_POINT]), which is what "2 more" has to mean if the number is to be
      * a promise about the clicks left rather than about the slots left.
      */
-    private fun stillNeeded(tool: ToolDef): Int = tool.slots.drop(filledSlots).count { !Tools.isOptionalSlot(it) }
+    private fun stillNeeded(tool: ToolDef): Int =
+        tool.slots
+            .take(tool.slotCount(doc, pickedElements))
+            .drop(filledSlots)
+            .count { !Tools.isOptionalSlot(it) }
 
     /**
      * A geometry pick, which is the one slot a **whole group** can fill (OP-16).
@@ -4652,7 +4658,7 @@ class Editor(
      */
     private fun maybeCompleteTool(at: Vec2?): Boolean {
         val tool = doc.toolDef(toolId) ?: return false
-        if (tool.repeating || filledSlots < tool.slots.size) return false
+        if (tool.repeating || filledSlots < tool.slotCount(doc, pickedElements)) return false
         val scalars = toolScalars(tool) ?: return false
         val where = at ?: pickedClicks.lastOrNull() ?: Vec2(0.0, 0.0)
         // OP-17's sequential-feature rule: the part this face space belongs to, as it stands *now*, fed in
