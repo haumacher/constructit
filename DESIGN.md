@@ -16572,6 +16572,35 @@ rules before dispatch: any construction whose inputs ride a pattern's cells repl
 multi-element tools and including another pattern — counts staying structural, rides stored as rules, the
 journal re-stamped on count changes exactly as OP-23 already does for single-element rides.
 
+*The design, worked out at dispatch (session 71) and posted to the issue.* The ground truth sharpened the
+entry: the polygon is **already** OP-23's pattern composition internally (`recordsSteps = true` — a
+`pattern` plus its `orbit`s), and it is declared `replicates = false` precisely because an orbit today can
+carry only a single `tool` gesture. So the general mechanism is not a polygon case — it is **the orbit rule
+applied to the `pattern` step itself**:
+
+- An `orbit` may carry any geometry-creating recorded step whose picks satisfy the invariance rule —
+  including a `pattern`, and transitively the `orbit`s that ride the inner pattern. The polygon then rides
+  for free (its recorded steps are exactly that bundle), and its `replicates = false` is retired rather
+  than special-cased.
+- **Member addressing composes**: `e2@j` gains depth — a member of copy *j*'s inner ring is `e…@j@k`, with
+  member 0 the anchor at every level (`@0…@0` is the drawn original), so a re-stamp in either direction
+  keeps its reference exactly as today.
+- **Counts stay structural at every level**, each in its own step's literal; a count change at either level
+  is the same journal re-stamp — re-running the script *is* the update, recursion included; names map
+  positionally per level, and a gesture spanning more members than the new count has refuses by name
+  before anything happens (the existing rule, stated per level).
+- **Scalars by reference, signs scored once, Alt suppresses** — all unchanged, applied at the level of the
+  gesture they belong to. The invariance rule composes: a gesture mixing levels replicates only where the
+  composed transform leaves each foreign pick invariant, refused naming the pick and its pattern otherwise.
+- New step *forms* only (an orbit carrying `pattern`; `@j@k` references) — syntax no earlier build ever
+  wrote, so **no stored literal changes meaning and no version bump**.
+- The **group** half of OP-23's parked note stays parked: a group lives in its own namespace and no pattern
+  or orbit step ever names one (the OP-16 wall stands); recorded here so it is not looked for.
+
+Acceptance is the user's script verbatim: the second polygon multiplies with the ring; a count change on
+the ring re-stamps the number of polygons, a side-count change re-stamps every copy; byte-equal round
+trips; one undo per gesture.
+
 **Queued in session 71, the order confirmed by the user — what this session's own machinery un-parks.**
 After the bug batch and the pattern entry above, in this order:
 
