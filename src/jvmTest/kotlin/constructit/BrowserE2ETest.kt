@@ -2136,4 +2136,79 @@ class BrowserE2ETest {
             browser.close()
         }
     }
+
+    /**
+     * **The two expression follow-ups through the real shell** (session 76, items a and b): a formula that
+     * reads a **named point's coordinate**, and a function curve whose **domain** is a formula.
+     *
+     * Both are reachable in the panel the scalar half already built — one names the point in the inspector
+     * and writes `P.x/2` in the formula field, the other types a name where the domain's number went — so the
+     * claim is made where a user makes it.
+     */
+    @Test
+    fun theExpressionFollowUpsAreReachableInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            val box = page.querySelector("#canvas").boundingBox()
+            // a free point, named `P` in the inspector — the naming authority, which is what `P.x` resolves through
+            page.click("#tool-point")
+            page.mouse().click(box.x + box.width * 0.75, box.y + box.height * 0.5)
+            page.click("#tool-select")
+            page.mouse().click(box.x + box.width * 0.75, box.y + box.height * 0.5)
+            page.fill("#insp-name", "P")
+            page.querySelector("#insp-name").press("Enter")
+
+            // a circle whose radius is a parameter, then that radius derived from the point's own x
+            page.fill("#p-name", "r")
+            page.fill("#p-value", "10")
+            page.click("#p-add")
+            page.querySelectorAll("#params-list .prow .pval").last().click()
+            page.click("#tool-circleR")
+            page.mouse().click(box.x + box.width * 0.25, box.y + box.height * 0.5)
+            page.click("#tool-select")
+            val before = inkPixels(page)
+
+            page.querySelectorAll("#params-list .prow").last().querySelector(".pexpr").fill("P.x/2")
+            page.keyboard().press("Enter")
+            assertTrue(status().contains("r = P.x/2"), "the shell took the coordinate as a value: ${status()}")
+            assertTrue(inkPixels(page) > before, "and the circle grew to half of P's x")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/36-coordinate-formula.png")))
+
+            // a function curve whose **domain** is a formula: the involute over 0..T
+            page.fill("#p-name", "T")
+            page.fill("#p-value", "1.6")
+            page.selectOption("#p-unit", "num")
+            page.click("#p-add")
+            page.click("#fc-form > summary")
+            page.fill("#fc-x", "r * (cos(t) + t * sin(t))")
+            page.fill("#fc-to", "T")
+            page.click("#fc-add")
+            assertTrue(status().contains("over 0..T"), "the shell says what domain it drew over: ${status()}")
+            val drawn = inkPixels(page)
+
+            // ...and editing T extends the flank, which is the whole point of the item
+            page.querySelectorAll("#params-list .prow").last().querySelector(".pval").fill("2.6")
+            page.keyboard().press("Enter")
+            assertTrue(inkPixels(page) > drawn, "the flank followed T")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/37-domain-formula.png")))
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

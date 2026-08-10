@@ -299,7 +299,10 @@ object DocumentFormat {
             // a function curve's two texts are stored **verbatim** for exactly the reason a binding's one
             // is (session 71, curve half), re-stamped in place under the current names of what they read;
             // and its **domain is state** — dragged in the fields, typed, and therefore restated from the
-            // very source nodes that carry it, which is the `param` step's own rule
+            // very source nodes that carry it, which is the `param` step's own rule. Since session 76 an end
+            // may be a **formula** instead ([Document.funcCurveDomain]), and then it is restated as the text
+            // it is, quoted: the argument gained an alternative form and the old form kept its meaning, so no
+            // stored literal changed and no version bump is owed (OP-18).
             "funccurve" -> {
                 val b = doc.funcCurveBinding(step)
                 val el = step.creates.firstOrNull()
@@ -310,8 +313,8 @@ object DocumentFormat {
                     listOf(
                         Arg.Label(b.xText),
                         Arg.Label(b.yText),
-                        Arg.Keyed("from", Arg.Num(Quantity.number(domain.first))),
-                        Arg.Keyed("to", Arg.Num(Quantity.number(domain.second))),
+                        Arg.Keyed("from", domain.first),
+                        Arg.Keyed("to", domain.second),
                     )
                 }
             }
@@ -936,9 +939,19 @@ object DocumentFormat {
             "funccurve" -> {
                 val x = unquote(words.getOrElse(1) { throw LoadError("funccurve is missing x(t)") })
                 val y = unquote(words.getOrElse(2) { throw LoadError("funccurve is missing y(t)") })
-                val from = keyed(words, "from")?.toDoubleOrNull() ?: throw LoadError("funccurve is missing from=")
-                val to = keyed(words, "to")?.toDoubleOrNull() ?: throw LoadError("funccurve is missing to=")
-                doc.functionCurve(x, y, from, to) ?: throw LoadError(doc.note ?: "cannot build the function curve")
+                // each end of the domain is a plain number (every file written before session 76, and every
+                // one written since whose domain is a number) **or** a quoted formula — told apart by the
+                // quote, which is the one thing a number can never be. An old form keeps its meaning exactly.
+                val from = keyed(words, "from") ?: throw LoadError("funccurve is missing from=")
+                val to = keyed(words, "to") ?: throw LoadError("funccurve is missing to=")
+                doc.functionCurve(
+                    x,
+                    y,
+                    from.toDoubleOrNull() ?: 0.0,
+                    to.toDoubleOrNull() ?: 1.0,
+                    fromText = if (from.startsWith("\"")) unquote(from) else null,
+                    toText = if (to.startsWith("\"")) unquote(to) else null,
+                ) ?: throw LoadError(doc.note ?: "cannot build the function curve")
             }
             // `sign=` is the branch the click chose, restated (OP-1); a format-1 script carries none, and the
             // click scores it once more — this time for good, since the save that follows writes it down

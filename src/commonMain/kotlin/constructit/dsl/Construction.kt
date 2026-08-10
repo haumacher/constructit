@@ -407,6 +407,22 @@ class Construction {
             EvalResult.Ok(PointValue(Vec2(px, py)))
         }
 
+    /**
+     * One **coordinate of a point**, as a length — the accessor `P.x` in an expression reads (OP-7's naming
+     * authority extended to coordinates, the session-76 entry). [axis] is 0 for x and 1 for y.
+     *
+     * The inverse of [pointXY], and deliberately one direction: this *reads* a point that the construction
+     * already places, so it adds an ordinary DAG edge and takes no freedom away from anything.
+     */
+    fun pointCoordinate(
+        p: PointRef,
+        axis: Int,
+    ): ScalarRef =
+        op(p) {
+            val v = (it[0] as PointValue).p
+            EvalResult.Ok(ScalarValue(Quantity.mm(if (axis == 0) v.x else v.y)))
+        }
+
     fun translate(
         p: PointRef,
         dx: ScalarRef,
@@ -1079,6 +1095,33 @@ class Construction {
             val d = sc(it[2]).mm
             val proj = l.origin + l.dir * (p - l.origin).dot(l.dir)
             EvalResult.Ok(PointValue(proj + l.dir * (sign * d)))
+        }
+
+    /**
+     * The point of [circle] at arc distance [distance] from [from] — [pointAlongLine]'s round-leg twin, and
+     * the whole of what the **chamfer-on-arc convention** needs (session 76, item c: a chamfer's setback is
+     * measured *along the carrier*, see [constructit.geom.FilletMath.setback] for why the arc and not the
+     * chord). [sign] turns counter-clockwise for `+1`.
+     *
+     * Closed form and exact: the travel is an angle, `distance / R`, added to the angle [from] already stands
+     * at (which is *on* the circle by construction — it is a crossing of the two carriers). Invalid with a
+     * reason where there is no angle to start from, which heals like everything else (OP-3).
+     */
+    fun pointAlongCircle(
+        circle: CircleRef,
+        from: PointRef,
+        distance: ScalarRef,
+        sign: Int,
+    ): PointRef =
+        op(circle, from, distance) {
+            val c = cir(it[0])
+            val p = pt(it[1])
+            val d = sc(it[2]).mm
+            if (c.radius <= Vec2.EPS) return@op EvalResult.Invalid("a chamfer cannot run along a circle of no radius")
+            val r = p - c.center
+            if (r.length() < Vec2.EPS) return@op EvalResult.Invalid("the corner is at the circle's own centre, so there is no way along it")
+            val a = r.angle() + sign * d / c.radius
+            EvalResult.Ok(PointValue(c.center + Vec2(c.radius * kotlin.math.cos(a), c.radius * kotlin.math.sin(a))))
         }
 
     /** Point on [circle] at the given [angle]. */

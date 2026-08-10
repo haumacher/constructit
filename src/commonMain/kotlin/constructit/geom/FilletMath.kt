@@ -2,6 +2,7 @@ package constructit.geom
 
 import kotlin.math.abs
 import kotlin.math.acos
+import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.tan
 
@@ -37,6 +38,17 @@ class FilletLeg(val line: Line?, val circle: Circle?) {
  * offsets. A stored choice, never re-derived (OP-1).
  */
 class FilletVariant(val side1: Int, val side2: Int, val branch: Int)
+
+/**
+ * The discrete choices a **chamfer** stores: [side1]/[side2] are which way along each leg the corner opens
+ * (the quadrant [FilletMath.legSigns] scores for two lines, `+1` along the carrier's own sense), and
+ * [branch] picks which of the two carrier crossings is the corner when a round leg makes there be two.
+ *
+ * The same shape as [FilletVariant] and the same rule: decided once from the clicks, then stored (OP-1). The
+ * first two positions mean exactly what they meant when both legs were lines, which is why a line–line
+ * chamfer's stored `signs=1;-1` keeps its meaning byte for byte.
+ */
+class ChamferVariant(val side1: Int, val side2: Int, val branch: Int)
 
 /**
  * The numeric geometry of a fillet: which variant a pair of clicks means, and what arc that variant is.
@@ -230,7 +242,7 @@ object FilletMath {
 
     /**
      * The two ends of the chamfer of [distance] across the corner named by [sign1]/[sign2] —
-     * `pointAlongLine` twice, on values.
+     * `pointAlongLine` twice, on values. The two-straight-legs case of [chamferBevel].
      */
     fun chamferEnds(
         l1: Line,
@@ -241,6 +253,140 @@ object FilletMath {
     ): Segment? {
         val corner = cornerOf(l1, l2) ?: return null
         return Segment(corner + l1.dir * (sign1 * distance), corner + l2.dir * (sign2 * distance))
+    }
+
+    // ---- the chamfer, generalized to a round leg: the convention, decided once (session 76, item c) ----
+
+    /**
+     * **The chamfer-on-arc convention**, and the whole of it: a chamfer's setback is measured
+     * **along the carrier** — arc distance on a round leg — and the bevel is the straight segment between the
+     * two setback points so found.
+     *
+     * The parked note that this retires named the fork: *"a bevel across a round leg has two honest readings,
+     * a chord and an arc of the same length"*. The arc reading is chosen, on four grounds and not on taste:
+     *
+     * 1. **It is the same sentence one leg kind on.** On a straight leg the setback *is* distance along the
+     *    leg from the corner (`pointAlongLine`), so "along the carrier" states the existing rule rather than a
+     *    new one — exactly as the generalized fillet found its tangency *on* the carrier (a projection on a
+     *    line, a radial on a circle) instead of gaining a rule per leg kind.
+     * 2. **Equal setback means equal material off each leg.** A chord of `d` on a circle of radius `R` eats
+     *    `2R·asin(d/2R) > d` of that leg, so one typed number would take different amounts out of the two legs
+     *    of one corner — and the number a chamfer is typed with is a machinist's setback, i.e. travel along
+     *    the edge.
+     * 3. **It costs no new stored choice.** The arc reading is one angle, `θ ± d/R`, closed form and exact;
+     *    the chord reading is a circle of radius `d` about the corner met with the carrier — exact too, but
+     *    with *two* solutions, so it would owe a second persisted branch per round leg for nothing.
+     * 4. **The limit is continuous, so nothing stored changes meaning.** As `R → ∞` the arc setback tends to
+     *    the straight one, and for two straight legs this *is* [chamferEnds] — the same points, the same
+     *    signs, the same file.
+     *
+     * Null when the leg carries neither a line nor a circle, or the circle is degenerate.
+     */
+    fun setback(
+        leg: FilletLeg,
+        corner: Vec2,
+        distance: Double,
+        sign: Int,
+    ): Vec2? {
+        leg.line?.let { return corner + it.dir.normalized() * (sign * distance) }
+        val c = leg.circle ?: return null
+        if (c.radius <= Vec2.EPS) return null
+        val d = corner - c.center
+        if (d.length() < Vec2.EPS) return null
+        // the corner is on the carrier by construction, so its own angle is where the travel starts; the arc
+        // distance is an angle, `d / R`, taken the way [legDirection] calls positive
+        val a = d.angle() + sign * distance / c.radius
+        return c.center + Vec2(cos(a), sin(a)) * c.radius
+    }
+
+    /**
+     * The direction of travel along [leg] at [at] in the `+1` sense — a line's own direction, and a circle's
+     * **counter-clockwise** tangent, which is the sense [setback] turns in.
+     */
+    fun legDirection(
+        leg: FilletLeg,
+        at: Vec2,
+    ): Vec2? {
+        leg.line?.let { return it.dir.normalized() }
+        val c = leg.circle ?: return null
+        val d = at - c.center
+        return if (d.length() < Vec2.EPS) null else d.perp().normalized()
+    }
+
+    /**
+     * Where the two legs' **carriers** meet — the corner a chamfer is cut across, as an ordered list.
+     *
+     * One point for two lines (so the branch is not a choice at all, which is why the line–line build stores
+     * only two signs). Up to two for a round leg, ordered exactly as [GeomMath.intersectLC] /
+     * [GeomMath.intersectCC] order them, so a stored branch means the same crossing on every reload (OP-1).
+     */
+    fun chamferCorners(
+        leg1: FilletLeg,
+        leg2: FilletLeg,
+    ): List<Vec2> =
+        when {
+            leg1.line != null && leg2.line != null -> listOfNotNull(cornerOf(leg1.line, leg2.line))
+            leg1.line != null && leg2.circle != null -> GeomMath.intersectLC(leg1.line, leg2.circle).points
+            leg2.line != null && leg1.circle != null -> GeomMath.intersectLC(leg2.line, leg1.circle).points
+            leg1.circle != null && leg2.circle != null -> GeomMath.intersectCC(leg1.circle, leg2.circle).points
+            else -> emptyList()
+        }
+
+    /** The corner of one scored variant, or null when that variant has none. */
+    fun chamferCorner(
+        leg1: FilletLeg,
+        leg2: FilletLeg,
+        v: ChamferVariant,
+    ): Vec2? {
+        val hits = chamferCorners(leg1, leg2).takeIf { it.isNotEmpty() } ?: return null
+        return if (v.branch >= 0) hits.first() else hits.last()
+    }
+
+    /** The bevel of one scored variant: the segment between the two setback points — see [setback]. */
+    fun chamferBevel(
+        leg1: FilletLeg,
+        leg2: FilletLeg,
+        distance: Double,
+        v: ChamferVariant,
+    ): Segment? {
+        val corner = chamferCorner(leg1, leg2, v) ?: return null
+        val a = setback(leg1, corner, distance, v.side1) ?: return null
+        val b = setback(leg2, corner, distance, v.side2) ?: return null
+        if ((b - a).length() < Vec2.EPS) return null
+        return Segment(a, b)
+    }
+
+    /**
+     * Which variant the two clicks meant, scored exactly as a fillet's is ([variantFor]): by how near the
+     * bevel's two ends fall to where the legs were clicked. The user pointed at the two places the bevel
+     * should reach, which is the whole of the information the clicks carry.
+     */
+    fun chamferVariantFor(
+        leg1: FilletLeg,
+        leg2: FilletLeg,
+        distance: Double,
+        clickA: Vec2,
+        clickB: Vec2,
+    ): ChamferVariant? {
+        if (distance <= 0.0) return null
+        val corners = chamferCorners(leg1, leg2)
+        if (corners.isEmpty()) return null
+        var best: ChamferVariant? = null
+        var bestScore = Double.MAX_VALUE
+        for (branch in if (corners.size > 1) listOf(1, -1) else listOf(1)) {
+            for (s1 in listOf(1, -1)) {
+                for (s2 in listOf(1, -1)) {
+                    val v = ChamferVariant(s1, s2, branch)
+                    val bevel = chamferBevel(leg1, leg2, distance, v) ?: continue
+                    val score = (bevel.a - clickA).length() + (bevel.b - clickB).length()
+                    if (score < bestScore) {
+                        bestScore = score
+                        best = v
+                    }
+                }
+            }
+        }
+        return best
     }
 
     /**

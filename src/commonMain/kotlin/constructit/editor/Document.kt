@@ -78,6 +78,7 @@ import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
 import constructit.geom.CarryMode
 import constructit.geom.Chains
+import constructit.geom.ChamferVariant
 import constructit.geom.Conics
 import constructit.geom.Continuity
 import constructit.geom.Curve3Element
@@ -3153,6 +3154,15 @@ class Document {
         val existing = journal.firstOrNull { s -> s.kind == "name" && s.args.any { a -> a is Arg.El && a.el === el } }
         val wanted = scalarWord(name)
         if (wanted.isEmpty()) {
+            // **a name an expression spells cannot be taken away.** `P.x` reads the point through its name
+            // (OP-7's naming authority, the session-76 entry), so clearing it would leave the formula live and
+            // its *file* unloadable — the scalar half's own probe lesson. Refused by name, with the cure, which
+            // is the same answer a rename that would capture a curve's parameter gets.
+            expressionsReading(el).takeIf { it.isNotEmpty() }?.let { reading ->
+                note = "Can't take ${nameOf(el)}'s name away: ${reading.joinToString(", ")} reads it as " +
+                    "'${userNameOf(el)}.x' or '.y' — change those formulas first, or rename it instead"
+                return null
+            }
             elementNames.remove(el.id)
             existing?.let { s -> journal.removeAll { it === s } }
             return ""
@@ -3160,7 +3170,18 @@ class Document {
         val took = uniqueElementName(wanted, except = el)
         elementNames[el.id] = took
         if (existing == null) recording("name", Arg.El(el), Arg.Label(took)) { }
+        // a coordinate an expression reads is a mention like any other, so it is re-stamped rather than
+        // orphaned — the parameter rename's own rule ([restampExpressions])
+        restampExpressions()
         return took
+    }
+
+    /** What reads a coordinate of [el] in a formula — a parameter by name, a curve by its own name. */
+    private fun expressionsReading(el: Element): List<String> {
+        val out = ArrayList<String>()
+        for (b in exprBindings.values) if (b.refs.any { it.point === el }) out.add(b.entry.name)
+        for (c in funcCurves.values) if (c.pointRefs().any { it === el }) out.add(nameOf(c.element))
+        return out.distinct()
     }
 
     // ---- appearance, Tier 1: a material per solid (one panel row, one recorded step) ----
@@ -3278,6 +3299,13 @@ class Document {
             }
         }
         step.args.forEach { walk(it) }
+        // a **coordinate** an expression reads (`P.x` — the session-76 entry, item a) is a reference to the
+        // point, living inside a text rather than in an argument of its own. So the step that stated it is
+        // asked what it read, exactly as it is asked for the scalars ([referencedScalars]), and the delete
+        // cascade reaches it like any other reference — which it must: a `bind` step left behind by a deleted
+        // point would name a point on load and the file would not open (OP-18).
+        exprBindings[step]?.let { b -> out.addAll(b.refs.mapNotNull { it.point }) }
+        funcCurves[step]?.let { c -> out.addAll(c.pointRefs()) }
         return out
     }
 
@@ -3297,10 +3325,10 @@ class Document {
         step.args.forEach { walk(it) }
         // an expression's references are inside its text, not in an argument of their own — so the step
         // that binds it is asked what it read, and the delete cascade reaches it like any other reference
-        exprBindings[step]?.let { out.addAll(it.refs) }
-        // the same for a function curve: its references live inside two texts rather than in arguments of
-        // their own, so the step that states them is asked what it read (session 71, curve half)
-        funcCurves[step]?.let { out.addAll(it.refs) }
+        exprBindings[step]?.let { b -> out.addAll(b.refs.mapNotNull { it.entry }) }
+        // the same for a function curve: its references live inside two texts (and, since session 76, in its
+        // two domain ends) rather than in arguments of their own, so the step is asked what it read
+        funcCurves[step]?.let { c -> out.addAll(c.scalarRefs()) }
         return out
     }
 
@@ -3586,7 +3614,7 @@ class Document {
         // and wins over every drawing scalar, so renaming a scalar a curve reads to `t` would rewrite its
         // text into one that means something else — live and, worse, in the file. Refused by name, with the
         // cure, exactly as a hyphenated name is: a name a rename allows must keep its reading, for ever.
-        if (funcCurves.values.any { it.param == wanted && it.refs.any { r -> r === e } }) {
+        if (funcCurves.values.any { c -> c.param == wanted && c.refs.any { r -> r.entry === e } }) {
             note = "Can't rename ${e.name} to '$wanted': inside a function curve '$wanted' is the curve's own " +
                 "parameter, so the curve would read its parameter where it now reads ${e.name} — pick another name"
             return null
@@ -5056,9 +5084,118 @@ class Document {
     // ---- expressions: the binding generalized to a pure function of named scalars (OP-7, session 71) ----
 
     /**
-     * One live expression binding: the [entry] it drives, the [node] under its `boundTo`, and the
-     * scalars its names resolved to — **by identity**, which is what makes a rename a re-stamp rather
-     * than an orphaned reference.
+     * What one name inside an expression **resolved to** (OP-7/OP-18's naming authority): a named scalar's
+     * panel row, or a named point's **coordinate** (`P.x` — the session-76 entry, item a).
+     *
+     * Held **by identity** rather than by the name it was written under, which is what makes a rename a
+     * re-stamp rather than an orphaned reference: [currentName] asks the thing itself what it is called now.
+     *
+     * The coordinate case is deliberately **one direction only**. An expression *reads* a coordinate — the
+     * node is an ordinary accessor over the point's own node, so a drag of the point recomputes the formula
+     * like any other edit — and nothing here ever writes one. A point whose coordinate should *be* an
+     * expression is a different feature (it would take a freedom away from the point), and it is reachable
+     * from nowhere in this build: the panel's formula field takes a [ScalarEntry], and a point's x and y are
+     * an element's *handle fields*, not rows. Recorded as a future extension rather than refused, because
+     * there is no gesture to refuse.
+     */
+    class ExprRef internal constructor(
+        /** The scalar row this name is, or null when it is a point's coordinate. */
+        val entry: ScalarEntry?,
+        /** The point whose coordinate this name is, or null when it is a scalar row. */
+        val point: Element?,
+        /** 0 for `.x`, 1 for `.y`; -1 for a scalar row. */
+        val axis: Int,
+        /** The scalar-valued node the expression reads — the row's own node, or the coordinate accessor. */
+        internal val node: Node,
+    )
+
+    /** How [r] is written **now** — what a re-stamp puts back into the text, or null when it has no name left. */
+    private fun currentName(r: ExprRef): String? =
+        r.entry?.name ?: r.point?.let { p -> userNameOf(p)?.let { "$it.${if (r.axis == 0) "x" else "y"}" } }
+
+    /** The coordinate suffixes a point publishes — see [resolveExprName]. */
+    private val coordinateSuffixes = listOf("x", "y")
+
+    /**
+     * The **naming authority extended to coordinates** (the session-76 entry, item a): what the name [n]
+     * inside an expression refers to, or null with [note] left unset for the caller to phrase.
+     *
+     * Two forms, and the precedence between them is a decision rather than a fallback order:
+     * - one word is a **scalar row**, exactly as before;
+     * - a **dotted** word is always `<point>.x` / `<point>.y` — a coordinate — *whatever the drawing carries*.
+     *
+     * The alternative was to look a dotted name up among the scalars first (a scalar may be *called* `wall.x`,
+     * since [scalarWord] only forbids spaces and quotes) and to read it as a coordinate only when no such row
+     * exists. That is rejected on the parser's own load-bearing ground: it would put the **drawing** into what
+     * a stored text means, so renaming a row to `wall.x` would silently steal every text that reads the point
+     * `wall`'s x — the frozen-literal hazard (OP-18) that the no-reserved-words rule exists to avoid, one
+     * level up. This rule costs nothing stored: a dot has never parsed, so no loadable file can contain one.
+     * A row whose own name carries a dot therefore stays unspellable, exactly as a hyphenated one is, and
+     * [unknownName] says so with the cure.
+     */
+    private fun resolveExprName(n: String): ExprRef? {
+        val dot = n.lastIndexOf('.')
+        if (dot < 0) return scalars.firstOrNull { it.name == n }?.let { ExprRef(it, null, -1, it.ref.node) }
+        val axis = coordinateSuffixes.indexOf(n.substring(dot + 1))
+        if (axis < 0) return null
+        val el = elements.firstOrNull { userNameOf(it) == n.substring(0, dot) } ?: return null
+        val node = coordinateNode(el, axis) ?: return null
+        return ExprRef(null, el, axis, node)
+    }
+
+    /**
+     * [el]'s [axis] coordinate as a scalar node — a **length**, read off the point the drawing already has,
+     * so the expression takes an ordinary DAG edge and no freedom is created or removed.
+     *
+     * Null when [el] is not a point of the plane. A point **in space** is the case worth naming: its
+     * coordinates are in *world* space while every `Vec2` in this engine means "in some plane's own
+     * coordinates" (OP-17), so answering `.x` for one would silently mix two frames. It refuses by name and
+     * `.z` with a stated space is the future extension.
+     */
+    private fun coordinateNode(
+        el: Element,
+        axis: Int,
+    ): Node? {
+        if (!el.isPoint) return null
+        val ref = el.ref as? PointRef ?: return null
+        if (Evaluator().valueOf(ref) !is PointValue) return null
+        return cx.pointCoordinate(ref, axis).node
+    }
+
+    /** Why the dotted name [n] resolves to nothing, with the cure — see [resolveExprName] and [unknownName]. */
+    private fun unknownCoordinate(n: String): String {
+        val dot = n.lastIndexOf('.')
+        val what = n.substring(0, dot)
+        val suffix = n.substring(dot + 1)
+        if (coordinateSuffixes.indexOf(suffix) < 0) {
+            return "there is no value named '$n' — a '.' in an expression reads a point's coordinate, and a " +
+                "point has ${coordinateSuffixes.joinToString(" and ") { ".$it" }}, not '.$suffix'"
+        }
+        scalars.firstOrNull { it.name == n }?.let {
+            return "there is no value named '$n' — the value called '$n' cannot be written in an expression (a " +
+                "'.' in a name reads a point's coordinate), so rename it to one word of letters and digits first"
+        }
+        val named = elements.firstOrNull { userNameOf(it) == what }
+        if (named == null) {
+            return "there is no point named '$what' — '$n' reads the $suffix of a point, so name the point in " +
+                "the panel first (its script name is not a name you can spell here)"
+        }
+        // a point **in space** is the case worth its own sentence, and it is the one every route that reads
+        // plane coordinates already speaks: `.x` would have to answer in *world* coordinates while every
+        // `Vec2` here means "in some plane's own" (OP-17), so the two frames would silently mix
+        notInThePlane(
+            named,
+            "a coordinate read in a formula",
+            "read the '.x' or '.y' of a point of the plane; a point in space is followed by *building* on it",
+        )?.let { return it }
+        return "${displayName(named)} has no $suffix to read — '$n' reads a coordinate of a point of the plane, " +
+            "and ${nameOf(named)} is ${kindWord(named)}"
+    }
+
+    /**
+     * One live expression binding: the [entry] it drives, the [node] under its `boundTo`, and what its
+     * names resolved to — **by identity**, which is what makes a rename a re-stamp rather than an orphaned
+     * reference.
      *
      * [refs] is parallel to `node.names` (the distinct names, in input order), not to the occurrences
      * in the text; an occurrence finds its entry through its name's index.
@@ -5066,7 +5203,7 @@ class Document {
     class ExprBinding internal constructor(
         val entry: ScalarEntry,
         val node: ExprNode,
-        val refs: List<ScalarEntry>,
+        val refs: List<ExprRef>,
     )
 
     /** The binding each `bind` step made — per step, since a parameter may be re-bound later. */
@@ -5150,22 +5287,26 @@ class Document {
         // the drawing's own names win over the constants, so a parameter named `PI` is read as itself and
         // a name nothing carries falls through to the evaluator, which knows what a constant is
         val bound = ArrayList<String>()
-        val refs = ArrayList<ScalarEntry>()
+        val refs = ArrayList<ExprRef>()
         for (n in ast.refNames()) {
-            val target = scalars.firstOrNull { it.name == n }
+            val target = resolveExprName(n)
             if (target == null) {
                 if (n in EXPR_CONSTANTS) continue
                 note = "Can't bind ${e.name}: ${unknownName(n)}"
                 return false
             }
-            if (dependsOn(target.ref.node, node, HashSet())) {
+            // one cycle rule for both reference kinds, over the same `dependsOn` walk every connection is
+            // checked with: a coordinate read from a point that the value being bound already helps to place
+            // (a rider on a circle of this very radius) would close a loop through *geometry*, and the DAG
+            // refuses it here by name rather than as a hang
+            if (dependsOn(target.node, node, HashSet())) {
                 note = "Can't bind ${e.name} to '$text': $n already follows ${e.name}, and a value cannot be derived from itself"
                 return false
             }
             bound.add(n)
             refs.add(target)
         }
-        val exprNode = ExprNode(nextId("ex"), text, ast, bound, refs.map { it.ref.node })
+        val exprNode = ExprNode(nextId("ex"), text, ast, bound, refs.map { it.node })
         node.boundTo = exprNode
         pendingExprBinding = ExprBinding(e, exprNode, refs)
         noteEdit()
@@ -5181,9 +5322,12 @@ class Document {
      *   parser split it before anything could look it up;
      * - a **function written without its arguments** — `sqrt` is a name like any other here (the parser
      *   reserves nothing, see [ExprParser]), so nothing carries it and the answer is *this is the
-     *   function, and a function is called*.
+     *   function, and a function is called*;
+     * - a **dotted** name, which reads a point's coordinate and has three ways of missing — see
+     *   [unknownCoordinate].
      */
     private fun unknownName(n: String): String {
+        if (n.contains('.')) return unknownCoordinate(n)
         val hidden = scalars.firstOrNull { it.name.startsWith("$n-") || it.name.startsWith("$n.") }
         return when {
             hidden != null ->
@@ -5206,16 +5350,7 @@ class Document {
      */
     private fun restampExpressions() {
         for (b in exprBindings.values) {
-            val out = StringBuilder()
-            var at = 0
-            for (r in b.node.ast.refs()) {
-                val k = b.node.names.indexOf(r.name)
-                val now = b.refs.getOrNull(k)?.name ?: continue
-                out.append(b.node.source, at, r.start).append(now)
-                at = r.end
-            }
-            out.append(b.node.source, at, b.node.source.length)
-            b.node.text = out.toString()
+            b.node.text = restamped(b.node.source, b.node.ast, b.node.names, b.refs)
         }
         restampFuncCurves()
     }
@@ -5229,21 +5364,28 @@ class Document {
         for (b in funcCurves.values) {
             b.xText = restamped(b.xSource, b.xAst, b.names, b.refs)
             b.yText = restamped(b.ySource, b.yAst, b.names, b.refs)
+            // ...and the two **domain** ends, which are expressions of the same kind (session-76 item b): a
+            // rename that reached the coordinates but not the domain would leave the curve live and its
+            // *file* unloadable, which is the scalar half's own probe lesson stated one argument on
+            for (d in listOf(b.from, b.to)) {
+                val ast = d.ast ?: continue
+                d.text = restamped(d.source ?: continue, ast, d.names, d.refs)
+            }
         }
     }
 
-    /** [source] with every reference span rewritten under its scalar's current name, and nothing else. */
+    /** [source] with every reference span rewritten under its target's current name, and nothing else. */
     private fun restamped(
         source: String,
         ast: Expr,
         names: List<String>,
-        refs: List<ScalarEntry>,
+        refs: List<ExprRef>,
     ): String {
         val out = StringBuilder()
         var at = 0
         for (r in ast.refs()) {
             val k = names.indexOf(r.name)
-            val now = refs.getOrNull(k)?.name ?: continue
+            val now = refs.getOrNull(k)?.let { currentName(it) } ?: continue
             out.append(source, at, r.start).append(now)
             at = r.end
         }
@@ -13344,15 +13486,49 @@ class Document {
         val xAst: Expr,
         val yAst: Expr,
         val names: List<String>,
-        val refs: List<ScalarEntry>,
+        val refs: List<ExprRef>,
         val param: String,
-        internal val t0: SourceNode,
-        internal val t1: SourceNode,
+        internal val from: DomainEnd,
+        internal val to: DomainEnd,
     ) {
         /** The two texts under the **current** names of what they read — what a save writes. */
         var xText: String = xSource
 
         var yText: String = ySource
+
+        /** Every scalar row this curve reads, its domain included — what the delete cascade follows. */
+        internal fun scalarRefs(): List<ScalarEntry> =
+            (refs + from.refs + to.refs).mapNotNull { it.entry }
+
+        /** Every point whose coordinate this curve reads, its domain included (session-76 item a). */
+        internal fun pointRefs(): List<Element> = (refs + from.refs + to.refs).mapNotNull { it.point }
+    }
+
+    /**
+     * One **end of a function curve's domain** (the session-76 entry, item b): a plain number, or an
+     * expression over named scalars.
+     *
+     * The plain number is the degenerate case and is left exactly as it was — [node] carries the literal, the
+     * inspector's field writes it, and the step restates the number — so no stored file changes meaning. An
+     * expression is the *same* mechanism the scalar half built, one argument on: [node] is **bound** to an
+     * [ExprNode] ([SourceNode.boundTo], which the wire generalized to a function), so the domain follows a
+     * teeth count by ordinary recompute, the field goes read-only by itself (nothing writable is under a
+     * binding — [isFreeSource]), and the step restates the **text** instead of the number.
+     *
+     * [source] is what the user wrote and [text] the same expression under the current names of what it
+     * reads; both null for the plain-number case.
+     */
+    class DomainEnd internal constructor(
+        internal val node: SourceNode,
+        val source: String?,
+        internal val ast: Expr?,
+        internal val names: List<String>,
+        internal val refs: List<ExprRef>,
+    ) {
+        var text: String? = source
+
+        /** The number this end currently runs to, whatever drives it. */
+        internal fun value(): Double? = ((Evaluator().eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.base
     }
 
     private val funcCurves = HashMap<Step, FuncCurveBinding>()
@@ -13378,15 +13554,21 @@ class Document {
      * without its arguments both speak). Everything about the *values* — a domain that does not run
      * forwards, an expression that leaves its own domain part-way, a coordinate that is not a length — is
      * the node's business and comes back as the named invalidity that heals (OP-3).
+     *
+     * The **domain** may be a number or an expression, [fromText]/[toText] carrying the latter (the
+     * session-76 entry, item b): a gear flank's length then follows a teeth count like everything else. A
+     * plain-number domain is the degenerate case and is stored and restated exactly as before.
      */
     fun functionCurve(
         xText: String,
         yText: String,
         t0: Double,
         t1: Double,
+        fromText: String? = null,
+        toText: String? = null,
     ): Element? =
         recording("funccurve", Arg.Label(xText), Arg.Label(yText), skipIfEmpty = true) {
-            functionCurveNow(xText, yText, t0, t1)
+            functionCurveNow(xText, yText, t0, t1, fromText, toText)
         }
 
     private fun functionCurveNow(
@@ -13394,6 +13576,8 @@ class Document {
         yText: String,
         t0: Double,
         t1: Double,
+        fromText: String?,
+        toText: String?,
     ): Element? {
         val param = funcCurveParam
         val xAst =
@@ -13411,12 +13595,12 @@ class Document {
                 return null
             }
         val names = ArrayList<String>()
-        val refs = ArrayList<ScalarEntry>()
+        val refs = ArrayList<ExprRef>()
         for (n in (xAst.refNames() + yAst.refNames()).distinct()) {
             // the parameter is a **binder** and wins over everything, which is what makes `cos(t)` mean
             // what it says; a constant is what is left when nothing in the drawing carries the name
             if (n == param) continue
-            val target = scalars.firstOrNull { it.name == n }
+            val target = resolveExprName(n)
             if (target == null) {
                 if (n in EXPR_CONSTANTS) continue
                 note = "Can't build the curve: ${unknownName(n)}"
@@ -13425,30 +13609,81 @@ class Document {
             names.add(n)
             refs.add(target)
         }
-        val a = SourceNode(nextId("ft"), ScalarValue(Quantity.number(t0)))
-        val b = SourceNode(nextId("ft"), ScalarValue(Quantity.number(t1)))
+        val a = domainEnd(t0, fromText, "from") ?: return null
+        val b = domainEnd(t1, toText, "to") ?: return null
         val ref =
             cx.funcCurve(
                 xAst,
                 yAst,
                 names,
-                refs.map { it.ref },
-                Ref<ScalarValue>(a),
-                Ref<ScalarValue>(b),
+                refs.map { Ref<ScalarValue>(it.node) },
+                Ref<ScalarValue>(a.node),
+                Ref<ScalarValue>(b.node),
                 param,
                 text = "x($param) = $xText, y($param) = $yText",
             )
         val el = add(ref, ElementKind.FUNC_CURVE, Styles.CURVE)
-        el.handle = FuncCurveHandle(a, b)
+        el.handle = FuncCurveHandle(a.node, b.node)
         pendingFuncCurve = FuncCurveBinding(el, xText, yText, xAst, yAst, names, refs, param, a, b)
         return el
     }
 
-    /** The domain [el] currently runs over — what its own step restates (OP-18: state restates as a value). */
-    internal fun funcCurveDomain(el: Element): Pair<Double, Double>? =
+    /**
+     * One end of the domain: the literal [value], or [text] parsed as an expression over named scalars and
+     * **bound over** that literal (the session-76 entry, item b). Null with a note when the text is not an
+     * expression or names something the drawing does not carry — refused by name, before anything is built.
+     *
+     * A domain expression is deliberately *not* checked for dimension here: the domain must be dimensionless,
+     * but that is a property of the **values** and therefore the node's own named invalidity that heals
+     * (OP-3), exactly as a coordinate that is not a length is. `t from T` with `T` a length says so, quotes
+     * the dimensions, and comes back the moment `T` is a plain number.
+     *
+     * Note the one asymmetry with the curve's coordinates, and it is forced rather than chosen: inside `x(t)`
+     * the name `t` is the curve's own **binder**, while a domain *bounds* `t` and cannot depend on it, so
+     * there `t` is an ordinary drawing scalar. Nothing can be captured, so nothing is refused.
+     */
+    private fun domainEnd(
+        value: Double,
+        text: String?,
+        which: String,
+    ): DomainEnd? {
+        val node = SourceNode(nextId("ft"), ScalarValue(Quantity.number(value)))
+        if (text == null) return DomainEnd(node, null, null, emptyList(), emptyList())
+        val ast =
+            try {
+                ExprParser.parse(text)
+            } catch (err: ExprError) {
+                note = "Can't read the curve's $which from '${text.trim()}': ${err.message}"
+                return null
+            }
+        val names = ArrayList<String>()
+        val refs = ArrayList<ExprRef>()
+        for (n in ast.refNames()) {
+            val target = resolveExprName(n)
+            if (target == null) {
+                if (n in EXPR_CONSTANTS) continue
+                note = "Can't read the curve's $which: ${unknownName(n)}"
+                return null
+            }
+            names.add(n)
+            refs.add(target)
+        }
+        node.boundTo = ExprNode(nextId("ex"), text, ast, names, refs.map { it.node })
+        return DomainEnd(node, text, ast, names, refs)
+    }
+
+    /**
+     * The domain [el] currently runs over — what its own step restates (OP-18: state restates as a value).
+     *
+     * Each end is a **number or a text**: a number is state and is restated as one, a text is a *formula* and
+     * is restated verbatim under the current names of what it reads (the session-76 entry, item b). One end
+     * may be each, since they are two independent arguments.
+     */
+    internal fun funcCurveDomain(el: Element): Pair<Arg, Arg>? =
         funcCurveOf(el)?.let { b ->
-            val lo = (b.t0.value as? ScalarValue)?.q?.base ?: return null
-            val hi = (b.t1.value as? ScalarValue)?.q?.base ?: return null
+            fun end(d: DomainEnd): Arg? = d.text?.let { Arg.Label(it) } ?: d.value()?.let { Arg.Num(Quantity.number(it)) }
+            val lo = end(b.from) ?: return null
+            val hi = end(b.to) ?: return null
             lo to hi
         }
 
@@ -13732,13 +13967,133 @@ class Document {
         }
 
     /**
-     * A straight bevel across the corner of two legs: the points at [distance] from the corner along each
-     * leg, joined by a segment. The corner quadrant comes from where the legs were clicked, exactly as a
-     * fillet's does ([legSigns]).
+     * A straight bevel across the corner of two **carrier curves** — a line/segment/ray, a circle or an arc,
+     * in any of the three combinations (the session-76 entry, item c: *the chamfer-on-arc convention, decided
+     * once*).
+     *
+     * The convention, stated in one line and argued in [FilletMath.setback]: each setback point is
+     * [distance] from the corner **along its own carrier** — arc distance on a round leg — and the bevel is
+     * the straight segment between the two. What replaced the old line-only refusal is therefore *the same
+     * sentence*, one leg kind on; the parked alternative (a chord of the same length) loses on three counts,
+     * chief among them that it would take unequal amounts of material off the two legs of one corner.
+     *
+     * Which corner and which way along each leg stays a **stored discrete choice** (OP-1), scored once from
+     * the two clicks: `signs = side1;side2` for two straight legs, exactly as before, and
+     * `side1;side2;branch` where a round leg gives the carriers two crossings to choose between. The first two
+     * positions never changed meaning, so every stored line–line chamfer replays byte for byte.
+     */
+    fun chamferBetweenCurves(
+        leg1: Element,
+        leg2: Element,
+        distance: ScalarRef,
+        clickA: Vec2,
+        clickB: Vec2,
+        signs: List<Int> = emptyList(),
+    ): Element? =
+        when {
+            leg1.isLinear && leg2.isLinear -> chamferBetweenLines(leg1, leg2, distance, clickA, clickB, signs)
+            isFilletLeg(leg1) && isFilletLeg(leg2) -> chamferMixed(leg1, leg2, distance, clickA, clickB, signs)
+            else -> {
+                // the fillet's own sentence, and the same reason: a bevel's end has to stay *on* its leg, so
+                // the leg must carry a line or a circle to run along. A spline, a conic and a function curve
+                // carry neither — their arc length is not a closed form this drawing states (OP-15) — so the
+                // setback along one could only be sampled. Named rather than dropped.
+                val bad = listOf(leg1, leg2).firstOrNull { !isFilletLeg(it) }
+                if (bad != null) {
+                    note = "Chamfer: ${nameOf(bad)} is ${kindWord(bad)}, and a bevel's end runs a stated " +
+                        "distance along its leg — pick a line, a segment, a circle or an arc"
+                }
+                null
+            }
+        }
+
+    /**
+     * A chamfer with at least one **round** leg: the corner is a crossing of the two carriers (a persisted
+     * branch, OP-1, since a round leg makes there be two of them), and each end is that distance along its own
+     * carrier — `pointAlongLine` on a straight leg, [Construction.pointAlongCircle] on a round one.
+     *
+     * The graph is built in **exactly** the argument order [FilletMath.chamferCorners] scores numerically,
+     * because a `Select` sign means "first or last of *this* set" (OP-1) and both intersections order their
+     * solutions from their arguments — swap them and the stored branch would mean the other crossing.
+     */
+    private fun chamferMixed(
+        leg1: Element,
+        leg2: Element,
+        distance: ScalarRef,
+        clickA: Vec2,
+        clickB: Vec2,
+        signs: List<Int>,
+    ): Element? {
+        val v =
+            if (signs.size >= 3) {
+                ChamferVariant(signs[0], signs[1], signs[2])
+            } else {
+                chamferVariantFor(leg1, leg2, distance, clickA, clickB)
+            } ?: return null
+        val reason = "the two legs do not cross there, so there is no corner to bevel"
+        val set =
+            when {
+                leg1.isLinear -> cx.intersectLC(carrierLine(leg1), carrierCircle(leg2))
+                leg2.isLinear -> cx.intersectLC(carrierLine(leg2), carrierCircle(leg1))
+                else -> cx.intersectCC(carrierCircle(leg1), carrierCircle(leg2))
+            }
+        val corner = cx.select(set, v.branch, reason)
+        val a = addDerived(setbackOn(leg1, corner, distance, v.side1))
+        val b = addDerived(setbackOn(leg2, corner, distance, v.side2))
+        val bevel = segment(a, b)
+        registerSigns(bevel, listOf(v.side1, v.side2, v.branch))
+        registerJoint(bevel, leg1, a)
+        registerJoint(bevel, leg2, b)
+        supersedeCorner(leg1, leg2, bevel)
+        return bevel
+    }
+
+    /** A bevel end: [distance] from [corner] along [leg]'s own carrier — the convention, as a construction. */
+    private fun setbackOn(
+        leg: Element,
+        corner: PointRef,
+        distance: ScalarRef,
+        sign: Int,
+    ): PointRef =
+        if (leg.isLinear) {
+            cx.pointAlongLine(carrierLine(leg), corner, distance, sign)
+        } else {
+            cx.pointAlongCircle(carrierCircle(leg), corner, distance, sign)
+        }
+
+    /**
+     * Which variant the two clicks meant — decided once, here, and then stored (OP-1); the fillet's own
+     * scoring ([filletVariantFor]) with the bevel's ends in place of the rounding's tangencies, so the live
+     * preview runs the very same function ([Previews.chamfer]) without touching the graph.
+     */
+    private fun chamferVariantFor(
+        leg1: Element,
+        leg2: Element,
+        distance: ScalarRef,
+        clickA: Vec2,
+        clickB: Vec2,
+    ): ChamferVariant? {
+        val ev = Evaluator()
+        val d = ((ev.eval(distance.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm ?: return null
+        val v1 = filletLegOf(leg1, ev) ?: return null
+        val v2 = filletLegOf(leg2, ev) ?: return null
+        val v = FilletMath.chamferVariantFor(v1, v2, d, clickA, clickB)
+        if (v == null) {
+            note = "Chamfer: ${nameOf(leg1)} and ${nameOf(leg2)} do not cross, so there is no corner to bevel"
+        }
+        return v
+    }
+
+    /**
+     * The two-straight-legs case: the points at [distance] from the corner along each leg, joined by a
+     * segment. The corner quadrant comes from where the legs were clicked, exactly as a fillet's does
+     * ([legSigns]).
      *
      * Composed entirely of ops that already existed — `intersectLL` + `Select` for the corner (a persisted
      * branch, OP-1) and `pointAlongLine` for each bevel end — so a chamfer needs no geometry of its own:
-     * both ends stay on their legs, and the bevel follows every later edit of either.
+     * both ends stay on their legs, and the bevel follows every later edit of either. Kept as its own case
+     * rather than folded into [chamferMixed] for the reason the line–line *fillet* is kept: it is what every
+     * existing drawing was built with, and two lines meet in one point, so it stores one sign fewer.
      */
     fun chamferBetweenLines(
         leg1: Element,

@@ -620,17 +620,27 @@ object Previews {
         return listOfNotNull(FilletMath.arcOf(leg1, leg2, r, v)?.let { PreviewShape.ArcS(it) })
     }
 
-    /** The bevel the current cursor quadrant would cut, at the distance in effect. */
+    /**
+     * The bevel the current cursor quadrant would cut, at the distance in effect — and, since session 76, on
+     * a **round** leg as well, under the same convention the build uses (the setback measured along the
+     * carrier, [FilletMath.setback]). The line–line case keeps its own two-sign scoring, as the fillet's does.
+     */
     fun chamfer(c: PreviewContext): List<PreviewShape> {
         val d = c.length(0) ?: return emptyList()
         if (d <= 0.0) return emptyList()
         val first = c.element(0) ?: return emptyList()
         val clickA = c.click(0) ?: return emptyList()
-        val second = c.under { it !== first && it.isLinear } ?: return emptyList()
-        val l1 = lineOf(first, c.ev) ?: return emptyList()
-        val l2 = lineOf(second, c.ev) ?: return emptyList()
-        val (s1, s2) = FilletMath.legSigns(l1, l2, clickA, c.cursor)
-        return listOfNotNull(FilletMath.chamferEnds(l1, l2, d, s1, s2)?.let { PreviewShape.Seg(it) })
+        val second = c.under { it !== first && (it.isLinear || it.isCentric) } ?: return emptyList()
+        val l1 = lineOf(first, c.ev)
+        val l2 = lineOf(second, c.ev)
+        if (l1 != null && l2 != null) {
+            val (s1, s2) = FilletMath.legSigns(l1, l2, clickA, c.cursor)
+            return listOfNotNull(FilletMath.chamferEnds(l1, l2, d, s1, s2)?.let { PreviewShape.Seg(it) })
+        }
+        val leg1 = legOf(first, c.ev) ?: return emptyList()
+        val leg2 = legOf(second, c.ev) ?: return emptyList()
+        val v = FilletMath.chamferVariantFor(leg1, leg2, d, clickA, c.cursor) ?: return emptyList()
+        return listOfNotNull(FilletMath.chamferBevel(leg1, leg2, d, v)?.let { PreviewShape.Seg(it) })
     }
 
     /**

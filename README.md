@@ -30,8 +30,9 @@ first-class goal and the current implementation focus.
 - **Unit-aware scalars** — dimensional analysis over Length / Angle / Dimensionless (+ Area /
   Volume); base units mm and rad.
 - **Rich 2D tool set** — points, midpoints (or any ratio along a span), intersections, projections, perpendiculars, parallels,
-  bisectors, tangents (from a point / common), fillets (between lines, circles and arcs alike) and
-  chamfers, circles (centre+point / centre+radius / 3-point / **3 tangents** — the incircle and the three
+  bisectors, tangents (from a point / common), fillets and chamfers (between lines, circles and arcs alike —
+  a chamfer's setback is measured *along* each leg, so on a round one it is an arc distance), circles
+  (centre+point / centre+radius / 3-point / **3 tangents** — the incircle and the three
   excircles of three lines), arcs, **ellipses and elliptic arcs**, rectangles (rounded or not) and regular
   polygons, transforms (mirror / rotate / scale / translate), linear and circular **arrays**, and
   measurements. Any tool that wants a line takes a segment or ray, and any tool that wants a circle takes
@@ -46,7 +47,8 @@ first-class goal and the current implementation focus.
   to a stated tolerance (an elliptic integral has no closed form), and a wall thickened over an elliptic
   carrier is flagged, because an ellipse's offset is not an ellipse.
 - **A curve a formula defines — and no new curve type per curve family.** Write `x(t)` and `y(t)` over a
-  stated domain, in the same expression language a parameter's formula is written in, reading any named
+  stated domain — whose two ends are numbers *or* formulas themselves, so a gear flank's length follows a
+  teeth count — in the same expression language a parameter's formula is written in, reading any named
   scalar in the drawing: an **involute**, a cycloid, a spiral, a catenary and a lemniscate are one element
   with five different texts. The two texts *are* the record — stored verbatim, re-stamped when a scalar is
   renamed, parsed back on load — and the scalars they read are ordinary inputs, so editing one moves the
@@ -113,7 +115,8 @@ first-class goal and the current implementation focus.
   equality by shared reference, with cycle checks.
 - **Expressions** — the same binding, generalized: type a formula into a parameter's row and it is
   *derived* from the other named values — `d/2 + 1mm`, `sin(a)*r`, the whole `java.lang.Math`
-  vocabulary plus plain operators, with units in the literals (`10mm`, `15°`). One direction only:
+  vocabulary plus plain operators, with units in the literals (`10mm`, `15°`) — and a named point's own
+  coordinates, `P.x` and `P.y`, read through the same names everything else is named by. One direction only:
   `r = d/2` **defines** `r`, so it is an ordinary set of DAG edges and no solver is involved. The
   text is stored verbatim and re-stamped when something it reads is renamed; dimensions are checked
   (`sin` takes an angle, `sqrt` halves the exponents) and a violation just makes the value invalid
@@ -354,8 +357,7 @@ rounding's own band added — so you can sketch on a rounded part's face, drill 
 edges and corners of a working plane's section of it as construction inputs, none of which a plain mesh result
 could offer. Blends chain: round one edge, fuse a pad on, chamfer another, and it is one part throughout. What
 it declines, it declines by name and heals: a radius that reaches past one of the two faces says so *and names
-the largest that fits*, so the message is a number to type; a chamfer whose leg is curved in section points at
-the fillet; an edge whose shape changes along it (a turned cap edge over a slanted piece) is named as the
+the largest that fits*, so the message is a number to type; an edge whose shape changes along it (a turned cap edge over a slanted piece) is named as the
 future extension it is. Two limits are stated rather than hidden: a corner where three or more broken edges
 meet stays sharp, and a blend applied to a body that was **fused** with another one is a mesh body — it draws,
 measures, prints and exports, and its section offers no inputs.

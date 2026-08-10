@@ -2518,8 +2518,52 @@ class Editor(
         yText: String,
         from: Double,
         to: Double,
+    ): Element? = built(doc.functionCurve(xText.trim(), yText.trim(), from, to), xText, yText, "$from..$to")
+
+    /**
+     * The same, with the **domain given as two texts** (the session-76 entry, item b) — a number, or a formula
+     * over named scalars, per end.
+     *
+     * The rule between the two readings is [bindParameter]'s own, deliberately: a text that is *one number* is
+     * a plain domain end and binds nothing, anything else is an expression. So the two fields keep behaving
+     * exactly as they did for everyone who types numbers into them, and a gear flank whose length follows a
+     * teeth count is typed where the number was. The alternative — a second pair of fields beside the numbers,
+     * the way a parameter row has a value *and* a formula — was rejected because the domain has no spinner to
+     * protect: it is one field per end and one meaning per field.
+     */
+    fun addFunctionCurve(
+        xText: String,
+        yText: String,
+        fromText: String,
+        toText: String,
     ): Element? {
-        val el = doc.functionCurve(xText.trim(), yText.trim(), from, to)
+        // a literal that carries a **unit** is deliberately *not* the plain reading: `from=10mm` must be the
+        // dimension violation it is (a domain is dimensionless), and dropping the unit to read the 10 would be
+        // the silent answer this engine never gives. So it takes the expression route and the node says so.
+        val from = bareNumber(fromText.trim())?.takeIf { !it.hadUnit }
+        val to = bareNumber(toText.trim())?.takeIf { !it.hadUnit }
+        return built(
+            doc.functionCurve(
+                xText.trim(),
+                yText.trim(),
+                from?.q?.base ?: 0.0,
+                to?.q?.base ?: 1.0,
+                fromText = if (from == null) fromText.trim() else null,
+                toText = if (to == null) toText.trim() else null,
+            ),
+            xText,
+            yText,
+            "${fromText.trim()}..${toText.trim()}",
+        )
+    }
+
+    /** What both entry points say afterwards: one checkpoint, and the curve's own words either way. */
+    private fun built(
+        el: Element?,
+        xText: String,
+        yText: String,
+        domain: String,
+    ): Element? {
         if (el == null) {
             statusHint = doc.takeNote() ?: "Can't build a function curve from '$xText' and '$yText'"
             changed()
@@ -2527,8 +2571,9 @@ class Editor(
         }
         checkpoint()
         // a curve whose *values* do not work out is legal and invalid, not refused (OP-3): it says so and heals
+        // — a domain that is not a pair of plain numbers is exactly such a case, and it names both dimensions
         val why = (Evaluator().eval(el.ref.node) as? EvalResult.Invalid)?.reason
-        statusHint = "${doc.nameOf(el)}: x(t) = ${xText.trim()}, y(t) = ${yText.trim()} over $from..$to" +
+        statusHint = "${doc.nameOf(el)}: x(t) = ${xText.trim()}, y(t) = ${yText.trim()} over $domain" +
             (why?.let { " — but $it" } ?: "")
         changed()
         return el

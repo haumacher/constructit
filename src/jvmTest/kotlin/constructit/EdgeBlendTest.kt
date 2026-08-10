@@ -16,6 +16,7 @@ import constructit.geom.SolidFace
 import constructit.units.deg
 import constructit.units.mm
 import kotlin.math.PI
+import kotlin.math.sin
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -346,34 +347,52 @@ class EdgeBlendTest {
     }
 
     /**
-     * A chamfer across a leg that is **curved in section** stays refused — the parked 2D chamfer-on-arc
-     * convention, inherited unchanged.
+     * A chamfer across a leg that is **curved in section** takes the bevel — the chamfer-on-arc convention,
+     * inherited (session 76, item c; this test used to assert the refusal that stood in its place).
      *
      * The leg here is a real circle rather than a contrivance: a partial revolve's **cap edge over an
      * axis-parallel profile piece** stands against a cylinder cut square to its own axis, which is that
-     * cylinder's own circle. The fillet takes it (the mixed line–circle construction, the 2D tool's own); the
-     * chamfer says which leg is curved and points at the fillet.
+     * cylinder's own circle. So this is the acceptance the convention owes: *a cap edge against a cylinder
+     * barrel gets its bevel, and the volumes say so.*
+     *
+     * The figure is asserted against the wedge computed **here**, from the convention rather than from the
+     * engine: with the corner on a bore of radius `Rb`, the setback `d` along the flat cap reaches `d` from the
+     * corner and the setback along the bore turns through `d / Rb`, so the wedge is the triangle those two
+     * points make with the corner **less** the circular segment the bore cuts off it. The edge is straight and
+     * the section rigid, so the loss is that area times the edge's 60 mm — up to the class's own stated band
+     * (the bore reaches the boolean as an inscribed chord polygon, so the wedge comes out a shade **larger**).
      */
     @Test
-    fun aChamferAcrossACurvedLegPointsAtTheFillet() {
+    fun aChamferAcrossACurvedLegTakesTheBevel() {
         val cx = Construction()
         val turned = cx.turnedBar(90.0)
         val ev = Evaluator()
         val body = ev.solid(turned)
+        val before = Geom3.volume(body.mesh)
         // piece #0 runs along the axis at r = 15 (the bore), so on the cap it meets a cylinder side-on
         val i = edgeIndex(ev, turned, EdgeName.RevolveCapPiece(SolidFace.TOP, 0))
         val (targets, _) = Blend3.targets(body.feature, false, i)
-        val bevel = assertNotNull(Blend3.choicesFor(body, targets!!, 2.0, BlendKind.CHAMFER).first)
-        val (out, why) = Blend3.blended(body, body, targets, 2.0, BlendKind.CHAMFER, bevel)
-        assertTrue(out == null, "a chamfer needs two straight legs")
-        val said = assertNotNull(why)
-        assertTrue(said.contains("fillet it instead"), "and it points at the fillet: $said")
-        // …and the fillet across the very same crease is built, which is what makes that a real alternative
-        val round = assertNotNull(Blend3.choicesFor(body, targets, 2.0, BlendKind.FILLET).first)
-        val (rounded, whyRound) = Blend3.blended(body, body, targets, 2.0, BlendKind.FILLET, round)
+        val d = 2.0
+        val choice = assertNotNull(Blend3.choicesFor(body, targets!!, d, BlendKind.CHAMFER).first)
+        val (out, why) = Blend3.blended(body, body, targets, d, BlendKind.CHAMFER, choice)
+        val bevelled = assertNotNull(out, why)
+        assertManifold(bevelled.mesh, "the bevelled bore mouth")
+        val loss = before - Geom3.volume(bevelled.mesh)
+
+        val bore = 15.0
+        val turn = d / bore
+        // the triangle (corner, d along the flat cap, d of arc along the bore) less the bore's own segment
+        val wedge = bore * sin(turn) - bore * bore / 2.0 * (turn - sin(turn))
+        val exact = wedge * 60.0
+        assertTrue(loss >= exact - 1e-6, "the bevel takes at least the wedge the convention states: $loss vs $exact")
+        assertTrue(loss <= exact * 1.02, "and no more than the inscribed bore's own 2% band: $loss vs $exact")
+
+        // ...and it takes **more** than the fillet of the same size does, which is what a bevel is
+        val round = assertNotNull(Blend3.choicesFor(body, targets, d, BlendKind.FILLET).first)
+        val (rounded, whyRound) = Blend3.blended(body, body, targets, d, BlendKind.FILLET, round)
         assertNotNull(rounded, whyRound)
         assertManifold(rounded.mesh, "the rounded bore mouth")
-        assertTrue(Geom3.volume(rounded.mesh) < Geom3.volume(body.mesh), "and it takes material away")
+        assertTrue(loss > before - Geom3.volume(rounded.mesh), "a chamfer of $d takes more than a round of $d")
     }
 
     /** A body the mesh engine made has no named edges, so a blend on it declines in [Section3]'s own words. */

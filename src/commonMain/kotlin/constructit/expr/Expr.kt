@@ -55,9 +55,14 @@ sealed interface Expr {
     class Lit(val q: Quantity, val hadUnit: Boolean = false) : Expr
 
     /**
-     * A reference to a named scalar, with the half-open span `[start, end)` it occupies in the source
+     * A reference to a named value, with the half-open span `[start, end)` it occupies in the source
      * text. The span is what lets a **rename re-stamp** the stored text in place (OP-23's move, and the
      * parameter-rename pattern of OP-7) instead of orphaning the expression.
+     *
+     * [name] is one word — or a **dotted** one (`P.x`), which is a *coordinate* of a named point and is
+     * resolved through the same naming authority (OP-7/OP-18, the session-76 entry). The whole dotted text
+     * is one reference and one span, so a rename of the point rewrites `P` and leaves `.x` alone by
+     * construction.
      */
     class Ref(val name: String, val start: Int, val end: Int) : Expr
 
@@ -133,8 +138,8 @@ val EXPR_CONSTANTS: Set<String> = CONSTANTS.keys
  * same expression.
  *
  * Grammar (lowest to highest): `+ -`, then `* /`, then unary `-`, then `^` (right-associative), then
- * atoms — a literal with an optional unit, a name, a call, or a parenthesised expression.
- * Positions in refusals are **1-based**, because a user counts characters from one.
+ * atoms — a literal with an optional unit, a name (optionally **dotted**, as in `P.x`), a call, or a
+ * parenthesised expression. Positions in refusals are **1-based**, because a user counts characters from one.
  *
  * **There are no reserved words, and that is load-bearing.** A word is a *function* when a `(` follows it
  * and a *reference* otherwise; a word that names nothing in the drawing falls back to a constant. So `sin`
@@ -244,6 +249,17 @@ class ExprParser private constructor(private val src: String) {
         // one word of letters, digits and underscores: a name a hyphen splits would be indistinguishable
         // from a subtraction, so such a name simply cannot be referenced (the binding says so, by name)
         while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) i++
+        // **a dot continues the word**, which is how `P.x` reaches a named point's coordinate (the session-76
+        // entry, item a). It binds **tight** — no whitespace either side, exactly as a unit binds to the
+        // digits it touches — so `P . x` is the unexpected-character error it has always been, and `2.5` is a
+        // number because [number] reads the digits first. Whether the word means a coordinate is not the
+        // parser's question at all: it hands the whole text over as one reference and the naming authority
+        // answers ([Document.resolveExprName]), which is the same division of labour the `(`-makes-a-function
+        // rule follows and it keeps the *vocabulary* out of what a stored file means (see the class note).
+        while (i + 1 < src.length && src[i] == '.' && (src[i + 1].isLetter() || src[i + 1] == '_')) {
+            i++
+            while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) i++
+        }
         val word = src.substring(start, i)
         // the reference's span ends **at the word**, taken before the look-ahead below: [peek] skips
         // whitespace, so reading it first would stretch the span over the space after the name and a rename

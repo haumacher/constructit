@@ -930,11 +930,77 @@ them, and it is exactly enough. Unsolvable radii are ordinary invalidity with a 
 tangency, and heal (OP-3) — the *closest-to-solvable* variant is the one stored, so a fillet heals into the
 one the user was reaching for rather than into a sibling.
 
-Two deliberate limits. The arc is emitted **quietly** (one element, no visible tangent points), matching the
+One deliberate limit. The arc is emitted **quietly** (one element, no visible tangent points), matching the
 line–line fillet — its tangencies are registered as *joints* instead (below), which is what the boundary
-tracer needs and the drawing does not. And **chamfer stays line-only**: a bevel across a round leg has two
-honest readings, a chord and an arc of the same length, and until that convention is stated a tool that
-silently picked one would be guessing. Recorded here rather than half-built.
+tracer needs and the drawing does not.
+
+**Retired in session 76: the chamfer-on-arc convention, decided once for both dimensions** (queue entry 6,
+item c). The parked sentence, quoted so what it asked can be compared with what was answered: *"And **chamfer
+stays line-only**: a bevel across a round leg has two honest readings, a chord and an arc of the same length,
+and until that convention is stated a tool that silently picked one would be guessing. Recorded here rather
+than half-built."* The convention, in one line: **a chamfer's setback is measured along the carrier** — arc
+distance on a round leg — and the bevel is the straight segment between the two setback points so found. The
+arc reading beats the chord on four counts, none of them taste, and all four are stated at
+`FilletMath.setback`:
+
+1. **It is the same sentence one leg kind on.** On a straight leg the setback *is* distance along the leg
+   from the corner (`pointAlongLine`), so "along the carrier" restates the existing rule instead of adding one
+   — exactly as the generalized fillet above found its tangency *on* the carrier (a projection on a line, a
+   radial on a circle) rather than gaining a rule per leg kind.
+2. **Equal setback means equal material off each leg.** A chord of `d` on a circle of radius `R` eats
+   `2R·asin(d/2R) > d` of that leg, so one typed number would take *different* amounts out of the two legs of
+   one corner — and the number a chamfer is typed with is a machinist's setback, i.e. travel along the edge.
+3. **It costs no new stored choice.** The arc reading is one angle, `θ ± d/R`, closed form and exact; the
+   chord reading is a circle of radius `d` about the corner met with the carrier — exact too, but with *two*
+   solutions, so it would owe a second persisted branch per round leg for nothing.
+4. **The limit is continuous, so no stored file changes meaning.** As `R → ∞` the arc setback tends to the
+   straight one, and for two straight legs it *is* `chamferEnds` — the same points, the same signs, the same
+   bytes.
+
+Neither reading is inexact, so OP-15 does not decide it; 1–3 do. And because both readings are defensible in
+isolation the decision is recorded here rather than left implicit in code — which is what the parking asked
+for.
+
+*As built.* One new accessor, `Construction.pointAlongCircle` — `pointAlongLine`'s round-leg twin, the second
+accessor the generalized-fillet pattern has needed (`radialPoint` was the first) — plus
+`FilletMath.setback` / `chamferCorners` / `chamferBevel` / `chamferVariantFor` on values, so the **live preview
+runs the very scoring the click stores** (`Previews.chamfer` now takes a round leg too). `Document.chamferBetweenCurves`
+dispatches on the leg kinds exactly as `filletBetweenCurves` does: two lines take the old
+`chamferBetweenLines` verbatim (kept, because it is what every existing drawing was built with, and two lines
+meet in one point so it stores one sign fewer), and a round leg takes `chamferMixed` — the corner is
+`select(intersectLC | intersectCC, branch)`, a persisted branch (OP-1), and each end is that distance along
+its own carrier. **The stored signs are `side1;side2` for two straight legs and `side1;side2;branch` where a
+round leg makes there be two crossings**; the first two positions never changed meaning, so every stored
+line–line chamfer replays byte for byte and no version bump is owed (OP-18). The 2D tool's slots became
+`CARRIER, CARRIER` (the fillet's own), and what still refuses is what has no carrier to run along: a spline,
+a conic or a function curve, refused **by name** in the fillet's own sentence — its arc length is not a closed
+form this drawing states (OP-15), so the setback along one could only be sampled. Legs that do not cross say
+so too.
+
+**The 3D blend inherited it in the same session, and it was three lines rather than a package.** In an edge's
+normal section the corner *is* the origin and both legs pass through it, so there is no branch to pick: each
+setback point is `FilletMath.setback` from the origin along its own leg, and the wedge closes with the same
+`sidePiece` the fillet's already used — the two kinds now differ in **one piece** (the bevel where the arc was)
+and in nothing else. `choicesFor` scores a chamfer's two leg directions whatever the legs are (the probe walks
+the leg itself rather than its tangent, which for a straight leg is the very same point), where it used to
+store a placeholder `1,1` whose only purpose was to reach the build's refusal. So blend slice 2's inherited
+refusal — *"a chamfer bevels a corner between two straight legs … fillet it instead (a chamfer across a curved
+leg is a future extension)"* — **is retired**, and its own test now asserts the bevel: a partial revolve's cap
+edge over an axis-parallel profile piece stands against a cylinder cut square to its own axis, and the chamfer
+there takes the wedge the convention states (`EdgeBlendTest.aChamferAcrossACurvedLegTakesTheBevel`, the
+triangle less the bore's own circular segment, times the 60 mm edge, within the class's stated inscribed-mesh
+band) and takes **more** material than the fillet of the same size, which is what a bevel is. What the 3D
+blend still refuses is unchanged and unrelated: a section that is a **conic** rather than a line or a circle,
+and a section that **changes along the edge** (both were refused for the fillet too).
+
+Regressions: `ChamferOnArcTest` (10) — the exact setback points on a line/arc corner *and* the decisive
+assertion that the chord to the round leg's end is `2R·sin(d/2R)` and measurably **shorter** than the setback
+(which is what tells the chosen reading from the rejected one), the widening that slides both ends along their
+legs, the quadrant and the crossing both read off the clicks, two round legs, the stored sign taken verbatim
+after the circle grows (byte-equal round trip, the reloaded bevel equal to the live one to 1e-12), the
+line–line chamfer storing exactly what it always did, the function-curve leg and the non-crossing legs refused
+by name, the preview equal to the build, and the bevel's ends registered as joints on both legs. Plus
+`EdgeBlendTest.aChamferAcrossACurvedLegTakesTheBevel` for the inheritance.
 
 #### On a circle *by construction* — the tangent's own slot (GitHub #19, session 72)
 
@@ -14952,8 +15018,8 @@ its coplanarity is exact, so it keeps it.
   drew; the split lives inside the footprint's `compute` and is a value. So the drawing gains no elements,
   no names and no steps from a junction — which is also why extending a wall creates nothing.
 - **No mitre limit.** A very sharp branch produces a very long spike, exactly as the ortho case always
-  has. Stated so it is not mistaken for a bug; capping it is a convention decision (like the
-  chamfer-on-arc one) and belongs with the others.
+  has. Stated so it is not mistaken for a bug; capping it is a convention decision (as the chamfer-on-arc one
+  was, until session 76 decided it) and belongs with the others.
 - **A whole circle cannot be a carrier**: it has no endpoints, so it joins nothing and its "network" is a
   ring with no vertices. Break it into arcs first — refused by name.
 - **The carrier curves are not consumed.** A thickened segment stays a visible segment, as the ortho
@@ -16219,7 +16285,8 @@ radius and a stored sign — never a kernel op (OP-9 said so from the start) and
    literal with machinery that exists — the edge lifts to a `Path3`, the sweep carries the fillet section,
    the boolean applies it (subtract on a convex edge, add on a concave one) — at the stated cost that the
    result takes the mesh route. **Chamfer** is the same sentence with `chamferEnds`, and inherits the
-   parked chamfer-on-arc convention unchanged.
+   parked chamfer-on-arc convention unchanged. *(That convention is **decided in session 76** — the setback
+   runs along the carrier — and the inheritance came with it: see the retirement under the generalized fillet.)*
 3. **`Feature3.Blend` — the dress-up feature. — done, session 71; see the as-built note below.** What keeps
    the honesty ledger: base feature + edge
    addresses + a radius parameter + stored signs, a feature case of its own whose face list **extends the
@@ -16428,8 +16495,10 @@ note — see the inset there.
 **Refusals added, all of them naming the element and the way forward**: a size that reaches past one of the
 two faces (*"…reaches past the face over boundary edge #1 … the largest that fits there is about 2.9 mm"* —
 the bound is found by halving, so the message is a number to type); a section this rounding has no name for
-(the conic above); an edge whose section changes along it; a chamfer whose leg is **curved in section**
-(pointing at the fillet — the parked chamfer-on-arc convention inherited unchanged); a crease whose material
+(the conic above); an edge whose section changes along it; ~~a chamfer whose leg is **curved in section**
+(pointing at the fillet — the parked chamfer-on-arc convention inherited unchanged)~~ **retired in session 76:
+the convention is decided and that chamfer takes its bevel** (see the retirement under the generalized
+fillet); a crease whose material
 fills neither one nor three of its four sides; two faces too nearly tangent to tell the sides apart; a
 degenerate edge; an elliptic or spline edge; and a body with no named edges at all, in `Section3`'s own words.
 The sweep's own refusals pass through **in the curve's words** (session 65's rule): a radius that outgrows the
@@ -16744,10 +16813,12 @@ hang, over the same `dependsOn` walk every connection is checked with. And what 
 and the typed number in the wired height's own words** (OP-25) with one sentence added that "driven by the
 construction" could not say: *which formula* to go and change.
 
-**Cuts, all of them recorded as future extensions and none as non-goals.** (1) Only **named** scalars can be
+**Cuts, all of them recorded as future extensions and none as non-goals.** (1) ~~Only **named** scalars can be
 bound or referenced: a free point's x and y are anonymous source nodes with no name to resolve and no panel
 row to type into, so `P.x = w/2` is not reachable yet — it needs the naming authority extended to a
-coordinate, not more expression machinery. (2) No conditionals, which is v1's own rule (OP-7) and unchanged.
+coordinate, not more expression machinery.~~ **Closed in session 76** (queue entry 6, item a): a *named*
+point's coordinate is readable as `P.x`, and the diagnosis was right — it took the naming authority and not one
+line of expression machinery. See *Named coordinates, as built* at the queue's tail. (2) No conditionals, which is v1's own rule (OP-7) and unchanged.
 (3) No `%` operator; `mod(a, b)` is the function, under `java.lang.Math`'s name like everything else. (4) The
 curve half of this entry — function-defined curve pieces, `x(t)`/`y(t)`, the symbolic derivative and the
 involute acceptance — was queued behind this one, and is what the AST and the dimension check were shaped to
@@ -16887,8 +16958,10 @@ domain, so the refusal points at the `from`/`to` fields, which are the trim. (3)
 curve as a leg, on the chamfer-on-arc convention's own ground — a rounding is tangent *by construction* to a
 line or a circle, and a function curve's offset is not a curve of its own kind, so a fillet against one could
 only be fitted; the refusal now names the leg for splines and conics too, where it used to drop silently.
-(4) The **domain is two plain numbers**, not two expressions — it is state the fields write, and a formula
-there would need its own binding record. (5) A rider on a function curve has **no say over a placed
+(4) ~~The **domain is two plain numbers**, not two expressions — it is state the fields write, and a formula
+there would need its own binding record.~~ **Closed in session 76** (queue entry 6, item b): each end is a
+number *or* an expression, and the "binding record" it wanted turned out to be the one the scalar half already
+had — `boundTo` over the end's own source node. See *An expression-valued domain, as built* at the queue's tail. (5) A rider on a function curve has **no say over a placed
 coordinate** (`placeable = false`): an arbitrary function has no closed-form inverse, and solving numerically
 for a position the user did not ask to be approximate is the wrong kind of answer.
 
@@ -17056,7 +17129,8 @@ After the bug batch and the pattern entry above, in this order:
    face lists extending rather than forking, `assertManifold` everywhere. **Draft** stays behind it, as
    the session-37 note ordered ("follows them and is meaningless before them"), and is now the next of
    that trio with nothing in front of it.
-6. **The expression follow-ups, riding alongside (small).** (a) **Named coordinates**: the scalar half's
+6. **The expression follow-ups, riding alongside (small). — done, session 76; all three items, nothing cut.**
+   (a) **Named coordinates**: the scalar half's
    first cut — `P.x = w/2` needs the naming authority extended to coordinates, not more expression
    machinery; the first thing an expression user reaches for. (b) **An expression-valued domain** for
    function curves: `[t0, t1]` is two plain numbers today, so a gear flank's length cannot follow a
@@ -17064,6 +17138,10 @@ After the bug batch and the pattern entry above, in this order:
    once for both dimensions — the 2D parking now costs twice, since blend slice 2 inherited it verbatim
    ("a chamfer across a curved leg refuses and points at the fillet"); it is decided in whichever of
    these packages touches chamfer first, and recorded where the 2D note parked it.
+   *As built*: (a) and (b) in *The expression follow-ups, as built* at this queue's tail; (c) where the
+   parking lived — *Retired in session 76: the chamfer-on-arc convention* under the generalized fillet, with
+   the parked sentence quoted and the 3D inheritance taken in the same session (blend slice 2's curved-leg
+   refusal is retired, not carried).
 7. **The variable-section sweep — OP-26's parked question, newly speakable.** Session 42 parked it as
    "the only thing that would relax the single derived reach", with no way to *state* a varying section.
    The expression language is that missing vocabulary: a section dimension as a function of the station
@@ -17081,8 +17159,8 @@ Smaller parked items, each already recorded at its source: **`GeomMath.transform
 would be silently wrong under any affine map that is not one; session 47's projection routes conics through
 `Conics` instead and says so at the call site, but the assumption is unguarded and the next non-similarity
 transform will meet it. Then: grouping-per-copy for group arrays and
-Mirror/Rotate/**Point reflect** as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
-convention (fillet note), drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), **Manifold
+Mirror/Rotate/**Point reflect** as group operands (OP-16 note), macro specialization UI (OP-6 note),
+drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), **Manifold
 face-ID provenance** — whose *3D picking* half was retired in session 63 (a `SOLID` slot and a plain selection
 resolve by ray ∩ mesh over the bodies the 3D view draws — `Geom3.rayMesh`, `PlaneProjection.eyeRay`) and whose
 **naming a face durably** half is retired in session 74 **for every analytic body**: a ray hit is resolved to a
@@ -17231,3 +17309,117 @@ the closed row recording no choice at all, the stored open face taken verbatim a
 nothing, a sketch and a Cut through the wall, the face picked in the 3D view (and the bottom face picked from
 below), the fused part's refusal, and a turned cup shelled by the same gesture. `assertManifold` runs on every
 body in every one of them.
+
+### The expression follow-ups, as built (session 76 — queue entry 6 closed)
+
+Three small items, one package. **Nothing was cut**, and the two *limits* both come from the queue line
+itself rather than from the doing: a coordinate is **read**, never written (a point whose coordinate should *be*
+a formula is a different feature, and there is no gesture that could ask for it), and the coordinates are the
+plane's `.x` and `.y` — a point in space refuses by name, with `.z` and the space it is measured in named as the
+future extension. Item (c) — the chamfer-on-arc convention — is recorded where its parking lived (*Retired in session 76: the chamfer-on-arc convention*, under the generalized fillet), because
+that is what the queue line asked for. The two expression items are here.
+
+#### Named coordinates — `r = P.x / 2` (item a; the scalar half's cut 1, closed)
+
+**The mechanism is the naming authority, not the expression machinery**, exactly as the cut predicted. The
+parser gained one loop — *a dot continues a word* — and hands `P.x` over as **one** `Expr.Ref` with **one**
+span; everything else is the name lookup answering a second kind of question. `Document.resolveExprName` is the
+one seam: a plain word is a scalar row as before, a dotted word is a *named point's* coordinate, and the value
+comes off `Construction.pointCoordinate` — `pointXY`'s inverse, an ordinary accessor node yielding a **length**.
+So an expression takes one more DAG edge and nothing else: a drag of the point recomputes the formula by the
+same recompute every other edit uses.
+
+- **The name is the *user's* name (`nameElement`, OP-7's "nodes get names"), never the script name `e3`.** That
+  is a decision with a reason: a script name is *positional* and a delete renumbers it, so a stored text saying
+  `e3.x` would silently mean a different point after an unrelated deletion — the frozen-literal hazard OP-18
+  exists to stop. A user name is restated by its own `name` step, so it is the one name a stored text can hold
+  for ever. The refusal says so and names the cure ("name the point in the panel first — its script name is not
+  a name you can spell here").
+- **Precedence, and why it is not a fallback order.** A scalar row *may* be called `wall.x` (`scalarWord` only
+  normalises spaces and quotes away) and a point *may* be called `wall`. The rule: **a dotted name is always a
+  coordinate**, whatever the drawing carries. The rejected alternative — look the dotted name up among the rows
+  first, and read a coordinate only when there is no such row — would put the *drawing* into what a stored text
+  means, so renaming a row to `wall.x` would steal every text that reads the point `wall`'s x. That is the
+  no-reserved-words rule read one level up, and it is the same argument the `(`-makes-a-function decision was
+  made on. **It costs nothing stored**: a dot has never parsed, so no loadable file can contain one. A row whose
+  own name carries a dot therefore stays unspellable exactly as a hyphenated one is, and `unknownName` says so
+  with the cure (rename it to one word).
+- **One direction, and it is true by construction rather than by refusal.** An expression *reads* a coordinate;
+  nothing writes one. There is no gesture that could: the panel's formula field takes a `ScalarEntry`, and a
+  point's x and y are an element's **handle fields**, not rows. So there was nothing to refuse, and *a point
+  whose coordinate should **be** an expression* stays a future extension (it would take a freedom away from the
+  point, which is a different feature).
+- **Cycles are the DAG's own rule, asked of the reference.** `dependsOn` already walks the graph; a coordinate
+  read from a point the value being bound helps to place — a rider on a circle of that very radius — closes a
+  loop through **geometry** and is refused *by name at bind time*, over the same walk a scalar cycle is refused
+  with. No new rule, and the refusal names both ends.
+- **A rename re-stamps, and clearing the name is refused.** `nameElement` now calls `restampExpressions`, so
+  renaming `P` to `hinge` rewrites `P.x / 2 + 1mm` into `hinge.x / 2 + 1mm` — the reference span and not one
+  character more (the curve half's own span fix carries here). Clearing the name is the one operation that has
+  no re-stamp available, so it is **refused by name with the cure**, naming what reads it: the alternative
+  (letting the name go) would leave the formula live and the *file* unloadable, which is precisely the scalar
+  half's probe lesson (*"a claim about an expression is a claim about the file"*).
+- **The delete cascade reaches it.** `referencedElements` now asks a `bind` (and a `funccurve`) step what
+  points it read, the twin of the `referencedScalars` hook the scalar half added — because a step left behind
+  by a deleted point would name a point on load and the file would not open.
+- **A point in space refuses by name**, in the sentence every route that reads plane coordinates already
+  speaks (`notInThePlane`, OP-17): its coordinates are *world* ones while every `Vec2` here means "in some
+  plane's own", so answering `.x` would mix two frames silently. `.z` with a stated space is the future
+  extension. `.x` and `.y` are the whole vocabulary; anything else is refused naming what there is.
+- **No version bump.** No stored literal changed meaning: a dotted reference is text no earlier build could
+  write *or* read (OP-18's own test).
+
+#### An expression-valued domain (item b; the curve half's cut 4, closed)
+
+`FuncCurve`'s `[t0, t1]` is now **two expressions**, of which two plain numbers are the degenerate case — and
+the "own binding record" the cut thought it needed turned out to be the one the scalar half already had:
+`Document.DomainEnd` holds the end's source node and **binds** an `ExprNode` over it (`SourceNode.boundTo`,
+the wire generalized to a function). Three things fall out of that rather than being built:
+
+- the inspector's `from`/`to` field goes **read-only by itself**, because nothing writable sits under a binding
+  (`isFreeSource`) — so *what is derived refuses the drag* holds here with no code at all;
+- the domain follows a teeth count by plain recompute, so a gear flank's length is an ordinary parameter;
+- the **text is the record** and is re-stamped on rename by the same pass the two coordinate texts use — which
+  was not optional, for the reason the curve half already recorded: a rename that reached the coordinates but
+  not the domain would leave the curve live and its file unloadable.
+
+**Reachability is the field that was already there.** `Editor.addFunctionCurve` reads each end with the
+formula field's own rule — *a text that is one number is a number, anything else is a formula* — so everyone
+who types numbers into those two fields sees no change, and a name typed where the number went is a formula.
+The alternative (a second pair of fields beside the numbers, the way a parameter row has a value *and* a
+formula) was rejected because the domain has no spinner to protect: one field per end, one meaning per field.
+The browser's two inputs became text inputs for that reason. One deliberate strictness: a literal with a
+**unit** (`from = 10mm`) is *not* read as its number — dropping the unit would be the silent answer this engine
+never gives — so it takes the expression route and the node states the violation.
+
+**A dimensioned domain is named invalidity that heals, not a refusal**, which is the scalar half's decision
+restated rather than a new one: a dimension violation is a property of the *values* (OP-3), so `to = w` with `w`
+a length is legal to write, the curve says why it has no value and quotes both dimensions, the status line
+repeats it at the gesture, and the moment `w` is a plain number the whole cone comes back. The alternative —
+refusing the bind — was rejected because it would make the domain the one argument in the language whose
+dimension is checked at *bind* time, and because the heal is the more useful behaviour. What *is* refused, by
+name and before anything is built, is a text that is not an expression or a name the drawing does not carry.
+
+Note one forced asymmetry, recorded so it is not mistaken for an oversight: inside `x(t)` the name `t` is the
+curve's own **binder**, while a domain *bounds* `t` and cannot depend on it, so in a domain `t` is an ordinary
+drawing scalar. Nothing can be captured there, so nothing is refused there (the rename-to-`t` refusal stays
+exactly as narrow as it was).
+
+**Persistence: the argument gained an alternative form and the old form kept its meaning**, so no version bump
+is owed (OP-18). `from=0 to="T * 2"` — a bare number is a number, a **quoted** value is a formula, told apart by
+the one character a number can never carry. Every file written before this loads unchanged and writes back byte
+for byte.
+
+Tests: `NamedCoordinateTest` (10) — the derived radius following a drag of `P` (and `.y` read the same way),
+the typed number still refused in the formula's own words, the rename re-stamping **through the file** (and the
+old name nowhere in it), clearing the name refused with what reads it named, the collision case with its
+precedence rule asserted from both sides (a point `wall` beside a row `wall.x`), the three ways a dotted name
+misses, the point in space, the **cycle through geometry**, the delete cascade taking the formula with the
+point, and a function curve reading a coordinate through the file. `FuncCurveDomainTest` (10) — the involute
+whose domain is `T` ending on the true involute there, `T` extending the flank, an arithmetic domain, the
+derived end read-only beside the plain one still writable, the text stored verbatim and round-tripping, the
+rename re-stamped in the file, a **hand-written pre-session-76 script** loading and writing back byte for byte,
+the dimensioned domain saying so and healing, a unit not read as its number, the unknown name refused by name,
+and the domain's reference counting as use. `BrowserE2ETest.theExpressionFollowUpsAreReachableInBrowser`
+carries both through the real shell: a point named in the inspector, `P.x/2` typed into the formula field and
+the circle following it, then an involute drawn over `0..T` and the flank extending when `T` is retyped.

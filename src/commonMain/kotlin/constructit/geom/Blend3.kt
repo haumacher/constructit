@@ -35,10 +35,10 @@ enum class BlendKind {
  *
  * [a] and [b] hold **what each construction consumes**, not the sector they were scored from, so that nothing
  * at all is derived from live geometry on replay — the same reason `Document.storedLegSigns` exists one
- * dimension down. With **two straight legs** (a fillet or a chamfer alike) they are the quadrant:
- * `+1` along each leg's own direction, `-1` against it, exactly what [FilletMath.lineLineArc] and
- * [FilletMath.chamferEnds] take, and [branch] is unused. With **a round leg** (a mixed fillet) they are
- * [FilletVariant]'s two offset sides and [branch] is its intersection branch. [convex] is `true` when the
+ * dimension down. For a **chamfer**, and for a fillet with **two straight legs**, they are the quadrant:
+ * `+1` along each leg's own carrier direction, `-1` against it, exactly what [FilletMath.lineLineArc] and
+ * [FilletMath.setback] take, and [branch] is unused. With **a round leg** a *fillet* stores
+ * [FilletVariant]'s two offset sides instead, and [branch] is its intersection branch. [convex] is `true` when the
  * sector the blend fills is the **material** one — the blend is then subtracted — and `false` when it is the
  * void, where it is added.
  */
@@ -66,7 +66,8 @@ data class BlendChoice(val a: Int, val b: Int, val branch: Int, val convex: Bool
  *    this same construction collapsed: an extrusion's upright and a revolution's ring are edges swept by a
  *    profile *corner*, and their normal section **is** the profile plane, so the arc that lands there is the
  *    outline's own fillet.
- * 3. The blend is the arc of that fillet (or [FilletMath.chamferEnds]'s bevel) closed back to the corner —
+ * 3. The blend is the arc of that fillet (or, for a chamfer, the bevel between the two setback points
+ *    [FilletMath.setback] finds along the legs) closed back to the corner —
  *    a **corner wedge** — swept along the edge lifted to a [Path3] and applied to the body by a boolean
  *    ([Geom3.combine]): **subtracted** where the sector it fills is material (a convex edge), **added**
  *    where it is void (a concave one).
@@ -528,19 +529,21 @@ object Blend3 {
             blendPiece = ProfileElement.ArcE(arc)
             loop = Loop(listOf(sidePiece(crease.leg1, Vec2(0.0, 0.0), t1), ProfileElement.ArcE(arc), sidePiece(crease.leg2, t2, Vec2(0.0, 0.0))))
         } else {
-            val l1 = crease.leg1.line
-            val l2 = crease.leg2.line
-            if (l1 == null || l2 == null) {
-                return null to
-                    "a chamfer bevels a corner between two straight legs, and at ${crease.edge.name.label} " +
-                    "${(if (l1 == null) crease.face1 else crease.face2).name.label} is curved in section — " +
-                    "fillet it instead (a chamfer across a curved leg is a future extension)"
-            }
-            val bevel = FilletMath.chamferEnds(l1, l2, size, choice.a, choice.b) ?: return null to notFitting(crease, size, kind)
-            t1 = bevel.a
-            t2 = bevel.b
+            // **the chamfer-on-arc convention, inherited** (session 76, item c): the corner of the section is
+            // the origin here, so each setback point is that distance from it **along its own leg** — a step
+            // along a straight one, an arc distance along a round one ([FilletMath.setback], where the
+            // convention is argued). The wedge is then closed with [sidePiece] exactly as the fillet's is, so
+            // the two kinds differ in one piece — the bevel where the arc was — and in nothing else. For two
+            // straight legs this is [FilletMath.chamferEnds] point for point, so no dressed body changes.
+            val corner = Vec2(0.0, 0.0)
+            val a = FilletMath.setback(crease.leg1, corner, size, choice.a) ?: return null to notFitting(crease, size, kind)
+            val b = FilletMath.setback(crease.leg2, corner, size, choice.b) ?: return null to notFitting(crease, size, kind)
+            if ((b - a).length() <= Geom3.WELD_TOL) return null to notFitting(crease, size, kind)
+            val bevel = Segment(a, b)
+            t1 = a
+            t2 = b
             blendPiece = ProfileElement.Seg(bevel)
-            loop = Loop(listOf(ProfileElement.Seg(Segment(Vec2(0.0, 0.0), t1)), ProfileElement.Seg(bevel), ProfileElement.Seg(Segment(t2, Vec2(0.0, 0.0)))))
+            loop = Loop(listOf(sidePiece(crease.leg1, corner, t1), ProfileElement.Seg(bevel), sidePiece(crease.leg2, t2, corner)))
         }
         val oriented = if (GeomMath.signedArea(loop) >= 0.0) loop else GeomMath.reverseLoop(loop)
         if (abs(GeomMath.signedArea(oriented)) <= Geom3.WELD_TOL * Geom3.WELD_TOL) {
@@ -656,16 +659,19 @@ object Blend3 {
             val l1 = crease.leg1.line
             val l2 = crease.leg2.line
             out.add(
-                if (l1 != null && l2 != null) {
-                    // two straight legs, fillet and chamfer alike: what is stored is **which way along each
-                    // leg the corner opens**, the quadrant [FilletMath.legSigns] scores one dimension down
+                if ((l1 != null && l2 != null) || kind == BlendKind.CHAMFER) {
+                    // **which way along each leg the corner opens** — the quadrant [FilletMath.legSigns]
+                    // scores one dimension down, and what a chamfer stores whatever its legs are (session 76:
+                    // the setback runs along the carrier, so the direction along it *is* the choice). The
+                    // probe walks the leg itself rather than its tangent, which for a straight leg is the
+                    // very same point and for a round one is exactly on the carrier.
                     val step = min(size, crease.length / 2.0) * PROBE_FRACTION
-                    val sign1 = if (sideOf(crease.leg2, l1.dir * step) == s2) 1 else -1
-                    val sign2 = if (sideOf(crease.leg1, l2.dir * step) == s1) 1 else -1
+                    val q1 = FilletMath.setback(crease.leg1, Vec2(0.0, 0.0), step, 1)
+                    val q2 = FilletMath.setback(crease.leg2, Vec2(0.0, 0.0), step, 1)
+                    if (q1 == null || q2 == null) return null to notFitting(crease, size, kind)
+                    val sign1 = if (sideOf(crease.leg2, q1) == s2) 1 else -1
+                    val sign2 = if (sideOf(crease.leg1, q2) == s1) 1 else -1
                     BlendChoice(sign1, sign2, 0, convex)
-                } else if (kind == BlendKind.CHAMFER) {
-                    // scored anyway, so the build's own refusal is the one that speaks (it names the leg)
-                    BlendChoice(1, 1, 0, convex)
                 } else {
                     // at least one round leg: the mixed fillet's stored variant — which side each leg is
                     // offset to, and which of the two intersections of those offsets the centre is

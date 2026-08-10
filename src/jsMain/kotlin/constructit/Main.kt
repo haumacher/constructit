@@ -741,8 +741,11 @@ private fun setupApp() {
     (document.getElementById("fc-add") as HTMLElement).addEventListener("click", {
         val x = (document.getElementById("fc-x") as HTMLInputElement).value
         val y = (document.getElementById("fc-y") as HTMLInputElement).value
-        val from = (document.getElementById("fc-from") as HTMLInputElement).value.toDoubleOrNull() ?: 0.0
-        val to = (document.getElementById("fc-to") as HTMLInputElement).value.toDoubleOrNull() ?: 1.0
+        // the domain's two ends are **texts**, since session 76: a number is a number and anything else is a
+        // formula over the panel's own values, which is the same reading the formula field gives
+        // ([Editor.addFunctionCurve]) — so a flank's length follows a teeth count without a field of its own
+        val from = (document.getElementById("fc-from") as HTMLInputElement).value
+        val to = (document.getElementById("fc-to") as HTMLInputElement).value
         editor.addFunctionCurve(x, y, from, to)
         repaint()
     })
@@ -1535,7 +1538,8 @@ private fun renderPanel(
                     "<input class=\"pval\" type=\"number\" step=\"${stepFor(q.dim)}\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"$disabled>" +
                     "<span class=\"punit\">${unitLabel(q.dim)}</span>" +
                     "<input class=\"pexpr\" data-sid=\"${s.id}\" value=\"$formula\" placeholder=\"= formula\"" +
-                    " title=\"A formula over the other values (d/2 + 1mm, sin(a)*r) — blank frees it again\"" +
+                    " title=\"A formula over the other values (d/2 + 1mm, sin(a)*r) and over a named point's " +
+                    "coordinates (P.x/2) — blank frees it again\"" +
                     (if (wired) " disabled" else "") + ">" +
                     "<select class=\"pbind\" data-sid=\"${s.id}\"${if (formula.isNotEmpty()) " disabled" else ""}>$opts</select>" +
                     "</div>"
