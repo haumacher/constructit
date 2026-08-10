@@ -16287,8 +16287,40 @@ gestures surviving the file with all twelve flanks and the user's own text in it
 `BrowserE2ETest.aFunctionCurveIsDrawnFromTwoTextsInBrowser` carries it through the real shell: the involute
 typed into the panel's form, drawn, following `r`, and a bad name refusing by name.
 
-**Beyond those four — the small batch, the blends and the expressions (both halves) — the numbered queue is
-empty** (the session-59 entry above is closed). What remains is the parked list below, each item recorded at its source.
+**Queued in session 71, from the issue tracker — the bug batch, then the pattern design.** Five issues
+arrived in one evening, triaged with a diagnosis comment each before anything was dispatched. **#17** (*two
+ways creating a disc*) closed at triage: the extruded circle and the outline revolved about its own on-axis
+side are the same object to 1e-11 relative and both watertight — the feared 0 mm hole cannot exist because
+the on-axis piece sweeps a `Band.Degenerate` (session 69) and a crack at the axis would fail
+`assertManifold`; `DiscTwoWaysTest` carries the user's drawing verbatim. The batch, in flight:
+
+1. **#19 — the tangent's slot asks for a rider where the construction already answers.** *Tangent at
+   point* refuses the radius-defining point of a circle (and a circle ∩ line intersection) although both
+   lie on the circle **by construction**; only a circle ∩ circle intersection is genuinely ambiguous, and
+   there the user's own suggestion is the design — an explicit pick of the circle, recorded as a durable
+   choice. The refusal must also stop prescribing *Point on circle* where no rider is needed.
+2. **#20 — a curved leg folds inside the mitre the tangent arithmetic clears.** The tube over a
+   mirrored-Bézier outline builds watertight and positively-volumed yet folds locally at the sharp
+   corners: the session-65 criterion measures the corner trim **along the leg's tangent**, and a Bézier
+   that curls back into the mitre wedge within the trim distance passes it while self-intersecting. The
+   criterion must ask where the curved run actually is inside the trimmed span. User's script verbatim as
+   the regression; silent-wrong-output family, so it outranks everything below.
+3. **#16 — cm joins the scale ladder** (mm, m, km today), on the one rounding rule all three consumers of
+   the scale share.
+
+**Queued behind the batch (user-designed, GitHub #18): a pattern multiplies what rides it — recursively.**
+The circle multiplies because it was drawn riding pattern members (an orbit step re-runs per cell); the
+*polygon* does not, because a tool that creates **several** elements from picked points has no orbit path —
+and the user named the missing abstraction: *"what about multiplying a pattern with a pattern
+recursively?"* This is OP-23's own parked closing note ("a **pattern of a pattern**, and a whole **group**
+as a pattern's reference member") arriving as a demand. The mechanism, to be designed against OP-23's
+rules before dispatch: any construction whose inputs ride a pattern's cells replicates per cell — including
+multi-element tools and including another pattern — counts staying structural, rides stored as rules, the
+journal re-stamped on count changes exactly as OP-23 already does for single-element rides.
+
+**Beyond those — the batch, the pattern entry and the long-standing small batch (the ULP creep and the
+number pad's sign) — the numbered queue is empty** (the session-59 entry above is closed). What remains is
+the parked list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
 (it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and
