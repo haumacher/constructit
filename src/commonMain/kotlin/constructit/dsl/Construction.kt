@@ -3060,6 +3060,14 @@ class Construction {
      * branch its centre is, and whether that sector is material. All of them are recorded in the step's
      * `signs=` and taken verbatim on replay, never re-scored (OP-1/OP-18).
      *
+     * **Two tiers, decided by the graph and not by a value** (session 71, slice 3). When [applyTo] and
+     * [base] are the same node the result is a `Feature3.Blend` — the dress-up feature, whose face list
+     * extends the base's — and that is the ordinary case, a first blend and every blend of a blend. When
+     * they differ, an ordinary boolean stands between the two and the body being cut has no face list to
+     * extend, so the result stays a `Feature3.MeshBoolean` with a silhouette plan. **No stored byte moved
+     * for this**: the step is the same `tool` row with the same address and the same `signs=`, and what
+     * changed is the feature the same step builds, which is eval-time (OP-18 protects stored literals).
+     *
      * Invalid with a reason that heals (OP-3) for everything geometric — see [Blend3] for the list, of which
      * the two that matter are a size that reaches past one of the two faces (the message names the largest
      * that fits) and an edge whose normal section is not one this rounding can say.
@@ -3087,12 +3095,28 @@ class Construction {
             if (targets == null) return@op EvalResult.Invalid(whyTargets ?: "this solid has no edge to blend there")
             val (out, why) = Blend3.blended(body, tip, targets, r, kind, choices)
             if (out == null) return@op EvalResult.Invalid(why ?: "cannot blend that edge")
-            // **The result gets a plan** ([Feature3.MeshBoolean.plan]): it is a mesh boolean, so without one
-            // it would be a body the drawing could build and nobody could click — and the *next* blend has to
-            // be able to pick it. Computed once, here, because this is the node that knows which plane the
-            // body is shown in (`Silhouette`, the same field and the same reason a sweep and an import have
-            // one). Retires half of session 55's parked note; see that field.
-            val dressed = (out.feature as? Feature3.MeshBoolean)?.let { f -> out.restated(f.copy(plan = Silhouette.of(out.mesh, plane))) } ?: out
+            val dressed =
+                if (!chained) {
+                    // **The dress-up feature** (session 71, slice 3): the body addressed *is* the body cut,
+                    // so the result is the base with its blend on it — a feature whose face list extends the
+                    // base's ([Feature3.Blend]). The triangles are the ones the boolean just made, restated
+                    // under the analytic feature and sharing the very same derivation, which is the whole
+                    // point of `Solid3.restated`: one mesh, two statements of the same body.
+                    val f = Feature3.Blend(body.feature, targets, kind, r, choices.take(targets.size))
+                    // it must still say why, if the dressed list cannot be stated — otherwise a body would
+                    // claim faces it cannot produce, and every reader downstream would meet the refusal
+                    // instead of this node (OP-3: the refusal belongs where the decision is)
+                    val (faces, whyFaces) = Section3.faces(f)
+                    if (faces == null) return@op EvalResult.Invalid(whyFaces ?: "this blend has no faces to name")
+                    out.restated(f)
+                } else {
+                    // **The mesh tier, unchanged and stated**: the body cut is *not* the body addressed — a
+                    // blend after an ordinary boolean — so there is no face list to extend (the union's own
+                    // faces are emergent, OP-9's sink rule) and the result stays a mesh boolean. It gets a
+                    // plan ([Feature3.MeshBoolean.plan]) so it is drawn and clickable, computed once here
+                    // because this is the node that knows which plane the body is shown in (`Silhouette`).
+                    (out.feature as? Feature3.MeshBoolean)?.let { g -> out.restated(g.copy(plan = Silhouette.of(out.mesh, plane))) } ?: out
+                }
             EvalResult.Ok(SolidValue(dressed))
         }
     }

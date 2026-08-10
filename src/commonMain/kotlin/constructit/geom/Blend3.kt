@@ -3,6 +3,7 @@ package constructit.geom
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -79,9 +80,14 @@ data class BlendChoice(val a: Int, val b: Int, val branch: Int, val convex: Bool
  * blend has a spine that is not the edge offset at all. That is a **future extension**, not a silent decline
  * (see DESIGN.md, session 71 slice 2).
  *
- * **The cost is stated too**: the boolean takes the mesh route (the operands share no axis), so a blended
- * body is `Feature3.MeshBoolean` — it draws, measures, prints and picks, and it offers no section inputs.
- * Slice 3's `Feature3.Blend` is the cure and is queued.
+ * **The triangles still take the mesh route** — the operands share no axis, so the wedge is applied by the
+ * general engine — but since **slice 3** that is a statement about the mesh alone and no longer about the
+ * body: the result is a [Feature3.Blend], whose face list *extends* the base's (see [dressedFaces]), so a
+ * dressed part keeps its address space and answers sketch-on-face, sections and named refusals. The mesh is
+ * a sink (OP-9), which is exactly why answering the faces analytically while the triangles come off the
+ * boolean costs nothing. The one place the old cost stands is a blend applied to a body that was **fused**
+ * or cut by a general boolean: there is no face list under it to extend, so that result stays a
+ * `Feature3.MeshBoolean` with a silhouette plan, and the tool help says so.
  */
 object Blend3 {
     /** How close to parallel/perpendicular counts as it, on a dot product of unit vectors. */
@@ -98,6 +104,15 @@ object Blend3 {
 
     /** How many halvings the *largest radius that fits* is reported to (a refusal that heals, OP-3). */
     private const val FIT_STEPS = 24
+
+    /** How far off a face's own boundary (mm) still counts as on the face — see [onFace]. */
+    private const val ON_BOUNDARY_TOL = 1e-6
+
+    /** How far apart two exactly-constructed curves may be (mm) and still be the same curve. */
+    private const val SAME_CURVE_TOL = 1e-6
+
+    /** How many stations a blend band's own section is sampled at (OP-15: deterministic, never adaptive). */
+    private const val BAND_SECTION_STEPS = 64
 
     // ---- what a blend is addressed by ----
 
@@ -327,6 +342,9 @@ object Blend3 {
         feature: Feature3,
         edge: SolidEdge,
     ): Pair<Crease?, String?> {
+        // an edge a blend already consumed keeps its index and its carrier, but it is no longer a crease of
+        // the body — so building on it is refused in the words the dressed list put there (slice 3)
+        edge.reason?.let { return null to it }
         val (faces, whyFaces) = Section3.faces(feature)
         if (faces == null) return null to whyFaces
         val face1 = faces.firstOrNull { it.name == edge.between.a } ?: return null to "this solid has no ${edge.between.a.label}"
@@ -457,8 +475,14 @@ object Blend3 {
 
     // ---- the corner wedge, in the section's own coordinates ----
 
-    /** The two tangencies of a blend, and the wedge it fills the corner with. */
-    private class Wedge(val region: Region, val t1: Vec2, val t2: Vec2)
+    /**
+     * The two tangencies of a blend, the wedge it fills the corner with, and the **blend's own section
+     * curve** — the arc of a fillet, the bevel of a chamfer.
+     *
+     * [piece] is what slice 3 carries the band away on: the surface the blend *adds* to the body is that one
+     * curve swept along the edge, so the face list is built from the same object the boolean was.
+     */
+    private class Wedge(val region: Region, val t1: Vec2, val t2: Vec2, val piece: ProfileElement)
 
     private fun sidePiece(
         leg: FilletLeg,
@@ -484,6 +508,7 @@ object Blend3 {
         val loop: Loop
         val t1: Vec2
         val t2: Vec2
+        val blendPiece: ProfileElement
         if (kind == BlendKind.FILLET) {
             val straight1 = crease.leg1.line
             val straight2 = crease.leg2.line
@@ -500,6 +525,7 @@ object Blend3 {
                 }
             t1 = arc.center + Vec2(cos(arc.startAngle), sin(arc.startAngle)) * arc.radius
             t2 = arc.center + Vec2(cos(arc.endAngle), sin(arc.endAngle)) * arc.radius
+            blendPiece = ProfileElement.ArcE(arc)
             loop = Loop(listOf(sidePiece(crease.leg1, Vec2(0.0, 0.0), t1), ProfileElement.ArcE(arc), sidePiece(crease.leg2, t2, Vec2(0.0, 0.0))))
         } else {
             val l1 = crease.leg1.line
@@ -513,13 +539,14 @@ object Blend3 {
             val bevel = FilletMath.chamferEnds(l1, l2, size, choice.a, choice.b) ?: return null to notFitting(crease, size, kind)
             t1 = bevel.a
             t2 = bevel.b
+            blendPiece = ProfileElement.Seg(bevel)
             loop = Loop(listOf(ProfileElement.Seg(Segment(Vec2(0.0, 0.0), t1)), ProfileElement.Seg(bevel), ProfileElement.Seg(Segment(t2, Vec2(0.0, 0.0)))))
         }
         val oriented = if (GeomMath.signedArea(loop) >= 0.0) loop else GeomMath.reverseLoop(loop)
         if (abs(GeomMath.signedArea(oriented)) <= Geom3.WELD_TOL * Geom3.WELD_TOL) {
             return null to "a ${kind.word} of ${Frames3.mm(size)} mm leaves no material at ${crease.edge.name.label}"
         }
-        return Wedge(Region(oriented, emptyList()), t1, t2) to null
+        return Wedge(Region(oriented, emptyList()), t1, t2, blendPiece) to null
     }
 
     private fun notFitting(
@@ -550,10 +577,40 @@ object Blend3 {
                 val rings = Project3.ringsOf(face.outline)
                 if (rings.isEmpty()) continue
                 val world = st.at + crease.e1 * t.x + st.e2 * t.y
-                if (!RegionBool.contains(rings, plane.toLocal(world))) return false
+                if (!onFace(rings, plane.toLocal(world))) return false
             }
         }
         return true
+    }
+
+    /**
+     * Whether [q] lies **on** the face bounded by [rings] — inside it, or on its own boundary within
+     * [ON_BOUNDARY_TOL].
+     *
+     * The boundary case is not a courtesy, it is the case slice 3 created: a dressed part's faces are the
+     * base's with a **strip removed along each blended edge** ([Feature3.Blend]), so a second blend's
+     * station can land exactly on the first blend's trim line — a fillet of 4 mm on one rim puts the cap's
+     * new boundary at x = 4, and the next edge's first station is at a tenth of a 40 mm run. Asking a
+     * strict inside/outside there is asking a coin to decide whether a chamfer fits, and it does fit: the
+     * tangency is *on* the face. A hair either way is inside, and a radius that genuinely outgrows a face
+     * misses it by millimetres, so nothing is masked.
+     */
+    private fun onFace(
+        rings: List<List<Vec2>>,
+        q: Vec2,
+    ): Boolean {
+        if (RegionBool.contains(rings, q)) return true
+        for (ring in rings) {
+            for (i in ring.indices) {
+                val a = ring[i]
+                val b = ring[(i + 1) % ring.size]
+                val d = b - a
+                val len2 = d.dot(d)
+                val t = if (len2 <= 1e-18) 0.0 else ((q - a).dot(d) / len2).coerceIn(0.0, 1.0)
+                if ((q - (a + d * t)).length() <= ON_BOUNDARY_TOL) return true
+            }
+        }
+        return false
     }
 
     /** The largest size that fits at this crease, by halving — what a refusal names so it can be acted on. */
@@ -627,13 +684,14 @@ object Blend3 {
      * [base] with a [kind] blend of [size] run along every edge of [targets] — the whole sentence: the corner
      * wedge of the 2D fillet swept along the lifted edge and applied by a boolean.
      *
-     * **[base] states the geometry and [applyTo] takes the cut**, and they are the same body for a first
-     * blend. They part company for the second one: a blended body is a `Feature3.MeshBoolean`, which names no
-     * edges (OP-9's sink rule), so its own edges could never be addressed — the addresses stay against the
-     * **analytic base**, which still has them, while the wedge is applied to the body as it stands so that
-     * blends *chain* instead of forking the model back onto the original. The pair is exactly the
-     * part-and-tip split OP-17's sequential features already make, said one operation further, and it is what
-     * lets slice 3's `Feature3.Blend` supersede this without changing a single stored address.
+     * **[base] states the geometry and [applyTo] takes the cut**, and they are the same body whenever the
+     * addressed body *is* the body being dressed — which, since slice 3, is every blend and every blend of a
+     * blend, because a [Feature3.Blend] names its own edges. They part company where an ordinary boolean
+     * stands between the two: a **fused** body is a `Feature3.MeshBoolean` and names no edges (OP-9's sink
+     * rule), so the addresses stay against the analytic base while the wedge is applied to the part as it
+     * stands and blends *chain* instead of forking the model back onto the original. The pair is exactly the
+     * part-and-tip split OP-17's sequential features already make, said one operation further, and it is
+     * what let slice 3 supersede the mesh tier without changing a single stored address.
      *
      * One sweep and one boolean **per edge**, deliberately, rather than one sweep per tangent-continuous run:
      * whether two pieces meet tangentially is a property of *values*, and a construction whose number of
@@ -719,6 +777,708 @@ object Blend3 {
         }
         return best to (if (best == null) NO_FACE_UNDER_CLICK else null)
     }
+
+    // ---- slice 3: the dress-up feature's own face and edge lists ----
+
+    /**
+     * One blended edge, fully resolved — the crease, the wedge and the choice that made it.
+     *
+     * The dressed lists are pure functions of [Feature3.Blend], and this is the shared step both of them
+     * take: [dressedFaces] needs the tangencies (to trim the two faces and to build the band) and
+     * [dressedEdges] needs them again (for the two rails), and neither may re-derive them differently.
+     */
+    private class Dressing(
+        val index: Int,
+        val edge: SolidEdge,
+        val crease: Crease,
+        val wedge: Wedge,
+        val choice: BlendChoice,
+        val kind: BlendKind,
+    ) {
+        val name: FaceName get() = FaceName.BlendBand(index)
+
+        /** How this band is spoken of when it is the *thing* rather than the address — "the fillet". */
+        val kindWord: String get() = "${kind.word} itself"
+    }
+
+    private fun dressingsOf(f: Feature3.Blend): Pair<List<Dressing>?, String?> {
+        val (edges, whyEdges) = Section3.edges(f.base)
+        if (edges == null) return null to whyEdges
+        val out = ArrayList<Dressing>(f.targets.size)
+        for ((k, i) in f.targets.withIndex()) {
+            val edge = edges.getOrNull(i) ?: return null to "this solid has no edge #${i + 1} (it has ${edges.size})"
+            val (crease, why) = creaseOf(f.base, edge)
+            if (crease == null) return null to why
+            val choice = f.choices.getOrNull(k) ?: return null to "this blend recorded no choice for edge #${i + 1}"
+            val (wedge, whyWedge) = wedgeOf(crease, f.size, f.kind, choice)
+            if (wedge == null) return null to whyWedge
+            out.add(Dressing(i, edge, crease, wedge, choice, f.kind))
+        }
+        return out to null
+    }
+
+    /**
+     * **The dressed face list**: the base's faces at their **own indices**, with the outline of every face
+     * the blend cut into corrected, followed by one band per blended edge (session 71, slice 3).
+     *
+     * Two rules, and both are OP-21's index stability read on a face list:
+     *
+     * - *Nothing renumbers and nothing drops out.* Face #3 of the base is face #3 of the dressed part,
+     *   whatever the blend did to it, because a stored `sketchspace el= piece=` and every recorded section
+     *   index is an address into this list (OP-18). A face the blend trimmed and whose correction is not
+     *   reachable analytically keeps its index and gains a **reason** instead — it is still there, it is
+     *   still cut, it just cannot be sketched on until the correction can be stated.
+     * - *The bands append*, exactly the way an extrusion's two caps append after its sides. So a blend of a
+     *   blend addresses the first blend's own bands with no new machinery: they are ordinary entries of an
+     *   ordinary list.
+     *
+     * **The correction is analytic in this tier and that is what makes it honest.** The blend removes a
+     * strip of constant width from each of the two faces — the tangency stands at a fixed distance from
+     * the crease, which is exactly what "the section is rigid" means ([creaseOf]) — so the face's own
+     * boundary piece over that edge steps **inward by that distance** and its neighbours are re-joined on
+     * their own carriers: a line against a line, a line against a circle, a circle against a circle, all
+     * of them the intersections this drawing already computes. Nothing is sampled and nothing is fitted.
+     */
+    fun dressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, String?> {
+        val (baseFaces, whyFaces) = Section3.faces(f.base)
+        if (baseFaces == null) return null to whyFaces
+        val (dressings, whyDress) = dressingsOf(f)
+        if (dressings == null) return null to whyDress
+        val trims = HashMap<FaceName, MutableList<Pair<SolidEdge, Double>>>()
+        for (d in dressings) {
+            for ((patch, t) in listOf(d.crease.face1 to d.wedge.t1, d.crease.face2 to d.wedge.t2)) {
+                trims.getOrPut(patch.name) { ArrayList() }.add(d.edge to t.length())
+            }
+        }
+        val out = ArrayList<FacePatch>(baseFaces.size + dressings.size)
+        for (patch in baseFaces) {
+            val cut = trims[patch.name]
+            if (cut == null) {
+                out.add(patch)
+                continue
+            }
+            val (outline, why) = correctedOutline(patch, cut)
+            out.add(
+                if (outline == null) {
+                    // the index stays, the face stays cut, and the reason says what is not reachable — a
+                    // curved face's own trim needs a surface offset this vocabulary does not have (OP-3)
+                    patch.copy(reason = patch.reason ?: why)
+                } else {
+                    patch.copy(outline = outline)
+                },
+            )
+        }
+        for (d in dressings) out.add(bandPatchOf(d))
+        return out to null
+    }
+
+    /**
+     * **The dressed edge list**: every base edge at its own index — a blended one flagged rather than
+     * removed — then the two tangent rails of each band, appended.
+     *
+     * *Removing the consumed edge is not how it works*, and the reason is the same one that keeps the face
+     * list stable: an index into this list is an address a step may already hold. So the edge stays where
+     * it is with the carrier it had and a [SolidEdge.reason] saying it was rounded away; a second blend
+     * asking for it is refused in those words, and a section still shows where it ran.
+     *
+     * What the rails buy is what makes a chain a chain: after a fillet, *"the edge between the band and the
+     * top face"* is a first-class edge that a further blend can be addressed by.
+     */
+    fun dressedEdges(f: Feature3.Blend): Pair<List<SolidEdge>?, String?> {
+        val (baseEdges, whyEdges) = Section3.edges(f.base)
+        if (baseEdges == null) return null to whyEdges
+        val (dressings, whyDress) = dressingsOf(f)
+        if (dressings == null) return null to whyDress
+        val consumed = dressings.associateBy { it.index }
+        val out = ArrayList<SolidEdge>(baseEdges.size + 2 * dressings.size)
+        for ((i, e) in baseEdges.withIndex()) {
+            val d = consumed[i]
+            out.add(
+                if (d == null) {
+                    e
+                } else {
+                    e.copy(
+                        reason =
+                            "${e.name.label} was rounded away by the ${f.kind.word} of ${Frames3.mm(f.size)} mm — " +
+                                "${d.name.label} stands in its place, and its two tangent rails are edges of this body",
+                    )
+                },
+            )
+        }
+        for (d in dressings) {
+            for (side in 0..1) {
+                val face = if (side == 0) d.crease.face1 else d.crease.face2
+                val t = if (side == 0) d.wedge.t1 else d.wedge.t2
+                val (geom, why) = railGeom(d, t)
+                out.add(
+                    SolidEdge(
+                        EdgeName.BlendRail(d.index, side),
+                        geom ?: EdgeGeom.Straight(d.crease.ref.at, d.crease.ref.at),
+                        FacePair(face.name, d.name),
+                        why,
+                    ),
+                )
+            }
+        }
+        return out to null
+    }
+
+    // ---- the band: the blend's own section curve, carried along the edge ----
+
+    /** The one curve piece an edge is, or null when it is a chain (which no tier here produces). */
+    private fun soleElement(crease: Crease): Curve3Element? = crease.path.elements.singleOrNull()
+
+    /** The world point of section coordinate [p] at parameter [s] along a **straight** edge from [a] along [u]. */
+    private fun worldOnStraight(
+        crease: Crease,
+        a: Vec3,
+        u: Vec3,
+        p: Vec2,
+        s: Double,
+    ): Vec3 {
+        val e2 = u.cross(crease.e1)
+        return a + u * s + crease.e1 * p.x + e2 * p.y
+    }
+
+    /**
+     * The **outward normal of the blend's own surface**, in the section's coordinates, at [q] on it.
+     *
+     * One rule for both kinds and both signs: the blend's surface faces the **corner** when the wedge was
+     * subtracted (a convex edge — the material is on the far side of it) and away from the corner when the
+     * wedge was added (a concave one). For a fillet that is `q − centre`, flipped on a concave edge; for a
+     * chamfer it is the bevel's perpendicular chosen the same way.
+     */
+    private fun bandOutward(
+        wedge: Wedge,
+        choice: BlendChoice,
+        q: Vec2,
+    ): Vec2? {
+        val sign = if (choice.convex) 1.0 else -1.0
+        return when (val e = wedge.piece) {
+            is ProfileElement.ArcE -> {
+                val d = q - e.arc.center
+                if (d.length() <= Vec2.EPS) null else d.normalized() * sign
+            }
+            is ProfileElement.Seg -> {
+                val dir = (e.segment.b - e.segment.a)
+                if (dir.length() <= Vec2.EPS) {
+                    null
+                } else {
+                    val n = dir.normalized().perp()
+                    // toward the corner (the section's origin) when convex, away from it when concave
+                    val toward = if (n.dot(Vec2(0.0, 0.0) - q) >= 0.0) n else n * -1.0
+                    toward * sign
+                }
+            }
+            else -> null
+        }
+    }
+
+    /** The mid-point and the tangent direction of a section piece — where its orientation is decided. */
+    private fun midOf(e: ProfileElement): Pair<Vec2, Vec2>? =
+        when (e) {
+            is ProfileElement.Seg -> {
+                val d = e.segment.b - e.segment.a
+                if (d.length() <= Vec2.EPS) null else ((e.segment.a + e.segment.b) * 0.5) to d.normalized()
+            }
+            is ProfileElement.ArcE -> {
+                val a = e.arc.startAngle + GeomMath.sweep(e.arc) * 0.5
+                val p = GeomMath.arcPointAt(e.arc, a)
+                val radial = (p - e.arc.center).normalized()
+                p to (if (e.arc.ccw) radial.perp() else radial.perp() * -1.0)
+            }
+            else -> null
+        }
+
+    /**
+     * [e] traversed so that the **material lies to its left** — the convention [Section3.sweptFace] and
+     * [Revolve3.bandOf] both read, stated once here so a band's plane and a flat band's outward side come
+     * out of the same sentence rather than out of two guesses.
+     */
+    private fun materialLeft(
+        e: ProfileElement,
+        outward: Vec2,
+    ): ProfileElement {
+        val (_, dir) = midOf(e) ?: return e
+        return if (dir.perp().dot(outward) < 0.0) e else GeomMath.reverse(e)
+    }
+
+    /**
+     * The band along one blended edge, as a face: the blend's section curve carried along the edge.
+     *
+     * **Two carriers and no third**, because the tier has no third: a **straight** edge carries the section
+     * the way an extrusion does — a bevel sweeps a plane, a fillet arc sweeps a **cylinder** — and a
+     * **circular** edge carries it the way a revolution does — the same two curves sweep a cone or an
+     * annulus, a torus or a sphere. Both are read through the existing emitters ([Section3.sweptFace],
+     * [Revolve3.bandPatch]) rather than restated, which is what keeps "a cylinder" one sentence in this
+     * drawing instead of three.
+     */
+    private fun bandPatchOf(d: Dressing): FacePatch {
+        val name = d.name
+        val el =
+            soleElement(d.crease)
+                ?: return FacePatch(name, null, emptyList(), "${d.edge.name.label} is a chain of several pieces, so its band has no single surface")
+        val piece =
+            orientedSection(d)
+                ?: return FacePatch(name, null, emptyList(), "the ${d.crease.edge.name.label} blend has no section curve with a side")
+        return inBlendsWords(d, bandCarrier(d, el, piece))
+    }
+
+    /**
+     * The band as the emitter that knows the surface states it — [Section3.sweptFace] for a straight edge,
+     * [Revolve3.bandPatch] for a circular one.
+     */
+    private fun bandCarrier(
+        d: Dressing,
+        el: Curve3Element,
+        piece: ProfileElement,
+    ): FacePatch {
+        val name = d.name
+        return when (el) {
+            is Curve3Element.Seg3 -> {
+                val v = el.end - el.start
+                val len = v.length()
+                if (len <= Geom3.WELD_TOL) {
+                    FacePatch(name, null, emptyList(), "${d.edge.name.label} has no length, so its band has no surface")
+                } else {
+                    val u = v * (1.0 / len)
+                    Section3.sweptFace(Plane3(el.start, d.crease.e1, u.cross(d.crease.e1)), u, len, piece, name)
+                }
+            }
+            is Curve3Element.Arc3 -> {
+                val (frame, sr) =
+                    revolvedBand(d, el, piece) ?: return FacePatch(
+                        name,
+                        null,
+                        emptyList(),
+                        "${d.edge.name.label} does not stand square to its own axis, so the band it carries is not a " +
+                            "surface of revolution this drawing has a name for",
+                    )
+                Revolve3.bandPatch(frame, sr, name)
+            }
+            else ->
+                FacePatch(
+                    name,
+                    null,
+                    emptyList(),
+                    "${d.edge.name.label} is neither straight nor circular, so its band is a surface this drawing " +
+                        "has no name for",
+                )
+        }
+    }
+
+    /**
+     * The band's refusal **in the blend's own words**.
+     *
+     * The two emitters above speak of *"that boundary edge"* and *"that profile edge"*, which is right for
+     * an extrusion and a revolution and wrong here: nobody drew this piece — it is the rounding's own
+     * section. So the surface is named the same way and the sentence is restated, which is the same rule a
+     * sweep's refusals pass through under (session 65: a refusal speaks in the words of the thing the user
+     * made, not of the machinery that noticed).
+     */
+    private fun inBlendsWords(
+        d: Dressing,
+        patch: FacePatch,
+    ): FacePatch {
+        if (patch.plane != null || patch.reason == null) return patch
+        val what = patch.surface?.band?.label ?: "a surface this drawing has no name for"
+        return patch.copy(
+            reason =
+                "${d.name.label} is $what and not a plane — it is the ${d.kindWord}, so there is nothing to " +
+                    "sketch on there; put a datum plane where you want to sketch",
+        )
+    }
+
+    /**
+     * A circular edge read as an **axis frame**, and the blend's section curve read in that frame's own
+     * `(s, r)` — which is all [Revolve3.bandOf] ever needed to name a surface.
+     *
+     * The map is a rigid axis-aligned one because the normal section of a circular edge *contains* the
+     * axis: [referenceOf] seeds the section's first axis with the edge plane's normal, so `e1` is the axis
+     * and `e2` is the radius, up to a sign each. Where that is not so — an edge whose own plane is not
+     * square to the frame it turns in — there is no revolution to name and the caller says so.
+     */
+    private fun revolvedBand(
+        d: Dressing,
+        el: Curve3Element.Arc3,
+        piece: ProfileElement,
+    ): Pair<Revolve3.Frame, ProfileElement>? {
+        val axis = el.normal.normalized()
+        val sigmaS = d.crease.e1.dot(axis)
+        if (abs(abs(sigmaS) - 1.0) > 1e-7) return null
+        val at = d.crease.ref.at
+        val rel = at - el.center
+        val s0 = rel.dot(axis)
+        val radial = rel - axis * s0
+        if (radial.length() <= Geom3.WELD_TOL) return null
+        val sigmaR = d.crease.ref.e2.dot(radial.normalized())
+        if (abs(abs(sigmaR) - 1.0) > 1e-7) return null
+        val a = Affine(if (sigmaS > 0) 1.0 else -1.0, 0.0, 0.0, if (sigmaR > 0) 1.0 else -1.0, s0, radial.length())
+        val turnA = el.startAngle
+        val turnB = el.startAngle + el.sweepAngle
+        val frame =
+            Revolve3.Frame(
+                Vec2(1.0, 0.0),
+                Vec2(0.0, 1.0),
+                Vec2(0.0, 0.0),
+                el.center,
+                axis,
+                el.u,
+                el.v,
+                min(turnA, turnB),
+                max(turnA, turnB),
+                abs(el.sweepAngle) >= 2.0 * PI - 1e-9,
+            )
+        // the map may reverse orientation (either sign is a reflection), and the material-left convention
+        // is what [Revolve3.bandOf] reads a flat band's outward side from — so it is re-established *after*
+        // the map rather than assumed to survive it
+        val moved = GeomMath.transform(piece, a)
+        val (mid, _) = midOf(d.wedge.piece) ?: return null
+        val outward = bandOutward(d.wedge, d.choice, mid) ?: return null
+        return frame to materialLeft(moved, a.linear(outward).normalized())
+    }
+
+    /** One tangent rail of a band, as a curve in the world — a straight one, or a ring about the edge's axis. */
+    private fun railGeom(
+        d: Dressing,
+        t: Vec2,
+    ): Pair<EdgeGeom?, String?> {
+        val el = soleElement(d.crease) ?: return null to "${d.edge.name.label} is a chain of several pieces, so its rails have no single curve"
+        return when (el) {
+            is Curve3Element.Seg3 -> {
+                val v = el.end - el.start
+                val len = v.length()
+                if (len <= Geom3.WELD_TOL) {
+                    null to "${d.edge.name.label} has no length"
+                } else {
+                    val u = v * (1.0 / len)
+                    EdgeGeom.Straight(worldOnStraight(d.crease, el.start, u, t, 0.0), worldOnStraight(d.crease, el.start, u, t, len)) to null
+                }
+            }
+            is Curve3Element.Arc3 -> {
+                val axis = el.normal.normalized()
+                val w = d.crease.ref.at + d.crease.e1 * t.x + d.crease.ref.e2 * t.y
+                val rel = w - el.center
+                val s = rel.dot(axis)
+                val r = (rel - axis * s).length()
+                val o = el.center + axis * s
+                if (r <= Geom3.WELD_TOL) {
+                    EdgeGeom.Straight(o, o) to null
+                } else {
+                    val full = abs(el.sweepAngle) >= 2.0 * PI - 1e-9
+                    val a = min(el.startAngle, el.startAngle + el.sweepAngle)
+                    val b = max(el.startAngle, el.startAngle + el.sweepAngle)
+                    val ring =
+                        if (full) {
+                            ProfileElement.CircleE(Circle(Vec2(0.0, 0.0), r), true)
+                        } else {
+                            ProfileElement.ArcE(Arc(Vec2(0.0, 0.0), r, a, b, true))
+                        }
+                    EdgeGeom.OnPlane(Plane3(o, el.u, el.v), ring) to null
+                }
+            }
+            else -> null to "${d.edge.name.label} is neither straight nor circular, so its rails have no exact curve"
+        }
+    }
+
+    // ---- the band, cut ----
+
+    /**
+     * Where [cut] crosses the band along base edge [edge] — **exactly**, when that band is a surface of
+     * revolution about the edge's own axis, and null when it is not (a straight edge carries a *swept*
+     * band instead; see [bandStrip]).
+     *
+     * The whole of [Revolve3]'s dispatch table applies unchanged, meridian column included, which is the
+     * reason this is a delegation and not a second reading: a plane containing the axis cuts the band in
+     * the blend's own section curve placed at the two meridian angles, a plane square to it cuts the
+     * band's own circles, and the families answer the rest. A blend's torus band on the rim of a turned
+     * part is the case that made this necessary — the section a machinist draws is the meridian one.
+     */
+    fun bandCut(
+        f: Feature3.Blend,
+        edge: Int,
+        cut: Plane3,
+    ): Revolve3.BandCut? {
+        val d = dressingOf(f, edge) ?: return null
+        val el = soleElement(d.crease) as? Curve3Element.Arc3 ?: return null
+        val (frame, sr) = revolvedBand(d, el, orientedSection(d) ?: return null) ?: return null
+        return Revolve3.cutBandOf(frame, sr, cut)
+    }
+
+    /**
+     * The band along a **straight** edge as its family of rulings — the blend's section curve carried
+     * along the edge, one straight ruling per point of that curve.
+     *
+     * Exact at every ruling and chords between, which is OP-15's approximated class and exactly what an
+     * extrusion's own cylindrical side face gets: the two are the same surface reached by the same sweep,
+     * so they are cut by the same machinery ([Section3.cutRuledStrip]) rather than by two.
+     */
+    internal fun bandStrip(
+        f: Feature3.Blend,
+        edge: Int,
+    ): Section3.RuledStrip? {
+        val d = dressingOf(f, edge) ?: return null
+        val el = soleElement(d.crease) as? Curve3Element.Seg3 ?: return null
+        val piece = orientedSection(d) ?: return null
+        val v = el.end - el.start
+        val len = v.length()
+        if (len <= Geom3.WELD_TOL) return null
+        val u = v * (1.0 / len)
+        val steps =
+            when (piece) {
+                is ProfileElement.ArcE -> max(BAND_SECTION_STEPS, GeomMath.chordSteps(piece.arc.radius, GeomMath.sweep(piece.arc), GeomMath.TESS_TOL_MM))
+                else -> BAND_SECTION_STEPS
+            }
+        return Section3.RuledStrip(false, { t ->
+            val p = sectionPointAt(piece, t) ?: Vec2(0.0, 0.0)
+            worldOnStraight(d.crease, el.start, u, p, 0.0) to worldOnStraight(d.crease, el.start, u, p, len)
+        }, steps)
+    }
+
+    private fun dressingOf(
+        f: Feature3.Blend,
+        edge: Int,
+    ): Dressing? = dressingsOf(f).first?.firstOrNull { it.index == edge }
+
+    /** The blend's section curve, traversed with the material to its left — the band's own generator. */
+    private fun orientedSection(d: Dressing): ProfileElement? {
+        val (mid, _) = midOf(d.wedge.piece) ?: return null
+        val outward = bandOutward(d.wedge, d.choice, mid) ?: return null
+        return materialLeft(d.wedge.piece, outward)
+    }
+
+    private fun sectionPointAt(
+        e: ProfileElement,
+        t: Double,
+    ): Vec2? =
+        when (e) {
+            is ProfileElement.Seg -> e.segment.a + (e.segment.b - e.segment.a) * t
+            is ProfileElement.ArcE -> GeomMath.arcPointAt(e.arc, e.arc.startAngle + GeomMath.sweep(e.arc) * t)
+            else -> null
+        }
+
+    // ---- the outline correction: the strip a blend takes off each of its two faces ----
+
+    /**
+     * [patch]'s own boundary with the strip each of [trims] removed — the piece over the blended edge
+     * stepped **inward** by the tangency's distance, and its neighbours re-joined on their own carriers.
+     *
+     * Analytic, and only for a **planar** face: on a plane the tangency curve is the boundary piece offset
+     * by a constant, which is a line beside a line and a circle beside a circle, both of them exact. On a
+     * curved face the same strip is an offset *on the surface* — a fact this drawing has no vocabulary for
+     * yet — so the caller keeps the face at its index and states the reason instead of drawing a boundary
+     * that is not there (OP-3, OP-15's honesty line).
+     */
+    private fun correctedOutline(
+        patch: FacePatch,
+        trims: List<Pair<SolidEdge, Double>>,
+    ): Pair<List<ProfileElement>?, String?> {
+        val plane =
+            patch.plane
+                ?: return null to
+                    "${patch.name.label} is not a plane, so the strip the blend takes off it is an offset on a " +
+                    "curved surface — this drawing states that face's own boundary only where it is flat, and " +
+                    "the surface itself is unchanged (a future extension)"
+        val offsets = HashMap<Int, Double>()
+        for ((edge, d) in trims) {
+            val hits = patch.outline.indices.filter { sameCurve(plane, patch.outline[it], edge) }
+            if (hits.size != 1) {
+                return null to
+                    "${edge.name.label} matches ${hits.size} pieces of ${patch.name.label}'s own boundary, so the " +
+                    "strip the blend takes off it cannot be stated exactly"
+            }
+            offsets[hits[0]] = (offsets[hits[0]] ?: 0.0) + d
+        }
+        val out = patch.outline.toMutableList()
+        for (chain in chainsOf(patch.outline)) {
+            if (chain.none { it in offsets }) continue
+            val (fixed, why) = offsetChain(patch.outline, chain, offsets)
+            if (fixed == null) return null to "${patch.name.label}: $why"
+            for ((k, i) in chain.withIndex()) out[i] = fixed[k]
+        }
+        return out to null
+    }
+
+    /** The offset carrier of one boundary piece — inward is the piece's **left**, the material's own side. */
+    private fun carrierOf(
+        e: ProfileElement,
+        d: Double,
+    ): Pair<Line?, Circle?>? =
+        when (e) {
+            is ProfileElement.Seg -> {
+                val v = e.segment.b - e.segment.a
+                if (v.length() <= Vec2.EPS) {
+                    null
+                } else {
+                    val dir = v.normalized()
+                    Line(e.segment.a + dir.perp() * d, dir) to null
+                }
+            }
+            is ProfileElement.ArcE -> {
+                val r = e.arc.radius + (if (e.arc.ccw) -d else d)
+                if (r <= Geom3.WELD_TOL) null else null to Circle(e.arc.center, r)
+            }
+            is ProfileElement.CircleE -> {
+                val r = e.circle.radius + (if (e.ccw) -d else d)
+                if (r <= Geom3.WELD_TOL) null else null to Circle(e.circle.center, r)
+            }
+            else -> null
+        }
+
+    /** One ring of a face boundary, with the trimmed pieces stepped in and every corner re-solved. */
+    private fun offsetChain(
+        outline: List<ProfileElement>,
+        chain: List<Int>,
+        offsets: Map<Int, Double>,
+    ): Pair<List<ProfileElement>?, String?> {
+        val pieces = chain.map { outline[it] }
+        val carriers = pieces.mapIndexed { k, e -> carrierOf(e, offsets[chain[k]] ?: 0.0) }
+        if (carriers.any { it == null }) {
+            return null to "one of the pieces beside the blend is neither a straight run nor an arc, so the join cannot be solved"
+        }
+        val n = pieces.size
+        if (n == 1) {
+            // a ring of one piece — a circle — has no corner to re-solve, so the offset **is** the answer
+            val c = carriers[0]!!.second ?: return null to "a single-piece ring that is not a circle has no offset here"
+            val e = pieces[0]
+            val ccw = (e as? ProfileElement.CircleE)?.ccw ?: true
+            return listOf(ProfileElement.CircleE(c, ccw)) to null
+        }
+        val corners = ArrayList<Vec2>(n)
+        for (k in 0 until n) {
+            val old = GeomMath.endOf(pieces[k])
+            val q = junction(carriers[k]!!, carriers[(k + 1) % n]!!, old)
+            corners.add(q ?: return null to "the blend's new boundary does not meet the piece beside it")
+        }
+        val out = ArrayList<ProfileElement>(n)
+        for (k in 0 until n) {
+            val from = corners[(k + n - 1) % n]
+            val to = corners[k]
+            val rebuilt =
+                rebuild(pieces[k], carriers[k]!!, from, to)
+                    ?: return null to "the ${offsets[chain[k]]?.let { "blended" } ?: "neighbouring"} piece is consumed at that size"
+            out.add(rebuilt)
+        }
+        return out to null
+    }
+
+    /** Where two carriers meet, taking the solution nearest the corner they replace. */
+    private fun junction(
+        a: Pair<Line?, Circle?>,
+        b: Pair<Line?, Circle?>,
+        near: Vec2,
+    ): Vec2? {
+        val pts =
+            when {
+                a.first != null && b.first != null -> GeomMath.intersectLL(a.first!!, b.first!!).points
+                a.first != null && b.second != null -> GeomMath.intersectLC(a.first!!, b.second!!).points
+                a.second != null && b.first != null -> GeomMath.intersectLC(b.first!!, a.second!!).points
+                a.second != null && b.second != null -> GeomMath.intersectCC(a.second!!, b.second!!).points
+                else -> emptyList()
+            }
+        return pts.minByOrNull { (it - near).length() }
+    }
+
+    /** One piece restated on its (possibly offset) carrier between two re-solved corners. */
+    private fun rebuild(
+        e: ProfileElement,
+        carrier: Pair<Line?, Circle?>,
+        from: Vec2,
+        to: Vec2,
+    ): ProfileElement? =
+        when (e) {
+            is ProfileElement.Seg -> {
+                val was = (e.segment.b - e.segment.a)
+                val now = to - from
+                // a piece whose direction reversed has been consumed by the offset rather than shortened
+                if (now.length() <= Geom3.WELD_TOL || now.dot(was) <= 0.0) null else ProfileElement.Seg(Segment(from, to))
+            }
+            is ProfileElement.ArcE -> {
+                val c = carrier.second
+                if (c == null) null else ProfileElement.ArcE(Arc(c.center, c.radius, (from - c.center).angle(), (to - c.center).angle(), e.arc.ccw))
+            }
+            else -> null
+        }
+
+    /** The contiguous rings of a face boundary, as index lists — the wrap staying inside its own ring. */
+    private fun chainsOf(outline: List<ProfileElement>): List<List<Int>> {
+        val out = ArrayList<List<Int>>()
+        var cur = ArrayList<Int>()
+        for (i in outline.indices) {
+            if (cur.isNotEmpty() && (GeomMath.startOf(outline[i]) - GeomMath.endOf(outline[cur.last()])).length() > SAME_CURVE_TOL) {
+                out.add(cur)
+                cur = ArrayList()
+            }
+            cur.add(i)
+            if ((GeomMath.endOf(outline[i]) - GeomMath.startOf(outline[cur.first()])).length() <= SAME_CURVE_TOL) {
+                out.add(cur)
+                cur = ArrayList()
+            }
+        }
+        if (cur.isNotEmpty()) out.add(cur)
+        return out
+    }
+
+    /**
+     * Whether boundary piece [e] of the face in [plane] **is** the edge [edge] — the same curve in the
+     * world, however each of the two happens to be traversed or indexed.
+     *
+     * *Matching rather than indexing, and stated as a decision.* The face outline's index space and the
+     * edge list's are not the same space and cannot be made so by fiat: an extrusion's cap outline is its
+     * footprint loop *mapped* (and the bottom cap's map is a reflection, which re-orients the ring — the
+     * very fact `CAP_EDGE_CONVENTION` exists to keep out of the edge indices), a revolution's flat band
+     * carries its own generated boundary, and a side face carries a rectangle. Rather than a case per
+     * feature per cap, the two exact constructions are compared **as curves**: both come from the same
+     * parameters, so they agree to the last bits, and comparing them discovers nothing that was not
+     * constructed (OP-8's rule is about not reading names out of triangles, and there are no triangles here).
+     */
+    private fun sameCurve(
+        plane: Plane3,
+        e: ProfileElement,
+        edge: SolidEdge,
+    ): Boolean {
+        fun near(
+            a: Vec3,
+            b: Vec3,
+        ) = (a - b).length() <= SAME_CURVE_TOL
+        val ends = listOf(plane.toWorld(GeomMath.startOf(e)), plane.toWorld(GeomMath.endOf(e)))
+        return when (val g = edge.geom) {
+            is EdgeGeom.Straight -> {
+                if (e !is ProfileElement.Seg) {
+                    false
+                } else {
+                    (near(ends[0], g.a) && near(ends[1], g.b)) || (near(ends[0], g.b) && near(ends[1], g.a))
+                }
+            }
+            is EdgeGeom.OnPlane -> {
+                val other = listOf(g.plane.toWorld(GeomMath.startOf(g.piece)), g.plane.toWorld(GeomMath.endOf(g.piece)))
+                val sameEnds =
+                    (near(ends[0], other[0]) && near(ends[1], other[1])) || (near(ends[0], other[1]) && near(ends[1], other[0]))
+                if (!sameEnds) {
+                    false
+                } else {
+                    val ca = centreAndRadius(plane, e)
+                    val cb = centreAndRadius(g.plane, g.piece)
+                    when {
+                        ca == null && cb == null -> e is ProfileElement.Seg && g.piece is ProfileElement.Seg
+                        ca == null || cb == null -> false
+                        else -> near(ca.first, cb.first) && abs(ca.second - cb.second) <= SAME_CURVE_TOL
+                    }
+                }
+            }
+        }
+    }
+
+    /** A curved piece's world centre and radius — null for a straight one, which its endpoints already fix. */
+    private fun centreAndRadius(
+        plane: Plane3,
+        e: ProfileElement,
+    ): Pair<Vec3, Double>? =
+        when (e) {
+            is ProfileElement.ArcE -> plane.toWorld(e.arc.center) to e.arc.radius
+            is ProfileElement.CircleE -> plane.toWorld(e.circle.center) to e.circle.radius
+            else -> null
+        }
 
     const val NO_FACE_UNDER_CLICK =
         "no flat face of this solid lies under that click as this space looks at it — click on the face whose " +

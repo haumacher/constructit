@@ -15181,6 +15181,11 @@ one stroke), or 3D picking. The miss at least says where to look now.
 > measurement in `BooleanCrossSpaceTest` stands, unedited, and is now the pin on a deliberate asymmetry
 > rather than on a gap. The mechanism is proven and the general case is one line away when that package wants
 > it. 3D picking stays parked where the rest of the face-ID provenance item waits.
+>
+> **Narrowed, not re-opened, by slice 3.** An ordinary blend is a `Feature3.Blend` now and draws its
+> **base's own plan** — analytic, free, and forcing no mesh at eval time. What still arrives at the
+> silhouette is a blend applied to a body a general boolean made (a fused part), which has no plan of
+> its own. The mechanism stays proven and stays used, on the smaller set.
 
 **Retired in session 55, fourth sitting: the group-creation UX** — queued one sitting earlier out of the same
 user's report and delivered whole. What it retires is not a design question but four failures of *speech* around
@@ -15216,10 +15221,11 @@ their **surfaces**, and there are now analytic surface patches to be a function 
 `FacePatch.surface`, beside the planes an extrusion and a loft already name. What is still absent is the blend
 itself and, before it, the **edge** between two named faces as a first-class thing: `Section3.edges` names a
 revolution's rings and an extrusion's uprights, but nothing yet says "these two faces meet along this curve"
-for an arbitrary pair. That, not the surfaces, is now the first missing piece.)* *(Session 71 queues the
+for an arbitrary pair. That, not the surfaces, is now the first missing piece.)* *(Session 71 queues **and delivers** the
 blends whole — the mechanism settled in discussion and adopted, the 2D fillet run in the edge's own moving
-normal section — see the numbered entry at the queue's tail; shelling, draft and text below stay parked
-here.)*;
+normal section, all three slices shipped including the dress-up feature that keeps a blended body's face
+addresses — see the numbered entry at the queue's tail and the three as-built notes under it; shelling, draft
+and text below stay parked here.)*;
 and **shelling** to a stated wall thickness, since a real member is hollow (0.8–15% of its bounding box) and
 the only route today is subtracting a hand-built inner solid. **Draft** follows them and is meaningless
 before them. Also named: **text as geometry** (part marking, serial plates, signage) — a general capability,
@@ -15553,7 +15559,8 @@ scalar-entry change with tests on a signed offset typed straight into the revolv
 regression-pinned already (`ChainCutReachTest.assertRoundTrips`; `RevolveIntervalTest`'s panel-parameter
 detour states the workaround it retires).
 
-**Queued in session 71 (user-directed): 3D edge blends — the 2D fillet, one dimension up.** The session-37
+**Queued and delivered in session 71 (user-directed): 3D edge blends — the 2D fillet, one dimension up.**
+*All three slices shipped; this entry is closed — see the three as-built notes below it.* The session-37
 parked item above becomes a numbered line; the question that queued it was the user's own — a profile
 filleted before an extrude or a sweep rounds the *lateral* edges, but the two cap faces of an outline
 revolved less than a full turn stay sharp, so *"what is the most general mechanism?"* — and the mechanism,
@@ -15590,7 +15597,8 @@ radius and a stored sign — never a kernel op (OP-9 said so from the start) and
    the boolean applies it (subtract on a convex edge, add on a concave one) — at the stated cost that the
    result takes the mesh route. **Chamfer** is the same sentence with `chamferEnds`, and inherits the
    parked chamfer-on-arc convention unchanged.
-3. **`Feature3.Blend` — the dress-up feature.** What keeps the honesty ledger: base feature + edge
+3. **`Feature3.Blend` — the dress-up feature. — done, session 71; see the as-built note below.** What keeps
+   the honesty ledger: base feature + edge
    addresses + a radius parameter + stored signs, a feature case of its own whose face list **extends the
    base's** — base faces keep their indices, one blend band appended per edge, the way caps append after
    sides today — so sketch-on-face, sections and named refusals all survive a dressed part.
@@ -15822,6 +15830,132 @@ leg; (4) **no live preview** for the four rows (a `preview` lambda may not touch
 picture is a mesh boolean — the honest preview is the result itself, one click away); (5) a blend applied to a
 body whose whole ancestry is mesh-only (an import, a sweep, a boolean of two such) refuses, since there is no
 analytic base to address. Nothing was cut silently.
+
+#### Implementation status (as built — `Feature3.Blend`, the dress-up feature: slice 3 of the blends, and the last)
+
+Slice 3 shipped whole and **closes the session-71 blends entry**. `Feature3.Blend(base, targets, kind, size,
+choices)` is a feature case of its own; `Section3.faces` and `Section3.edges` delegate to `Blend3.dressedFaces`
+/ `Blend3.dressedEdges`; and there is **no new step kind, no format change and no version bump** — a blend
+still rides the generic `tool` step with its address and its scored choices in `signs=`. *The stored step did
+not change; what changed is the feature the same step builds*, which is eval-time and is exactly what OP-18
+allows (it protects stored literals, not derived values). Every slice-2 drawing saves, loads and saves to the
+same bytes, which `EdgeBlendToolTest`'s round trips assert unedited.
+
+**The face list extends the base's, and that is the whole of the design.** The dressed list is the base's
+faces **at the base's own indices**, followed by one band per blended edge — the way an extrusion's two caps
+append after its sides. Nothing renumbers and nothing drops out, because every index in it is an address a
+step may already hold (OP-21's law, OP-18's naming rule). The same sentence twice for edges: a blended edge
+**keeps its index** with its carrier and gains a `SolidEdge.reason` — *"…was rounded away by the fillet of
+2 mm — the rounded band along edge #10 stands in its place"* — and a second blend asking for it declines in
+those very words; the band's **two tangent rails** append after every base edge. That is what makes a chain of
+dress-up features ordinary: the second blend's base is the first `Feature3.Blend`, and its address is an index
+into the list the first one produced (`BlendFeatureTest.aBlendOfABlendExtendsTheExtendedList`).
+
+**The outline correction is analytic, and it is the piece that had to be got right.** The blend takes a strip
+of **constant width** off each of its two faces — constant because the section is rigid, which is precisely
+slice 2's own scope condition — so on a *planar* face the new boundary is that face's own piece over the edge
+**offset inward by the tangency's distance**, re-joined to its neighbours on their own carriers: line against
+line, line against circle, circle against circle, all of them intersections this drawing already computes.
+Nothing is sampled and nothing is fitted, and the numbers say so: on a 90° crease between two planes the step
+is exactly the radius, and on a cap edge standing against a **cylinder** of radius `R` it is
+`√((R ± r)² − r²)` — 16.882 and 22.913 for a 2 mm round on a 15/25 bore, which
+`BlendFeatureTest.aBlendedCapCarriesASketchAndACutDrilledFromIt` asserts to 1e-9. Where the correction is not
+reachable — a **curved** face, whose strip is an offset *on a surface* this drawing has no vocabulary for —
+the patch **keeps its index** and carries the reason instead, so a face is never renumbered and never silently
+wrong. The one thing that had to be decided rather than derived is how an outline piece is matched to an edge:
+the two live in different index spaces per feature and per cap (an extrusion's cap outline is its footprint
+loop *mapped*, and the bottom cap's map is a reflection — the very fact `CAP_EDGE_CONVENTION` exists to keep
+out of the edge indices), so the two exact constructions are compared **as curves** in the world. That is not
+discovery in OP-8's sense: both sides come from the same parameters and agree to the last bits, and there are
+no triangles anywhere near it. The alternative — a case per feature per cap — is what slice 1 already recorded
+as the thing to avoid.
+
+**The band carries its own surface, through the emitters that already state those surfaces.** A **straight**
+edge carries the blend's section curve the way an extrusion does, so the band is read by `Section3.sweptFace`:
+a chamfer's bevel sweeps a **plane** (with its rectangle, so it is a face you can sketch on), a fillet's arc
+sweeps a **cylinder** of the radius. A **circular** edge carries it the way a revolution does, so the band is
+read by `Revolve3.bandPatch` on a frame built from the edge's own axis: the fillet arc becomes a **torus** —
+`Torus(sc, rc, minor)` with the fillet radius as the minor, measured, not asserted — or a **sphere** where the
+centre circle closes on the axis, and a chamfer's bevel a cone, a cylinder or a flat annulus, whichever
+`Revolve3.bandOf` says. Two emitters and no third, because the tier has no third carrier; anything else keeps
+its index and refuses by name. The refusals are then **restated in the blend's words** (session 65's rule):
+the emitters say *"that boundary edge is curved"*, which is right for an extrusion and wrong here, since
+nobody drew this piece — it is the rounding's own section.
+
+**The mesh: slice 2's sweep-and-boolean, kept, and the decision recorded with its alternative.** Two routes
+were on the table. **(a) A native emitter** stitching the base's faces and the blend bands into one watertight
+shell — which would make the blend exact end to end, and would mean a second surface-to-triangle emitter for
+every band family, a trim-and-stitch pass along every rail, and a second answer to *"what does this body look
+like"* to keep in step with the first. **(b) The feature answers faces analytically while the triangles come
+off the very boolean slice 2 already runs** — chosen, and chosen on doctrine rather than on cost: the mesh is
+a **sink** (OP-9), so nothing structural is ever read back out of it, and a body whose *names* are analytic
+and whose *triangles* are a boolean is not a compromise but exactly the partition this design draws. The
+practical half is that `Solid3.restated` hands the boolean's own mesh to the analytic feature with the same
+derivation cell, so there is one mesh and two statements of one body. `assertManifold` runs on every body in
+every test either way, and slice 2's exact volume figures rerun **unchanged and green** — the quarter-round's
+chord model, the 45° chamfer's 0.01 mm³, Pappus on the extruded rim's 4% band, the eight-piece rounded-rectangle
+rim's 5% — because the triangles are, deliberately, the same triangles. What (a) would still buy is exactness,
+and it is now a **named future extension** with a clear boundary rather than a gap in this one.
+
+**What it buys, which is the acceptance and not the plumbing.** *Sketch on face* opens on the **trimmed** cap
+of a blended partial revolve — the pick reaches the dressed body (`Section3.undressed` lets a cap pick see
+through a dressing, since a blend trims a cap and does not move it), and the reference outline the space
+measures on is the corrected one. A **Cut** drilled from that face space lands on the dressed part and the
+volumes add up, all of it round-tripping byte for byte. A working plane's **section** of a chamfered plate
+names every face the unchamfered one named, at the same indices, with the same words — *plus the bevel*, which
+is a face of the body and therefore an input like any other — while the rounded-away edge reports its reason
+in place of a corner that is not there and the two rails report corners that are. The frames are deliberately
+the **base's** everywhere a stored address reads one (`Geom3.facePlane`, `Geom3.sideFace`'s span,
+`Section3.facePatchOfFootprintPiece`): a blend does not move a face, so nothing a file recorded may change
+meaning.
+
+**`facePlane`, the footprint, and the plan hint.** `facePlane` delegates to the base and `sectionAt` — the
+*prismatic* horizontal cut — refuses by name, because a rounded wall is not a slab wall and answering with the
+base's slabs would be a wrong area rather than a missing one; the working plane's section is the exact reading
+that does work on a dressed part, and the refusal says so. `Feature3.Blend.footprint` is the **base's own
+plan**, which replaces slice 2's silhouette for this tier: it is analytic, it is free, and it does not force
+the mesh at eval time the way `Silhouette.of` did (session 51's whole point). What that costs is stated: a
+blend that rounds an **upright** rounds the plan outline too, and the hint still draws the base's sharp corner.
+`prismatic` and the same-axis predicate deliberately answer *no* for a blend, so a boolean over a dressed body
+takes the general engine and never the exact algebra — a predicate that lied there would hand the slab algebra
+a body that is not the body.
+
+**The mesh tier is kept where it is honest, and it is one case: a blend over a fused part.** `Construction.blend`
+decides by the **graph** (OP-21's rule: structure at build time) — when the body addressed *is* the body cut
+the result is a `Feature3.Blend`, and when an ordinary boolean stands between them the body cut has no face
+list to extend and the result stays a `Feature3.MeshBoolean` with its silhouette plan. Stated in
+`BlendFeatureTest.aBlendOverAUnionStaysTheMeshTierAndSaysSo` and in the tool help, rather than pretended away.
+Session 55's parked *"a mesh boolean's result has no plan"* note is therefore **narrowed, not re-opened**: the
+silhouette mechanism stays proven and stays used, on the smaller set.
+
+**The slice-2 costs this retires, quoted.** No test assertion changed — the retired cost was carried in prose,
+in all four tool rows, and it read: *"The result is a mesh body (a general boolean, OP-9): it draws a footprint
+hint you can click, measures, prints and exports, and a working plane's section of it offers no construction
+inputs."* It now reads that the result is a feature of its own whose faces are the body's own faces with the
+band appended — so a face carries a sketch, a Cut drills from one, and a section offers inputs — with the one
+fused-part exception named in the same sentence. The two prose costs in the kernel go with it: `Blend3`'s
+*"a blended body is `Feature3.MeshBoolean` … it offers no section inputs. Slice 3's `Feature3.Blend` is the
+cure and is queued"*, and `Document.blendEdges`'s *"a blended body is a mesh boolean and names none of its
+own"* — which is now true of a fused part and of nothing else. The **silhouette plan** is retired for this
+tier and kept for the other, as above.
+
+**One measurement had to become tolerant, and it is a fact about slice 3 rather than a loosened bound.** A
+dressed face's boundary now *has* a trim line, so a second blend's station can land exactly on the first
+blend's: a 4 mm fillet on one rim of a 40 mm plate puts the cap's new boundary at `x = 4`, and the next edge's
+first station is at a tenth of that run. `Blend3.tangenciesFit` asked a strict inside/outside there, which is
+asking a coin whether a chamfer fits — and it does fit, the tangency being *on* the face. So *on the boundary
+within 1e-6 mm counts as on the face* (`Blend3.onFace`), which cannot mask anything: a radius that genuinely
+outgrows a face misses it by millimetres.
+
+**Cuts, each whole, each named and none silent**: (1) **a curved face's own trim** — a face the blend cut into
+whose boundary is not statable as a planar offset keeps its index and carries the reason; its *surface* is
+untouched and exact, so only its own boundary is unstated, and a surface offset is the future extension; (2)
+**the neighbours' ends** — an edge that a blend merely *shortens* (the uprights beside a rounded cap edge)
+keeps its full carrier, so a section corner taken beyond the tangency is the base's; stated on
+`Blend3.dressedFaces` and a future extension with the same offset machinery behind it; (3) everything slice 2
+refuses, **`Blend` refuses in the same words and through the same code** — one authority, no second table:
+the varying-section edge, vertex blends at a corner where three edges meet, a chamfer across a curved leg, no
+live preview, and a body whose whole ancestry is mesh-only. Nothing was cut silently.
 
 **Delivered in session 71 (queued behind the blends, user-directed): expressions — the binding generalized
 to a function, and the curve a function defines.** Postponed since the early sessions until ordinary

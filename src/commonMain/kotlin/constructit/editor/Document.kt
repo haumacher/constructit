@@ -2253,7 +2253,12 @@ class Document {
         val here = planeOf(activeSpace, ev) ?: return null
         for (el in elements.asReversed()) {
             if (el.kind != ElementKind.SOLID || el.space != activeSpace.name || !el.visible) continue
-            val feature = (ev.valueOf(el.ref) as? SolidValue)?.solid?.feature as? Feature3.Revolution ?: continue
+            // a **dressed** revolve is still a revolve for this question: the blend trims its cap, it does
+            // not move it, so the pick that reaches a cap must reach the body as it stands (session 71,
+            // slice 3 — `Section3.undressed`). What the space then draws is the dressed cap, because the
+            // face patch it opens on comes from the dressed list.
+            val whole = (ev.valueOf(el.ref) as? SolidValue)?.solid?.feature ?: continue
+            val feature = Section3.undressed(whole) as? Feature3.Revolution ?: continue
             val f = Revolve3.frameOf(feature) ?: continue
             if (f.full) continue
             val rings =
@@ -11512,8 +11517,10 @@ class Document {
         // **Two walks, two questions, and they are not the same question** (session 71, slice 2).
         //
         // *Whose edges am I naming?* — a walk **backwards** along the picked body's own spine to the nearest
-        // solid that names its edges ([analyticBaseOf]). A blended body is a mesh boolean and names none of
-        // its own (OP-9's sink rule), so the addresses stay against the analytic body that still has them.
+        // solid that names its edges ([analyticBaseOf]). Since slice 3 a **blended** body names its own
+        // (`Feature3.Blend` extends its base's list), so the walk stops there and a blend of a blend is
+        // addressed against the dressed list; what still names none is a body a general boolean made — a
+        // fused part (OP-9's sink rule) — and there the addresses stay against the analytic body under it.
         //
         // *What body do I apply to?* — a walk **forwards** to the drawing's tip of that body's chain
         // ([tipOfChain], the sequential-feature rule OP-17 already states for a cut). Without it a blend made

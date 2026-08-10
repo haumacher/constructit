@@ -207,6 +207,11 @@ fun Feature3.movedBy(x: Xform3): Feature3 =
         // that does not gets no hint rather than a wrong one.
         // (the **open-shell flag** rides along, because a rigid motion cannot open or close a surface)
         is Feature3.Imported -> Feature3.Imported(source, openShell = openShell)
+        // A blend is a dressing, and a rigid move of a dressed part is the same dressing of the moved part:
+        // the addresses are indices into a list that moves with the base, and the radius and the stored signs
+        // are frame-free numbers. So the analytic form survives a placement exactly as every other feature's
+        // does — which is what keeps a placed blended body sketchable and sectionable (session 71, slice 3).
+        is Feature3.Blend -> Feature3.Blend(base.movedBy(x), targets, kind, size, choices)
     }
 
 /**

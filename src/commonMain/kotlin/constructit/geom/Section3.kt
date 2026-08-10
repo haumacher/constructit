@@ -52,6 +52,18 @@ sealed interface FaceName {
         override val label: String
             get() = if (which == SolidFace.TOP) "the cap at the end of the sweep" else "the cap at the start of the sweep"
     }
+
+    /**
+     * The **band a blend sweeps along one edge** of its base (session 71, slice 3) — a fillet's cylinder or
+     * torus, a chamfer's plane or cone.
+     *
+     * [edge] is the index of the blended edge in the base's own [Section3.edges] order, which is *also* this
+     * feature's own order for that edge (the dressed list keeps every base index, [Feature3.Blend]), so the
+     * one number names both the band and the crease it rounds.
+     */
+    data class BlendBand(val edge: Int) : FaceName {
+        override val label: String get() = "the rounded band along edge #${edge + 1}"
+    }
 }
 
 /**
@@ -96,6 +108,17 @@ sealed interface EdgeName {
             get() =
                 "profile edge #${piece + 1} of the cap at the " +
                     (if (which == SolidFace.TOP) "end" else "start") + " of the sweep"
+    }
+
+    /**
+     * A **rail of a blend's band** (session 71, slice 3): where the band along base edge [edge] runs tangent
+     * onto one of the two faces that edge separated — [side] 0 for the first of the pair, 1 for the second.
+     *
+     * The two edges a blend *creates*, which is why they append rather than replace: the edge it consumed
+     * keeps its index and its reason ([SolidEdge.reason]), and nothing renumbers (OP-21).
+     */
+    data class BlendRail(val edge: Int, val side: Int) : EdgeName {
+        override val label: String get() = "tangent rail #${side + 1} of the rounded band along edge #${edge + 1}"
     }
 }
 
@@ -218,7 +241,21 @@ sealed interface EdgeGeom {
  * a ring that collapses to a point, and it still names the two bands it separates, so nothing drops out of
  * the ordered list and no index ever renumbers (OP-3, OP-17's index-stability rule).
  */
-data class SolidEdge(val name: EdgeName, val geom: EdgeGeom, val between: FacePair)
+data class SolidEdge(
+    val name: EdgeName,
+    val geom: EdgeGeom,
+    val between: FacePair,
+    /**
+     * Why this entry is **not a crease of the body as it stands**, or null when it is (session 71, slice 3).
+     *
+     * The one thing a dress-up feature needs that a plain list did not have: a blend *consumes* the edge it
+     * rounds, and the entry may not drop out — every index in this list is an address a step may already
+     * hold, so an edge that is gone stays in place and says so (OP-3's invalid-with-a-reason, OP-21's
+     * index-stability rule). [geom] is still the base's carrier, so a reader that only wants the curve gets
+     * the curve; a reader that wants to *build on* the edge — a second blend — is refused in these words.
+     */
+    val reason: String? = null,
+)
 
 /**
  * One **curve of a section**, in the cutting plane's own (u, v) — and an *input* of the construction on that
@@ -373,6 +410,10 @@ object Section3 {
             is Feature3.MeshBoolean -> null to MESH_ONLY
             is Feature3.Imported -> null to IMPORT_ONLY
             is Feature3.Sweep -> null to SWEEP_ONLY
+            // **The dressed list** (session 71, slice 3): the base's faces at their own indices, outlines
+            // corrected where the blend consumed an edge, one band appended per blended edge. The blend owns
+            // that arithmetic, so it is stated once in [Blend3] and read from here.
+            is Feature3.Blend -> Blend3.dressedFaces(feature)
         }
 
     /**
@@ -396,12 +437,25 @@ object Section3 {
             is Feature3.MeshBoolean -> false
             is Feature3.Imported -> false
             is Feature3.Sweep -> false
+            // A dressed part's faces are whole exactly when its base's are: the blend replaces a strip of two
+            // faces with a band it appends, so nothing leaves the shell and nothing is added outside it.
+            is Feature3.Blend -> facesAreWholeBoundary(feature.base)
         }
+
+    /**
+     * [feature] with its **dressings taken off** — the shape underneath, however many blends stand on it.
+     *
+     * For the readers that ask *which kind of body is this* rather than *what are its faces*: a dressed
+     * revolve is still a revolve, so its caps are still picked the way a revolve's caps are picked
+     * (`Document.capUnder`). Everything about the faces themselves goes through [faces], which corrects
+     * them; this is only for the questions the dressing does not change.
+     */
+    fun undressed(feature: Feature3): Feature3 = if (feature is Feature3.Blend) undressed(feature.base) else feature
 
     /** Why a general section of [feature] cannot name its faces, or null when it can. */
     fun structuralRefusal(feature: Feature3): String? =
         when (feature) {
-            is Feature3.Extrusion, is Feature3.Loft, is Feature3.Revolution -> faces(feature).second
+            is Feature3.Extrusion, is Feature3.Loft, is Feature3.Revolution, is Feature3.Blend -> faces(feature).second
             is Feature3.Prism -> PRISM_ONLY
             is Feature3.MeshBoolean -> MESH_ONLY
             is Feature3.Imported -> IMPORT_ONLY
@@ -423,8 +477,16 @@ object Section3 {
         return out
     }
 
-    /** The face boundary piece [e] sweeps, when it is a plane — else the patch that says why it is not. */
-    private fun sweptFace(
+    /**
+     * The face boundary piece [e] sweeps, when it is a plane — else the patch that says why it is not.
+     *
+     * `internal` since session 71 slice 3, because a **blend's band along a straight edge is exactly this**:
+     * the blend's own section curve carried along the edge. A segment sweeps a plane and an arc sweeps a
+     * cylinder whichever construction is doing the carrying, so the blend reads this rather than saying the
+     * same two sentences a second time. The caller states the convention this relies on: [base]'s normal is
+     * the sweep direction, and the material lies to the **left** of [e].
+     */
+    internal fun sweptFace(
         base: Plane3,
         axis: Vec3,
         depth: Double,
@@ -810,6 +872,9 @@ object Section3 {
             is Feature3.MeshBoolean -> null to MESH_ONLY
             is Feature3.Imported -> null to IMPORT_ONLY
             is Feature3.Sweep -> null to SWEEP_ONLY
+            // the dressed list: every base edge at its own index (a consumed one flagged with its reason and
+            // never removed), then two tangent rails appended per blended edge — see [Blend3.dressedEdges]
+            is Feature3.Blend -> Blend3.dressedEdges(feature)
         }
 
     /**
@@ -965,6 +1030,18 @@ object Section3 {
         feature: Feature3,
         piece: Int,
     ): Pair<FacePatch?, String?> {
+        // **A dressed part is sketched on exactly where its base was** (session 71, slice 3): the frame is
+        // the base's — same plane, same origin, same u — because a stored `sketchspace el= piece=` must go on
+        // meaning what it meant (OP-18), and a blend does not move a face, it trims it. What the face space
+        // *draws* is the trimmed outline, taken from the dressed list where the two frames are the same
+        // plane, so the picture shows the rounded corner the body actually has.
+        if (feature is Feature3.Blend) {
+            val (base, why) = facePatchOfFootprintPiece(feature.base, piece)
+            if (base == null) return null to why
+            val trimmed =
+                faces(feature).first?.firstOrNull { it.name == base.name && it.plane != null && it.plane == base.plane }
+            return (if (trimmed == null) base else base.copy(outline = trimmed.outline)) to null
+        }
         // A revolution's face is the band its profile piece sweeps, and indices past the profile's own
         // pieces are the two caps of a partial turn ([Revolve3.facePatchOf]) — one address space, so a
         // recorded `sketchspace el= piece=` needs no format change to reach either.
@@ -1122,8 +1199,15 @@ object Section3 {
         val (es, whyEdges) = edges(feature)
         val corners =
             es?.map { e ->
-                val (at, why) = cutEdge(e.geom, cut)
-                SectionCorner(e.name.label, at, why)
+                // an edge a dress-up feature **consumed** is not a corner of this body, whatever its old
+                // carrier crosses: it keeps its index (a stored address may name it) and states its reason
+                // instead of a point that is not there (session 71, slice 3)
+                if (e.reason != null) {
+                    SectionCorner(e.name.label, null, e.reason)
+                } else {
+                    val (at, why) = cutEdge(e.geom, cut)
+                    SectionCorner(e.name.label, at, why)
+                }
             } ?: emptyList()
         return PlaneSection(
             edges,
@@ -1172,6 +1256,20 @@ object Section3 {
                     ) to pieces.map { DrawnPiece(it, false) }
             }
         }
+        // **A dressed part cuts as its base plus its bands** (session 71, slice 3). A face the blend only
+        // trimmed is still the base's own surface, so the base's exact readings answer it verbatim — the
+        // cylinder of a bored plate is the same cylinder after its rim is broken. A **band** is the blend's
+        // own, and it is cut the way the blend was built: one section at a time along the edge.
+        if (feature is Feature3.Blend) {
+            val n = patch.name
+            if (n !is FaceName.BlendBand) return cutFace(feature.base, patch, cut)
+            // a band about a circular edge is a surface of revolution and gets [Revolve3]'s whole table;
+            // a band along a straight one is a swept strip and gets the rulings, exact at every one of them
+            Blend3.bandCut(feature, n.edge, cut)?.let { return bandCutToEdge(label, it) }
+            val strip = Blend3.bandStrip(feature, n.edge)
+            if (strip != null) return cutRuledStrip(label, strip, cut)
+            return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
+        }
         // a revolution's bands have their own dispatch, decided by the plane's relation to the axis before
         // any geometry is made (OP-17's item 4 — see [Revolve3.cutBand] for the table)
         revolutionCut(feature, patch, cut)?.let { return it }
@@ -1212,6 +1310,20 @@ object Section3 {
         if (name !is FaceName.Side) return null
         val label = name.label
         val band = Revolve3.cutBand(feature, name.piece, cut) ?: return null
+        return bandCutToEdge(label, band)
+    }
+
+    /**
+     * One [Revolve3.BandCut] read as a section edge — the exact curves where the family has them, the
+     * sampled runs where it does not, and the one-input-is-one-curve refusal in both cases.
+     *
+     * Shared since session 71 slice 3 by a revolution's bands and by an **edge blend's** band about a
+     * circular edge, which is the same table asked of the same frame ([Blend3.bandCut]).
+     */
+    private fun bandCutToEdge(
+        label: String,
+        band: Revolve3.BandCut,
+    ): Pair<SectionEdge, List<DrawnPiece>> {
         val exact = band.exact
         if (exact != null) {
             return when (exact.size) {
@@ -1415,7 +1527,7 @@ object Section3 {
      * operation on all of them: solve the ruling for where the plane crosses it. Exactly what OP-15 calls the
      * approximated class: exact at every ruling, chords between.
      */
-    private class RuledStrip(val closed: Boolean, val at: (Double) -> Pair<Vec3, Vec3>, val steps: Int)
+    internal class RuledStrip(val closed: Boolean, val at: (Double) -> Pair<Vec3, Vec3>, val steps: Int)
 
     /**
      * A cylindrical face cut **perpendicular to its own axis**: the profile's arc or circle itself, restated in
@@ -1609,6 +1721,21 @@ object Section3 {
             val r = runs[0]
             if ((r.first() - r.last()).length() > Geom3.WELD_TOL) r.add(r.first())
         }
+        return runsToEdge(label, runs)
+    }
+
+    /**
+     * The sampled runs of one face's cut, read as a section edge — the one place *"exact at every station,
+     * chords between"* (OP-15) becomes an input or a refusal.
+     *
+     * Shared by a ruled strip's cut and, since session 71 slice 3, by a **blend band's**: both produce runs
+     * of exact points and neither may answer the *"one input is one curve"* question differently.
+     */
+    private fun runsToEdge(
+        label: String,
+        runs: List<List<Vec2>>,
+    ): Pair<SectionEdge, List<DrawnPiece>> {
+        if (runs.isEmpty()) return SectionEdge(label, null, null, "the plane does not cut $label") to emptyList()
         if (runs.size > 1) {
             return SectionEdge(
                 label,

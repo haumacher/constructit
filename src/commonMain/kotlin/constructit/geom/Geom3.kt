@@ -287,6 +287,11 @@ sealed interface Feature3 {
          * able to pick the first one's body — so it takes the silhouette, computed once by the node that
          * knows which plane that is (`Construction.blend`), exactly as [Imported.plan] and [Sweep.plan] are.
          *
+         * *Narrowed, not retired, by slice 3.* An ordinary blend is now a [Blend] and draws its base's own
+         * plan, which is analytic and forces no mesh; what still arrives here is a blend applied to a body
+         * a general boolean made (a fused part), which has no plan of its own and takes the silhouette
+         * exactly as above. So the mechanism stays proven and stays used, on the narrower set.
+         *
          * It is deliberately **not** filled by the ordinary boolean tools: giving them a plan is OP-22's
          * decision to make and would change what every cross-axis boolean draws today (see
          * `BooleanCrossSpaceTest`, which pins the miss). The field is here, the mechanism is proven, and the
@@ -427,6 +432,45 @@ sealed interface Feature3 {
             get() =
                 sections.any { s -> s is LoftSection.Area && s.sketch.regions.any { curvedBoundary(it) } } ||
                     guides.any { g -> g.pieces.any { it !is ProfileElement.Seg } }
+    }
+
+    /**
+     * A **dress-up feature**: [base] with a [kind] blend of [size] run along the edges [targets] names
+     * (session 71, slice 3 — see [Blend3] for the construction and DESIGN.md for the ledger).
+     *
+     * **What makes it a feature of its own rather than the mesh boolean slice 2 left behind**: its face
+     * list *extends* the base's. Every face of [base] keeps its **index** and gets its outline corrected
+     * where the blend consumed one of its edges; one band is appended per blended edge, the way an
+     * extrusion's caps append after its sides. So a dressed part still answers *sketch on this face*,
+     * still offers a working plane's section its structural inputs, and still refuses by name where the
+     * base did — none of which a `MeshBoolean` can do (OP-9's sink rule). See [Section3.faces] and
+     * [Section3.edges], both of which delegate here.
+     *
+     * **It wraps a feature, not a solid, and that is what keeps it pure.** `(base, targets, kind, size,
+     * choices)` is enough to rebuild the identical body — the base's own mesh, the wedge swept along each
+     * edge, the boolean — so [Solid3]'s "the mesh is a pure function of the feature" holds verbatim and a
+     * reload derives the same triangles from the same numbers. [choices] are the discrete signs the
+     * gesture scored once and the step restates (OP-1/OP-18); nothing here is re-scored.
+     *
+     * **The mesh is still slice 2's sweep-and-boolean** and deliberately so (the decision is recorded in
+     * DESIGN.md with its alternative): the mesh is a *sink*, so answering faces analytically while the
+     * triangles come off the same route costs no honesty and no second emitter to keep in step.
+     *
+     * [footprint] is the **base's**, not a silhouette of the triangles: a blend is a dressing, so the plan
+     * it draws and is picked by is the plan of the body it dresses — which is analytic, free, and does not
+     * force the mesh (slice 2's `MeshBoolean.plan` had to build one, since a mesh boolean has no other
+     * reading of itself). What it costs is stated: a blend that rounds an **upright** rounds the plan
+     * outline too, and the hint still shows the base's sharp corner.
+     */
+    data class Blend(
+        val base: Feature3,
+        /** Which of the base's edges are blended — indices into [Section3.edges] of [base], in order. */
+        val targets: List<Int>,
+        val kind: BlendKind,
+        val size: Double,
+        val choices: List<BlendChoice>,
+    ) : Feature3 {
+        override val footprint: List<Region> get() = base.footprint
     }
 }
 
@@ -2414,6 +2458,10 @@ object Geom3 {
             is Feature3.Loft -> null to NOT_PRISMATIC
             // A sweep's axis is a curve, so there is no one direction to stack slabs along at all (OP-26).
             is Feature3.Sweep -> null to NOT_PRISMATIC
+            // A blend's walls are rounded, so it is not a stack of slabs however prismatic its base was —
+            // refused rather than approximated by the base, which would silently give the exact algebra a
+            // body that is not the body (OP-22's dispatch is a *predicate*, and it must not lie).
+            is Feature3.Blend -> null to NOT_PRISMATIC
             is Feature3.Extrusion -> oneSlab(feature, tolMm)
         }
 
@@ -2445,6 +2493,11 @@ object Geom3 {
             is Feature3.Imported -> null
             is Feature3.Loft -> null
             is Feature3.Sweep -> null
+            // Null and **not** the base's plane: this predicate decides whether the exact algebra runs, and
+            // a blend has no prismatic reading to run it on ([prismatic] refuses it). Naming an axis here
+            // would send a blended body down a path that then declines — and the exact path's refusals are
+            // never retried on the mesh engine, by design ([combine]).
+            is Feature3.Blend -> null
         }
 
     private fun oneSlab(
@@ -2950,6 +3003,12 @@ object Geom3 {
             // frames are the moving frame's at each end — which for a closed path do not exist at all — so
             // naming one TOP would invent a convention. A datum plane reaches either of them.
             is Feature3.Sweep -> null to "a swept solid has no top or bottom face — put a datum plane where you want to sketch"
+            // **The dressed part keeps its named faces** (session 71, slice 3): a blend does not move a face's
+            // plane, it trims the face's outline, so `TOP` of a filleted plate is the plate's own top face and
+            // a boss sketched on it before the fillet is on it after. That is the whole point of the feature
+            // case — a `MeshBoolean` refused here, and everything anchored on a face died when a blend was
+            // added. The outline is corrected where a sketch reads one ([Section3.facePatchOfFootprintPiece]).
+            is Feature3.Blend -> facePlane(feature.base, which)
         }
 
     // ---- side faces: the planar faces a boundary piece sweeps (OP-8 provenance, OP-17's frame) ----
@@ -3001,6 +3060,14 @@ object Geom3 {
             is Feature3.Imported -> null
             is Feature3.Loft -> null
             is Feature3.Sweep -> null
+            // **The base's span**, and only for [sideFace]'s question, which is *which plane a face is*: a
+            // blend does not move a face, it trims it, so the frame a sketch on a dressed part's side face
+            // is measured in must be the very frame it was measured in before (OP-18 — a stored
+            // `sketchspace el= piece=` may not change meaning). What the blend *did* take off that face is
+            // in the dressed outline ([Section3.faces]), which is where a boundary belongs; it is
+            // deliberately not here, because the one thing that must not follow from this is a *prismatic*
+            // reading of a rounded body — [prismatic] refuses one and this is not asked for it.
+            is Feature3.Blend -> prismSpan(feature.base)
         }
 
     /**
@@ -3158,6 +3225,15 @@ object Geom3 {
             // *path*, which a horizontal cut is not — the station of OP-26's step 4 is where that lives.
             is Feature3.Sweep ->
                 return null to "a swept solid has no prismatic cross-section, because its axis is a curve; sectioning one needs an analytic sweep section (OP-26)"
+            // A **horizontal** cut of a blended body is not one of the base's slabs: the blend rounds the
+            // walls, so the area at a height inside the rounding is not the base's area there. Refused by
+            // name rather than answered with the base's — a working plane's section (`Section3.sectionOf`)
+            // is the exact reading that does work on a dressed part, and it says so.
+            is Feature3.Blend ->
+                return null to
+                    "this solid is a blended body, so its horizontal cross-section is not one of the base's slabs — " +
+                    "the rounding changes the area through the blend; cut it with a working plane instead, " +
+                    "whose section of a dressed part is exact and offers inputs"
             is Feature3.Extrusion -> {
                 plane = feature.sketch.plane
                 // [Slab] is borrowed here as a plain (interval, areas) carrier and never escapes this

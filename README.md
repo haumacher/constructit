@@ -338,6 +338,28 @@ typing that number closes it. Everything else is what any solid gets: it shows i
 click in plan, unions and subtracts with the parts around it, exports to every format, and one undo takes the
 whole gesture back.
 
+**Breaking an edge of a solid — the 2D fillet, one dimension up.** *Fillet edge* and *Chamfer edge* take a
+radius (or a setback) and one click on a body near the edge you want broken; *Fillet the edges of a face* and
+*Chamfer the edges of a face* take one click **on** a face and break its whole boundary in one gesture — the
+two flat ends of an outline revolved less than a full turn, the rim of a plate, the eight pieces of a rounded
+rectangle's rim, with no crack where the boundary runs on smoothly from one piece to the next. It is the same
+construction the 2D *Fillet* tool is, run in the plane square to the edge and carried along it: which is why
+"fillet the outline first" was never a different feature, and why an inside corner is **filled in** rather
+than cut away by the same arithmetic with the other sign. The size stays an ordinary parameter — retype it and
+the body re-rounds, feed one parameter to several blends and they stay equal *by construction* — and it takes
+an expression like any other scalar, so a radius of `d/4` follows `d`.
+
+The result is a body with a **face list of its own**: the part's faces are still there, still named, with the
+rounding's own band added — so you can sketch on a rounded part's face, drill a *Cut* from it, and click the
+edges and corners of a working plane's section of it as construction inputs, none of which a plain mesh result
+could offer. Blends chain: round one edge, fuse a pad on, chamfer another, and it is one part throughout. What
+it declines, it declines by name and heals: a radius that reaches past one of the two faces says so *and names
+the largest that fits*, so the message is a number to type; a chamfer whose leg is curved in section points at
+the fillet; an edge whose shape changes along it (a turned cap edge over a slanted piece) is named as the
+future extension it is. Two limits are stated rather than hidden: a corner where three or more broken edges
+meet stays sharp, and a blend applied to a body that was **fused** with another one is a mesh body — it draws,
+measures, prints and exports, and its section offers no inputs.
+
 **A helix — a spring, a coil, the path a thread runs on.** *Helix (centre, start point, right-hand)* and its
 left-hand twin take a rise per turn and — if you want more than one — a number of turns, then two clicks: the
 point the axis stands on, and the point the coil **starts** at. Those two clicks state the radius *and* where

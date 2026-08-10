@@ -284,8 +284,14 @@ object Revolve3 {
         return out to null
     }
 
-    /** One band as a face: a plane where the family is a flat one, and a named non-plane otherwise. */
-    private fun bandPatch(
+    /**
+     * One band as a face: a plane where the family is a flat one, and a named non-plane otherwise.
+     *
+     * `internal` since session 71 slice 3: an **edge blend's band along a circular edge** is exactly this —
+     * the blend's own section curve turned about the edge's axis — so it is named through this one sentence
+     * rather than through a second copy of it ([Blend3]).
+     */
+    internal fun bandPatch(
         f: Frame,
         e: ProfileElement,
         name: FaceName,
@@ -562,6 +568,22 @@ object Revolve3 {
     ): BandCut? {
         val f = frameOf(feature) ?: return null
         val e = Geom3.boundaryPieces(feature).getOrNull(piece) ?: return null
+        return cutBandOf(f, e, cut)
+    }
+
+    /**
+     * The table above, asked of a **frame and a profile piece** rather than of a feature and an index.
+     *
+     * `internal` and factored out in session 71 slice 3 for the one other thing in this drawing that is a
+     * surface of revolution: an **edge blend's band along a circular edge** ([Blend3]) — the blend's own
+     * section curve turned about the edge's own axis. It gets the whole table, meridian column included,
+     * rather than a second and weaker reading of the same surfaces.
+     */
+    internal fun cutBandOf(
+        f: Frame,
+        e: ProfileElement,
+        cut: Plane3,
+    ): BandCut? {
         val band = bandOf(f, e)
         if (band is Band.Degenerate) return BandCut(emptyList(), null)
         val n = cut.normal.normalized()
