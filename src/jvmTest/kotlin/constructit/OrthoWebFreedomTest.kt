@@ -295,10 +295,19 @@ attachortho e15 e7
         assertClose(at(ed, 1, 2).y, 27.0, 1e-9, "and the far end still on the bottom wall")
     }
 
-    /** The fixture itself replays to itself: nothing here depends on a load-time repair. */
+    /**
+     * The fixture itself replays to itself: nothing here depends on a load-time repair.
+     *
+     * Its four `attachortho` steps each gain the one argument they did not carry — the **position along the
+     * host** the meeting owns, restated (session 63's creep closed). Every number the file already had is
+     * untouched, which is the whole of what "replays to itself" claims here, and the second assertion is the
+     * property the restatement bought: byte-equal from the first save on, with no drift to settle.
+     */
     @Test
     fun theReportedFixtureRoundTrips() {
         val ed = load()
-        assertEquals(atThisVersion(web), DocumentFormat.save(ed.doc), "the file must replay to itself")
+        val once = DocumentFormat.save(ed.doc)
+        assertEquals(atThisVersion(web), withoutRestatedAttach(once), "the file must replay to itself")
+        assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and be a fixed point from that save on")
     }
 }

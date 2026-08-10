@@ -11,6 +11,7 @@ import constructit.dsl.line
 import constructit.dsl.point
 import constructit.dsl.scalar
 import constructit.dsl.segment
+import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.Element
 import constructit.editor.ElementKind
@@ -23,6 +24,7 @@ import constructit.units.mm
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -34,6 +36,16 @@ class EditorTest {
         val s = camera.worldToScreen(world)
         pointerDown(s)
         pointerUp(s)
+    }
+
+    /** Grab what is at [from] and let it go at [to] — one drag, in world coordinates. */
+    private fun Editor.dragWorld(
+        from: Vec2,
+        to: Vec2,
+    ) {
+        pointerDown(camera.worldToScreen(from))
+        pointerMove(camera.worldToScreen(to))
+        pointerUp(camera.worldToScreen(to))
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -2171,6 +2183,69 @@ class EditorTest {
         val pf = Evaluator().point(p.ref as constructit.dsl.PointRef)
         assertClose(pf.y, 0.0)
         assertClose(pf.x, -20.0)
+    }
+
+    /**
+     * **A point slid along the curve it was attached to comes back exactly where it was left** — on a slanted
+     * host, where the parameter is a distance along the carrier and nothing else in the drawing can pin it.
+     *
+     * The reason this is worth its own test: the position used to travel through the *point's* restated
+     * coordinates, which replay projected back onto the host — so what came back was the projection of a
+     * projection, right to about 1e-13 mm and never exact (session 63's creep). The `attach` step restates the
+     * rider's own parameter now, so this is bit-for-bit, and the round trip is a fixed point on the first save.
+     */
+    @Test
+    fun aPointSlidAlongItsHostReloadsExactlyWhereItWasLeft() {
+        val ed = Editor()
+        ed.setTool(Tools.LINE)
+        ed.click(Vec2(-40.0, -17.0))
+        ed.click(Vec2(43.0, 29.0)) // a slanted host: the parameter is a distance along it
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(0.0, 40.0))
+        val p = ed.doc.freePoints.last()
+        ed.setTool(Tools.SELECT)
+        ed.dragWorld(Vec2(0.0, 40.0), Vec2(0.0, 5.0)) // onto the line: attach
+        assertEquals(ElementKind.ON_CURVE, p.kind, "it rides the line now: ${ed.statusHint}")
+        ed.dragWorld(Vec2(0.0, 5.0), Vec2(25.0, 19.0)) // and slid along it, well away from where it landed
+        val slid = Evaluator().point(p.ref as constructit.dsl.PointRef)
+
+        val text = DocumentFormat.save(ed.doc)
+        assertTrue(text.lines().any { it.startsWith("attach ") && it.contains("dofs=") }, "the attach states where it sits:\n$text")
+        assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal on the first pass")
+        val back = DocumentFormat.load(text)
+        val there = Evaluator().point(back.elements.first { it.kind == ElementKind.ON_CURVE }.ref as constructit.dsl.PointRef)
+        assertEquals(slid.x, there.x, "the reloaded rider is where it was left, to the last bit in x")
+        assertEquals(slid.y, there.y, "…and in y")
+    }
+
+    /**
+     * **The same rule on a circle, where the parameter is an angle** — one rule, three dimensions of stored
+     * freedom, and the dimension is what decides whether a stored number belongs to the parameter at all
+     * (`Document.restateDof`). Slid a third of the way round and reloaded bit for bit.
+     */
+    @Test
+    fun aPointAttachedToACircleRestatesItsAngleAndReloadsExactly() {
+        val ed = Editor()
+        ed.setTool(Tools.CIRCLE)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(50.0, 0.0))
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(0.0, 70.0))
+        val p = ed.doc.freePoints.last()
+        ed.setTool(Tools.SELECT)
+        ed.dragWorld(Vec2(0.0, 70.0), Vec2(2.0, 48.0)) // onto the rim: attach
+        assertEquals(ElementKind.ON_CURVE, p.kind, "it rides the circle: ${ed.statusHint}")
+        ed.dragWorld(Vec2(2.0, 48.0), Vec2(-35.0, -35.0)) // and round to the third quadrant
+        val slid = Evaluator().point(p.ref as constructit.dsl.PointRef)
+
+        val text = DocumentFormat.save(ed.doc)
+        val step = assertNotNull(text.lines().firstOrNull { it.startsWith("attach ") }, "the attach step:\n$text")
+        assertTrue(step.contains("dofs=") && step.endsWith("deg"), "an angle about the centre, in degrees: $step")
+        assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal on the first pass")
+        val back = DocumentFormat.load(text)
+        val there = Evaluator().point(back.elements.first { it.kind == ElementKind.ON_CURVE }.ref as constructit.dsl.PointRef)
+        assertEquals(slid.x, there.x, "the reloaded rider is where it was left, to the last bit in x")
+        assertEquals(slid.y, there.y, "…and in y")
     }
 
     /**

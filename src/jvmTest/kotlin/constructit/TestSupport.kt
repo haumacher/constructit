@@ -122,6 +122,20 @@ fun atThisVersion(text: String): String =
     text.replaceFirst(Regex("^constructit \\d+"), "constructit ${DocumentFormat.VERSION}")
 
 /**
+ * [text] with the freedom an `attach` / `attachortho` step **restates** taken off again — `attach e6 e5
+ * dofs=12mm` read back as `attach e6 e5`.
+ *
+ * What it is for: since session 63's creep was closed those two steps restate the rider's (or the junction's)
+ * own position along its host, exactly as `pointoncurve` always has. A fixture written before that argument
+ * existed is therefore byte-equal to its own save **but for** that one addition — and a test that says so
+ * should say exactly that, rather than embedding the number, which is geometry the drawing owns and not
+ * something a fixture's text should have to predict. What every such test asserts *beside* this is the property
+ * the fix bought: from that first save on, the text is a fixed point (OP-18).
+ */
+fun withoutRestatedAttach(text: String): String =
+    text.lines().joinToString("\n") { if (it.startsWith("attach")) it.substringBefore(" dofs=") else it }
+
+/**
  * SVG golden support. On first run (file missing) the golden is written and the check passes;
  * commit the file after inspection. Subsequent runs assert byte-equality (canonical serializer).
  * Delete the file to regenerate.

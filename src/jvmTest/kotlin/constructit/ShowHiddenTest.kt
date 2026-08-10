@@ -310,7 +310,13 @@ class ShowHiddenTest {
     fun theUsersPillarFindsItsHiddenConstructionAgain() {
         val ed = Editor()
         ed.replaceDocument(DocumentFormat.load(LiftedRunTest.ROUND_PILLAR_CIT))
-        assertEquals(atThisVersion(LiftedRunTest.ROUND_PILLAR_CIT), DocumentFormat.save(ed.doc), "the fixture round trips as it came")
+        // as it came, but for the freedom its `attachortho` step now restates — see
+        // [LiftedRunTest.theUsersFileLoadsCleanAndRoundTripsByteEqual], which owns that story
+        assertEquals(
+            atThisVersion(LiftedRunTest.ROUND_PILLAR_CIT),
+            withoutRestatedAttach(DocumentFormat.save(ed.doc)),
+            "the fixture round trips as it came",
+        )
 
         ed.showHidden = true
         val ghosts = ed.ghostElements()

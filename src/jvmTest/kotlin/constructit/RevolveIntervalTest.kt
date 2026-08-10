@@ -643,7 +643,56 @@ class RevolveIntervalTest {
         }
     }
 
-    /** The fixture's profile `e28` revolved about its axis `e29` again, with a stated interval. */
+    /**
+     * **The workaround retired**: the user's own straddle stated by *typing* `-15` into the revolve gesture, and
+     * it builds the very body the panel detour builds — the same interval, the same volume, the same vertices.
+     *
+     * This is what session 63 queued ("the number pad takes no sign"): the offset had to be typed positive and
+     * then negated in the panel, because the entry took digits and a dot. It takes a sign now, as one rule for
+     * every scalar slot, so the gesture the tool's own help describes — *"a second number for the offset it
+     * starts at, so the body can straddle the drawing"* — is finally a gesture and not a two-step detour.
+     */
+    @Test
+    fun theSameStraddleIsStatedByTypingTheSignIntoTheGesture() {
+        val byPanel = revolvedHandle(Editor(DocumentFormat.load(ChainCutFixture.CIT)), sweepDeg = 30.0, offsetDeg = -15.0)
+        val ed = Editor(DocumentFormat.load(ChainCutFixture.CIT))
+        val byTyping = revolvedHandleTyped(ed, sweepDeg = 30.0, offsetDeg = -15.0)
+
+        assertEquals(featureOf(byPanel).turn, featureOf(byTyping).turn, "the same interval, stated the other way")
+        val mesh = meshOf(byTyping)
+        assertManifold(mesh, "the typed straddle")
+        assertClose(Geom3.volume(mesh), Geom3.volume(meshOf(byPanel)), 1e-9, msg = "the same body by volume")
+        for (v in meshOf(byPanel).vertices) {
+            assertTrue(mesh.vertices.any { (it - v).length() < 1e-9 }, "every vertex of the panel-stated body is in the typed one: $v")
+        }
+        val span = planAngleSpan(mesh)
+        assertClose(span.first, -15.0, 1e-9, msg = "15° clockwise in plan")
+        assertClose(span.second, 15.0, 1e-9, msg = "...and 15° the other way: it straddles the drawing")
+
+        // …and the number that did it is an ordinary parameter, negative, in the file — printed to the last
+        // digit of the radian it is stored as, exactly as the user's own hand-set `angle4 = −15°` is
+        val text = DocumentFormat.save(ed.doc)
+        val row = assertNotNull(text.lines().firstOrNull { it.startsWith("param \"offset\" = ") }, "the typed offset is a parameter:\n$text")
+        assertClose(row.removePrefix("param \"offset\" = ").removeSuffix("deg").toDouble(), -15.0, 1e-9, msg = "…and it is negative fifteen")
+        assertTrue(
+            text.lines().any { it.startsWith("tool revolve") && it.contains("scalar=\"angle5\",\"offset\"") },
+            "the gesture consumed both typed numbers, in order:\n$text",
+        )
+        assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
+    }
+
+    /**
+     * The fixture's profile `e28` revolved about its axis `e29` again, with a stated interval — **through the
+     * panel**: the magnitudes are typed and the signs are then written onto the two parameters, which is where
+     * a value stated by hand lives (OP-7).
+     *
+     * It was once the *only* route to a negative number, and the sentence that stood here said so: *"a negative
+     * number cannot be typed anywhere in this program (the pad takes digits and a dot), so it is stated where
+     * every negative number is stated: as the parameter's own value in the panel"*. That is retired — the entry
+     * takes a minus sign now, program-wide — and this detour stays exactly as it was, as a test that a **panel**
+     * parameter reaches the interval. [revolvedHandleTyped] is the same body stated the other way, and
+     * [theSameStraddleIsStatedByTypingTheSignIntoTheGesture] asserts the two agree.
+     */
     private fun revolvedHandle(
         ed: Editor,
         sweepDeg: Double,
@@ -656,12 +705,28 @@ class RevolveIntervalTest {
         ed.click(Vec2(84.9038970502295, 4.076096924511516))
         ed.click(Vec2(-13.262378894393418, 27.726098394917802))
         val made = ed.doc.elements.last { it.kind == ElementKind.SOLID }
-        // a negative number cannot be *typed* anywhere in this program (the pad takes digits and a dot), so
-        // it is stated where every negative number is stated: as the parameter's own value in the panel
         if (offsetDeg < 0) ed.doc.setParameter(paramNamed(ed, "offset"), offsetDeg.deg)
         if (sweepDeg < 0) ed.doc.setParameter(paramNamed(ed, "angle"), sweepDeg.deg)
         return made
     }
+
+    /** The very same handle, with **both signs typed straight into the gesture** — no panel edit anywhere. */
+    private fun revolvedHandleTyped(
+        ed: Editor,
+        sweepDeg: Double,
+        offsetDeg: Double,
+    ): Element {
+        ed.setActiveSpace("plane1")
+        ed.setTool(Tools.REVOLVE)
+        ed.type(signed(sweepDeg))
+        ed.type(signed(offsetDeg))
+        ed.click(Vec2(84.9038970502295, 4.076096924511516))
+        ed.click(Vec2(-13.262378894393418, 27.726098394917802))
+        return ed.doc.elements.last { it.kind == ElementKind.SOLID }
+    }
+
+    /** `-15.0` as the pad takes it: the sign key, then the digits. */
+    private fun signed(deg: Double): String = (if (deg < 0) "-" else "") + abs(deg)
 
     private fun paramNamed(
         ed: Editor,

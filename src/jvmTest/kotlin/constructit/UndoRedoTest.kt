@@ -253,10 +253,17 @@ class UndoRedoTest {
     }
 
     /**
-     * A drawing whose file **restates a derived position**: `e6` is `attach`ed to the rotated line `e5`, so
-     * the file writes the current foot of the perpendicular and re-deriving it on load can land a ULP away.
-     * Ten lines, no solid, no tool of any interest — the point is only that `save ∘ load` is not the identity
-     * here, which is the condition the tests below are about.
+     * A drawing whose file **restates a derived position**: `e6` is `attach`ed to the rotated line `e5`, so the
+     * file writes the current foot of the perpendicular. Ten lines, no solid, no tool of any interest — the
+     * point is only that this *text* is not what its own document saves to, which is the condition the test
+     * below is about.
+     *
+     * Kept at format 2 and kept verbatim, and it now says two things at once. The ULP drift it was chosen for is
+     * **gone** (session 63's creep, closed: the `attach` step restates the rider's own parameter, so the
+     * derivation reproduces what was written), and this file still loads to a document that saves to something
+     * else — the version line, and the `dofs=` its attach step did not carry. That is the same condition, from
+     * the direction that will always exist: a stored file is a *file*, and what a document saves to is the
+     * document's own answer. Which is exactly the distinction the baseline had to learn.
      */
     private val RESTATED_POSITION_CIT =
         """constructit 2
@@ -289,10 +296,13 @@ attach e6 e5
     @Test
     fun everyGesturePeelsInItsOwnUndoOnADrawingThatRestatesAPosition() {
         val ed = Editor(DocumentFormat.load(RESTATED_POSITION_CIT))
+        val once = DocumentFormat.save(ed.doc)
         assertTrue(
-            DocumentFormat.save(ed.doc) != DocumentFormat.save(DocumentFormat.load(DocumentFormat.save(ed.doc))),
-            "this drawing is the interesting kind: its save is not a fixed point",
+            once != RESTATED_POSITION_CIT,
+            "this drawing is the interesting kind: the text it was loaded from is not what it saves to",
         )
+        // …and the drift that used to be the reason is gone: from its own save on, the text is a fixed point
+        assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "no ULP creep is left to settle")
         val segments = { ed.doc.elements.count { it.kind == ElementKind.SEGMENT } }
         val journal = { ed.doc.journal.size }
 

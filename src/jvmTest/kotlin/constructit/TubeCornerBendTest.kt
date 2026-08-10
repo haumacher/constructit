@@ -185,10 +185,15 @@ attach e9 e19
      * …and the refused drawing still saves, reloads and **refuses in the same words** (OP-18): a refusal is a
      * property of the values, so a body nobody can build is still a drawing with every step in it.
      *
-     * Byte equality is deliberately *not* claimed here and the reason is not this fix: the script ends with
+     * **Byte equality is claimed now**, and the sentence that stood here is retired with its own history: it
+     * read *"byte equality is deliberately not claimed here and the reason is not this fix: the script ends with
      * `attach e9 e19`, so that point's coordinates are recomputed on load and drift by one unit in the last
-     * place each time round — the ULP-creep item parked in DESIGN.md's small batch, visible on any drawing
-     * with an attachment in it. What is asserted instead is everything that is about *this* fixture.
+     * place each time round — the ULP-creep item parked in DESIGN.md's small batch"*. That item is closed. The
+     * `attach` step restates the rider's own parameter, so the position it derives on load is bit-identical to
+     * the one that was written and there is no drift left to settle. The fixture is a file written before that
+     * argument existed, so its **first** save adds it — and re-derives the stored foot one last time, which is
+     * the only number in the whole drawing that moves and moves by 1e-14 mm. From that save on the text is a
+     * fixed point, which is exactly the claim declined before.
      */
     @Test
     fun theRefusedDrawingStillRoundTrips() {
@@ -197,6 +202,27 @@ attach e9 e19
         assertTrue(once.lines().any { it.startsWith("tool tube") }, "the refused tube is in the file: $once")
         val again = DocumentFormat.load(once)
         assertEquals(refusalOf(doc), refusalOf(again), "the reloaded drawing refuses in the same words")
+        assertEquals(once, DocumentFormat.save(again), "…and writes itself back byte for byte, attachment and all")
+        val moved = script.lines().zip(once.lines()).filter { it.first != it.second }
+        assertEquals(
+            listOf("attach e9 e19", "point 12.442618571818494,22.357698716930418 -> e9"),
+            moved.map { it.first }.sortedBy { it.first() },
+            "the first save touches the attach — which now states its freedom — and the foot it re-derived once",
+        )
+        assertTrue(moved.single { it.first.startsWith("attach") }.second.startsWith("attach e9 e19 dofs="), "$once")
+
+        // **and the stored file still means what it meant.** The claim the fix owes a file written by an
+        // earlier build: `e9` comes back where that file put it — the recorded position itself, since a script
+        // with no `dofs=` still places the rider by projecting it (OP-18). Asserted against the literal in the
+        // paste above, so no golden from another build is needed to make the statement.
+        for (d in listOf(doc, again)) {
+            val e9 = d.elements.first { d.nameOf(it) == "e9" }
+            val at = ((Evaluator().eval(e9.ref.node) as EvalResult.Ok).value as constructit.core.PointValue).p
+            assertTrue(
+                (at - constructit.geom.Vec2(12.442618571818494, 22.357698716930418)).length() < 1e-9,
+                "the file's own attached point is where the file says, to a nanometre: $at",
+            )
+        }
     }
 
     /**

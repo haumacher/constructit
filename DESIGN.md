@@ -1681,6 +1681,12 @@ literal that was not restated, and any drift in naming, in one assertion.
   step has restated its own parameter since session 9; the point-on-line and point-on-circle **tools** now do
   the same through `dofs=`, so there is one rule and no special case. Old files keep loading: with no `dofs=`
   the click places the rider exactly as it always did.
+  **Session 73 closed the last two exceptions**, and they were the routes that make a rider out of geometry that
+  already exists: `attach` and `attachortho` restated *nothing* and re-derived the parameter by projecting the
+  point's own restated position — which is derived geometry once the point rides the curve, so the projection
+  read its own output and the last digit moved on every save. Both now carry `dofs=` (see *the small batch, as
+  built* in the queue), which is what makes the round trip a fixed point on the **first** pass rather than the
+  fourth.
 
 ```
 constructit 2
@@ -4330,6 +4336,14 @@ from the geometry as it then stands, and the `place` step that follows re-does t
 geometry. So the reported file replays to the fixed behaviour untouched, and `save → load → save` stays
 byte-equal after a frame drag — which is the regression, carrying the user's script verbatim
 (`PlacedJunctionTest`).
+
+> **Amended in session 73**, and only in one clause: a junction still has no step of its own, but the
+> `attachortho` step that builds one now **restates its parameter** (`dofs=`) instead of letting replay
+> re-derive it from the corner's own restated position — which was derived *from the junction*, so the
+> re-derivation read its own output and drifted by a ULP per save (see *the small batch, as built* in the
+> queue). The sentence above was written about a *frame drag*, and that claim is untouched: the pre-rotation
+> correction a captured junction needs is the same one a captured rider has always had, and it is now written
+> once for both (`Document.unturned`).
 
 ### Implementation status (as built — a whole group as a tool *operand*)
 
@@ -13426,6 +13440,30 @@ the composition table is driven generically as well as by its own test.
   thirty-five kept with reasons about the gesture. New step forms only, so no version bump. **2232 → 2247
   green**, no golden moved; cuts recorded in the as-built note under OP-23, and the *group as a pattern's
   reference* half of that OP's parked note deliberately left parked.
+- **Session 73, queue item 3** — **The small batch**, queued in session 63 as *"the plan for the next session"*
+  and deferred by every session since. Two items, and the interesting one is the item this record **guessed
+  wrong**: the ULP save-creep was written down as *"the projection's own conditioning"* wanting to be made a
+  fixed point, and no conditioning can do that (`A + dir·(p·dir)` is not idempotent in binary floating point,
+  and the arithmetic is in the as-built note). What was actually wrong is a doctrine gap: *a rider's position
+  along its host is state, restated by the step that creates it* — the rule `pointoncurve` has followed since
+  session 9 — and the two routes that make a rider out of geometry that **already exists**, `attach` and
+  `attachortho`, restated nothing and re-derived the parameter by projecting the point's own restated position,
+  which is derived geometry the moment the point rides the curve. So the projection read its own output and the
+  last digit moved on every save. Both steps now carry `dofs=`; the derivation reads a number the file states
+  exactly and reproduces the written position **bit for bit**, so `save → load → save` is a fixed point on the
+  first pass and `TubeCornerBendTest` claims the byte equality it deliberately declined. The creep was never
+  attach-shaped — the ortho junction drifted the same way, two lines per pass — and one rule closes both. The
+  alternative (restate a *bound* node's own literal) is recorded as rejected: wider blast radius, and no help at
+  all for the ortho half. **No version bump**: `dofs=` here is an argument no earlier build wrote and its
+  absence still means what it always meant, so old files load bit-identical and gain it on their first save.
+  The second item is the **number pad's minus sign**, one rule beside the digits for every scalar slot in the
+  program: `-` **toggles** the sign of the number being typed, at any point in it (a keystroke that does nothing
+  is indistinguishable from one that never arrived), the status line names the route where a sign becomes
+  relevant, a **leg's** length refuses one out loud (its direction is the cursor's), and the pad **states**
+  values without policing them — a negative radius is still the circle node's own `non-positive radius`, and
+  retyping it positive heals it. `RevolveIntervalTest`'s panel detour stays as a test of panel parameters with
+  its workaround sentence retired and quoted, beside a new test that builds the user's own `offset −15°`
+  straddle by typing the sign into the gesture. **2252 → 2261 green**, no golden moved, nothing cut.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -15881,32 +15919,108 @@ deserves its own assertion that the swept and bent cases are untouched, and beca
 reached so far it is worth nothing (the reporting drawing's box grew from 17 mm to 56 mm). Stated at the call
 site in `Chains.ofLine`.
 
-**Queued in session 63 (found while building it, not reported): a restated derived position creeps by a ULP
-per save.** A point `attach`ed to a curve is written to the file as its **current value** — the foot of the
-perpendicular — and re-deriving that foot on load moves its last digit, so `save → load → save` is not a
-fixed point on the first pass. The drift is about 1e-13 mm and settles in four passes, and it touches nothing
-but that one line; but it is a restatement that does not reproduce itself exactly, which is a smaller cousin
-of the frozen-literal rule (OP-18) and worth closing rather than tolerating. Reproduced by
-`ChainCutReachTest.assertRoundTrips`, which pins both halves — only that line ever moves, and the text
-settles — so it cannot grow unnoticed. Not fixed here because the fix is in the projection's own conditioning
-rather than in anything this package touches, and a package that changes how a derived position is written is
-a format question of its own.
+**Queued in session 63, delivered in session 73: a restated derived position creeps by a ULP per save.**
+*Closed — see* **the small batch, as built** *below.* The entry said: a point `attach`ed to a curve is written
+to the file as its **current value** — the foot of the perpendicular — and re-deriving that foot on load moves
+its last digit, so `save → load → save` is not a fixed point on the first pass. The drift is about 1e-13 mm and
+settles in four passes, and it touches nothing but that one line; but it is a restatement that does not
+reproduce itself exactly, which is a smaller cousin of the frozen-literal rule (OP-18) and worth closing rather
+than tolerating. Reproduced by `ChainCutReachTest.assertRoundTrips`, which pinned both halves — only that line
+ever moves, and the text settles — so it could not grow unnoticed.
 
-**Queued in session 63 (a deliberate cut of the revolve package, promoted here so it is not lost): the
-number pad takes no sign.** The pad accepts digits and a dot, so a negative angle or offset — both first-class
-meanings since the signed revolve — can only be stated through a panel parameter (as the user's own
-`angle4 = −15°` is). Teach the scalar entry a minus sign **program-wide** (every `ang`/`len`/`num` slot, one
-rule, not a per-tool patch), with the boundary kept honest: a negative number where the *node* refuses one
-(an extrude depth, a radius) stays the node's refusal in the node's words — the pad states values, it does
-not police them. Recorded as a cut in *the revolve completed* (Turn 63); the sentence there stays as the
-history of why it waited.
+**Queued in session 63, delivered in session 73: the number pad takes no sign.** *Closed — see* **the small
+batch, as built** *below.* A deliberate cut of the revolve package, promoted to the queue so it was not lost.
+The pad accepted digits and a dot, so a negative angle or offset — both first-class meanings since the signed
+revolve — could only be stated through a panel parameter (as the user's own `angle4 = −15°` is). The charge was
+to teach the scalar entry a minus sign **program-wide** (every `ang`/`len`/`num` slot, one rule, not a per-tool
+patch), with the boundary kept honest: a negative number where the *node* refuses one (an extrude depth, a
+radius) stays the node's refusal in the node's words — the pad states values, it does not police them. Recorded
+as a cut in *the revolve completed* (Turn 63); the sentence there stays as the history of why it waited.
 
-**The plan for the next session: the two entries above are one small batch** — the creep's fix is the
-projection's own conditioning made a fixed point on first save (its dangerous consequence is already gone:
-the undo baseline no longer trusts `save ∘ load`, session 63's chain-cut note), and the sign is a
-scalar-entry change with tests on a signed offset typed straight into the revolve gesture. Both are
-regression-pinned already (`ChainCutReachTest.assertRoundTrips`; `RevolveIntervalTest`'s panel-parameter
-detour states the workaround it retires).
+### The small batch, as built (session 73 — the two entries above, closed)
+
+**One sentence for the creep, and it is not the one this record predicted.** The guess above was *"the fix is
+in the projection's own conditioning"* — make the projection reproduce its own output bit for bit. It cannot
+be done, and the arithmetic says why: the composed map is `A + dir·(p·dir)` with `A` the carrier's own anchor,
+and no rearrangement of it is exactly idempotent in binary floating point (`dir·dir` is not exactly 1, `A·dir`
+is not exactly 0, and `(A + x) − A` is not exactly `x`). Chasing exactness through a dot product would have
+been a fix that held for the fixture and drifted for the next drawing.
+
+**What was wrong is that two steps created a freedom and restated nothing.** *A rider's position along its host
+is state* — dragged, typed, compensated while the host turns — and every route that makes one restates it as
+`dofs=`: `pointoncurve` has since session 9, and `breakarc`, `breakellipse` and the rider-creating tools follow
+it. The two routes that turn geometry *that already exists* into a rider were the exception: **`attach`** (a
+free point dragged onto a curve) and **`attachortho`** (an ortho run's end landing on one). Replay re-derived
+their parameter by projecting the point's **own restated position** onto the host — and that position is
+*derived geometry* the moment the point rides the curve, so the projection was reading its own output. Both now
+restate the freedom they create (`attach e6 e5 dofs=43.03mm`, `attachortho e9 e8 dofs=46.75mm`), through one
+`Document.restateDof` seam and one `unturned` helper that both a rider's and a junction's restatement share
+(the pre-rotation correction a placed, turned group needs — OP-16 — was already written for riders and is now
+said once).
+
+So the load reads a number the file states exactly, the derivation from it is deterministic, and the position
+it produces is **bit-identical** to the one that was written: `save → load → save` is a fixed point on the
+**first** pass. And the creep was never attach-shaped — the ortho junction drifted the same way, in two lines
+per pass, which is the second half of the item and is closed by the same rule rather than by a second patch.
+
+**No stored file changed meaning, and no version bump is owed** (OP-18's own test): `dofs=` on these two steps
+is an argument no earlier build ever wrote, and its **absence** still means *"re-derive it from the recorded
+position"*, which is exactly what such a file always meant. A file written by the previous build therefore
+loads to bit-identical geometry, gains the argument on its first save, and is a fixed point from that save on.
+`TubeCornerBendTest.theRefusedDrawingStillRoundTrips` now **claims the byte equality it deliberately declined**
+— its comment quotes the retired sentence — and pins the two lines that first save touches: the attach, and
+the stored foot re-derived one last time (1e-14 mm).
+
+**The alternative rejected, and it was close.** *Restate a bound source node's own literal* rather than the
+value that drives it — a general rule with its own precedent (`relativeDofs` already reads the literal for a
+re-welded point) which would additionally stop the old fixtures' `point` line moving at all. Rejected because
+it buys that one line at the price of a much wider blast radius (every welded point's restated position changes
+too, in every file this build writes), and because it does **nothing** for the ortho half, whose corners are
+derived through a junction and hold no literal — so the asymmetry would be paid for and the creep only
+half-closed. The rule that closes both is the one above.
+
+**The sign: `-` is a toggle on the number being typed, at any point in it.** One rule in `Editor.key`, beside
+the digits, for every scalar slot in the program — an empty entry starts a negative number, a number in the
+entry is negated, and pressing `-` again takes the sign off. **Toggling rather than refusing** because both
+orders are natural (*"−15"*, and *"15 — make that negative"*), and because a keystroke that does nothing is
+indistinguishable from a keystroke that never arrived. Three consequences, each stated where it belongs:
+
+- **The status line names the route**, and names it where a sign becomes relevant — with a number already in
+  the entry (`radius = -15 mm — click to use it (or press Enter), - again for positive, Esc to cancel`), never
+  on the arming line, which would carry the clause for every tool whether a sign means anything for it or not.
+  A sign with no digits yet is not a value, so the prompt says *"radius: negative — now the digits"* instead of
+  printing `= - mm`.
+- **A leg's length takes no sign, out loud.** While a path is being drawn the click states the endpoint, so the
+  direction is the one the cursor points in and a negative length would contradict the very gesture that places
+  it — the leg rule session 55 left deliberately untouched. The key is refused *with a sentence*, never
+  swallowed.
+- **The pad states values; it does not police them.** A negative radius is a typeable number and an impossible
+  circle: the parameter is created exactly as typed and the *node* refuses, in its own words (`non-positive
+  radius`), transitively (OP-3) — and retyping it positive heals the very same circle. A bare `-` is not a
+  number yet and says so, which is the boundary a bare `.` already had.
+
+The pad was the only place a negative could not be stated: the panel's value fields have always taken one, and
+the tools' own help already promised what the pad refused (*"a negative one sweeps the other way"*, *"a negative
+angle swaps them"*). `RevolveIntervalTest`'s panel-parameter detour **stays**, as a test that a panel parameter
+reaches the interval, with the sentence that made it a workaround retired and quoted; beside it,
+`theSameStraddleIsStatedByTypingTheSignIntoTheGesture` builds the user's own `offset −15°, sweep 30°` straddle
+by typing the sign into the gesture and asserts the two bodies agree vertex for vertex.
+
+**Regressions.** `ChainCutReachTest.assertRoundTrips` asserts the first-pass fixed point (and byte equality
+with no exceptions for any text this build wrote); two in `EditorTest` for what the restatement actually buys —
+a point **slid along** its host after the attach reloads bit for bit, on a slanted line (a distance) and round a
+circle (an angle), where before the position travelled through the point's coordinates and came back as the
+projection of a projection; `TubeCornerBendTest.theRefusedDrawingStillRoundTrips`;
+`OrthoWebFreedomTest.theReportedFixtureRoundTrips` and `LiftedRunTest.theUsersFileLoadsCleanAndRoundTripsByteEqual`
+(both fixtures gain the argument and nothing else — `withoutRestatedAttach` in `TestSupport` says exactly that
+once, for all of them); `UndoRedoTest.everyGesturePeelsInItsOwnUndoOnADrawingThatRestatesAPosition`, whose
+precondition is restated as what it was always about — *the text a document was loaded from is not what the
+document saves to* — since the drift it used to lean on is gone. For the sign: `TypedScalarTest`'s six new
+tests, including a **sweep of the whole tool table** (`everyScalarSlotInTheRegistryTakesASignedNumber`: every
+tool in the registry that takes a scalar at all — 45 of them — states `-12` in that slot's own dimension) so no
+tool can be given a scalar the pad cannot sign, and one in the browser
+(`BrowserE2ETest.buildAndDragInBrowser` types `-90` into a real *Rotate*, which is the one thing only a real
+keydown seam can vouch for). **2252 → 2261 green**, no golden moved.
 
 **Queued and delivered in session 71 (user-directed): 3D edge blends — the 2D fillet, one dimension up.**
 *All three slices shipped; this entry is closed — see the three as-built notes below it.* The session-37
@@ -16756,10 +16870,11 @@ trips; one undo per gesture.
 **Queued in session 71, the order confirmed by the user — what this session's own machinery un-parks.**
 After the bug batch and the pattern entry above, in this order:
 
-3. **The small batch, at last** — the ULP save-creep fix and the number pad's minus sign, queued in
-   session 63 as "the plan for the next session" and deferred by every session since. Both are
-   regression-pinned already (`ChainCutReachTest.assertRoundTrips`; `RevolveIntervalTest`'s
-   panel-parameter detour); nothing about them changed except that their turn has come.
+3. **The small batch, at last — done, session 73.** The ULP save-creep fix and the number pad's minus sign,
+   queued in session 63 as "the plan for the next session" and deferred by every session since. Both are
+   closed: see *the small batch, as built* under the two session-63 entries above, which records the fix that
+   was **not** the one predicted (the creep was two steps restating no freedom, not a projection wanting
+   better conditioning) and the interaction the sign settled on (`-` toggles the number being typed).
 4. **Edit-in-3D slice 2 — click-a-face working-plane selection, and what it un-parks.** The entry has
    waited since session 21 on one thing: *naming a face durably*, the half of the *Manifold face-ID
    provenance* item session 63 left parked. The blends built that machinery for every analytic feature:

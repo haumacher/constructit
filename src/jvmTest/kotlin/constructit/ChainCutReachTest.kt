@@ -191,27 +191,39 @@ class ChainCutReachTest {
     }
 
     /**
-     * `save → load → save` leaves [text] alone **except** for the one line that is a restated derived
-     * position, and reaches a fixed point.
+     * **`save → load → save` is a fixed point on the FIRST pass** — and, where [text] is the user's own
+     * pre-package paste, leaves every line alone but the three named below.
      *
-     * `e40` is `attach`ed to `e32`, so the file states it as the current foot of the perpendicular rather
-     * than as a click, and re-deriving that foot moves its last digit — about 1e-13 mm per pass, settling
-     * within four. That is a property of the *drawing* this fixture happens to contain and not of anything
-     * this package touches, and it is asserted rather than papered over: every other line, including every
-     * step this test builds, is byte-identical on the first pass.
+     * The fixed point is the strong half and is asserted first, for any text: what a save writes is exactly
+     * what the next load says, with nothing left to settle. It was not so until session 63's creep was closed
+     * — `e40` is `attach`ed to `e32`, the `attach` step restated *nothing*, and replay re-derived the rider's
+     * parameter by projecting the point's own restated position, which is derived geometry the moment the point
+     * rides the curve. The projection did not reproduce its own output to the last bit, so the last digit moved
+     * about 1e-13 mm on every pass and took four of them to settle. The step now restates the parameter, as
+     * `pointoncurve` always has, so the position it derives is bit-identical to the one that was written.
      *
-     * The **second** named exception is the revolve step, and it is a property of this build rather than of
-     * the drawing (session 63): a partial revolve now carries an *offset* freedom its step restates
-     * (`dofs=0deg`), so this pre-package file gains that argument the first time it is written back. Nothing
-     * it already said changed meaning — the offset was zero before it could be stated, which is what an
-     * absent `dofs=` still means (OP-18) — and the file is a fixed point from that first save onwards.
+     * Three named differences remain on the **first** save of the user's file, none of them a change of
+     * meaning. (1) `attach e40 e32` gains that very `dofs=`, an argument no earlier build wrote — an absent one
+     * still means "re-derive it from the recorded position", which is what that file always meant (OP-18).
+     * (2) The `point -> e40` line moves by that same last digit, once: the file's stored foot is re-derived one
+     * final time on the way in, and never again. (3) The revolve step gains its *offset* freedom (`dofs=0deg`),
+     * for the same versioning reason as (1). And the header itself comes up: this fixture was written at format
+     * 2 and is kept that way, because a fixture edited to say the current version stops being a test of
+     * anything.
      *
-     * The **third** is the header itself: this fixture was written at format 2 and is kept that way, because a
-     * fixture edited to say the current version stops being a test of anything. A save brings it up to what
-     * this build writes (format 3, the closed-run seam's own bump) and touches no other line.
+     * A text this build wrote is held to more than that: it must come back **byte-identical**, no exceptions.
      */
     private fun assertRoundTrips(text: String) {
         val once = DocumentFormat.save(DocumentFormat.load(text))
+        assertEquals(
+            once,
+            DocumentFormat.save(DocumentFormat.load(once)),
+            "save -> load -> save must be a fixed point on the first pass, with nothing left to settle",
+        )
+        if (text.startsWith(DocumentFormat.HEADER)) {
+            assertEquals(text, once, "a text this build wrote comes back byte for byte, attachment and all")
+            return
+        }
         val differing = text.lines().zip(once.lines()).filter { it.first != it.second }
         assertEquals(text.lines().size, once.lines().size, "no step is added or lost")
         for (d in differing) {
@@ -223,32 +235,27 @@ class ChainCutReachTest {
                 assertEquals(d.first.replace(" -> ", " dofs=0deg -> "), d.second, "the revolve gains its offset freedom and nothing else")
                 continue
             }
+            if (d.first.startsWith("attach ")) {
+                assertEquals(d.first, withoutRestatedAttach(d.second), "the attach gains the freedom it restates and nothing else")
+                continue
+            }
             assertTrue(d.first.endsWith("-> e40"), "only the attached point's restated position moves, not ${d.first}")
             val a = d.first.removePrefix("point ").removeSuffix(" -> e40").split(",").map { it.toDouble() }
             val b = d.second.removePrefix("point ").removeSuffix(" -> e40").split(",").map { it.toDouble() }
             assertClose(a[0], b[0], 1e-12, msg = "and it moves by less than a picometre in x")
             assertClose(a[1], b[1], 1e-12, msg = "and in y")
         }
-        var t = once
-        for (i in 0 until 8) {
-            val next = DocumentFormat.save(DocumentFormat.load(t))
-            if (next == t) return
-            t = next
-        }
-        assertEquals(t, DocumentFormat.save(DocumentFormat.load(t)), "the text reaches a fixed point")
     }
 
     // ---- 0. the drawing itself ----
 
     /**
-     * The user's script loads clean and is a **fixed point of save → load → save**, which is what makes it a
-     * fixture.
+     * The user's script loads clean and is a **fixed point of save → load → save**, on the first pass.
      *
-     * One line of the paste is not bit-identical to what this build writes back, and it is worth naming
-     * rather than hiding: `e40` is `attach`ed to `e32`, so its position is a **restated current value** (the
-     * foot of the perpendicular, recomputed) rather than a click, and re-deriving it moves the last two
-     * digits. The file is stable from its first save onwards, which is the property that matters — a step's
-     * *meaning* is unchanged and nothing else in the drawing moves at all.
+     * Two lines of the paste are not bit-identical to what this build writes back, both named in
+     * [assertRoundTrips]: `attach e40 e32` gains the freedom it restates, and `e40`'s stored position is
+     * re-derived one last time as the file comes in. From that save on, nothing moves at all — which is what
+     * session 63's creep item asked for and what the assertion above now claims.
      */
     @Test
     fun theUsersDrawingLoadsAndSettlesOnItsFirstSave() {

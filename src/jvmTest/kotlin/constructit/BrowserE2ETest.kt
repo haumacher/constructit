@@ -477,6 +477,40 @@ class BrowserE2ETest {
             )
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/12-broken-segment.png")))
 
+            // ---- **A negative number, typed into a real gesture** (session 63's queued pad item) ----
+            //
+            // Here rather than only headless for the one thing a browser decides: whether the shell's own keydown
+            // seam hands `-` to the controller at all, on a real keyboard layout, without the page doing something
+            // else with it. The gesture is an ordinary *Rotate* of the segment pair below — the sign key, the
+            // digits, then the two clicks — and what it proves is that the value reached the drawing: a new
+            // element, and a negative `angle` row in the panel.
+            val itemsBeforeTurn = page.querySelectorAll("#tree .item").size
+            page.click("#tool-${Tools.ROTATE}")
+            page.keyboard().press("-")
+            page.keyboard().type("90")
+            assertTrue(
+                page.querySelector("#status").textContent().contains("angle = -90"),
+                "the pad states the sign; got: ${page.querySelector("#status").textContent()}",
+            )
+            // the middle of the first half — a click on its endpoint would take the *point*, which is the
+            // ranking working as designed and not what a geometry slot wants
+            page.mouse().click((bx1 * 3 + bx2) / 4, by - 20.0)
+            page.mouse().click(bx1, by) // and its far end as the centre to turn about
+            assertTrue(
+                page.querySelectorAll("#tree .item").size > itemsBeforeTurn,
+                "the turned copy is in the drawing; got ${page.querySelectorAll("#tree .item").size - itemsBeforeTurn} new items",
+            )
+            @Suppress("UNCHECKED_CAST")
+            val turnRows =
+                (
+                    page.evaluate(
+                        "() => [...document.querySelectorAll('#params-list .prow')].map(r =>" +
+                            " (r.querySelector('.pname').value ?? '') + '=' + (r.querySelector('.pval')?.value ?? ''))",
+                    ) as List<Any?>
+                ).map { it?.toString() ?: "" }
+            assertTrue(turnRows.any { it.startsWith("angle=-") }, "…and the negative angle is an ordinary parameter row; got $turnRows")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/12c-typed-negative.png")))
+
             // ---- Join, then **Unlink** through the element tree (GitHub issue #10) ----
             //
             // Here for the one thing only a browser can vouch for: a welded alias is hidden *by

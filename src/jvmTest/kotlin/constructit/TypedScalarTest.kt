@@ -261,6 +261,152 @@ class TypedScalarTest {
         )
     }
 
+    // ---- 1b. the sign (session 63's queued item: the pad takes a minus, program-wide) ----
+
+    /**
+     * **`-` states the sign of the number being typed, and states it as a toggle.** On an empty entry it starts
+     * a negative number; on a number it negates it; pressed again it takes the sign off. Both orders are
+     * natural — *"−15"* and *"15, and make that negative"* — so the key is one rule at any point in the entry,
+     * and the status line says which way it now reads.
+     */
+    @Test
+    fun aMinusStatesTheSignAndASecondMinusTakesItBack() {
+        val ed = Editor()
+        ed.setTool(Tools.CIRCLE_R)
+        ed.key("-")
+        assertEquals("-", ed.numericEntry, "a sign on an empty entry starts a negative number")
+        assertTrue(ed.statusHint.contains("negative"), "and says so rather than printing '= - mm': ${ed.statusHint}")
+        ed.keyIn("15")
+        assertEquals("-15", ed.numericEntry, "the digits follow the sign")
+        assertTrue(ed.statusHint.contains("radius = -15 mm"), "the entry reads as the value it is: ${ed.statusHint}")
+        assertTrue(ed.statusHint.contains("- again for positive"), "and the way back is named: ${ed.statusHint}")
+
+        ed.key("-")
+        assertEquals("15", ed.numericEntry, "a second sign takes it off — never a keystroke that does nothing")
+        assertTrue(ed.statusHint.contains("- for negative"), "and the way there is named too: ${ed.statusHint}")
+        ed.key("-")
+        assertEquals("-15", ed.numericEntry, "…and back: the sign belongs to the number, not to a place in it")
+    }
+
+    /**
+     * **One rule for every scalar slot in the registry**, whatever its dimension: a minus typed for any `ang` /
+     * `len` / `num` slot commits a *negative parameter* of that dimension. Swept over the whole tool table, so
+     * no tool can be given a scalar that the pad then cannot state a sign for — the audit that keeps this from
+     * being a per-tool patch.
+     */
+    @Test
+    fun everyScalarSlotInTheRegistryTakesASignedNumber() {
+        var swept = 0
+        for (t in Tools.all) {
+            val slot = t.scalars.firstOrNull() ?: continue
+            val ed = Editor()
+            ed.setTool(t.id)
+            ed.key("-")
+            ed.keyIn("12")
+            ed.key("Enter")
+            // by newest rather than by name: a slot whose name has a space in it is written as one word
+            // (`corner-radius`), which is the file's rule and not this test's business
+            val entry = assertNotNull(ed.doc.scalars.lastOrNull(), "${t.id} took the typed ${slot.name}")
+            val q = assertNotNull(((Evaluator().eval(entry.ref.node) as? EvalResult.Ok)?.value as? constructit.core.ScalarValue)?.q)
+            assertEquals(slot.dim, q.dim, "${t.id}.${slot.name} is stated in its own dimension")
+            val n =
+                if (q.dim == constructit.units.Dimension.ANGLE) {
+                    q.deg
+                } else if (q.dim == constructit.units.Dimension.LENGTH) {
+                    q.mm
+                } else {
+                    q.value
+                }
+            assertClose(n, -12.0, 1e-12, "${t.id}.${slot.name} is negative twelve, in its own unit")
+            swept++
+        }
+        assertTrue(swept > 40, "the sweep really covered the table, not three rows of it ($swept slots)")
+    }
+
+    /**
+     * **The pad states values; it does not police them.** A negative radius is a perfectly typeable number and
+     * an impossible circle, so the parameter is created exactly as typed and the *node* refuses — in its own
+     * words, transitively, which is OP-3 and not the entry's business. Retyping the parameter positive heals it,
+     * which is the whole reason the refusal belongs to the node.
+     */
+    @Test
+    fun aNegativeRadiusIsRefusedInTheNodesOwnWords() {
+        val ed = Editor()
+        ed.setTool(Tools.POINT)
+        ed.click(Vec2(0.0, 0.0))
+        ed.setTool(Tools.CIRCLE_R)
+        ed.key("-")
+        ed.keyIn("20")
+        ed.click(Vec2(0.0, 0.0))
+
+        val entry = assertNotNull(ed.doc.scalars.lastOrNull { it.name == "radius" }, "the number was stated: ${ed.statusHint}")
+        val circle = assertNotNull(circles(ed).singleOrNull(), "and the circle was built as an element: ${ed.statusHint}")
+        val why = Evaluator().eval(circle.ref.node)
+        assertTrue(why is EvalResult.Invalid, "…which cannot evaluate")
+        assertEquals("non-positive radius", why.reason, "in the node's own words, not the pad's")
+
+        ed.doc.setParameter(entry, 20.0.mm)
+        assertClose(radiusOf(circle), 20.0, 1e-12, "and typing it positive heals the very same circle")
+    }
+
+    /**
+     * **A leg's length takes no sign, and says so.** While a path is being drawn the click states the endpoint,
+     * so the direction is the one the cursor points in — a negative length would contradict the gesture that
+     * places it. The key is refused *out loud*: a keystroke swallowed in silence is indistinguishable from a
+     * keystroke that never arrived.
+     */
+    @Test
+    fun aLegsLengthTakesNoSignAndTheRefusalSpeaks() {
+        val ed = Editor()
+        ed.setTool(Tools.ORTHO_PATH)
+        ed.click(Vec2(0.0, 0.0))
+        ed.keyIn("350")
+        ed.key("-")
+        assertEquals("350", ed.numericEntry, "the length is untouched")
+        assertTrue(ed.statusHint.contains("no sign"), "and the refusal names itself: ${ed.statusHint}")
+        assertTrue(ed.statusHint.contains("point the way"), "…with what to do instead: ${ed.statusHint}")
+    }
+
+    /**
+     * **A sign alone is not a number**, and the boundary is the one a bare dot already had: committing it says
+     * so and builds nothing. Stated here so the two half-typed entries cannot drift apart.
+     */
+    @Test
+    fun aBareSignIsNotANumberYet() {
+        for (half in listOf("-", ".")) {
+            val ed = Editor()
+            ed.setTool(Tools.CIRCLE_R)
+            ed.key(if (half == "-") "-" else ".")
+            assertEquals(half, ed.numericEntry)
+            ed.key("Enter")
+            assertEquals("That is not a number", ed.statusHint, "a half-typed '$half' says so")
+            assertEquals("", ed.numericEntry, "and the entry is cleared, not left half-standing")
+            assertTrue(ed.doc.scalars.none { it.name == "radius" }, "and no parameter was made of it")
+        }
+    }
+
+    /**
+     * **A typed negative is an ordinary parameter**: it appears in the panel, rides the `param` step and
+     * round-trips byte for byte. Nothing about it is a special kind of value — which is the point of teaching
+     * the *entry* a sign rather than teaching any tool one.
+     */
+    @Test
+    fun aTypedNegativeIsAnOrdinaryParameterAndRoundTrips() {
+        val ed = Editor()
+        ed.setTool(Tools.SEGMENT)
+        ed.click(Vec2(0.0, 0.0))
+        ed.click(Vec2(60.0, 0.0))
+        ed.setTool(Tools.ROTATE)
+        ed.key("-")
+        ed.keyIn("90")
+        ed.click(Vec2(30.0, 0.0))
+        ed.click(Vec2(0.0, 0.0))
+
+        val text = DocumentFormat.save(ed.doc)
+        assertTrue(text.lines().any { it.startsWith("param \"angle\" = -90deg") }, "the negative rides the param step:\n$text")
+        assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "save -> load -> save byte-equal")
+    }
+
     // ---- 2. feedback where the user is looking ----
 
     /** **The pending digits are drawn at the cursor**, through the one text primitive the surface has. */

@@ -333,6 +333,24 @@ object DocumentFormat {
                 val q = step.creates.singleOrNull()?.let { doc.restatedRiderParam(it, ev) }
                 if (q == null) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(listOf(q)))
             }
+            // **The same rule for the two routes that make a rider out of a point that already existed**
+            // (session 63's ULP creep, closed): a free point dragged onto a curve (`attach`) and an ortho run's
+            // end landing on one (`attachortho`) each create exactly one freedom — a position along the host —
+            // and neither restated it. Replay re-derived it by *projecting the point's own restated position*
+            // onto the host, and that position is itself **derived** once the point rides the curve: the
+            // projection does not reproduce its own output to the last bit, so every save moved the last digit
+            // and `save -> load -> save` was never a fixed point (it drifted, one ULP per pass). Restating the
+            // parameter makes the derivation read a value the file states exactly, so the position it produces
+            // is bit-identical to the one that was written — a fixed point on the **first** save, and the same
+            // answer whichever route put the rider there.
+            "attach" -> {
+                val q = (step.args.firstOrNull() as? Arg.El)?.el?.let { doc.restatedRiderParam(it, ev) }
+                if (q == null) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(listOf(q)))
+            }
+            "attachortho" -> {
+                val q = (step.args.firstOrNull() as? Arg.El)?.el?.let { doc.restatedJunctionParam(it, ev) }
+                if (q == null) step.args else step.args + Arg.Keyed("dofs", Arg.Nums(listOf(q)))
+            }
             // the same rule for a re-parameterization recorded on its own rather than through a tool
             // (OP-4 case b): the offset is state, so it is restated — one distance and one angle for a polar
             // offset, one signed distance for a rider measured along its carrier
@@ -889,9 +907,14 @@ object DocumentFormat {
                     keyed(words, "closed") == "1",
                 )
             "weld" -> doc.weld(el(1), el(2))
-            "attach" -> doc.attachToCurve(el(1), el(2))
+            // `dofs=` is the rider's own parameter, restated — the same seam `pointoncurve` has ridden since
+            // session 9 (see [restate]). A script written before it was recorded carries none and re-derives the
+            // parameter from the point's restated position, exactly as it always did, so no stored literal
+            // changed meaning and this needs no version bump (OP-18).
+            "attach" -> doc.attachToCurve(el(1), el(2), keyedNums(words, "dofs").firstOrNull())
             "weldortho" -> doc.weldOrthoEndpointToPoint(el(1), el(2))
-            "attachortho" -> doc.attachOrthoEndpointToCurve(el(1), el(2))
+            // …and the same for the junction an ortho end makes on a curve: its one freedom is state
+            "attachortho" -> doc.attachOrthoEndpointToCurve(el(1), el(2), keyedNums(words, "dofs").firstOrNull())
             // `dofs=` is the freed point's own position, restated (see [restate]): replay runs the `weld` step
             // first, so without it the point would be handed back the master's position instead of the one it
             // has been dragged to since. A script written before it was recorded has none and frees the point

@@ -157,14 +157,24 @@ class LiftedRunTest {
 
     // ---- 1. the user's own file ----
 
-    /** **The file the user sent loads with nothing ambiguous, and writes itself back unchanged** (OP-18). */
+    /**
+     * **The file the user sent loads with nothing ambiguous, and writes itself back unchanged** (OP-18) — but
+     * for one line, and the exception is the honest kind: this drawing's run ends on a curve (`attachortho e23
+     * e15`), and that step now **restates the freedom it creates** (`dofs=`, session 63's creep closed). The
+     * step means what it always meant, the addition is an argument no earlier build wrote, and from this save
+     * on the text is a fixed point.
+     */
     @Test
     fun theUsersFileLoadsCleanAndRoundTripsByteEqual() {
         val doc = DocumentFormat.load(ROUND_PILLAR_CIT)
         assertTrue(doc.loadNotes.isEmpty(), "nothing about this file is ambiguous: ${doc.loadNotes}")
         val once = DocumentFormat.save(doc)
-        assertEquals(atThisVersion(ROUND_PILLAR_CIT), once, "the file is written back exactly as it came")
-        assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and again")
+        assertEquals(
+            atThisVersion(ROUND_PILLAR_CIT),
+            withoutRestatedAttach(once),
+            "the file is written back exactly as it came, but for the freedom its attach now states",
+        )
+        assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "and again — byte-equal from the first save on")
     }
 
     /**

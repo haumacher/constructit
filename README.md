@@ -552,7 +552,9 @@ did not previously complete at all. What the measuring produced:
 
 - **type a number for any tool input** — digits typed with a tool armed become an ordinary named parameter
   (editable, wireable, saved), so no scalar-consuming tool needs a trip to the panel first, and a tool that
-  is still missing its value now *waits* with your clicks instead of discarding them;
+  is still missing its value now *waits* with your clicks instead of discarding them. `-` states the sign of
+  the number being typed (press it again for positive), so a negative angle or offset is one keystroke rather
+  than a panel edit — and where a value cannot be negative it is the *node* that says so, by name;
 - **single-key tool shortcuts** (`S P L C R O W D E X M`), shown on the palette buttons;
 - **boundaries that already meet are not re-intersected**, which is what makes a rounded rectangle (or a
   fillet) traceable at all — its sides meet its corner arcs tangentially;

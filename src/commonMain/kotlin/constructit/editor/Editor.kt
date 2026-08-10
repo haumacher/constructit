@@ -3048,13 +3048,14 @@ class Editor(
     /**
      * A key pressed while the canvas has focus, as a pure controller entry point. Digits feed the
      * numeric entry — a leg's length while a path is being drawn, otherwise the scalar the armed tool
-     * wants; Enter commits it; Escape cancels a pending entry first, then finishes; a single letter arms
-     * the tool that letter belongs to. Returns true when consumed.
+     * wants; `-` states its sign; Enter commits it; Escape cancels a pending entry first, then finishes; a
+     * single letter arms the tool that letter belongs to. Returns true when consumed.
      */
     fun key(key: String): Boolean {
         terminalHint = null // an action, like a press — see [markTerminal]
         val pathActive = activePath != null
         val digit = key.length == 1 && (key[0].isDigit() || key == ".")
+        val sign = key == "-"
         return when {
             pathActive && digit -> {
                 numericEntry += key
@@ -3071,6 +3072,31 @@ class Editor(
                 // with it and the entry is echoed at the cursor, so what the next click will build is visible
                 // where the user is looking rather than only in the status bar (OP-13)
                 refreshToolPreviewAtHover()
+                changed()
+                true
+            }
+            // **A minus sign belongs to the number, not to a place in it** — one rule for every `ang`/`len`/
+            // `num` slot in the program, exactly as the digits are (OP-13). It is a **toggle**: on an empty
+            // entry it starts a negative number, on a number being typed it negates it, and pressing it again
+            // takes the sign off. Toggling rather than refusing because both orders are natural — "−15" and
+            // "15, and make that negative" — and a keystroke that does nothing is indistinguishable from a
+            // keystroke that was not received.
+            //
+            // The pad **states** values and does not police them: a negative number where the node refuses one
+            // (an extrude depth, a radius) is still the node's refusal, in the node's own words (OP-3).
+            sign && typedScalarSlot() != null -> {
+                numericEntry = if (numericEntry.startsWith("-")) numericEntry.drop(1) else "-$numericEntry"
+                statusHint = typedScalarPrompt()
+                refreshToolPreviewAtHover()
+                changed()
+                true
+            }
+            // A **leg's length takes no sign**, and says so rather than swallowing the key: while a path is
+            // being drawn the click states the endpoint, so the direction is the one the cursor points in and a
+            // negative length would contradict the very gesture that places it (the leg rule OP-13 states —
+            // see [commitTypedLeg], deliberately untouched since session 55).
+            pathActive && sign -> {
+                statusHint = "A leg's length has no sign — point the way the leg is to go, and type how long it is"
                 changed()
                 true
             }
@@ -3167,7 +3193,13 @@ class Editor(
     private fun typedScalarPrompt(): String {
         val slot = typedScalarSlot() ?: return ""
         if (numericEntry.isEmpty()) return currentHelp()
-        return "${slot.name} = ${entryText(slot)} — click to use it (or press Enter), Esc to cancel"
+        // a sign on its own is not a value yet: say what *has* been stated instead of printing "= - mm"
+        if (numericEntry == "-") return "${slot.name}: negative — now the digits (Esc to cancel, - again for positive)"
+        // …and the sign is **named where it becomes relevant**, which is with a number already in the entry: a
+        // route nobody is told about is a route that does not exist (the session-55 rule), and the arming line
+        // is not the place — every tool would carry the clause whether a sign means anything for it or not
+        val negate = if (numericEntry.startsWith("-")) "- again for positive" else "- for negative"
+        return "${slot.name} = ${entryText(slot)} — click to use it (or press Enter), $negate, Esc to cancel"
     }
 
     /** The pending entry as the status line and the canvas both say it: `20 mm`, `30°`, a bare `3`. */

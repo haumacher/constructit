@@ -5994,13 +5994,59 @@ class Document {
         val q = ((ev.eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q ?: return null
         val rec = riderOf(el) ?: return q
         val g = allGroups.firstOrNull { grp -> grp.capturedRiders.any { it === rec } } ?: return q
+        return unturned(q, g, rec.form, rec.axis, rec.line, rec.point.node, ev)
+    }
+
+    /**
+     * The value the `attachortho` step restates (OP-18) — the **junction's** own parameter, which is the one
+     * freedom an ortho run's end gains when it lands on a curve ([junctionOnCurve]).
+     *
+     * The same rule as [restatedRiderParam], for the same reason: the run's corner is *derived* from the
+     * junction from the moment it is bound, so re-deriving the junction from the corner's restated position was
+     * a projection reading its own output — the session-63 creep.
+     *
+     * **Both** coordinates must answer the *same* junction, and that is the whole test for "this step owns a
+     * freedom". A meeting that is fully **determined** ([bindCornerToDeterminedMeeting]) owns none: it binds the
+     * one free coordinate outright, while the other still follows a junction further back along the run — so
+     * asking either coordinate on its own would restate a value belonging to a different step, and replay would
+     * (rightly) ignore it. Null there, which is exactly what such a step always meant.
+     */
+    fun restatedJunctionParam(
+        el: Element,
+        ev: Evaluator,
+    ): Quantity? {
+        val corner = el.handle as? OrthoCornerHandle ?: return null
+        val j = junctionOf(corner.xNode) ?: return null
+        if (junctionOf(corner.yNode) !== j) return null
+        val param = j.param ?: return null
+        val q = scalarOf(param, ev) ?: return null
+        val g = allGroups.firstOrNull { grp -> grp.capturedJunctions.any { it.junction === j } } ?: return q
+        return unturned(q, g, j.form, j.axis, j.line, j.point.node, ev)
+    }
+
+    /**
+     * [q] measured on the geometry a **turned** placed group's steps replay against (OP-16): they run before
+     * the placement that turns the group, so what they must restate is the pre-rotation position along the
+     * host — the same rule [restatedPosition] follows for a captured point, here applied to a parameter.
+     *
+     * One helper for both freedoms that can be captured this way (a rider's and a junction's), because the
+     * correction is a property of the *form* the parameter is in and of nothing else.
+     */
+    private fun unturned(
+        q: Quantity,
+        g: Group,
+        form: RiderForm?,
+        axis: Int?,
+        line: LineRef?,
+        point: Node,
+        ev: Evaluator,
+    ): Quantity {
         val f = frameValueOf(g) ?: return q
         if (f.angle == 0.0) return q
-        val here = pointOf(rec.point.node, ev) ?: return q
+        val here = pointOf(point, ev) ?: return q
         val pre = f.origin + f.toLocal(here)
-        if (rec.form == RiderForm.AXIS_COORD) return Quantity.mm(if (rec.axis == 0) pre.x else pre.y)
-        val line = rec.line ?: return q
-        val dir = ((ev.eval(line.node) as? EvalResult.Ok)?.value as? LineValue)?.line?.dir ?: return q
+        if (form == RiderForm.AXIS_COORD) return Quantity.mm(if (axis == 0) pre.x else pre.y)
+        val dir = ((ev.eval((line ?: return q).node) as? EvalResult.Ok)?.value as? LineValue)?.line?.dir ?: return q
         // the carrier un-turned: a direction has no origin, so only the rotation is undone
         val c = cos(-f.angle)
         val s = sin(-f.angle)
@@ -6618,20 +6664,31 @@ class Document {
      * The parameter is a world coordinate on a host that is axis-aligned by construction, and a distance
      * along the line otherwise — see [riderOn]; a free point attached to a wall must not slide when that
      * wall is stretched any more than a run's end does.
+     *
+     * [at] is that parameter as a replay hands it back (OP-18), exactly as it is for [pointOnCurve]: where the
+     * point sits along the curve is **state** — dragged, and compensated while the host turns — while the two
+     * elements this step names are the choice replay must repeat. Without it, replay re-derived the parameter
+     * by projecting the point's *own restated position*, which is derived geometry once the point rides the
+     * curve, so the projection read its own output and the last digit moved on every save (session 63's creep).
      */
     fun attachToCurve(
         pt: Element,
         curve: Element,
-    ): Boolean = recording("attach", Arg.El(pt), Arg.El(curve), skipIfEmpty = true) { attachToCurveNow(pt, curve) }
+        at: Quantity? = null,
+    ): Boolean = recording("attach", Arg.El(pt), Arg.El(curve), skipIfEmpty = true) { attachToCurveNow(pt, curve, at) }
 
     private fun attachToCurveNow(
         pt: Element,
         curve: Element,
+        at: Quantity?,
     ): Boolean {
         val node = literalNode(pt) ?: return false
         if (attachTargetPos(pt, curve) == null) return false
         val p = (Evaluator().eval(node) as EvalResult.Ok).let { (it.value as PointValue).p }
         val rider = riderOn(curve, p, "") ?: return false
+        // no migration to make ([migratedRiderDof]): `dofs=` on this step is an argument no earlier build ever
+        // wrote, so a file that carries one was written by a build that measures it the way this one reads it
+        restateDof(rider.dof, at)
         node.boundTo = rider.point.node
         pt.handle = rider.handle
         pt.kind = ElementKind.ON_CURVE
@@ -6666,11 +6723,13 @@ class Document {
     fun attachOrthoEndpointToCurve(
         el: Element,
         curve: Element,
-    ): Boolean = recording("attachortho", Arg.El(el), Arg.El(curve)) { attachOrthoEndpointToCurveNow(el, curve) }
+        at: Quantity? = null,
+    ): Boolean = recording("attachortho", Arg.El(el), Arg.El(curve)) { attachOrthoEndpointToCurveNow(el, curve, at) }
 
     private fun attachOrthoEndpointToCurveNow(
         el: Element,
         curve: Element,
+        at: Quantity?,
     ): Boolean {
         val corner = orthoEndpoint(el) ?: return false
         // before making the junction, not after: a rejected bind would otherwise leave a stray junction
@@ -6681,9 +6740,13 @@ class Document {
         if (mx == null && my == null) return false // nothing left to give — see [connectRefusal]
         if (mx == null || my == null) {
             val free = mx ?: my ?: return false
+            // a determined meeting owns no freedom, so there is nothing for a restated [at] to say
             return bindCornerToDeterminedMeeting(corner, curve, free, if (mx != null) 0 else 1)
         }
         val junction = junctionOnCurve(curve, el.ref.node) ?: return false
+        // where the meeting sits along the host is state, restated by this step (see [restatedJunctionParam]):
+        // set before the bind, so the corner is derived from the position the file states and from nothing else
+        restateDof(junction.param, at)
         return bindCornerToJunction(corner, junction)
     }
 
@@ -7011,6 +7074,25 @@ class Document {
     ) = addDerived(cx.projectToLine(p, carrierLine(line)))
 
     /**
+     * Put a freedom back where a replay says it stood (OP-18) — the one write every route that restates a
+     * *position along a host* goes through, whether the freedom belongs to a rider, to a point attached to a
+     * curve or to a junction.
+     *
+     * The **dimension** decides whether the stored number belongs to this freedom at all: the forms of
+     * [RiderForm] are a length, a bare number and an angle, so a file whose host has since changed kind states
+     * a value this parameter cannot mean — and then the click's own placement stands, which is what a load
+     * without a `dofs=` does anyway. Checked rather than trusted, because that mismatch is a *file*, not a bug.
+     */
+    private fun restateDof(
+        dof: SourceNode?,
+        restated: Quantity?,
+    ) {
+        if (dof != null && restated != null && restated.dim == (dof.value as? ScalarValue)?.q?.dim) {
+            dof.value = ScalarValue(restated)
+        }
+    }
+
+    /**
      * Add a rider element over [ref]. [dof] is the rider's own parameter node and [restated] the value a
      * replay hands back for it (OP-18): a rider's position is **state**, since dragging it writes that
      * parameter, so the step restates the parameter itself rather than leaving the file describing the click
@@ -7023,9 +7105,7 @@ class Document {
         restated: Quantity? = null,
         inSpace: Boolean = false,
     ): Ref<V> {
-        if (dof != null && restated != null && restated.dim == (dof.value as? ScalarValue)?.q?.dim) {
-            dof.value = ScalarValue(restated)
-        }
+        restateDof(dof, restated)
         // through [add], because that is where an element's sketch space is stamped (OP-17): building the
         // Element here instead left every constrained point in the **plan** whatever space it was drawn in,
         // and an ortho path drawn on a face came out as legs on the face with their corners in the plan
