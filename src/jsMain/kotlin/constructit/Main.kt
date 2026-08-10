@@ -782,6 +782,11 @@ private fun setupApp() {
                 t.value = editor.renameParameter(entry, t.value) ?: entry.name
                 repaint()
             }
+            // the formula field: one entry point for "free it", "just a number" and "an expression"
+            t is HTMLInputElement && t.className.contains("pexpr") -> {
+                editor.bindParameter(entry, t.value)
+                repaint()
+            }
             t is HTMLSelectElement && t.className.contains("pbind") -> {
                 val target = editor.doc.scalars.firstOrNull { s -> s.id == t.value }
                 if (target == null) {
@@ -1482,6 +1487,12 @@ private fun renderPanel(
                     opts.append("<option value=\"${t.id}\"${if (t.id == boundId) " selected" else ""}>=${t.name}</option>")
                 }
                 val disabled = if (editor.doc.isBound(s)) " disabled" else ""
+                // the formula field (OP-7, session 71): blank frees the value, one number writes it exactly
+                // as the field beside it does, anything else is an expression — see [Editor.bindParameter]
+                val formula = editor.doc.expressionOf(s) ?: ""
+                // a wire is the degenerate expression, so while one is in force the dropdown owns the
+                // binding and the formula field says so rather than offering a second way to state it
+                val wired = formula.isEmpty() && editor.doc.isBound(s)
                 // the name is editable exactly where the file can carry it (OP-7); the others say why not
                 val name =
                     if (editor.doc.canRenameParameter(s)) {
@@ -1495,7 +1506,10 @@ private fun renderPanel(
                     // every tick is a live write (OP-13 — typing and nudging are the same operation)
                     "<input class=\"pval\" type=\"number\" step=\"${stepFor(q.dim)}\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"$disabled>" +
                     "<span class=\"punit\">${unitLabel(q.dim)}</span>" +
-                    "<select class=\"pbind\" data-sid=\"${s.id}\">$opts</select>" +
+                    "<input class=\"pexpr\" data-sid=\"${s.id}\" value=\"$formula\" placeholder=\"= formula\"" +
+                    " title=\"A formula over the other values (d/2 + 1mm, sin(a)*r) — blank frees it again\"" +
+                    (if (wired) " disabled" else "") + ">" +
+                    "<select class=\"pbind\" data-sid=\"${s.id}\"${if (formula.isNotEmpty()) " disabled" else ""}>$opts</select>" +
                     "</div>"
             }
     }

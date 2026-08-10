@@ -59,6 +59,13 @@ import constructit.dsl.roundedRect
 import constructit.dsl.valueOf
 import constructit.exchange.MeshText
 import constructit.exchange.PathText
+import constructit.expr.EXPR_CONSTANTS
+import constructit.expr.EXPR_FUNCTIONS
+import constructit.expr.ExprError
+import constructit.expr.ExprNode
+import constructit.expr.ExprParser
+import constructit.expr.refNames
+import constructit.expr.refs
 import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.BoolOp
@@ -1236,6 +1243,7 @@ class Document {
         note = null // a note is about the operation being run now, never about the one before it
         pendingReparams.clear()
         pendingDofs.clear()
+        pendingExprBinding = null
         // an identity snapshot, not a count: a step may *remove* elements too (a break replaces one
         // leg with three), and then a count would mistake shifted survivors for new ones
         val before = elements.toHashSet()
@@ -1258,6 +1266,11 @@ class Document {
             pendingDofs.clear()
             noteSpace(kind)
             journal.add(step)
+            // …and the expression this operation bound, owned by the step that states it (OP-7, session 71):
+            // per step and not per parameter, since a re-bound parameter has two steps and each keeps the
+            // text *it* stated — which is what the writer restates under the current names
+            pendingExprBinding?.let { exprBindings[step] = it }
+            pendingExprBinding = null
             // which step *owns* each re-parameterization this operation performed (OP-4 case b), so the writer
             // restates an offset on the step that made it and nowhere else — a step that merely *uses* a
             // relative point (a circle through it) must not carry its distance and angle
@@ -1273,6 +1286,7 @@ class Document {
             while (scalars.size > scalarsBefore) scalars.removeAt(scalars.size - 1)
             pendingReparams.clear()
             pendingDofs.clear()
+            pendingExprBinding = null
             throw t
         } finally {
             recordDepth--
@@ -3026,6 +3040,9 @@ class Document {
             }
         }
         step.args.forEach { walk(it) }
+        // an expression's references are inside its text, not in an argument of their own — so the step
+        // that binds it is asked what it read, and the delete cascade reaches it like any other reference
+        exprBindings[step]?.let { out.addAll(it.refs) }
         return out
     }
 
@@ -3308,6 +3325,8 @@ class Document {
         val wanted = scalarWord(name)
         if (wanted.isEmpty()) return e.name
         e.name = uniqueScalarName(wanted, except = e)
+        // an expression that reads it is a mention like any other, so it is re-stamped rather than orphaned
+        restampExpressions()
         return e.name
     }
 
@@ -4738,12 +4757,199 @@ class Document {
         return true
     }
 
-    /** Free the parameter again, keeping its current (last driven) value. */
-    fun unwireParameter(e: ScalarEntry) {
-        val node = e.ref.node as? ParameterNode ?: return
-        val cur = (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as ScalarValue).q }
-        if (cur != null) node.literal = ScalarValue(cur)
-        node.boundTo = null
+    /**
+     * Free the parameter again, keeping its current (last driven) value — recorded as an `unbind` step,
+     * so the file says it happened.
+     *
+     * **The step is the fix to a hole this package found.** Unbinding used to record nothing at all, while
+     * the `wire` step that created the bond stayed in the journal — so a parameter freed in the panel came
+     * back wired on the next load, silently. A new step kind costs no version bump (OP-18: no stored literal
+     * changed its meaning), and the value it restates is the parameter's own **literal**, for the reason the
+     * `param` step restates its number: what the user typed after freeing it is state.
+     *
+     * [value] is what replay hands back; live callers pass null and get the value the binding last drove.
+     */
+    fun unwireParameter(
+        e: ScalarEntry,
+        value: Quantity? = null,
+    ): Boolean =
+        recording("unbind", Arg.Sc(e), Arg.Text("="), Arg.Num(value ?: literalOf(e)), skipIfEmpty = true) {
+            val node = e.ref.node as? ParameterNode
+            if (node == null || (node.boundTo == null && value == null)) {
+                false
+            } else {
+                val cur = value ?: (Evaluator().eval(node) as? EvalResult.Ok)?.let { (it.value as ScalarValue).q }
+                if (cur != null) node.literal = ScalarValue(cur)
+                node.boundTo = null
+                noteEdit()
+                true
+            }
+        }
+
+    // ---- expressions: the binding generalized to a pure function of named scalars (OP-7, session 71) ----
+
+    /**
+     * One live expression binding: the [entry] it drives, the [node] under its `boundTo`, and the
+     * scalars its names resolved to — **by identity**, which is what makes a rename a re-stamp rather
+     * than an orphaned reference.
+     *
+     * [refs] is parallel to `node.names` (the distinct names, in input order), not to the occurrences
+     * in the text; an occurrence finds its entry through its name's index.
+     */
+    class ExprBinding internal constructor(
+        val entry: ScalarEntry,
+        val node: ExprNode,
+        val refs: List<ScalarEntry>,
+    )
+
+    /** The binding each `bind` step made — per step, since a parameter may be re-bound later. */
+    private val exprBindings = HashMap<Step, ExprBinding>()
+    private var pendingExprBinding: ExprBinding? = null
+
+    /** The binding [step] recorded, or null — how the writer restates that step's own text. */
+    internal fun expressionBinding(step: Step): ExprBinding? = exprBindings[step]
+
+    /**
+     * The expression currently driving [e] — under the **current** names of everything it reads — or null
+     * when [e] is free or plainly wired.
+     */
+    fun expressionOf(e: ScalarEntry): String? = liveBinding(e)?.node?.text
+
+    /** The binding actually in force for [e]: the one whose node its parameter is bound to right now. */
+    private fun liveBinding(e: ScalarEntry): ExprBinding? {
+        val bt = (e.ref.node as? ParameterNode)?.boundTo ?: return null
+        return exprBindings.values.firstOrNull { it.node === bt }
+    }
+
+    /**
+     * The expression driving [node], as `name = text`, or null — what a refusal quotes when a drag or a
+     * typed value lands on a derived parameter ("the wired height's own words", OP-25).
+     */
+    fun expressionDriving(node: Node): String? {
+        val bound = (node as? ParameterNode)?.boundTo ?: return null
+        val b = exprBindings.values.firstOrNull { it.node === bound } ?: return null
+        return "${b.entry.name} = ${b.node.text}"
+    }
+
+    /** The literal [e] carries while free — what an `unbind` step restates (see [unwireParameter]). */
+    internal fun restatedLiteral(e: ScalarEntry): Quantity = literalOf(e)
+
+    private fun literalOf(e: ScalarEntry): Quantity =
+        (e.ref.node as? ParameterNode)?.literal?.q
+            ?: (Evaluator().eval(e.ref.node) as? EvalResult.Ok)?.let { (it.value as? ScalarValue)?.q }
+            ?: Quantity.mm(0.0)
+
+    /**
+     * Bind [e] to the expression [text] — `boundTo` generalized from *one other node* to a pure function
+     * of named scalars (OP-7, the session-71 entry). One direction: `a = b + c` **defines** `a`, it does
+     * not assert an equation, so this is an ordinary set of DAG edges and no solver is anywhere near it.
+     *
+     * Everything it can refuse, it refuses **by name** and before anything is rewired:
+     * - a text that is not an expression — the position and what was expected there;
+     * - a name nothing in the drawing carries (and, for the one case a user will actually hit, a name that
+     *   *is* there but cannot be written in an expression at all: a hyphenated one would read as a
+     *   subtraction, so it is named and the cure is a rename);
+     * - a **cycle**, at bind time rather than as a hang — the DAG's own rule, asked of the reference.
+     *
+     * A dimension violation is deliberately *not* refused here: it is a property of the **values**, so it
+     * is the `DimensionError` the evaluator turns into named invalidity that heals (OP-3), exactly as a
+     * degenerate intersection is. Binding `r = d/2 + 1deg` therefore succeeds and the circle says why it
+     * cannot be built, and correcting `d` heals it.
+     */
+    fun bindParameter(
+        e: ScalarEntry,
+        text: String,
+    ): Boolean =
+        recording("bind", Arg.Sc(e), Arg.Text("="), Arg.Label(text), skipIfEmpty = true) {
+            bindParameterNow(e, text)
+        }
+
+    private fun bindParameterNow(
+        e: ScalarEntry,
+        text: String,
+    ): Boolean {
+        val node = e.ref.node as? ParameterNode
+        if (node == null || !e.editable) {
+            note = "${e.name} is not a parameter that can be given a formula — it is measured by the construction (OP-4)"
+            return false
+        }
+        val ast =
+            try {
+                ExprParser.parse(text)
+            } catch (err: ExprError) {
+                note = "Can't read '${text.trim()}': ${err.message}"
+                return false
+            }
+        // the drawing's own names win over the constants, so a parameter named `PI` is read as itself and
+        // a name nothing carries falls through to the evaluator, which knows what a constant is
+        val bound = ArrayList<String>()
+        val refs = ArrayList<ScalarEntry>()
+        for (n in ast.refNames()) {
+            val target = scalars.firstOrNull { it.name == n }
+            if (target == null) {
+                if (n in EXPR_CONSTANTS) continue
+                note = "Can't bind ${e.name}: ${unknownName(n)}"
+                return false
+            }
+            if (dependsOn(target.ref.node, node, HashSet())) {
+                note = "Can't bind ${e.name} to '$text': $n already follows ${e.name}, and a value cannot be derived from itself"
+                return false
+            }
+            bound.add(n)
+            refs.add(target)
+        }
+        val exprNode = ExprNode(nextId("ex"), text, ast, bound, refs.map { it.ref.node })
+        node.boundTo = exprNode
+        pendingExprBinding = ExprBinding(e, exprNode, refs)
+        noteEdit()
+        return true
+    }
+
+    /**
+     * Why a name in an expression resolves to nothing, with the cure where there is one. Two cases are
+     * worth saying out loud, because in both the bare sentence would send the user hunting for a typo he
+     * did not make:
+     *
+     * - a **hyphenated** parameter — `wall-width` is one scalar name and two expression tokens, so the
+     *   parser split it before anything could look it up;
+     * - a **function written without its arguments** — `sqrt` is a name like any other here (the parser
+     *   reserves nothing, see [ExprParser]), so nothing carries it and the answer is *this is the
+     *   function, and a function is called*.
+     */
+    private fun unknownName(n: String): String {
+        val hidden = scalars.firstOrNull { it.name.startsWith("$n-") || it.name.startsWith("$n.") }
+        return when {
+            hidden != null ->
+                "there is no value named '$n' — '${hidden.name}' cannot be written in an expression (a '-' in a name reads as " +
+                    "a subtraction), so rename it to one word of letters and digits first"
+            n in EXPR_FUNCTIONS -> "there is no value named '$n' — '$n' is a function, so write '$n(…)' with its arguments"
+            else -> "there is no value named '$n'"
+        }
+    }
+
+    /**
+     * Re-stamp every stored expression under the **current** names of what it reads (OP-18's naming
+     * authority, and the move OP-23 makes for a pattern's count): a rename rewrites the reference *spans*
+     * of the text and leaves every other character of it alone, so a saved expression is still the user's
+     * own text and still resolves.
+     *
+     * The alternative — refusing the rename and naming the expressions that read the parameter — was
+     * rejected because the file already restates every *other* mention of a scalar under its current name
+     * (OP-7: "one rename restates the whole file consistently"), and an expression is a mention.
+     */
+    private fun restampExpressions() {
+        for (b in exprBindings.values) {
+            val out = StringBuilder()
+            var at = 0
+            for (r in b.node.ast.refs()) {
+                val k = b.node.names.indexOf(r.name)
+                val now = b.refs.getOrNull(k)?.name ?: continue
+                out.append(b.node.source, at, r.start).append(now)
+                at = r.end
+            }
+            out.append(b.node.source, at, b.node.source.length)
+            b.node.text = out.toString()
+        }
     }
 
     fun moveFreePoint(

@@ -15686,6 +15686,149 @@ One parser, one AST, one differentiator, one dimension check — two consumers. 
 halves are one entry, and the order of work inside it is the scalar half first (it is the smaller and the
 curve half consumes it).
 
+#### Implementation status (as built — the **scalar half**, session 71; the curve half stays queued)
+
+`constructit/expr/` is the whole language: `Expr` (AST), `ExprParser`, `ExprEval` and `ExprNode`, all in
+`commonMain`. A `ParameterNode` may now be bound to a **pure expression over named scalars** instead of to a
+single node, and that is the entire mechanism — `boundTo` generalized, one direction, an ordinary set of DAG
+edges. `r = d/2 + 1mm` **defines** `r`; editing `d` moves the circle by nothing but the recompute every other
+edit uses, and because binding mutates the parameter *in place*, everything that already referenced it
+follows with no input list rewired. The bare reference is the degenerate case and is left exactly as it was:
+today's `wire` steps keep their storage and their meaning, and a file that has one is unchanged by this build.
+
+**One node, not a compiled sub-graph.** The alternative — compiling the AST into `add`/`mul` op nodes — was
+rejected on three grounds that all point the same way: the **text is the record**, so the thing that is
+stored and the thing that computes must be one object; a rename then has one place to re-stamp; and the curve
+half needs the AST itself to differentiate, not a graph it would have to read back. `ExprNode`'s inputs are
+the scalar nodes its names resolved to, so the DAG sees an ordinary derived node with ordinary edges.
+
+**The dimension table, riding the units layer** (OP-7). `+ − min max mod hypot` demand equal dimension and
+keep it; unary `−` and `abs` keep it; `× ÷` combine exponents; `sqrt` halves them and `cbrt` thirds them,
+**refusing a non-divisible exponent by name**; `sin cos tan` take an angle and yield a plain number, `asin
+acos atan` the reverse, `atan2` two of equal dimension and yields an angle; `exp log log10` demand and
+deliver the dimensionless. Two decisions inside that table:
+
+- **`^` scales dimensions under a whole-number literal exponent** (`r^2` is an area), and refuses a
+  dimensioned base otherwise. The rule reads the *tree*, not the value, because an exponent that could move
+  would move the result's dimension — which is a thing the drawing must not do quietly. The alternative
+  (dimensionless-only powers, which the entry explicitly allowed) was rejected as the weaker of two rules
+  that cost the same.
+- **`floor ceil round sign` refuse a dimensioned argument by name.** Rounding a length is deterministic —
+  it would round to whole *millimetres*, the canonical base unit — but that is a rule the panel's display
+  unit hides the moment it shows anything else. The alternative, rounding in the base unit and saying so, was
+  rejected because the honest form is already writable: `round(x/1mm)*1mm` states the unit it rounds in, and
+  the refusal says exactly that. `round` follows `java.lang.Math`'s tie-up rule rather than `kotlin.math`'s
+  tie-to-even, because 2.5 becoming 2 would read as a bug in the drawing rather than as a convention.
+
+A violation is **not a refusal**: it is a property of the values, so it is the `DimensionError` the evaluator
+already turns into named invalidity that heals (OP-3). Binding `r = d/2 + 1deg` succeeds, the circle says why
+it cannot be built and quotes the expression, dependents hide through the ordinary cascade, and correcting
+the formula heals the whole cone with no repair and no deletion. Nothing throws past the node, and nothing
+ever answers 0.
+
+**Literals carry units and canonicalize at the parse** — `10mm`, `1.5cm`, `15°` (or `15deg`), `1rad`, bare
+numbers dimensionless — so `deg` exists only in the source text and in the panel, never in a node. No
+scientific-notation literal, deliberately: the file's own number writer has never emitted one.
+
+**There are no reserved words, and that is the load-bearing decision of the parser** — found on this
+package's own probe review, and a real defect before it. A word is a **function** when a `(` follows it and
+a **reference** otherwise; a reference nothing in the drawing carries falls back to a **constant** (`PI`,
+`pi`, `E`). So `sin` is an ordinary parameter name, `sin/2` reads it, `sin(90°)` calls the function, and
+`sin + sin(90°)*1mm` is one legal text with both readings in it. The same for `PI`: a parameter of that name
+*is* the parameter, and π is only what is left when nothing is named.
+
+What the probe found is the reason, and it is worth stating in full because it is the sharpest form of the
+frozen-literal rule. With the first cut's keyword-style parsing, renaming a referenced parameter to `sin`
+was **accepted**, the re-stamp wrote `bind "r" = "sin/2 + 1mm"`, and the **live** drawing went on working —
+the bound node keeps the AST it was parsed from — while the *file* it wrote became unloadable, because the
+parser met `sin` with no argument list and called it a misplaced function. A legal editor operation that
+writes a file the next session cannot open is worse than a wrong number: it is loss at the very seam OP-18
+exists to protect, and it is invisible until the reload. The general cure is the grammar, not a guard.
+
+The rejected alternative was to **refuse the rename against a reserved-word list**, the way a hyphenated
+name is refused. It is rejected on the decisive ground that it puts the *vocabulary* into what a stored file
+means: adding `sec` to the function table next session would turn every existing file that has a parameter
+named `sec` in an expression into a file this build cannot open — a frozen-literal violation waiting for its
+first release, and one no test written today could catch. A name the editor allows must stay a name a load
+accepts, for ever; the `(` rule makes that true by construction, and it costs one condition. A function name
+written *without* its arguments is then not a parse error at all but an ordinary unknown name, so the
+binding is what speaks — "there is no value named 'sqrt' — 'sqrt' is a function, so write 'sqrt(…)' with its
+arguments", the same shape as the hyphen refusal's cure.
+
+The general lesson the probe also taught, recorded because it decides where the *next* test goes: the
+defect was invisible to every live assertion and visible only through `save → load`. A binding is two
+representations — the AST that computes and the text that persists — so a claim about an expression is a
+claim about the **file**, and the regression goes through it.
+
+**The rename decision: re-stamp, not refuse.** Each `Expr.Ref` carries the span it occupies in the source
+text, and a rename rewrites exactly those spans and leaves every other character — spacing included — alone.
+That is OP-23's move for a pattern's count, and it is the parameter-rename pattern of OP-7 applied to the one
+mention of a scalar that lives inside a string: the file already restates every *other* mention under its
+current name, and an expression is a mention. The alternative — refusing the rename and naming the
+expressions that read it — was rejected for exactly that reason; it would have made one kind of mention
+special. One name a rename cannot reach is one an expression cannot *spell*: a hyphenated scalar
+(`wall-width`, which is what `wall width` normalises to) reads as a subtraction, so it is refused **by name,
+with the cure** ("rename it to one word of letters and digits first") rather than left to fail as a bogus
+unknown-name error.
+
+**Persistence: two new step kinds, and no version bump.** `bind "r" = "d/2 + 1mm"` stores the text verbatim
+and is parsed on load; `save → load → save` is byte-equal with the user's own spacing in it, and a
+pre-existing plain-`boundTo` file round-trips untouched. The reader's word split became **quote-aware**, which
+returns precisely what `split(' ')` returned for every file ever written (OP-7 normalises every name to one
+quote-free word) and adds only the one argument that is a *text* rather than a name. No stored literal changed
+meaning, so no version bump is owed — OP-18's own test, the same one two new step kinds and a `sketchspace`
+argument passed before this.
+
+The second step kind is `unbind`, and it closes a hole this package found rather than made: **freeing a bound
+value used to be in no file at all.** `unwireParameter` rewired the graph and recorded nothing, while the
+`wire` step that created the bond stayed in the journal — so a parameter freed in the panel came back wired
+on the next load, silently. `unbind "r" = 7mm` says it happened and restates the literal the parameter
+carries from then on, which is the `param` step's own rule for the step that hands a value *back*.
+`ExpressionTest.freeingABoundValueSurvivesTheFile` is the guard.
+
+**Reachability, and the rule that keeps a number a number.** The parameter row gained a **formula field**
+beside its value field, and one entry point (`Editor.bindParameter`) decides among three readings: blank
+frees the value; a text that is *one number* — with or without a unit, negative or not — is today's plain
+value edit and binds nothing; anything else is an expression. The alternative rule the entry suggested, a
+leading `=`, was rejected because it makes the common case carry the syntax; and the value field beside it
+stays a native `type=number` spinner, which is the OP-7 decision this field must not undo. A unit written out
+must be the parameter's own dimension, or the field says which unit it reads bare numbers in. The tool number
+pad is untouched: it takes digits and a dot, and the queued *"the number pad takes no sign"* item is a
+separate one that this package deliberately did not entangle.
+
+**Refusals speak, and they name the position.** An unparseable text names the character position and what was
+expected there; an unknown name says which name; an unknown function lists what there is; a cycle is refused
+**at bind time by name** (`a` may not follow `c`, because `c` already follows `a`) rather than discovered as a
+hang, over the same `dependsOn` walk every connection is checked with. And what is derived **refuses the drag
+and the typed number in the wired height's own words** (OP-25) with one sentence added that "driven by the
+construction" could not say: *which formula* to go and change.
+
+**Cuts, all of them recorded as future extensions and none as non-goals.** (1) Only **named** scalars can be
+bound or referenced: a free point's x and y are anonymous source nodes with no name to resolve and no panel
+row to type into, so `P.x = w/2` is not reachable yet — it needs the naming authority extended to a
+coordinate, not more expression machinery. (2) No conditionals, which is v1's own rule (OP-7) and unchanged.
+(3) No `%` operator; `mod(a, b)` is the function, under `java.lang.Math`'s name like everything else. (4) The
+curve half of this entry — function-defined curve pieces, `x(t)`/`y(t)`, the symbolic derivative and the
+involute acceptance — **stays queued**, and is what the AST and the dimension check were shaped to be
+consumed by.
+
+Tests: `ExpressionTest` (22) — the derived radius and the edit that moves it, the undo layering (a live tick
+is no operation, a committed change is, the binding is one of its own), `save → load → save` byte-equal with
+the text verbatim, a pre-existing wire unchanged, freeing a value surviving the file, `sin`/`cos` over a
+deg-displayed rad-canonical angle, both directions of the dimension rule as named invalidity that heals, a
+`DimensionError` hiding a dependent circle and the whole cone coming back, the typed number and the 3D drag
+both refused with the formula quoted, a rename re-stamping the stored text (and the file), a name an
+expression cannot spell, the cycle refused by name, a measurement feeding an expression and counting as a
+reference, the number-versus-formula entry rule, the refusals' positions and names, and the language itself —
+grammar, the `java.lang.Math` vocabulary and every dimension rule in the table; plus the two the probe's
+defect owns — a parameter renamed to a function's name (and one renamed to a constant's) surviving **the
+file**, and a function written without its arguments refusing with the call form. `ExpressionProbeTest` (3)
+is the review's own: the cycle guard seen across both binding kinds in both directions, a plain wire feeding
+an expression through a rename and a reload, and the rename-to-`sin` episode end to end.
+`BrowserE2ETest.aParameterTakesAFormulaInBrowser` carries it through the real shell: two parameters typed
+into the panel's form, the formula typed into the row, the drawing following, the value field going read-only
+because the value is derived, and a plain number typed into the same field staying a plain number.
+
 **Beyond those four — the small batch, the blends and the expressions — the numbered queue is empty** (the
 session-59 entry above is closed). What remains is the parked list below, each item recorded at its source.
 

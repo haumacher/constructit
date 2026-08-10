@@ -1944,4 +1944,90 @@ class BrowserE2ETest {
             browser.close()
         }
     }
+
+    /**
+     * **The formula field is reachable, and a typed number is still a typed number** (OP-7, session 71).
+     *
+     * The panel row is where a user states an expression, so the claim is made where he makes it: two
+     * parameters typed into the panel's own form, a circle built from one of them, and then `d/2 + 1mm`
+     * typed into the row's formula field — the drawing follows, the value field goes read-only because
+     * the value is derived now, and the refusal that meets a drag says which formula to go and change.
+     */
+    @Test
+    fun aParameterTakesAFormulaInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            // two parameters, through the panel's own form
+            page.fill("#p-name", "d")
+            page.fill("#p-value", "20")
+            page.click("#p-add")
+            page.fill("#p-name", "r")
+            page.fill("#p-value", "10")
+            page.click("#p-add")
+            assertEquals(2, page.querySelectorAll("#params-list .prow").size, "two parameter rows")
+
+            // a circle driven by r
+            val box = page.querySelector("#canvas").boundingBox()
+            page.querySelectorAll("#params-list .prow .pval").last().click()
+            page.click("#tool-circleR")
+            page.mouse().click(box.x + box.width * 0.5, box.y + box.height * 0.5)
+            page.click("#tool-select")
+
+            fun ink(): Int = inkPixels(page)
+
+            // while a parameter row holds the keyboard its DOM is left alone (OP-7: a live spinner must not
+            // be replaced under the caret), so a click on empty space is what asks the panel to redraw
+            fun leaveTheRow() {
+                page.mouse().click(box.x + 12.0, box.y + 12.0)
+            }
+            val before = ink()
+            assertTrue(before > 0, "the circle is drawn")
+
+            // …and now r is derived from d
+            val row = page.querySelectorAll("#params-list .prow").last()
+            row.querySelector(".pexpr").fill("d/2 + 1mm")
+            page.keyboard().press("Enter")
+            assertTrue(status().contains("r = d/2 + 1mm"), "the shell says what it took: ${status()}")
+            assertTrue(ink() > before, "and the circle grew from 10 to 11 mm")
+            leaveTheRow()
+            val derived = page.querySelectorAll("#params-list .prow").last()
+            assertEquals("11", derived.querySelector(".pval").getAttribute("value"), "the value field shows what it is now")
+            assertTrue(derived.querySelector(".pval").getAttribute("disabled") != null, "…and is read-only, being derived")
+
+            // editing d moves the circle, which is the whole point
+            val grown = ink()
+            page.querySelectorAll("#params-list .prow").first().querySelector(".pval").fill("60")
+            page.keyboard().press("Enter")
+            assertTrue(ink() > grown, "the circle followed d")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/34-formula.png")))
+
+            // a plain number typed into the same field is still a plain number: it frees nothing and binds nothing
+            page.querySelectorAll("#params-list .prow").first().querySelector(".pexpr").fill("40")
+            page.keyboard().press("Enter")
+            leaveTheRow()
+            assertEquals(
+                "",
+                page.querySelectorAll("#params-list .prow").first().querySelector(".pexpr").getAttribute("value"),
+                "typing a number states a value, not a formula",
+            )
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

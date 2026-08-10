@@ -284,6 +284,20 @@ object DocumentFormat {
                 val e = (step.args[0] as Arg.Sc).entry
                 listOf(step.args[0], Arg.Text("="), Arg.Num(value(e, ev)))
             }
+            // an expression is stored **verbatim** — the text is the record (OP-7, session 71) — with one
+            // rewrite and one only: a referenced parameter that has since been renamed is re-stamped in
+            // place, which is the parameter-rename pattern applied to the one mention that lives inside a
+            // string. Every other character of the user's text, spacing included, is untouched.
+            "bind" -> {
+                val text = doc.expressionBinding(step)?.node?.text
+                if (text == null) step.args else listOf(step.args[0], Arg.Text("="), Arg.Label(text))
+            }
+            // freeing a parameter hands it a literal from that step on, so the literal is state on this
+            // step — the `param` step's own rule, for the step that gives a value back
+            "unbind" -> {
+                val e = (step.args[0] as Arg.Sc).entry
+                listOf(step.args[0], Arg.Text("="), Arg.Num(doc.restatedLiteral(e)))
+            }
             // a rider's position along its host is **state**: it is dragged, typed, and compensated while the
             // host turns (OP-20). What the step restates is therefore the rider's own parameter (`dofs=`,
             // the same seam a dimension's placement uses) and not the click, since *which* curve and which
@@ -646,7 +660,7 @@ object DocumentFormat {
         val byName = HashMap<String, Element>()
         for ((lineNo, line) in lines.drop(1).withIndex()) {
             val (body, declared) = split(line)
-            var words = body.split(' ').filter { it.isNotEmpty() }
+            var words = splitWords(body)
             // the one literal a re-stamp rewrites: the count of the pattern being re-stamped (OP-23)
             if (restamp != null && words.firstOrNull() == "pattern" && words.getOrNull(1)?.let { unquote(it) } == restamp.pattern) {
                 words = words.map { if (it.startsWith("count=")) "count=${restamp.count}" else it }
@@ -690,6 +704,37 @@ object DocumentFormat {
 
     /** A step, in as many words as a note needs to identify it. */
     private fun describe(words: List<String>): String = words.take(3).joinToString(" ")
+
+    /**
+     * A step's words, splitting on spaces **outside quotes**.
+     *
+     * Every name in the file is one quote-free word (OP-7 normalises them for exactly this reason), so for
+     * every file ever written this returns precisely what `split(' ')` returned — no stored literal changes
+     * meaning. What it adds is the one argument that is a *text* rather than a name: an expression, stored
+     * verbatim, which is allowed to breathe (`"d/2 + 1mm"`).
+     */
+    private fun splitWords(body: String): List<String> {
+        val out = ArrayList<String>()
+        val word = StringBuilder()
+        var quoted = false
+        for (c in body) {
+            when {
+                c == '"' -> {
+                    quoted = !quoted
+                    word.append(c)
+                }
+                c == ' ' && !quoted -> {
+                    if (word.isNotEmpty()) {
+                        out.add(word.toString())
+                        word.clear()
+                    }
+                }
+                else -> word.append(c)
+            }
+        }
+        if (word.isNotEmpty()) out.add(word.toString())
+        return out
+    }
 
     private fun split(line: String): Pair<String, List<String>> {
         val i = line.indexOf("->")
@@ -800,6 +845,14 @@ object DocumentFormat {
             // this needs no version bump (OP-18).
             "unweld" -> doc.unweld(el(1), keyedNums(words, "dofs"))
             "wire" -> doc.wireParameter(scalar(1), scalar(3))
+            // the expression is parsed back from the very text that was stored; a text this build cannot
+            // read, or a name the drawing no longer carries, is a load error with the document's own reason
+            // rather than a drawing that comes back different (OP-18: a load is strict)
+            "bind" ->
+                if (!doc.bindParameter(scalar(1), unquote(words.getOrElse(3) { throw LoadError("missing expression") }))) {
+                    throw LoadError(doc.note ?: "cannot bind '${words.getOrNull(1)}'")
+                }
+            "unbind" -> doc.unwireParameter(scalar(1), quantity(words[3]))
             // `sign=` is the branch the click chose, restated (OP-1); a format-1 script carries none, and the
             // click scores it once more — this time for good, since the save that follows writes it down
             "intersectnear" -> doc.intersectNear(el(1), el(2), parsePos(words[3]), keyedInts(words, "signs").firstOrNull())

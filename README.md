@@ -98,6 +98,14 @@ first-class goal and the current implementation focus.
   dimension line's own placement is draggable and typeable like any other degree of freedom.
 - **Parameter wiring** — reduce degrees of freedom by binding one parameter (or point) to another;
   equality by shared reference, with cycle checks.
+- **Expressions** — the same binding, generalized: type a formula into a parameter's row and it is
+  *derived* from the other named values — `d/2 + 1mm`, `sin(a)*r`, the whole `java.lang.Math`
+  vocabulary plus plain operators, with units in the literals (`10mm`, `15°`). One direction only:
+  `r = d/2` **defines** `r`, so it is an ordinary set of DAG edges and no solver is involved. The
+  text is stored verbatim and re-stamped when something it reads is renamed; dimensions are checked
+  (`sin` takes an angle, `sqrt` halves the exponents) and a violation just makes the value invalid
+  with a reason, which heals when you fix it. What is derived refuses the drag, and says which
+  formula to change.
 - **Your own tools** — select a construction, tick which of its free points and parameters are the
   inputs, and it becomes a button in the palette. Clicking its slots stamps an *instance* that is a
   view over the original rather than a copy of it: **editing the original updates every instance**, an

@@ -9,6 +9,9 @@ import constructit.dsl.PointRef
 import constructit.dsl.valueOf
 import constructit.exchange.ImportResult
 import constructit.exchange.Imports
+import constructit.expr.Expr
+import constructit.expr.ExprError
+import constructit.expr.ExprParser
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Justification
@@ -1649,7 +1652,12 @@ class Editor(
         if (!el.visible) {
             "${elementLabel(el)} selected — a ghost is not dragged"
         } else {
-            explainImmovable(el, doc.nameOf(el), doc.ownFields(el))
+            // …and where what drives it is an **expression**, the refusal quotes it: "driven by the
+            // construction" is true of a wired height (OP-25) and says nothing about which formula to go
+            // and change (OP-7, session 71)
+            explainImmovable(el, doc.nameOf(el), doc.ownFields(el)) +
+                el.handle?.dragNodes.orEmpty().mapNotNull { doc.expressionDriving(it) }.distinct()
+                    .joinToString("") { " Here $it." }
         }
 
     // ---- what the selection is built from, and what is built on it (see [Dependencies]) ----
@@ -2318,13 +2326,113 @@ class Editor(
         value: Double,
         commit: Boolean = true,
     ): Boolean {
-        if (!e.editable || doc.isBound(e)) return false
+        if (!e.editable || doc.isBound(e)) {
+            // a derived value refuses the write **in the wired height's own words** (OP-25): the refusal
+            // names what drives it, which for an expression is the expression
+            if (e.editable) {
+                statusHint =
+                    doc.expressionOf(e)?.let { "${e.name} is derived: ${e.name} = $it — change what it reads, or clear the formula" }
+                        ?: "${e.name} follows ${doc.boundEntry(e)?.name ?: "another value"} — free it first to type a number of its own"
+                changed()
+            }
+            return false
+        }
         // a parameter can drive a host's geometry (a leg length, an angle), so the same compensation applies
         compensating { doc.setParameter(e, quantityOf(dimensionOf(e.ref), value)) }
         if (commit) checkpoint()
         changed()
         return true
     }
+
+    /**
+     * What the panel's **formula** field does with what was typed into it (OP-7, the session-71 entry).
+     * One entry point, three answers, and the rule between them is stated rather than guessed:
+     *
+     * - **blank** frees the parameter where it stands (the `unbind` step), and says so;
+     * - a text that is **one number** — `12`, `10mm`, `15°`, and the negative of one — is *today's plain
+     *   value edit*, not a binding: it writes the literal exactly as the value field does, so typing a
+     *   number keeps precisely the behaviour it has always had and nobody freezes a constant into a
+     *   formula by accident. A unit may be written, and must then be the parameter's own dimension;
+     * - **anything else** is an expression, bound through [Document.bindParameter].
+     *
+     * The alternative rule considered was a leading `=` marking an expression. It was rejected because it
+     * makes the *common* case carry the syntax, and because the number field beside this one is a native
+     * spinner (OP-7's own decision) that this field must not become: what is typed here is a formula unless
+     * it happens to be nothing but a number.
+     */
+    fun bindParameter(
+        e: ScalarEntry,
+        text: String,
+    ): Boolean {
+        val t = text.trim()
+        if (!e.editable) {
+            statusHint = "${e.name} is measured by the construction (OP-4), so it has no formula of its own"
+            changed()
+            return false
+        }
+        if (t.isEmpty()) {
+            if (!doc.isBound(e)) return false
+            val was = doc.expressionOf(e) ?: doc.boundEntry(e)?.name
+            doc.unwireParameter(e)
+            checkpoint()
+            statusHint = "${e.name} is a free value again, where it stands" + (was?.let { " — it no longer follows $it" } ?: "")
+            changed()
+            return true
+        }
+        bareNumber(t)?.let { lit ->
+            val dim = dimensionOf(e.ref)
+            // a bare number is read in the panel's own display unit (OP-7), which is exactly what the value
+            // field does with it; a unit written out is taken at its word, and must be this parameter's
+            val q = if (lit.hadUnit) lit.q else quantityOf(dim, lit.q.value)
+            if (q.dim != dim) {
+                statusHint = "${e.name} is $dim, and $t is ${q.dim} — a plain number here is read in ${displayUnitName(dim)}"
+                changed()
+                return false
+            }
+            // a number typed at a value that is *derived* is the same refusal the value field gives, in the
+            // same words — the formula field is not a back door around the binding
+            if (doc.isBound(e)) return setParameter(e, 0.0)
+            compensating { doc.setParameter(e, q) }
+            checkpoint()
+            changed()
+            return true
+        }
+        if (!doc.bindParameter(e, t)) {
+            statusHint = doc.takeNote() ?: "Can't bind ${e.name} to '$t'"
+            changed()
+            return false
+        }
+        checkpoint()
+        // a binding whose *values* do not agree is legal and invalid, not refused (OP-3): it says so and heals
+        val why = (Evaluator().eval(e.ref.node) as? EvalResult.Invalid)?.reason
+        statusHint = "${e.name} = ${doc.expressionOf(e) ?: t}" + (why?.let { " — but $it" } ?: "")
+        changed()
+        return true
+    }
+
+    /**
+     * [text] as the single literal it is, or null when it is an expression — the rule that keeps a typed
+     * number exactly what it has always been. A leading minus is part of the number here, since `-3` is a
+     * number a user writes and not an expression he composed.
+     */
+    private fun bareNumber(text: String): Expr.Lit? {
+        val ast =
+            try {
+                ExprParser.parse(text)
+            } catch (e: ExprError) {
+                return null
+            }
+        (ast as? Expr.Lit)?.let { return it }
+        val neg = (ast as? Expr.Apply)?.takeIf { it.op == "neg" }?.args?.singleOrNull() as? Expr.Lit ?: return null
+        return Expr.Lit(-neg.q, neg.hadUnit)
+    }
+
+    private fun displayUnitName(dim: Dimension): String =
+        when (dim) {
+            Dimension.ANGLE -> "degrees"
+            Dimension.LENGTH -> "millimetres"
+            else -> "plain numbers"
+        }
 
     /**
      * Rename parameter [e] to what was typed into the panel's name field (OP-7). One user-level operation,
