@@ -771,6 +771,33 @@ object Geom3 {
     /** How far outside a triangle a ray may land and still count as hitting it — see [rayMesh]. */
     const val BARY_EPS = 1e-9
 
+    /**
+     * **How far a point of [mesh] may stand off the surface it samples**, in mm — the bound a ray hit has to
+     * be forgiven by when it is tested against a body's *analytic* faces (edit-in-3D slice 2,
+     * `Section3.faceAt`).
+     *
+     * Derived, never guessed. Every chord in this kernel is inscribed in its own curve within
+     * [GeomMath.effectiveTol] of it, and that tolerance grows monotonically with radius
+     * ([GeomMath.REL_TOL] above the crossover, [GeomMath.TESS_TOL_MM] below it) — so evaluating it at a
+     * radius no feature of this body can exceed bounds every chord in it at once. Half the bounding box's
+     * diagonal is such a radius: any circle lying inside the body has at most that radius. It is **doubled**
+     * because a triangle deviates in two parametric directions at once (a torus band's chords fall short of
+     * it along the tube *and* around the axis), and each of those is one chord's sag.
+     *
+     * An empty mesh has nothing to be off of and answers with the plain floor, which is the smallest honest
+     * number here.
+     */
+    fun meshSag(mesh: Mesh3): Double {
+        if (mesh.vertices.isEmpty()) return 2.0 * GeomMath.TESS_TOL_MM
+        var lo = mesh.vertices[0]
+        var hi = mesh.vertices[0]
+        for (v in mesh.vertices) {
+            lo = Vec3(min(lo.x, v.x), min(lo.y, v.y), min(lo.z, v.z))
+            hi = Vec3(max(hi.x, v.x), max(hi.y, v.y), max(hi.z, v.z))
+        }
+        return 2.0 * GeomMath.effectiveTol((hi - lo).length() / 2.0)
+    }
+
     // ---- vertex welding: an indexed mesh, in deterministic insertion order ----
 
     /**

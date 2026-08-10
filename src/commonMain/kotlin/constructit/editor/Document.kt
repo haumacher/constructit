@@ -83,6 +83,7 @@ import constructit.geom.Continuity
 import constructit.geom.Curve3Element
 import constructit.geom.CurveEnd
 import constructit.geom.Curves3
+import constructit.geom.FaceName
 import constructit.geom.Feature3
 import constructit.geom.FilletLeg
 import constructit.geom.FilletMath
@@ -2405,13 +2406,17 @@ class Document {
      * the note says so. A **face of revolution** has a centre — the axis pierces it — and that is where its
      * origin is put ([Revolve3]), which is what somebody sketching a boss on the end of a turned part is
      * measuring from; a *cap* of a partial turn is the profile itself, standing at one end of the sweep. A
-     * note that told all three the same story would be wrong about two of them (refusals and notes both
-     * name what a thing is — OP-3's rule, applied to the status line).
+     * **flat end** reached past the footprint's own pieces (edit-in-3D slice 2's addresses,
+     * [Section3.FACE_ADDRESS_CONVENTION]) has no picked edge at all: it is the footprint's own coordinates,
+     * which is the whole convenience of sketching on the top of a plate. A note that told all of them the
+     * same story would be wrong about most of them (refusals and notes both name what a thing is — OP-3's
+     * rule, applied to the status line).
      */
     fun faceFrameNote(space: SketchSpace): String {
-        val feature = space.anchor?.let { (Evaluator().valueOf(it.ref) as? SolidValue)?.solid?.feature }
+        val whole = space.anchor?.let { (Evaluator().valueOf(it.ref) as? SolidValue)?.solid?.feature }
+        val feature = whole?.let { Section3.undressed(it) }
         val piece = space.piece
-        if (feature is Feature3.Revolution && piece != null) {
+        if (feature is Feature3.Revolution) {
             val n = Geom3.boundaryPieces(feature).size
             if (piece >= n) {
                 return "the profile itself, standing at the ${if (piece == n) "start" else "end"} of the sweep, " +
@@ -2420,7 +2425,79 @@ class Document {
             return "u along the radius the profile is drawn at, the origin where the axis of revolution pierces " +
                 "the face — so a circle at (0, 0) is concentric with the turned part"
         }
+        if (whole != null && piece >= Geom3.boundaryPieces(whole).size) {
+            return "the coordinates the footprint was drawn in, standing on this face — the origin under the " +
+                "drawing's own, so what you draw here lines up with the plan"
+        }
         return "u along the edge you picked, v up into the face, the origin at that edge's middle"
+    }
+
+    /**
+     * **Which face of [solid] the point [at] names, aimed along [along]** — the *element*-level form of
+     * [Section3.faceAt], and the one route a 3D face click takes (edit-in-3D slice 2).
+     *
+     * Returns the stored `sketchspace … piece=` address, or the reason there is none *in this drawing's own
+     * names*: which body, which face, and — where the face is real but no plane — what does exist instead.
+     * The geometry is Section3's and the words are this document's, which is the split every other refusal
+     * here keeps.
+     *
+     * [tol] is the mesh's own tessellation sag ([Geom3.meshSag]), because the point comes off a chord.
+     */
+    fun faceAddressAt(
+        solid: Element,
+        at: Vec3,
+        along: Vec3,
+        tol: Double,
+        ev: Evaluator = Evaluator(),
+    ): Pair<Int?, String?> {
+        val feature =
+            (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature
+                ?: return null to "${nameOf(solid)} has no solid to take a face from"
+        val (pick, why) = Section3.faceAt(feature, at, along, tol)
+        if (pick == null) return null to "${nameOf(solid)}: ${why ?: "nothing here is a named face"}"
+        val piece = pick.piece
+        if (piece == null) {
+            return null to
+                "${pick.patch.name.label} of ${nameOf(solid)} has no address a sketch can be stored at" +
+                (pick.patch.reason?.let { " — $it" } ?: "") + flatFacesNote(solid, feature)
+        }
+        val refusal = Section3.facePatchOfFootprintPiece(feature, piece).second
+        if (refusal != null) {
+            return null to "${pick.patch.name.label} of ${nameOf(solid)}: $refusal${flatFacesNote(solid, feature)}"
+        }
+        return piece to null
+    }
+
+    /**
+     * The faces of [solid] a sketch *can* be opened on, named — what a refusal points at, so declining a
+     * barrel says where to go instead of only where not to (OP-3's speaking rule).
+     */
+    private fun flatFacesNote(
+        solid: Element,
+        feature: Feature3,
+    ): String {
+        val flat =
+            (0 until Section3.faceAddressCount(feature)).mapNotNull { p ->
+                Section3.facePatchOfFootprintPiece(feature, p).first?.let { p to it }
+            }
+        if (flat.isEmpty()) return " ${nameOf(solid)} has no flat face at all — put a datum plane where you want to sketch."
+        return " The flat faces of ${nameOf(solid)} are ${flat.joinToString(", ") { it.second.name.label }}."
+    }
+
+    /**
+     * What face address [piece] of [solid] **is**, in the words [FaceName] gives it — or null where the body
+     * has no named faces.
+     *
+     * The one place a face is spoken of outside a refusal: a 3D click has no footprint edge on screen for the
+     * user to read the answer off, so the status line says which face it opened (edit-in-3D slice 2).
+     */
+    fun faceLabel(
+        solid: Element,
+        piece: Int,
+        ev: Evaluator = Evaluator(),
+    ): String? {
+        val feature = (ev.valueOf(solid.ref) as? SolidValue)?.solid?.feature ?: return null
+        return Section3.facePatchOfFootprintPiece(feature, piece).first?.name?.label
     }
 
     /**

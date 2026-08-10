@@ -1346,6 +1346,24 @@ class BrowserE2ETest {
             )
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/18-solid-picked-in-3d.png")))
 
+            // ---- and a **working plane chosen by clicking a face**, in the 3D view (edit-in-3D slice 2) ----
+            //
+            // The same seam one step finer: the ray gives the body and the point, and the *feature's* face list
+            // says which face that point is on ([Section3.faceAt]), so what the click records is the ordinary
+            // `sketchspace el= piece=` step. What only a browser can answer is again the link the headless
+            // suite stands in for — that the shell's real viewport reaches the resolution, that the space
+            // indicator and the topbar follow a plane chosen this way, and that nothing throws on the path.
+            page.click("#tool-${Tools.SKETCH_ON_FACE}")
+            assertTrue(status().contains("3D view"), "the tool says how it picks here; got: ${status()}")
+            page.mouse().click(cx, cy)
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/19-face-picked-in-3d.png")))
+            val chosen = page.querySelector("#v-space").inputValue()
+            assertTrue(
+                chosen.startsWith("face"),
+                "clicking a face in the 3D view should make it the working plane; the indicator says '$chosen', status: ${status()}",
+            )
+            assertTrue(status().contains("Sketching on $chosen"), "…and the space introduces itself; got: ${status()}")
+
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()
         }

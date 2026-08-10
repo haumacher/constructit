@@ -17,6 +17,7 @@ import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.MeshQuality
 import constructit.geom.Vec2
+import constructit.geom.Vec3
 import constructit.units.Dimension
 import constructit.units.Quantity
 import constructit.units.mm
@@ -1301,7 +1302,10 @@ class Editor(
         // that *cannot* succeed there; switching is therefore the honest answer, and it is said out loud.
         // It also closes a silent trap: in a face view the tool used to find nothing, and the drawing that
         // followed went quietly into the old space.
-        val backToPlan = id == Tools.SKETCH_ON_FACE && !doc.activeSpace.isPlan
+        // …**and only in the 2D canvas** (edit-in-3D slice 2): in the 3D view the pick is a ray against the
+        // bodies themselves, which reaches every face from wherever the camera stands, so there is nothing to
+        // switch to and switching would throw away the plane the user is working on for no gain.
+        val backToPlan = id == Tools.SKETCH_ON_FACE && !doc.activeSpace.isPlan && pointing == null
         if (backToPlan) setActiveSpace(Document.PLAN_SPACE)
         // **Arming the tool that is already armed keeps what it has collected.** Arming a *different* tool
         // abandons the half-finished one, which is honest — it is a different operation. Re-arming the same
@@ -1317,6 +1321,8 @@ class Editor(
         statusHint =
             if (backToPlan) {
                 "Plan view — Sketch on face picks a solid's footprint edge, which is drawn here; click the edge you want"
+            } else if (id == Tools.SKETCH_ON_FACE && pointing != null) {
+                "3D view — Sketch on face takes the face you click on, wherever the camera stands; hold Ctrl to orbit"
             } else if (rearming) {
                 // …and it says where the gesture stands, because a click that deliberately does nothing must
                 // still answer "what happened?" — with the way to start over
@@ -1567,26 +1573,62 @@ class Editor(
         return Camera(canvasW / 2 - (lo.x + w / 2) * scale, canvasH / 2 + (lo.y + h / 2) * scale, scale)
     }
 
-    /** One click of the *Sketch on face* tool: a solid's footprint edge names a side face (OP-17). */
+    /**
+     * One click of the *Sketch on face* tool — **two gestures, one behaviour** (OP-17; edit-in-3D slice 2).
+     *
+     * In the 2D canvas a solid's *footprint edge* names the side face it projects to, and a click inside a
+     * partial revolve's profile names the cap standing in this plane ([Document.solidEdgeNear]). In the **3D
+     * view** the very face under the pointer is named, resolved analytically off the feature's own face list
+     * ([faceUnderRay]) and tried first there. Both produce the same thing — a solid and a boundary-piece
+     * address — so what is recorded is the one `sketchspace el= piece=` step either way, and a replay
+     * re-resolves nothing (OP-18).
+     */
     private fun faceClick(world: Vec2) {
         val from = doc.activeSpace.name
-        val hit = doc.solidEdgeNear(world, tolWorld(), ev())
+        // the ray first where a 3D view is driving; the flat route is what the plan has and all it has
+        val rayed = faceUnderRay(world)
+        if (rayed != null && rayed.first == null) {
+            statusHint = "No sketch space there: ${rayed.second}"
+            changed()
+            return
+        }
+        val hit = rayed?.first ?: doc.solidEdgeNear(world, tolWorld(), ev())
         if (hit == null) {
-            statusHint = "Click a solid's footprint edge — that edge is the side face, seen from above"
+            statusHint =
+                if (pointing != null) {
+                    "Click a face of a solid — the ray met nothing here"
+                } else {
+                    "Click a solid's footprint edge — that edge is the side face, seen from above"
+                }
+            changed()
+            return
+        }
+        val (solid, piece) = hit
+        // **A face that already has a space is activated, not doubled.** Two spaces on one face would be two
+        // names for one plane, and every drawing on the second one would look like a stranger to the first;
+        // the same click is therefore "go there", which is what the space list's own row does. No step and no
+        // checkpoint: nothing about the model changed.
+        val already = doc.spaces.firstOrNull { it.isFace && it.anchor === solid && it.piece == piece }
+        if (already != null) {
+            setActiveSpace(already.name)
+            statusHint = "${doc.nameOf(solid)} already has ${already.name} on that face — showing it. ${spaceNote(already)}"
+            changed()
+            return
+        }
+        val why = doc.faceRefusal(solid, piece)
+        val space = if (why == null) doc.createFaceSpace(solid, piece) else null
+        if (space == null) {
+            statusHint = "No sketch space on that edge of ${doc.nameOf(solid)}: ${why ?: "it has no planar side face there"}"
         } else {
-            val (solid, piece) = hit
-            val why = doc.faceRefusal(solid, piece)
-            val space = if (why == null) doc.createFaceSpace(solid, piece) else null
-            if (space == null) {
-                statusHint = "No sketch space on that edge of ${doc.nameOf(solid)}: ${why ?: "it has no planar side face there"}"
-            } else {
-                // the document already made it active; the *view* follows it here
-                spaceCameras[from] = camera
-                camera = cameraFor(space)
-                clearSelection()
-                checkpoint()
-                statusHint = spaceNote(space)
-            }
+            // the document already made it active; the *view* follows it here
+            spaceCameras[from] = camera
+            camera = cameraFor(space)
+            clearSelection()
+            checkpoint()
+            // which face was chosen, in the drawing's own names — the 3D click has no edge on screen to look
+            // at, so the face has to say what it is (OP-3's speaking rule)
+            val named = doc.faceLabel(solid, piece, ev())
+            statusHint = (if (named == null) "" else "$named of ${doc.nameOf(solid)}. ") + spaceNote(space)
         }
         changed()
     }
@@ -4933,9 +4975,11 @@ class Editor(
      * The solid the pointer is **actually pointing at in the 3D view** — ray ∩ mesh, nearest hit — or null:
      * no 3D view is driving, or the ray passes everything by (`Geom3.rayMesh`).
      *
-     * This is 3D picking, and it is the *picking* half only: what comes back is the **body**, never a face of
-     * it. Naming a face durably is Manifold's face-ID provenance, which stays parked exactly where it was —
-     * so nothing here has to invent an identity that could not survive a recompute.
+     * What comes back is the **body**, which is all a `SOLID` slot or a plain selection ever wanted. A *face*
+     * is one question further and is asked of the **feature**, not of the triangle the ray met: see [rayHit],
+     * which is this same search carrying the hit point, and [Section3.faceAt], which resolves it (edit-in-3D
+     * slice 2). No Manifold face ID is involved on either path — nothing here invents an identity that could
+     * not survive a recompute.
      *
      * **What it may offer is what the 3D view draws, and that is one line of code rather than a rule to keep
      * in step**: the candidates come from [Scene3.extract] itself, with no ghosts. So a hidden solid is never
@@ -4968,24 +5012,62 @@ class Editor(
     private fun solidUnderRay(
         world: Vec2,
         ev: Evaluator = ev(),
-    ): Element? {
+    ): Element? = rayHit(world, ev)?.element
+
+    /**
+     * What a ray hit is, whole: the body, where on it the ray landed, and how accurate that point can be.
+     *
+     * [solidUnderRay] answers the *body* alone, which is all a `SOLID` slot ever needed. A **face** pick needs
+     * the point too — it is what the feature's own face list is asked about ([Section3.faceAt]) — and it needs
+     * the mesh's tessellation sag with it, because the point lies on a chord and every tolerance downstream is
+     * that number (edit-in-3D slice 2).
+     */
+    private class RayHit(val element: Element, val at: Vec3, val along: Vec3, val sag: Double)
+
+    private fun rayHit(
+        world: Vec2,
+        ev: Evaluator = ev(),
+    ): RayHit? {
         val ray = pointing?.eyeRay(world) ?: return null
         // the caller's own memo pass where there is one ([pickAt] already holds one): a fresh [Evaluator] here
         // would re-evaluate every solid in the drawing on every press, which is a cost the triangle loop's own
         // argument does not cover
         val drawn = Scene3.extract(doc, ev).solids.associateBy { it.elementId }
         if (drawn.isEmpty()) return null
-        var best: Element? = null
+        var best: RayHit? = null
         var bestT = Double.POSITIVE_INFINITY
         for (el in doc.elements) {
             val item = drawn[el.id] ?: continue
             val t = Geom3.rayMesh(ray, item.mesh) ?: continue
             if (t < bestT) {
                 bestT = t
-                best = el
+                best = RayHit(el, ray.at(t), ray.dir, Geom3.meshSag(item.mesh))
             }
         }
         return best
+    }
+
+    /**
+     * **The face the pointer is on in the 3D view**, as the solid and the address a `sketchspace` step
+     * records — or a refusal in the drawing's own names, or null where no body is under the ray at all
+     * (edit-in-3D slice 2).
+     *
+     * The ray is asked *first* where a 3D view is driving, for [pickSolidRay]'s reason one level finer: the
+     * flat route names a face by the footprint edge it projects to, and in the 3D view that is a picture taken
+     * in a plane the user is not looking through — it cannot reach a cap at all, and it answers a click on a
+     * far face with the near one whose footprint edge happens to be under the cursor. Depth is the evidence
+     * the flat picture does not have. It takes nothing from the 2D canvas, where [PlaneProjection.eyeRay] is
+     * null and this route does not exist.
+     *
+     * A body under the ray whose face cannot carry a sketch **refuses here and falls through to nothing**: the
+     * user pointed at a face, and quietly opening a space on some other face whose footprint edge was near the
+     * cursor would be the silent wrong answer this route exists to remove.
+     */
+    private fun faceUnderRay(world: Vec2): Pair<Pair<Element, Int>?, String?>? {
+        val hit = rayHit(world) ?: return null
+        val (piece, why) = doc.faceAddressAt(hit.element, hit.at, hit.along, hit.sag, ev())
+        if (piece == null) return null to (why ?: "no face of ${doc.nameOf(hit.element)} can carry a sketch here")
+        return (hit.element to piece) to null
     }
 
     /**

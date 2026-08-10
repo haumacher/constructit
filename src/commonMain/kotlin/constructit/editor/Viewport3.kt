@@ -17,9 +17,11 @@ import constructit.geom.Vec2
  * [Editor.pointing] — and from there the editor is unchanged: it receives plane coordinates, as the test
  * suite has always driven it. Nothing here knows what a tool is beyond whether one is armed.
  *
- * Still **no picking of the solids**: a click reaches the active plane's geometry (that is what the ray
- * seam gives every tool for free), never a facet of a mesh. Choosing a working plane by clicking a face is
- * edit-in-3D's slice 2, and it needs a durable name for the face rather than a ray-cast.
+ * **The bodies are pickable too, and by name** — the ray seam's other half. A `SOLID` slot and a plain
+ * selection resolve by ray ∩ mesh (session 63), and since edit-in-3D **slice 2** *Sketch on face* resolves the
+ * hit to a **face** of the body's own face list and records that face's address, so a working plane is chosen
+ * by clicking it here. Nothing in this class knows about either: it routes the gesture, and the editor's
+ * projection ([Editor.pointing]) is what carries the ray.
  */
 class Viewport3(
     var camera: Camera3 = Camera3(),

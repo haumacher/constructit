@@ -709,6 +709,9 @@ WebGlRenderer3 (jsMain) — one program: position+normal+colour, uniform MVP, he
   selection model beside the 2D one. Sketch-on-face has since shipped and answered it **without** 3D
   picking: a face is named by a *provenance choice* (`facePlane(solid, TOP)`) reached by picking the solid
   in plan, not by clicking a facet — so the cut stands as *face-picking*, which is edit-in-3D's slice 2.
+  *(**Retired in session 74**, and the cut's own condition is how: clicking a face in the 3D view resolves to a
+  face of the feature's ordered list and records that face's stored address, so there is still no facet in the
+  model and no second selection model — see* Click a face and that face is the working plane *under OP-17.)*
   - **Superseded in part: the drawing tools now apply here too.** Since edit-in-3D slice 1 this view *is* an
     editing view whenever a tool is armed on the active working plane — every mouse position casts a ray onto
     that plane and reaches the same `Editor`. What the cut above now means precisely is: a gesture reaches the
@@ -5717,7 +5720,8 @@ at the incircle's centre — with **moving the apex** re-deriving every one of t
     — and it is an ordinary curve to put a point on from then on.
   - **No 3D picking.** Choosing a face by clicking the solid in the 3D view is edit-in-3D's slice 2; this
     package consumes the same provenance mechanism in the 2D editor first, which is the cheaper place to grow
-    it — exactly as the queue entry scoped it.
+    it — exactly as the queue entry scoped it. *(**Retired in session 74**: the same provenance now answers a
+    ray as well as a plan click — see* Click a face and that face is the working plane *above.)*
 
 #### A plane's input geometry is every solid built before it (as built — the user's design, GitHub #9, session 33)
 
@@ -5872,7 +5876,10 @@ Viewport3           — now also the router: whose gesture is this, the tool's o
   works, through the local scale. (3) **Nothing of slice 2**: no ray–triangle picking against the meshes, no
   face-as-a-recorded-choice. The cheap partial (a ray-cast that picks a facet) was deliberately not built —
   without the provenance half it would be a second, weaker selection model beside the 2D one, which is the
-  reason this view had no picking in the first place.
+  reason this view had no picking in the first place. *(**Retired in two steps**: the bodies became pickable in
+  session 63 and the **faces** in session 74, and the cut's own reasoning is what shaped the answer — the pick
+  never resolves to a facet, it resolves to a named face of the feature and records that name. See* Click a face
+  and that face is the working plane *below.)*
 - Tests: `Edit3DTest` (14) — the ray seam over four camera poses × three planes, the parallel-ray refusal, the
   acceptance pyramid + a datum at offset 45 + a segment between two of its section corners **clicked entirely
   in the 3D view** and compared step-for-step against the same gestures on the canvas, plane-space arc
@@ -5924,6 +5931,120 @@ its endpoint dragged in 3D, and the box selection drawn as the plane rectangle i
 `theModifierDecidesWhoOwnsTheDrag` was updated deliberately — it asserted the old cut — and the browser E2E
 `buildAndDragInBrowser` now asserts both halves in real Chrome: a plain drag leaves the solids unturned, a
 Ctrl+drag orbits them.
+
+#### Click a face and that face is the working plane (as built — edit-in-3D slice 2, session 74)
+
+Piece (4) of the edit-in-3D entry, the one thing it had waited on since session 21: *naming a face durably*.
+Slice 1 deliberately built none of it, and said why — *"a facet pick without a durable name would be a second,
+weaker selection model beside the 2D one"*. What made it buildable is not a better ray-cast but the machinery
+the blends left behind: ordered face lists whose indices never renumber, `Surface3` typing, and a dressed
+body's faces surviving its dressing.
+
+**The mechanism, in one sentence: the ray answers with a body and a *point*, and which face that point is on is
+a question the *feature* answers.** `Editor.rayHit` is the old `solidUnderRay` with the two things a face pick
+needs added — the hit point and the mesh's own accuracy — and `Section3.faceAt` is the authority everything
+else goes through:
+
+- **The hit point is tested against the body's own `faces()`**, never against the triangle it was hit on: a
+  **planar** patch by the distance to its plane plus containment in its own outline, a **`Surface3`** band by
+  the distance to that surface plus its stated intervals (the axial one and the turn). Nothing reads a
+  triangle, so the answer cannot change with the mesh quality — which is precisely what makes the pick
+  recordable as a durable choice (OP-1/OP-18) rather than a coincidence of a tessellation.
+- **The tolerance is derived, not chosen.** The point lies on a *chord*, so it sits inside the true surface by
+  up to the tessellation sag, and the sag is what it is forgiven by: `Geom3.meshSag` evaluates
+  `GeomMath.effectiveTol` at half the mesh's bounding-box diagonal — a radius no feature of that body can
+  exceed, and the tolerance is monotone in radius, so one number bounds every chord in the body at once. It is
+  doubled, because a triangle deviates in two parametric directions at once (a torus band's chords fall short
+  along the tube *and* around the axis). No ad-hoc epsilon appears anywhere on this path.
+- **A face you can see wins.** Two faces containing the point is not a corner case but the commonest case of
+  all — a silhouette grazes the body along an *edge*, which belongs to both faces that meet there — so the one
+  whose plane faces the ray is taken. A hit at the point where the ray enters the body cannot honestly be a
+  back-facing face, and the alternative (lowest index) answers "the bottom cap" for a click squarely on a
+  pyramid's flank. Ties past that go to the nearer face, then to the lower index: deterministic.
+- **The answer is an integer in the stored address space**, translated once by `Section3.addressOfFace` — the
+  inverse of `facePatchOfFootprintPiece`, structural throughout.
+
+**The address space grew a second half, and nothing a file stores changed meaning.**
+`Section3.FACE_ADDRESS_CONVENTION` now states it whole: `0 until n` is the face over footprint boundary piece
+*i* (OP-8's original address), and `n` onward are the faces standing over **no** footprint piece — the flat
+ends, in the face list's own order. That is not a new convention: a partial revolution has addressed its two
+caps exactly that way since session 63, and this generalizes it to an extrusion's and a prism's caps and a
+loft's terminal sections rather than inventing a second scheme. It had to grow, because a ray reaches a face no
+footprint edge projects to — the top of a plate is the obvious one — and it is safe to grow because every one
+of those indices was a **refusal** before (*"this solid has no boundary piece #k"*), so no build could ever
+have written one. A flat end's sketching frame is the face list's own: the top cap is the coordinates the
+footprint was drawn in, which is the whole convenience of drawing on the top of a plate, and the bottom cap is
+that frame with `v` mirrored so its normal points out of the material.
+
+**The gesture: the *Sketch on face* tool's own click, answered by the ray where a 3D view is driving.** The
+decision, with the alternative that was rejected:
+
+- **Chosen**: one tool, two routes, tried in the order `pickSolidRay` already established one level coarser —
+  the ray first in the 3D view, the footprint edge everywhere else (and in the 3D view when the ray meets
+  nothing). One tool row, one help text, one recorded step, and the 2D canvas is bit-for-bit untouched because
+  `PlaneProjection.eyeRay` is null there. A body under the ray whose face cannot carry a sketch **refuses and
+  does not fall through**: the user pointed at a face, and quietly opening a space on some other face whose
+  footprint edge happened to be near the cursor is exactly the silent wrong answer this route exists to remove.
+- **Rejected**: a dedicated interaction (a plain click in the 3D view under SELECT choosing the working
+  plane). It would put a second meaning on the gesture session 29 gave to selection and dragging, and it would
+  make choosing a plane the only editing action in the app with no tool behind it — the "second, weaker
+  selection model" slice 1 refused, arriving from the other direction.
+- **One rule of `setTool` is now view-dependent**, and stated where it is made: arming *Sketch on face* sends
+  the 2D canvas back to the plan (a footprint edge is only drawn there) and leaves the **3D** view where it
+  is, because the ray reaches every face from wherever the camera stands. The status line says which route is
+  live.
+- **Clicking a face that already has a space shows that space** instead of making a second one — two spaces on
+  one face would be two names for one plane and every drawing on the second a stranger to the first. It is in
+  `faceClick`, so it is one behaviour for both gestures, and it costs no step and no checkpoint because
+  nothing about the model changed. Deliberately **not** in `createFaceSpace`: a file that already holds two
+  such steps must go on loading exactly as it did (OP-18).
+- **The status line names the face** in the drawing's own words (`FaceName.label` through `Document.faceLabel`),
+  because a 3D click has no footprint edge on screen for the user to read the answer off.
+
+**What refuses, and in whose words.** A **curved band** names the surface it is and points at the flat faces
+that do exist (*"the face over boundary edge #2: that profile edge sweeps a cylinder and not a plane — put a
+datum plane where you want to sketch. The flat faces of e3 are …"*). A **blend's own band** says it is the
+rounded band along edge #k and names the flats too. A **mesh-route body** refuses by its route — the general
+boolean's `mesh-only`, an import's, a sweep's — which is the **mesh half** of the parked face-ID provenance
+item, still parked and now stated at the one place a user meets it. A hit on a body whose named faces are not
+its whole boundary (a **prism's** internal step face) says the ray met it where no named face is.
+
+**Cuts, each whole and each already refusing in-app with a reason.** (1) A body extruded along anything but
+the vertical still has **no side-face address**: `Geom3.sideFace` refuses one (*"this solid is not extruded
+vertically, so its side faces are not upright"*) because its frame is stated with `v = world +Z`. Its **flat
+ends** are reachable now, which is new; its flanks are not, and giving them an address means choosing a frame
+for them — one item, whole, deferred with its reason rather than half-built. (2) A **blend's own band** has no
+address at all, and that includes a **chamfer's**, which *is* a plane: the address space says nothing about the
+faces a dressing appends, so the honest answer is the refusal rather than an index that means one thing in the
+file and another after a second blend. Sketching on a chamfer is one item, whole, and it is the same item as
+naming an appended face — which is what slice 3 will want anyway. (3) A loft band over a section the
+footprint is **not** (a three-section loft's middle band) has no address, because a footprint edge names one
+band and only one; the refusal says so and a datum plane is the route. (4) A `Revolve3.Band.Sphere` or
+`Torus` carries no axial interval of its own, so two bands lying on the **same** sphere or torus resolve to the
+first of them — both are the same surface, so a refusal names the right kind of band either way, and it is
+recorded on `Section3.faceAt` rather than hidden. (5) The **2D** route still cannot reach the new flat-end
+addresses (a click inside a footprint is ambiguous between the top cap and the bottom one, and the plan has no
+depth to break the tie); the 3D click is how they are reached, which is what the coverage sentence of the queue
+entry asked for.
+
+**What this un-parks, for the two consumers the record parked with it.** `Section3.faceAt` is the seam:
+**slice 3** (a cross-space boolean picked by clicking both bodies; a datum or a loft section placed on a face in
+the 3D view) needs exactly "the face index under this ray on this body", and it is one call; **appearance
+Tier 3** (per-face material) needs the same call plus a place to store the index, and the index it will store
+is the address this note defines.
+
+Tests: `Face3DPickTest` (10) — a partial revolve's cap picked from below, drilled through, exact bore volume,
+`assertManifold`, `piece=4` in the saved step and a byte-equal replay of the whole story; an extrusion's side
+face picked in 3D asserted to be the *same frame* the footprint-edge route gives (a point at the same plane
+coordinates landing at the same world position, and the two documents' `sketchspace` lines compared
+character-for-character); the top cap that no footprint edge projects to; both kinds of a loft's flats (a
+pyramid's flank and its base); a dressed body picked at its base index with a pre-existing face space still
+meaning its face; the four refusals (a barrel, a blend's band, a mesh boolean, and the flat-faces pointer in
+each); the re-click that activates rather than doubles, from both views, with element, space and journal counts
+pinned; and the OP-18 test that matters most — a second body built between the camera and a picked face, so
+that the same pixel now resolves to a *different* body (asserted), while the recorded address reloads
+unchanged. The browser E2E `datumSketchPlaneInBrowser` gained one real 3D face click end to end: the shell's
+own viewport, the space indicator following the plane, and the space introducing itself in the status line.
 
 #### The face frame is intrinsic, and where a space's origin sits is the space's own business (as built — the user's design, session 32)
 
@@ -13464,6 +13585,33 @@ the composition table is driven generically as well as by its own test.
   retyping it positive heals it. `RevolveIntervalTest`'s panel detour stays as a test of panel parameters with
   its workaround sentence retired and quoted, beside a new test that builds the user's own `offset −15°`
   straddle by typing the sign into the gesture. **2252 → 2261 green**, no golden moved, nothing cut.
+- **Session 74, queue item 4** — **Edit-in-3D slice 2: click a face and that face is the working plane.** The
+  entry had waited since session 21 on *naming a face durably*, and the delivery's one interesting decision is
+  that the name is **not** an identity at all: the ray answers with a body and a *point*, and which face that
+  point is on is a question the **feature** answers off its own ordered face list — so there is no facet, no
+  Manifold face ID, and nothing that could change with a tessellation. The point lies on a chord, so the
+  tolerance is the mesh's own sag, *derived* (`GeomMath.effectiveTol` at half the bounding-box diagonal, a
+  radius no feature of the body can exceed, doubled for a doubly curved band) rather than picked. Two faces
+  containing the point is the *common* case, not a corner case — a silhouette grazes the body along an edge —
+  and the tie is broken by **which face the ray can see**, which is also what stops a click on a pyramid's flank
+  answering "the bottom cap". The address space grew its second half in the process, stated once as
+  `Section3.FACE_ADDRESS_CONVENTION`: past the footprint's own pieces come the **flat ends**, in the face list's
+  order, which is the convention a partial revolution's caps have used since session 63 generalized to
+  extrusions, prisms and lofts — a ray reaches the top of a plate, which no footprint edge projects to, and
+  every one of those indices was a refusal before, so no stored literal changed meaning and there is no version
+  bump. The gesture is the *Sketch on face* tool's own click with the ray tried first where a 3D view is
+  driving (the alternative — a plain SELECT click choosing the plane — is recorded as rejected: it would put a
+  second meaning on session 29's drag and make choosing a plane the one editing action with no tool behind it),
+  and a click on a face that already has a space **shows** that space instead of doubling it. Four refusals
+  speak (a curved band by its surface, a blend's band by its edge, a mesh-route body by its route, a prism's
+  internal step face by what it is not), each naming the flat faces that do exist. Four cuts recorded, each
+  already refusing in-app: an obliquely extruded body's *flanks* still have no address (its flat ends now do),
+  a blend's own band has none either (a chamfer's included, flat though it is — naming an appended face is its
+  own item), a loft band over a section the footprint is not, two bands on one sphere or torus, and the 2D route
+  still cannot reach the new flat-end addresses. What it un-parks is exactly what the record said it would: the
+  *naming a face durably* half of Manifold face-ID provenance is retired **for every analytic body** and the
+  mesh half stays parked and stated; slice 3 and appearance Tier 3 consume one function, `Section3.faceAt`.
+  **2263 → 2273 green**, no golden moved.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -15092,13 +15240,17 @@ press) and the three stated cuts (SELECT stays the canvas', no grid or ruler on 
 slice 2 — not even the cheap ray-cast).
 
 **Still queued, restated:**
-- **Slice 2 — click-a-face working-plane selection.** Piece (4) of the entry above: ray–triangle picking
+- **Slice 2 — click-a-face working-plane selection. — done, session 74.** Piece (4) of the entry above: ray–triangle picking
   against the tessellated solids, the picked face's plane becoming (or activating) a face space, with the click
   recorded as a **durable choice** rather than re-scored on load. This is the parked *Manifold face-ID
   provenance + 3D picking* item; the provenance is the hard part and the ray-cast is easy, and slice 1
   deliberately built none of it — a facet pick without a durable name would be a second, weaker selection model
   beside the 2D one. Tier 3 of the appearance package (per-face material assignment) waits on this for the same
-  reason.
+  reason. *(Delivered whole, and the provenance came out **analytic** rather than a facet identity: the ray
+  answers with a body and a point, and which face that point is on is asked of the feature's own face list. See
+  the as-built note* Click a face and that face is the working plane *under OP-17 — the address space, the
+  gesture and its rejected alternative, the four refusals and the four cuts. Tier 3's wait is over: what it
+  consumes is `Section3.faceAt` plus a place to store the index it returns.)*
 - **Slice 3 — what that unlocks.** The parked cross-space two-operand boolean gets its gesture (pick one
   solid, then the other, in the view where both are visible), and datum / loft-section placement becomes a 3D
   gesture: with the ray seam and face picking both in place, "put the next section on that face, 40 mm out" is
@@ -15208,7 +15360,11 @@ restated whole:**
 
 Nothing about those three changed here. Tier 3 still waits on edit-in-3D's **slice 2**, for the reason both
 entries give: naming a face durably is the same face-ID provenance mechanism click-a-working-plane needs, built
-once for two consumers.
+once for two consumers. *(**That wait ended in session 74.** Slice 2 shipped, and the mechanism it built is the
+one Tier 3 was promised: `Section3.faceAt` answers "which face is under this ray" and `Section3.addressOfFace`
+turns that face into the integer a step stores — so per-face material is now a place to record `(solid, face
+address) → material` plus the same call the face pick makes, with the honest limit inherited whole: a
+mesh-route body has no face to name and refuses by its route. Tier 3 itself is still queued, unbuilt.)*
 
 **Retired in session 27: conics as first-class curve values — ellipse and elliptic arc.** The queue's last
 numbered line, delivered whole. What it said, quoted so the retirement is legible:
@@ -16875,7 +17031,8 @@ After the bug batch and the pattern entry above, in this order:
    closed: see *the small batch, as built* under the two session-63 entries above, which records the fix that
    was **not** the one predicted (the creep was two steps restating no freedom, not a projection wanting
    better conditioning) and the interaction the sign settled on (`-` toggles the number being typed).
-4. **Edit-in-3D slice 2 — click-a-face working-plane selection, and what it un-parks.** The entry has
+4. **Edit-in-3D slice 2 — click-a-face working-plane selection, and what it un-parks. — done, session 74;
+   see *Click a face and that face is the working plane* under OP-17.** The entry has
    waited since session 21 on one thing: *naming a face durably*, the half of the *Manifold face-ID
    provenance* item session 63 left parked. The blends built that machinery for every analytic feature:
    ordered face lists whose indices never renumber (the stored `sketchspace … piece=` address), `Surface3`
@@ -16920,10 +17077,17 @@ would be silently wrong under any affine map that is not one; session 47's proje
 transform will meet it. Then: grouping-per-copy for group arrays and
 Mirror/Rotate/**Point reflect** as group operands (OP-16 note), macro specialization UI (OP-6 note), chamfer-on-arc
 convention (fillet note), drag-to-attach onto arcs (welding note), STL/3MF export (OP-9), **Manifold
-face-ID provenance** — whose *3D picking* half is retired in session 63: a `SOLID` slot and a plain selection
-now resolve by ray ∩ mesh over the bodies the 3D view draws (`Geom3.rayMesh`, `PlaneProjection.eyeRay`), so
-what is left parked is naming a **face** durably, which is the hard half and the one every other consumer of
-this item (click-a-working-plane, a boolean operand named by its face) actually waits on. Then: the mesh-only footprint **for a general boolean's result only** (the
+face-ID provenance** — whose *3D picking* half was retired in session 63 (a `SOLID` slot and a plain selection
+resolve by ray ∩ mesh over the bodies the 3D view draws — `Geom3.rayMesh`, `PlaneProjection.eyeRay`) and whose
+**naming a face durably** half is retired in session 74 **for every analytic body**: a ray hit is resolved to a
+face of the *feature's own* ordered face list and recorded as that face's stored address (`Section3.faceAt`,
+`Section3.addressOfFace` — see *Click a face and that face is the working plane* under OP-17), which is what
+click-a-working-plane, a boolean operand named by its face and per-face appearance were all waiting on. So no
+Manifold face ID is needed for anything the drawing constructs, and **what is left parked is the mesh half
+alone**: a body whose faces are emergent rather than constructed — a general boolean's result, an imported
+mesh, a swept body — has no face to name and refuses by its route at every consumer. That half is the one a
+Manifold face ID (or an equivalent per-triangle provenance carried through the boolean) would actually be for,
+and nothing new enables it yet. Then: the mesh-only footprint **for a general boolean's result only** (the
 imported-body half is delivered in session 30 — see the JT import note under OP-9; what is left is a
 decision about which *space* a mesh boolean belongs to, not a geometric one), MeshGL64,
 **silhouette edges in the 3D view** (the view-dependent half of the feature-edge work — see the viewport

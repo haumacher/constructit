@@ -14,7 +14,10 @@ import kotlin.math.pow
  * One appearance model with two consumers (the GLB writer and the preview), which is what makes *what the
  * preview shows what the exported GLB shows, by construction*. Tier 2 (textures by projection) and Tier 3
  * (per-face assignment) are queued elsewhere and add nothing here: a texture is an export-time projection
- * rule, and a per-face assignment needs the durable face names edit-in-3D's slice 2 introduces.
+ * rule, and a per-face assignment needs the durable face names edit-in-3D's slice 2 introduces — which it now
+ * has: `Section3.faceAt` answers which face a ray is on and `Section3.addressOfFace` gives the integer a step
+ * stores, so Tier 3 is a record keyed by `(solid, face address)` and the same call the face pick makes. The
+ * limit it inherits is stated there: a mesh-route body has no face to name and refuses by its route.
  *
  * A value, not a mutable object: setting a material replaces the record, so the document's map holds one
  * immutable answer per element and undo/replay restore it by putting the old one back.

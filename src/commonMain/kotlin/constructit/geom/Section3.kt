@@ -2,6 +2,7 @@ package constructit.geom
 
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -1017,9 +1018,31 @@ object Section3 {
     // ---- the face a footprint edge names: sketch-on-face, generalized past the prism ----
 
     /**
+     * **The whole stored address space, stated once** (OP-17's `sketchspace el= piece=`, extended in session
+     * 74 for edit-in-3D slice 2) — cited by [facePatchOfFootprintPiece] and [addressOfFace], which are the
+     * only two functions that may read or write it.
+     *
+     * `0 until n` (with `n = Geom3.boundaryPieces(feature).size`) is the face **over footprint boundary piece
+     * i** — an extrusion's or a revolution's `Side(i)`, a loft's `Band` at the rail that piece is. That is
+     * OP-8's original address and no stored literal changes meaning.
+     *
+     * `n` onward are the faces of [faces] that stand over **no** footprint piece — the flat ends: an
+     * extrusion's or a prism's two [FaceName.Cap]s, a partial revolution's two [FaceName.RevolveCap]s, a
+     * loft's terminal [FaceName.SectionFace]s — in the **face list's own order**, which for all three is
+     * low end first. The revolution has addressed its caps that way since session 63
+     * ([Revolve3.facePatchOf]); this generalizes the same convention to the other two rather than inventing a
+     * second one, and it is what a 3D face click needs, because a ray reaches a cap that no footprint edge
+     * projects to. Nothing a file stores changes meaning: every one of those indices was a **refusal** before
+     * (`this solid has no boundary piece #k`), so no build could have written one.
+     */
+    const val FACE_ADDRESS_CONVENTION =
+        "face address i < n is the face over footprint boundary piece i (Geom3.boundaryPieces order); " +
+            "i >= n is the (i − n)-th face standing over no footprint piece — the flat ends, in Section3.faces order"
+
+    /**
      * The face of [feature] over **footprint boundary piece** [piece] — the pick a plan view can make (a side
      * face projects to exactly one footprint edge), generalized from the prism to every feature whose faces
-     * are named.
+     * are named, and past the footprint to the flat ends (see [FACE_ADDRESS_CONVENTION]).
      *
      * The stored address is unchanged (OP-8's boundary-piece index, what the `sketchspace` step already
      * records), so this closes the loft's *"no named end faces"* cut for the faces that **are** planes without
@@ -1046,6 +1069,9 @@ object Section3 {
         // pieces are the two caps of a partial turn ([Revolve3.facePatchOf]) — one address space, so a
         // recorded `sketchspace el= piece=` needs no format change to reach either.
         if (feature is Feature3.Revolution) return Revolve3.facePatchOf(feature, piece)
+        // …and past the footprint's own pieces, the flat ends, in the face list's order
+        // ([FACE_ADDRESS_CONVENTION]) — which is where the revolution's caps have always been.
+        if (piece >= Geom3.boundaryPieces(feature).size) return endFacePatch(feature, piece)
         if (feature !is Feature3.Loft) {
             // The prism route is [Geom3.sideFace] verbatim — frame, anchor and refusals — because that frame
             // is the **sketching** convention (OP-17): the picked segment on the x axis, v into the face,
@@ -1055,22 +1081,305 @@ object Section3 {
             if (face == null) return null to why
             return FacePatch(FaceName.Side(piece), face.plane, sideRectangle(face.length, face.height), null) to null
         }
-        val (plan, why2) = Geom3.loftPlan(feature.sections, feature.seams, feature.guides)
-        if (plan == null) return null to why2
-        val (fs, whyFaces) = faces(feature)
-        if (fs == null) return null to whyFaces
-        val k = feature.sections.indexOfFirst { it is LoftSection.Area }
-        if (k < 0) return null to "this loft has no area section to take a face from"
-        val band = if (k < feature.sections.size - 1) k else k - 1
-        val rail = plan.railOfPiece(k, piece) ?: return null to "this solid has no boundary piece #${piece + 1}"
-        if (band < 0 || band + 1 >= plan.ringW.size || rail >= plan.railCount) {
+        val (addr, why2) = loftAddress(feature)
+        if (addr == null) return null to why2
+        val rail = addr.plan.railOfPiece(addr.section, piece) ?: return null to "this solid has no boundary piece #${piece + 1}"
+        if (rail >= addr.plan.railCount) {
             return null to "this solid has no boundary piece #${piece + 1} (it has ${Geom3.boundaryPieces(feature).size})"
         }
         // the picked footprint segment is section k's own ring edge — the band's lower edge unless the area
         // section is the *last* one, and the frame is built on it (OP-17's intrinsic rule)
-        val patch = bandPatch(plan, band, rail, refUpper = band != k)
+        val patch = bandPatch(addr.plan, addr.band, rail, refUpper = addr.band != addr.section)
         if (patch.plane == null) return null to (patch.reason ?: "that face is ruled rather than flat — put a datum plane where you want to sketch")
         return patch to null
+    }
+
+    /**
+     * The **flat end** at address `piece` — entry `piece − n` of the faces standing over no footprint piece
+     * ([FACE_ADDRESS_CONVENTION]).
+     *
+     * Read off [faces] rather than re-derived, so a cap's sketching frame *is* the frame the face list states
+     * for it: an extrusion's top cap is the sketch's own (u, v) — draw on it in the coordinates the footprint
+     * was drawn in — and the bottom cap is that frame with `v` mirrored, which is what makes its normal point
+     * out of the material ([capMap]). There is no picked edge to anchor on here and no choice to make.
+     */
+    private fun endFacePatch(
+        feature: Feature3,
+        piece: Int,
+    ): Pair<FacePatch?, String?> {
+        val (fs, why) = faces(feature)
+        if (fs == null) return null to why
+        val n = Geom3.boundaryPieces(feature).size
+        val ends = endFaces(fs)
+        val patch =
+            ends.getOrNull(piece - n)
+                ?: return null to "this solid has no face #${piece + 1} (it has ${n + ends.size})"
+        if (patch.plane == null) return null to (patch.reason ?: "that face is not a plane — put a datum plane where you want to sketch")
+        return patch to null
+    }
+
+    /**
+     * **How many addresses this body has**, side faces and flat ends together — what a reader that wants to
+     * walk the whole address space counts up to ([FACE_ADDRESS_CONVENTION]).
+     */
+    fun faceAddressCount(feature: Feature3): Int =
+        Geom3.boundaryPieces(feature).size + (faces(feature).first?.let { endFaces(it).size } ?: 0)
+
+    /**
+     * The faces of [fs] the address space puts **past** the footprint's own pieces — the flat ends.
+     *
+     * A dressing's own appended band is not one of them, and that is the one exclusion worth stating: a
+     * blend's band has no address at all (a chamfer's included, flat though it is), because the address space
+     * says nothing about faces a dress-up feature adds. It is refused by name instead of given an index that
+     * would mean something else after the next blend.
+     */
+    private fun endFaces(fs: List<FacePatch>): List<FacePatch> =
+        fs.filter { !overFootprintPiece(it.name) && it.name !is FaceName.BlendBand }
+
+    /** Whether [name] is the face over a footprint boundary piece — the `0 until n` half of the address space. */
+    private fun overFootprintPiece(name: FaceName): Boolean = name is FaceName.Side || name is FaceName.Band
+
+    /** A loft's footprint-piece address: the plan, the area section the footprint is, and the band it names. */
+    private class LoftAddress(val plan: Geom3.LoftPlan, val section: Int, val band: Int)
+
+    /**
+     * Where a loft's `piece` addresses read from — one place, so [facePatchOfFootprintPiece] and
+     * [addressOfFace] cannot drift on which band a footprint edge means.
+     */
+    private fun loftAddress(f: Feature3.Loft): Pair<LoftAddress?, String?> {
+        val (plan, why) = Geom3.loftPlan(f.sections, f.seams, f.guides)
+        if (plan == null) return null to why
+        val whyFaces = faces(f).second
+        if (whyFaces != null) return null to whyFaces
+        val k = f.sections.indexOfFirst { it is LoftSection.Area }
+        if (k < 0) return null to "this loft has no area section to take a face from"
+        val band = if (k < f.sections.size - 1) k else k - 1
+        if (band < 0 || band + 1 >= plan.ringW.size) {
+            return null to "this solid has no boundary piece to name a face by (it has ${Geom3.boundaryPieces(f).size})"
+        }
+        return LoftAddress(plan, k, band) to null
+    }
+
+    /**
+     * The **stored address of a named face** — the inverse of [facePatchOfFootprintPiece], and null for a face
+     * the address space cannot say (see [FACE_ADDRESS_CONVENTION]).
+     *
+     * What a pick needs: the geometric question ("which face is under this ray") is answered in the face
+     * list's own terms ([faceAt]), and this is the one translation from a [FaceName] to the integer a
+     * `sketchspace … piece=` step records. Structural throughout — nothing here measures anything.
+     *
+     * Null for exactly three kinds of face, each of them honest rather than missing: a **blend's own band**
+     * (which is a rounded strip, not a plane anybody sketches on), a loft's band over a section the footprint
+     * is not (a three-section loft's middle band — a footprint edge names one band, and only one), and any
+     * face of a body whose face list refuses altogether.
+     */
+    fun addressOfFace(
+        feature: Feature3,
+        name: FaceName,
+    ): Int? {
+        // A dressed part is addressed exactly as its base is (session 71, slice 3): the blend keeps every base
+        // index, so the address of a surviving base face is the base's own.
+        if (feature is Feature3.Blend) return addressOfFace(feature.base, name)
+        if (name is FaceName.BlendBand) return null
+        val n = Geom3.boundaryPieces(feature).size
+        if (name is FaceName.Side) return name.piece.takeIf { it in 0 until n }
+        if (name is FaceName.Band) {
+            val f = feature as? Feature3.Loft ?: return null
+            val addr = loftAddress(f).first ?: return null
+            if (name.band != addr.band) return null
+            return (0 until n).firstOrNull { addr.plan.railOfPiece(addr.section, it) == name.rail }
+        }
+        val ends = faces(feature).first?.let { endFaces(it) } ?: return null
+        val k = ends.indexOfFirst { it.name == name }
+        return if (k < 0) null else n + k
+    }
+
+    // ---- which face a point of the surface is on: the ray's answer, taken from the feature (slice 2) ----
+
+    /**
+     * One face of [feature] the point [at] lies on, with the address a click on it would record.
+     *
+     * [off] is how far the point stood off that face in mm — kept because it is the evidence the answer was
+     * chosen on, and because a consumer that wants to know how sure the pick was has no other way to ask.
+     */
+    data class FacePick(
+        val patch: FacePatch,
+        /** The `sketchspace … piece=` address of [patch], or null when the address space cannot say it. */
+        val piece: Int?,
+        val off: Double,
+    )
+
+    /**
+     * **Which face of [feature] the point [at] is on, aimed along [along]** — the authority every 3D face pick
+     * goes through (edit-in-3D slice 2), and the seam slice 3 and appearance Tier 3 consume.
+     *
+     * The whole rule, because it is the one thing this feature is:
+     *
+     * 1. **The feature answers, not the triangles.** [at] is a point of a *mesh* — a ray's hit, so it lies on
+     *    a **chord** and sits inside the true surface by up to the tessellation sag. It is tested against the
+     *    body's own [faces]: a **planar** patch by the distance to its plane plus containment in its own
+     *    outline, a **[Surface3] band** by the distance to that surface plus its stated intervals (the axial
+     *    one, and the turn). Nothing reads a triangle, so the answer cannot change with the mesh quality —
+     *    which is exactly why a pick may be recorded as a durable choice (OP-1/OP-18).
+     * 2. **The tolerance is the mesh's own sag, never an ad-hoc epsilon.** [tol] is what the caller
+     *    computed from the very mesh the ray met ([Geom3.meshSag]); a candidate farther off than that is not a
+     *    candidate at all, and the refusal says so rather than snapping to the nearest thing.
+     * 3. **A face you can see wins.** Where two faces both contain the point — which is exactly what a hit on
+     *    an *edge* is, and the commonest case of all, since a silhouette grazes the body along one — the one
+     *    whose plane faces the ray is taken. A hit at the entry point of the body cannot honestly be a
+     *    back-facing face, and the alternative (lowest index) would answer "the bottom cap" for a click
+     *    squarely on a pyramid's flank. Ties past that go to the nearer face, then to the lower index, so the
+     *    answer is deterministic.
+     *
+     * Refused by name — never guessed — when the body has no named faces at all (a general boolean's result,
+     * an import, a sweep: [faces]'s own reason, which is the **mesh half** of the parked face-ID item and
+     * stays parked), and when no named face contains the point, which is what a hit on a **prism's** internal
+     * step face is (its named faces are its sides and its two caps, not the whole boundary —
+     * [facesAreWholeBoundary]).
+     *
+     * *One stated limit.* A [Revolve3.Band.Sphere] or [Revolve3.Band.Torus] carries no axial interval of its
+     * own, so two bands lying on the **same** sphere or torus (a profile drawn with two arcs of one circle)
+     * are told apart by their turn interval alone and otherwise resolve to the first of them. Both are the
+     * same surface, so a refusal names the right kind of band either way; a consumer that assigns something
+     * *per face* there would put it on a same-surface neighbour, which is recorded here rather than hidden.
+     */
+    fun faceAt(
+        feature: Feature3,
+        at: Vec3,
+        along: Vec3,
+        tol: Double,
+    ): Pair<FacePick?, String?> {
+        val (fs, why) = faces(feature)
+        if (fs == null) return null to why
+        val dir = if (along.length() <= Vec3.EPS) null else along.normalized()
+        var best: FacePick? = null
+        var bestFacing = 2
+        // in face-list order, and a candidate has to be *strictly* better to displace one — which is what
+        // makes a tie go to the lower index, and the whole answer deterministic
+        for (patch in fs) {
+            val off = offOfPatch(patch, at, tol) ?: continue
+            // 0 = its plane faces the ray (or it is a curved band, which has no stated material side here),
+            // 1 = the ray would have to pass through the body to reach it
+            val facing =
+                if (patch.plane == null || dir == null) {
+                    0
+                } else if (patch.plane.normal.normalized().dot(dir) < 0.0) {
+                    0
+                } else {
+                    1
+                }
+            val b = best
+            if (b == null || facing < bestFacing || (facing == bestFacing && off < b.off)) {
+                best = FacePick(patch, addressOfFace(feature, patch.name), off)
+                bestFacing = facing
+            }
+        }
+        val pick = best ?: return null to "the ray met this body where no named face of it is"
+        return pick to null
+    }
+
+    /**
+     * How far [at] stands off [patch], or null when it is not on that face at all: outside its outline, off
+     * the band's own interval, or farther than [tol] away.
+     */
+    private fun offOfPatch(
+        patch: FacePatch,
+        at: Vec3,
+        tol: Double,
+    ): Double? {
+        val plane = patch.plane
+        if (plane != null) {
+            val d = abs(plane.distanceTo(at))
+            if (d > tol) return null
+            val rings = ringsOf(patch.outline)
+            if (rings.isEmpty()) return null
+            val uv = plane.toLocal(at)
+            if (RegionBool.contains(rings, uv)) return d
+            // a point just outside the boundary is on the face as far as a mesh hit can tell: a chord of a
+            // curved edge falls short of it by the same sag the plane distance is allowed
+            val edge = rings.minOf { ring -> ringDistance(ring, uv) }
+            if (edge > tol) return null
+            return kotlin.math.sqrt(d * d + edge * edge)
+        }
+        val surface = patch.surface ?: return null
+        val off = surfaceOff(surface, at, tol) ?: return null
+        return if (off > tol) null else off
+    }
+
+    /** The distance from [p] to the closed polyline [ring], in the ring's own plane. */
+    private fun ringDistance(
+        ring: List<Vec2>,
+        p: Vec2,
+    ): Double {
+        var best = Double.MAX_VALUE
+        for (i in ring.indices) {
+            val a = ring[i]
+            val b = ring[(i + 1) % ring.size]
+            val ab = b - a
+            val t = if (ab.length() <= Vec2.EPS) 0.0 else ((p - a).dot(ab) / ab.dot(ab)).coerceIn(0.0, 1.0)
+            val d = (p - (a + ab * t)).length()
+            if (d < best) best = d
+        }
+        return best
+    }
+
+    /**
+     * How far [at] stands off the band [s] states, or null when it lies outside the band's own extent — the
+     * curved half of [faceAt], done in the surface's own `(s, r, θ)` frame and therefore in millimetres.
+     *
+     * Each family's distance is the one its own statement gives: a cylinder's is the radial error, a cone's
+     * the perpendicular distance to its generating line in the meridian half-plane, a sphere's and a torus's
+     * the error of the radius they are stated by.
+     */
+    private fun surfaceOff(
+        s: Surface3,
+        at: Vec3,
+        tol: Double,
+    ): Double? {
+        val rel = at - s.origin
+        val axial = rel.dot(s.axis)
+        val rad = rel - s.axis * axial
+        val r = rad.length()
+        if (!turnHolds(s, atan2(rad.dot(s.binormal), rad.dot(s.ref)), r, tol)) return null
+
+        fun within(
+            a: Double,
+            b: Double,
+        ): Boolean = axial >= min(a, b) - tol && axial <= max(a, b) + tol
+        return when (val band = s.band) {
+            is Revolve3.Band.Cylinder -> if (!within(band.s0, band.s1)) null else abs(r - band.r)
+            is Revolve3.Band.Cone ->
+                if (!within(band.s0, band.s1)) {
+                    null
+                } else {
+                    abs(r - abs(axial - band.sApex) * band.tanHalf) / kotlin.math.sqrt(1.0 + band.tanHalf * band.tanHalf)
+                }
+            // no axial interval of its own — the stated limit on [faceAt]
+            is Revolve3.Band.Sphere -> abs(kotlin.math.sqrt((axial - band.sc) * (axial - band.sc) + r * r) - band.radius)
+            is Revolve3.Band.Torus -> {
+                val ds = axial - band.sc
+                val dr = r - band.rc
+                abs(kotlin.math.sqrt(ds * ds + dr * dr) - band.minor)
+            }
+            // a flat band has a plane, so it never reaches here; the other two have no surface to be off of
+            is Revolve3.Band.Planar, Revolve3.Band.Degenerate, is Revolve3.Band.Unnamed -> null
+        }
+    }
+
+    /** Whether turn angle [th] is inside [s]'s swept interval, with [tol] mm of slack read at radius [r]. */
+    private fun turnHolds(
+        s: Surface3,
+        th: Double,
+        r: Double,
+        tol: Double,
+    ): Boolean {
+        if (s.full) return true
+        val slack = if (r <= tol) PI else tol / r
+        val two = 2.0 * PI
+        var t = th
+        while (t < s.turnStart - 1e-12) t += two
+        while (t > s.turnStart + two + 1e-12) t -= two
+        return t <= s.turnEnd + slack || t >= s.turnStart + two - slack
     }
 
     // ---- the section itself ----
