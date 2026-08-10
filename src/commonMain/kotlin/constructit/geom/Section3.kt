@@ -477,6 +477,17 @@ object Section3 {
                     emptyList(),
                     "that boundary edge is a spline, so the face it sweeps is ruled and not a plane — pick a straight edge",
                 )
+            // an extrude **carries** a function curve — the piece tessellates into the mesh like every other
+            // — and the face it sweeps is a ruled surface this drawing has no name for, so the patch is
+            // `plane = null` with the reason and `surface = null`, refused by predicate up front
+            is ProfileElement.FuncE ->
+                FacePatch(
+                    name,
+                    null,
+                    emptyList(),
+                    "that boundary edge is a function curve, so the face it sweeps is ruled and not a plane — " +
+                        "pick a straight edge",
+                )
         }
 
     private const val CURVED_SIDE =
@@ -1388,6 +1399,9 @@ object Section3 {
                     }
                 }
             }
+            // numeric but deterministic, from the curve's own fixed grid — the seeding is the tessellation
+            // and nothing about it depends on the camera or on a click (OP-15's spline rule)
+            is ProfileElement.FuncE -> FuncCurves.intersectImplicit(e.curve, FuncCurves.lineImplicit(line)).points
         }
 
     // ---- ruled faces: the cylinder, the spline sweep, the twisted band ----

@@ -732,6 +732,21 @@ private fun setupApp() {
         editor.checkpoint() // panel edits commit through the same seam as canvas gestures
         repaint()
     })
+    // ---- the function-curve form (session 71, curve half) ----
+    //
+    // Two texts and a domain, entered where a formula is entered — because a function curve's inputs *are*
+    // texts, which is this panel's medium and not the click-collecting tool table's (see
+    // [Editor.addFunctionCurve] for the alternative that was rejected). What it makes is an ordinary
+    // element from the moment it exists: pickable, riddable and traceable by every tool there is.
+    (document.getElementById("fc-add") as HTMLElement).addEventListener("click", {
+        val x = (document.getElementById("fc-x") as HTMLInputElement).value
+        val y = (document.getElementById("fc-y") as HTMLInputElement).value
+        val from = (document.getElementById("fc-from") as HTMLInputElement).value.toDoubleOrNull() ?: 0.0
+        val to = (document.getElementById("fc-to") as HTMLInputElement).value.toDoubleOrNull() ?: 1.0
+        editor.addFunctionCurve(x, y, from, to)
+        repaint()
+    })
+
     val paramsList = document.getElementById("params-list") as HTMLElement
     // select active parameter by clicking a row — but NOT when clicking the value field
     // (that would repaint and destroy the input, stealing focus)

@@ -2030,4 +2030,58 @@ class BrowserE2ETest {
             browser.close()
         }
     }
+
+    /**
+     * **The curve half through the real shell** (session 71): the involute typed into the panel's own
+     * function-curve form, drawn, riddable, and following the parameter it reads.
+     */
+    @Test
+    fun aFunctionCurveIsDrawnFromTwoTextsInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            // the parameter the curve reads
+            page.fill("#p-name", "r")
+            page.fill("#p-value", "20")
+            page.click("#p-add")
+
+            val blank = inkPixels(page)
+            // the involute, as two texts and a domain — the form's own defaults are exactly it. The section
+            // is collapsed until it is wanted, which is what keeps the panel's idle height where it was.
+            page.click("#fc-form > summary")
+            page.fill("#fc-to", "2.5")
+            page.click("#fc-add")
+            assertTrue(status().contains("x(t) = r * (cos(t) + t * sin(t))"), "the shell says what it drew: ${status()}")
+            val drawn = inkPixels(page)
+            assertTrue(drawn > blank, "the curve is on the canvas")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/35-funccurve.png")))
+
+            // editing r re-rounds it by plain recompute
+            page.querySelectorAll("#params-list .prow").first().querySelector(".pval").fill("40")
+            page.keyboard().press("Enter")
+            assertTrue(inkPixels(page) > drawn, "the curve followed r")
+
+            // …and a text that is not an expression refuses by name, drawing nothing
+            page.fill("#fc-x", "q * cos(t)")
+            page.click("#fc-add")
+            assertTrue(status().contains("'q'"), "the refusal names the name: ${status()}")
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

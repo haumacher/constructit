@@ -2411,6 +2411,39 @@ class Editor(
     }
 
     /**
+     * Draw a **function curve** from two texts and a domain (the session-71 entry, curve half).
+     *
+     * The entry point is the panel's own form rather than a click-collecting [ToolDef], and that is a
+     * decision with an alternative behind it. A tool's inputs are *clicks and numbers* — that is what the
+     * slot table is — while a function curve's inputs are two **texts**, which is the panel's medium and the
+     * medium the scalar half already chose for a formula. Building a text-taking slot kind would have put a
+     * second input language into the tool runner for one tool; the curve it makes is an ordinary element the
+     * moment it exists, pickable and riddable by every tool there is.
+     *
+     * One checkpoint, one undo, exactly as a binding is — and every refusal is the document's own, by name.
+     */
+    fun addFunctionCurve(
+        xText: String,
+        yText: String,
+        from: Double,
+        to: Double,
+    ): Element? {
+        val el = doc.functionCurve(xText.trim(), yText.trim(), from, to)
+        if (el == null) {
+            statusHint = doc.takeNote() ?: "Can't build a function curve from '$xText' and '$yText'"
+            changed()
+            return null
+        }
+        checkpoint()
+        // a curve whose *values* do not work out is legal and invalid, not refused (OP-3): it says so and heals
+        val why = (Evaluator().eval(el.ref.node) as? EvalResult.Invalid)?.reason
+        statusHint = "${doc.nameOf(el)}: x(t) = ${xText.trim()}, y(t) = ${yText.trim()} over $from..$to" +
+            (why?.let { " — but $it" } ?: "")
+        changed()
+        return el
+    }
+
+    /**
      * [text] as the single literal it is, or null when it is an expression — the rule that keeps a typed
      * number exactly what it has always been. A leading minus is part of the number here, since `-3` is a
      * number a user writes and not an expression he composed.
@@ -4399,7 +4432,10 @@ class Editor(
                 SlotKind.CONIC -> pickElement(world) { it.isElliptic }
                 SlotKind.CENTERED -> pickElement(world) { it.hasCentre }
                 SlotKind.MEASURABLE ->
-                    pickElement(world) { it.kind == ElementKind.SEGMENT || it.kind == ElementKind.ARC || it.isElliptic }
+                    pickElement(world) {
+                        it.kind == ElementKind.SEGMENT || it.kind == ElementKind.ARC || it.isElliptic ||
+                            it.kind == ElementKind.FUNC_CURVE
+                    }
                 SlotKind.SEGMENT -> pickElement(world) { it.kind == ElementKind.SEGMENT }
                 SlotKind.GEOMETRY -> pickGeometry(world, tool)
                 SlotKind.ON_CIRCLE_POINT -> pickElement(world) { it.handle is OnCircleHandle }

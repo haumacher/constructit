@@ -378,6 +378,18 @@ object Combine3 {
                 arcPiece(e.circle.center, e.circle.radius, 0.0, if (e.ccw) 2.0 * PI else -2.0 * PI)
             is ProfileElement.EllipticArcE -> ellipsePiece(e.arc.ellipse, e.arc.startT, Conics.sweep(e.arc))
             is ProfileElement.EllipseE -> ellipsePiece(e.ellipse, 0.0, if (e.ccw) 2.0 * PI else -2.0 * PI)
+            // the function itself, reparametrized onto `0..1` — exact in the point, and exact in the
+            // derivative wherever the AST can state one. A curve with no statable derivative is refused
+            // **before** it reaches here (`Combine3.unnamedCurve`, the session-69 predicate rule), so this
+            // is never the place a missing tangent is discovered.
+            is ProfileElement.FuncE -> {
+                val c = e.curve
+                Piece(
+                    { t -> FuncCurves.pointAt(c, c.t0 + c.span * t) ?: Vec2(0.0, 0.0) },
+                    { t -> (FuncCurves.tangentAt(c, c.t0 + c.span * t) ?: Vec2(0.0, 0.0)) * c.span },
+                    null,
+                )
+            }
         }
 
     private fun arcPiece(
@@ -432,7 +444,44 @@ object Combine3 {
                 angleParams(ellipseTurn(e.arc.ellipse, g), e.arc.startT, Conics.sweep(e.arc))
             is ProfileElement.EllipseE ->
                 angleParams(ellipseTurn(e.ellipse, g), 0.0, if (e.ccw) 2.0 * PI else -2.0 * PI)
+            // an arbitrary function's turning points have no closed form, so they are the sign changes of
+            // its own derivative along the parametric grid it tessellates on — bracketed exactly where a
+            // chord turns, which is the same seeding every function-curve root uses
+            is ProfileElement.FuncE -> funcTurnParams(e.curve, g)
         }
+
+    /** Where [c]'s advance along [g] changes sign, in `0..1` — the sampled bracket, bisected. */
+    private fun funcTurnParams(
+        c: FuncCurve,
+        g: Vec2,
+    ): List<Double> {
+        val steps = FuncCurves.RENDER_STEPS
+        val f = { u: Double -> FuncCurves.tangentAt(c, c.t0 + c.span * u)?.dot(g) ?: 0.0 }
+        val out = ArrayList<Double>()
+        var prev = f(0.0)
+        for (i in 1..steps) {
+            val u = i.toDouble() / steps
+            val cur = f(u)
+            if (prev != 0.0 && cur != 0.0 && (prev > 0.0) != (cur > 0.0)) {
+                var lo = (i - 1).toDouble() / steps
+                var hi = u
+                var flo = prev
+                repeat(60) {
+                    val m = 0.5 * (lo + hi)
+                    val fm = f(m)
+                    if ((fm > 0.0) == (flo > 0.0)) {
+                        lo = m
+                        flo = fm
+                    } else {
+                        hi = m
+                    }
+                }
+                out.add(0.5 * (lo + hi))
+            }
+            prev = cur
+        }
+        return out
+    }
 
     /** The parametric angle at which [e]'s tangent is perpendicular to [g] (the other is half a turn on). */
     private fun ellipseTurn(

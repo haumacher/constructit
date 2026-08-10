@@ -8,6 +8,7 @@ import constructit.core.EllipseValue
 import constructit.core.EllipticArcValue
 import constructit.core.Evaluator
 import constructit.core.FrameValue
+import constructit.core.FuncCurveValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Path3Value
@@ -28,6 +29,8 @@ import constructit.geom.Conics
 import constructit.geom.Curves3
 import constructit.geom.Ellipse
 import constructit.geom.EllipticArc
+import constructit.geom.FuncCurve
+import constructit.geom.FuncCurves
 import constructit.geom.GeomMath
 import constructit.geom.Line
 import constructit.geom.Path3
@@ -273,6 +276,7 @@ object SceneRenderer {
                 is ArcValue -> poly(proj, target, proj.arcPoints(v.arc), style)
                 is EllipseValue -> poly(proj, target, tessellate(v.ellipse, true), style)
                 is EllipticArcValue -> poly(proj, target, tessellate(v.arc), style)
+                is FuncCurveValue -> poly(proj, target, tessellate(v.curve), style)
                 is BezierValue -> poly(proj, target, GeomMath.tessellateBezier(v.bezier), style)
                 is LoopValue -> drawChain(v.loop.elements, proj, target, style)
                 // A **cutting chain** (OP-22's extension) is drawn as what it is: its finite run, plus a
@@ -647,6 +651,7 @@ object SceneRenderer {
             is ArcValue -> poly(proj, target, proj.arcPoints(v.arc), style)
             is EllipseValue -> poly(proj, target, tessellate(v.ellipse, true), style)
             is EllipticArcValue -> poly(proj, target, tessellate(v.arc), style)
+            is FuncCurveValue -> poly(proj, target, tessellate(v.curve), style)
             is BezierValue -> poly(proj, target, GeomMath.tessellateBezier(v.bezier), style)
             is LoopValue -> drawChain(v.loop.elements, proj, target, style)
             is ChainValue -> drawCuttingChain(v.chain, proj, target, view, style)
@@ -918,6 +923,13 @@ object SceneRenderer {
      */
     fun tessellate(arc: EllipticArc): List<Vec2> = Conics.renderSample(arc)
 
+    /**
+     * A **function curve** as a plane-space polyline, at [FuncCurves.RENDER_STEPS] — a fixed count, for the
+     * two reasons the arc's is fixed: a golden must not depend on the camera, and [HitTest] measures a pick
+     * against these very chords. The *mesh* is adaptive instead ([FuncCurves.chordSteps]).
+     */
+    fun tessellate(c: FuncCurve): List<Vec2> = FuncCurves.renderSample(c)
+
     /** A whole ellipse as a closed plane-space polyline (its first point repeated at the end). */
     fun tessellate(
         e: Ellipse,
@@ -1002,6 +1014,7 @@ object SceneRenderer {
                 proj.drawCircle(target, el.circle, style)
             }
             is ProfileElement.EllipticArcE -> add(tessellate(el.arc))
+            is ProfileElement.FuncE -> add(tessellate(el.curve))
             is ProfileElement.EllipseE -> {
                 flush()
                 poly(proj, target, tessellate(el.ellipse, el.ccw), style)

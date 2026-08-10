@@ -10,6 +10,7 @@ import constructit.core.EllipticArcValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
+import constructit.core.FuncCurveValue
 import constructit.core.IndirectNode
 import constructit.core.LineValue
 import constructit.core.LoopValue
@@ -36,6 +37,7 @@ import constructit.dsl.Construction
 import constructit.dsl.EllipseRef
 import constructit.dsl.EllipticArcRef
 import constructit.dsl.FrameRef
+import constructit.dsl.FuncCurveRef
 import constructit.dsl.LineRef
 import constructit.dsl.LoftPart
 import constructit.dsl.LoopRef
@@ -61,6 +63,7 @@ import constructit.exchange.MeshText
 import constructit.exchange.PathText
 import constructit.expr.EXPR_CONSTANTS
 import constructit.expr.EXPR_FUNCTIONS
+import constructit.expr.Expr
 import constructit.expr.ExprError
 import constructit.expr.ExprNode
 import constructit.expr.ExprParser
@@ -84,6 +87,7 @@ import constructit.geom.Feature3
 import constructit.geom.FilletLeg
 import constructit.geom.FilletMath
 import constructit.geom.FilletVariant
+import constructit.geom.FuncCurves
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Handedness
@@ -194,6 +198,16 @@ enum class ElementKind {
 
     /** A piece of an ellipse, trimmed by parametric angle (OP-24). */
     ELLIPTIC_ARC,
+
+    /**
+     * A **function curve** (the session-71 expressions entry, curve half): the piece traced by `x(t)`,
+     * `y(t)` over a stated domain.
+     *
+     * One kind for every curve family a formula can write — an involute, a cycloid, a spiral — which is the
+     * design decision the whole item turns on: *no new primitive curve type per curve family*. It is an
+     * ordinary open curve in every other respect: pickable, riddable, a leg of a loop, traced, extruded.
+     */
+    FUNC_CURVE,
 
     /** A closed boundary: the result layer's own element (OP-14). */
     OUTLINE,
@@ -469,7 +483,7 @@ class Element(
     val isCurve: Boolean get() =
         kind == ElementKind.LINE || kind == ElementKind.CIRCLE || kind == ElementKind.SEGMENT ||
             kind == ElementKind.RAY || kind == ElementKind.ARC || kind == ElementKind.BEZIER ||
-            kind == ElementKind.ELLIPSE || kind == ElementKind.ELLIPTIC_ARC
+            kind == ElementKind.ELLIPSE || kind == ElementKind.ELLIPTIC_ARC || kind == ElementKind.FUNC_CURVE
 
     /** An output of the construction rather than scaffolding for it (OP-14). */
     val isResult: Boolean get() = kind == ElementKind.OUTLINE || kind == ElementKind.AREA || kind == ElementKind.SOLID
@@ -1247,6 +1261,7 @@ class Document {
         pendingReparams.clear()
         pendingDofs.clear()
         pendingExprBinding = null
+        pendingFuncCurve = null
         // an identity snapshot, not a count: a step may *remove* elements too (a break replaces one
         // leg with three), and then a count would mistake shifted survivors for new ones
         val before = elements.toHashSet()
@@ -1274,6 +1289,10 @@ class Document {
             // text *it* stated — which is what the writer restates under the current names
             pendingExprBinding?.let { exprBindings[step] = it }
             pendingExprBinding = null
+            // …and the two texts this operation's function curve states, owned by its step for the same
+            // reason: the writer restates them under the current names, and nothing else may (session 71)
+            pendingFuncCurve?.let { funcCurves[step] = it }
+            pendingFuncCurve = null
             // which step *owns* each re-parameterization this operation performed (OP-4 case b), so the writer
             // restates an offset on the step that made it and nowhere else — a step that merely *uses* a
             // relative point (a circle through it) must not carry its distance and angle
@@ -1290,6 +1309,7 @@ class Document {
             pendingReparams.clear()
             pendingDofs.clear()
             pendingExprBinding = null
+            pendingFuncCurve = null
             throw t
         } finally {
             recordDepth--
@@ -3065,6 +3085,9 @@ class Document {
         // an expression's references are inside its text, not in an argument of their own — so the step
         // that binds it is asked what it read, and the delete cascade reaches it like any other reference
         exprBindings[step]?.let { out.addAll(it.refs) }
+        // the same for a function curve: its references live inside two texts rather than in arguments of
+        // their own, so the step that states them is asked what it read (session 71, curve half)
+        funcCurves[step]?.let { out.addAll(it.refs) }
         return out
     }
 
@@ -3346,6 +3369,15 @@ class Document {
         if (!canRenameParameter(e)) return null
         val wanted = scalarWord(name)
         if (wanted.isEmpty()) return e.name
+        // **a re-stamp may not capture a binder.** Inside a function curve `t` is the curve's own parameter
+        // and wins over every drawing scalar, so renaming a scalar a curve reads to `t` would rewrite its
+        // text into one that means something else — live and, worse, in the file. Refused by name, with the
+        // cure, exactly as a hyphenated name is: a name a rename allows must keep its reading, for ever.
+        if (funcCurves.values.any { it.param == wanted && it.refs.any { r -> r === e } }) {
+            note = "Can't rename ${e.name} to '$wanted': inside a function curve '$wanted' is the curve's own " +
+                "parameter, so the curve would read its parameter where it now reads ${e.name} — pick another name"
+            return null
+        }
         e.name = uniqueScalarName(wanted, except = e)
         // an expression that reads it is a mention like any other, so it is re-stamped rather than orphaned
         restampExpressions()
@@ -4972,6 +5004,38 @@ class Document {
             out.append(b.node.source, at, b.node.source.length)
             b.node.text = out.toString()
         }
+        restampFuncCurves()
+    }
+
+    /**
+     * The same re-stamp over a **function curve's two texts** (session 71, curve half) — extended here
+     * deliberately, because a rename that reached a parameter binding but not a curve would leave the curve
+     * live and its *file* unloadable, which is precisely the failure the scalar half's probe found.
+     */
+    private fun restampFuncCurves() {
+        for (b in funcCurves.values) {
+            b.xText = restamped(b.xSource, b.xAst, b.names, b.refs)
+            b.yText = restamped(b.ySource, b.yAst, b.names, b.refs)
+        }
+    }
+
+    /** [source] with every reference span rewritten under its scalar's current name, and nothing else. */
+    private fun restamped(
+        source: String,
+        ast: Expr,
+        names: List<String>,
+        refs: List<ScalarEntry>,
+    ): String {
+        val out = StringBuilder()
+        var at = 0
+        for (r in ast.refs()) {
+            val k = names.indexOf(r.name)
+            val now = refs.getOrNull(k)?.name ?: continue
+            out.append(source, at, r.start).append(now)
+            at = r.end
+        }
+        out.append(source, at, source.length)
+        return out.toString()
     }
 
     fun moveFreePoint(
@@ -5192,6 +5256,7 @@ class Document {
      * back — *"e32 is a solid again"* — is the same sentence one word further on.
      */
     fun kindWord(el: Element): String {
+        if (el.kind == ElementKind.FUNC_CURVE) return "a function curve"
         val w = el.kind.name.lowercase().replace('_', ' ')
         return (if (w.first() in "aeiou") "an " else "a ") + w
     }
@@ -5967,6 +6032,14 @@ class Document {
         ELLIPSE_PARAM,
 
         /**
+         * A **function curve's own parameter** (the session-71 entry, curve half) — the same kind of freedom
+         * [ELLIPSE_PARAM] is, and absolute for the same reason: it is measured in the function's own
+         * parametrization, which no edit to the curve's extent can re-anchor. It is the one form whose
+         * quantity is a **plain number**, since the parameter is dimensionless by construction.
+         */
+        FUNC_PARAM,
+
+        /**
          * The **angle along a helix** (OP-26), measured from the coil's start the way it turns — the first
          * form whose point is not in the working plane, and the first whose parameter is **unbounded**.
          *
@@ -6225,6 +6298,24 @@ class Document {
                     true
                 }
             }
+        }
+        if (curve.kind == ElementKind.FUNC_CURVE) {
+            @Suppress("UNCHECKED_CAST")
+            val fr = curve.ref as FuncCurveRef
+            val c = (ev.eval(fr.node) as? EvalResult.Ok)?.value as? FuncCurveValue ?: return null
+            // the curve's own parameter: absolute for [RiderForm.ELLIPSE_PARAM]'s exact reason — it is
+            // measured in the function's own parametrization, which no edit to the extent re-anchors
+            val tNode = SourceNode(nextId(prefix + "f"), ScalarValue(Quantity.number(FuncCurves.nearestParam(c.curve, at))))
+            return Rider(
+                cx.pointOnFuncCurve(fr, Ref<ScalarValue>(tNode)),
+                OnFuncCurveHandle(fr, tNode),
+                tNode,
+                RiderForm.FUNC_PARAM,
+                // an arbitrary function has no closed-form inverse for "put this coordinate at that value",
+                // so this rider has no *say* over a placed coordinate — it says so rather than solving
+                // numerically for a position the user did not ask to be approximate
+                placeable = { false },
+            ) { _, _ -> false }
         }
         if (curve.isElliptic) {
             val er = carrierEllipse(curve)
@@ -6988,6 +7079,20 @@ class Document {
     }
 
     /**
+     * A point that **rides a function curve** at the parameter the click states (session 71, curve half) —
+     * the exact position-along a function curve offers, since nothing forces arc length to be the parameter
+     * (OP-24's correction, quoted one curve family on).
+     */
+    fun pointOnFuncCurve(
+        curve: Element,
+        at: Vec2,
+        dof: Quantity? = null,
+    ): PointRef? {
+        val rider = riderOn(curve, at, "") ?: return null
+        return addRider(curve, rider, dof)
+    }
+
+    /**
      * A point that **rides the coil [curve]**, at the angle the click at [at] states (OP-26, the queue's own
      * design) — the point-on-a-circle gesture one dimension up.
      *
@@ -7103,6 +7208,18 @@ class Document {
      */
     private class Crossing(val set: PointSetRef, val branches: Int, val byIndex: Boolean)
 
+    /**
+     * How many branches a **function curve's** intersection is addressed over — its set is as long as the
+     * function's own crossings are, which is a value, so the index discipline is the conic quartic's
+     * (`byIndex`) and the declared count is only what the branch cycler offers. An index the geometry no
+     * longer has is invalid with a reason and heals (OP-3).
+     */
+    private val FUNC_BRANCHES = 8
+
+    /** [el]'s own function-curve ref — a function curve carries no simpler curve to be coerced onto. */
+    @Suppress("UNCHECKED_CAST")
+    private fun funcCurveRef(el: Element): FuncCurveRef = el.ref as FuncCurveRef
+
     /** The intersection solution set of [a] and [b], with its branch discipline. */
     @Suppress("UNCHECKED_CAST")
     private fun intersectionSet(
@@ -7117,6 +7234,12 @@ class Document {
         // ...and an elliptic arc through its carrier ellipse, the same coercion a third time (OP-24)
         val aEll = a.isElliptic
         val bEll = b.isElliptic
+        // ...and a function curve, which has no carrier coercion at all: it is the curve itself (session 71)
+        val aFn = a.kind == ElementKind.FUNC_CURVE
+        val bFn = b.kind == ElementKind.FUNC_CURVE
+        // function curve ∩ function curve is **not built**, and is named where it is refused rather than
+        // silently returning nothing — see [intersectNearNow]
+        if (aFn && bFn) return null
         return when {
             aLin && bLin -> Crossing(cx.intersectLL(carrierLine(a), carrierLine(b)), 1, false)
             aCirc && bCirc -> Crossing(cx.intersectCC(carrierCircle(a), carrierCircle(b)), 2, false)
@@ -7130,6 +7253,16 @@ class Document {
             aCirc && bEll -> Crossing(cx.intersectCE(carrierCircle(a), carrierEllipse(b)), 4, true)
             aEll && bCirc -> Crossing(cx.intersectCE(carrierCircle(b), carrierEllipse(a)), 4, true)
             aEll && bEll -> Crossing(cx.intersectEE(carrierEllipse(a), carrierEllipse(b)), 4, true)
+            // …and a **function curve** meets a line, a circle or an ellipse numerically but deterministically
+            // (session 71, curve half). Whichever way round the two were clicked, the *curve* is the first
+            // operand of the set, because the ordering rule is OP-1's parametric one — ascending parameter
+            // along it — and an index means nothing unless the set is always ordered the same way.
+            aFn && bLin -> Crossing(cx.intersectFL(funcCurveRef(a), carrierLine(b)), FUNC_BRANCHES, true)
+            aLin && bFn -> Crossing(cx.intersectFL(funcCurveRef(b), carrierLine(a)), FUNC_BRANCHES, true)
+            aFn && bCirc -> Crossing(cx.intersectFC(funcCurveRef(a), carrierCircle(b)), FUNC_BRANCHES, true)
+            aCirc && bFn -> Crossing(cx.intersectFC(funcCurveRef(b), carrierCircle(a)), FUNC_BRANCHES, true)
+            aFn && bEll -> Crossing(cx.intersectFE(funcCurveRef(a), carrierEllipse(b)), FUNC_BRANCHES, true)
+            aEll && bFn -> Crossing(cx.intersectFE(funcCurveRef(b), carrierEllipse(a)), FUNC_BRANCHES, true)
             else -> null
         }
     }
@@ -7160,7 +7293,18 @@ class Document {
         stored: Int? = null,
         remember: Boolean = false,
     ): PointRef? {
-        val crossing = intersectionSet(a, b) ?: return null
+        val crossing =
+            intersectionSet(a, b) ?: run {
+                if (a.kind == ElementKind.FUNC_CURVE && b.kind == ElementKind.FUNC_CURVE) {
+                    // **cut whole, and named**: two arbitrary functions cross where a two-dimensional
+                    // system of expressions vanishes, and seeding that honestly needs a subdivision this
+                    // package did not build. What *does* exist is said, so the way forward is one click on:
+                    note = "Intersect: ${nameOf(a)} and ${nameOf(b)} are both function curves, and a crossing " +
+                        "of two of those is not built — a function curve meets a line, a circle, an arc or " +
+                        "an ellipse, so cross it with one of those"
+                }
+                return null
+            }
         val set = crossing.set
 
         // only where a *step* can restate them: the same helper serves the Outline tracer's handovers, which
@@ -7216,6 +7360,7 @@ class Document {
             el.isLinear -> pointOnLine(el, at, dof)
             el.kind == ElementKind.CIRCLE -> pointOnCircle(el, at, dof)
             el.kind == ElementKind.ELLIPSE -> pointOnEllipse(el, at, dof)
+            el.kind == ElementKind.FUNC_CURVE -> pointOnFuncCurve(el, at, dof)
             else -> null
         }
 
@@ -7259,6 +7404,10 @@ class Document {
                 // and co-vertices, which is what a conic's key points are (OP-24)
                 ElementKind.ELLIPSE ->
                     listOf(cx.ellipseCenter(el.ref as EllipseRef)) + (0..3).map { cx.ellipseAxisPoint(el.ref as EllipseRef, it) }
+                // a function curve's defining points are its own two ends — the parameter's two extremes,
+                // which is what a piece built onto its neighbours publishes (OP-15's rule, one family on)
+                ElementKind.FUNC_CURVE ->
+                    listOf(cx.funcCurveStart(el.ref as FuncCurveRef), cx.funcCurveEnd(el.ref as FuncCurveRef))
                 // an elliptic arc adds its own two ends, exactly as a circular arc does
                 ElementKind.ELLIPTIC_ARC ->
                     listOf(
@@ -7934,6 +8083,14 @@ class Document {
             ElementKind.ARC -> breakArcAt(el, world)
             ElementKind.BEZIER -> breakBezierAt(el, world)
             ElementKind.ELLIPTIC_ARC, ElementKind.ELLIPSE -> breakEllipticAt(el, world)
+            // deliberately not built, and refused with the thing that *does* do it: a function curve's
+            // extent **is** its domain, so narrowing `from`/`to` in its fields is the trim, and two pieces
+            // are two curves over two domains (recorded as a future extension in DESIGN.md)
+            ElementKind.FUNC_CURVE -> {
+                note = "${nameOf(el)} is a function curve — its extent is its domain, so change its from/to " +
+                    "fields instead of breaking it"
+                null
+            }
             else -> {
                 note = "${nameOf(el)} is not a segment, an arc, a Bézier or a conic"
                 null
@@ -8484,6 +8641,10 @@ class Document {
         sharedEndBetween(a, b, ev)?.let { return it }
         if (a.kind == ElementKind.BEZIER) return bezierEndNear(a, nearB, ev)
         if (b.kind == ElementKind.BEZIER) return bezierEndNear(b, nearA, ev)
+        // a function curve is joined exactly as a spline is: it is *built onto* its neighbours rather than
+        // trimmed to them, so the handover is whichever of its own ends is nearer the other pick (OP-15)
+        if (a.kind == ElementKind.FUNC_CURVE) return funcEndNear(a, nearB, ev)
+        if (b.kind == ElementKind.FUNC_CURVE) return funcEndNear(b, nearA, ev)
         return intersectNearNow(a, b, (nearA + nearB) * 0.5)
     }
 
@@ -8658,6 +8819,7 @@ class Document {
             is ArcValue -> listOf(GeomMath.arcStart(v.arc), GeomMath.arcEnd(v.arc))
             is BezierValue -> listOf(v.bezier.p0, v.bezier.p3)
             is EllipticArcValue -> listOf(Conics.start(v.arc), Conics.end(v.arc))
+            is FuncCurveValue -> listOfNotNull(FuncCurves.start(v.curve), FuncCurves.end(v.curve))
             else -> emptyList()
         }
 
@@ -8683,6 +8845,11 @@ class Document {
         if (piece.kind == ElementKind.BEZIER) {
             val b = (ev.valueOf(piece.ref) as? BezierValue)?.bezier ?: return null
             return (b.p0 + b.p1 * 3.0 + b.p2 * 3.0 + b.p3) * 0.125
+        }
+        // a function curve is built onto its own two ends, so the point "between" them is its own
+        // mid-parameter — the same answer a Bézier gives, in the curve's own parametrization
+        (ev.valueOf(piece.ref) as? FuncCurveValue)?.curve?.let { c ->
+            return FuncCurves.pointAt(c, FuncCurves.paramOfFraction(c, 0.5))
         }
         (ev.valueOf(piece.ref) as? EllipticArcValue)?.arc?.let { ea ->
             // the same rule in the conic's own parameter: the mid-parameter of whichever way round stays
@@ -8805,6 +8972,20 @@ class Document {
         }
         // an **elliptic arc** is the same case: it is trimmed to two cut points of its own, so the two
         // meetings are its own ends rather than an intersection to be found (OP-24)
+        val func =
+            if (a.kind == ElementKind.FUNC_CURVE) {
+                a
+            } else if (b.kind == ElementKind.FUNC_CURVE) {
+                b
+            } else {
+                null
+            }
+        if (func != null) {
+            @Suppress("UNCHECKED_CAST")
+            val ref = func.ref as FuncCurveRef
+            if (ev.valueOf(ref) !is FuncCurveValue) return null
+            return listOf(addDerived(cx.funcCurveStart(ref)), addDerived(cx.funcCurveEnd(ref)))
+        }
         val conic =
             if (a.kind == ElementKind.ELLIPTIC_ARC) {
                 a
@@ -8830,6 +9011,20 @@ class Document {
         val p2 = (ev.valueOf(second) as? PointValue)?.p ?: return null
         if ((p1 - p2).length() < GeomMath.JOIN_TOL) return null // tangent: one meeting only
         return listOf(addDerived(first), addDerived(second))
+    }
+
+    /** Whichever end of a function curve is nearer [near] — the joint it offers a neighbouring piece. */
+    private fun funcEndNear(
+        el: Element,
+        near: Vec2,
+        ev: Evaluator,
+    ): PointRef? {
+        @Suppress("UNCHECKED_CAST")
+        val ref = el.ref as FuncCurveRef
+        val c = (ev.valueOf(ref) as? FuncCurveValue)?.curve ?: return null
+        val s = FuncCurves.start(c) ?: return null
+        val e = FuncCurves.end(c) ?: return null
+        return addDerived(if ((s - near).length() <= (e - near).length()) cx.funcCurveStart(ref) else cx.funcCurveEnd(ref))
     }
 
     /** Whichever end of a Bézier is nearer [near] — the joint it offers a neighbouring piece. */
@@ -8859,6 +9054,9 @@ class Document {
     ): Ref<*>? {
         if (el.isLinear) return cx.segmentBetween(el.ref, from, to)
         if (el.kind == ElementKind.BEZIER) return el.ref
+        // built onto its ends, never trimmed to them — the spline's bargain (OP-15), and the reason its
+        // *domain* is the trim: change `from`/`to` and the piece moves with them
+        if (el.kind == ElementKind.FUNC_CURVE) return el.ref
         if (el.isElliptic) {
             // the conic twin of the arc trim below: which way round is decided by where the user clicked,
             // in the ellipse's **own parameter**, and then stored (OP-1)
@@ -9273,6 +9471,7 @@ class Document {
             is BezierValue -> ProfileElement.BezierE(v.bezier)
             is EllipseValue -> ProfileElement.EllipseE(v.ellipse)
             is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
+            is FuncCurveValue -> ProfileElement.FuncE(v.curve)
             else -> null
         }
 
@@ -9895,6 +10094,13 @@ class Document {
                 note =
                     "Combine two views: ${nameOf(el)} runs on for ever, so it states no length of run to " +
                     "match — a view is a bounded curve"
+                return null
+            }
+            // a combined run rides both views' **tangents** (its frame is parallel-transported along them),
+            // so a function curve with no statable derivative is refused **up front and by name** rather
+            // than being differenced somewhere inside — the session-69 predicate rule
+            funcTangentRefusal(el)?.let {
+                note = "Combine two views: $it"
                 return null
             }
         }
@@ -10735,7 +10941,7 @@ class Document {
      */
     fun isLiftable(el: Element): Boolean =
         when (el.kind) {
-            ElementKind.SEGMENT, ElementKind.ARC, ElementKind.BEZIER -> true
+            ElementKind.SEGMENT, ElementKind.ARC, ElementKind.BEZIER, ElementKind.FUNC_CURVE -> true
             ElementKind.CIRCLE, ElementKind.ELLIPSE, ElementKind.ELLIPTIC_ARC -> true
             ElementKind.OUTLINE, ElementKind.AREA -> true
             else -> false
@@ -12141,6 +12347,7 @@ class Document {
             is BezierValue -> ProfileElement.BezierE(v.bezier)
             is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
             is EllipseValue -> ProfileElement.EllipseE(v.ellipse)
+            is FuncCurveValue -> ProfileElement.FuncE(v.curve)
             else -> null
         }
 
@@ -12601,6 +12808,141 @@ class Document {
         Styles.CURVE,
     )
 
+    // ---- function curves: the same expressions, plus a parameter (the session-71 entry, curve half) ----
+
+    /**
+     * What a `funccurve` step made: the two texts as written, their ASTs, the scalars they resolved to, and
+     * the two source nodes carrying the domain.
+     *
+     * The exact twin of [ExprBinding], and it exists for the same two reasons: the **text is the record**, so
+     * the writer restates this step's own text; and a **rename is a re-stamp**, so the mentions of a scalar
+     * that live inside these strings are rewritten in place rather than orphaned ([restampExpressions]).
+     */
+    class FuncCurveBinding internal constructor(
+        val element: Element,
+        val xSource: String,
+        val ySource: String,
+        val xAst: Expr,
+        val yAst: Expr,
+        val names: List<String>,
+        val refs: List<ScalarEntry>,
+        val param: String,
+        internal val t0: SourceNode,
+        internal val t1: SourceNode,
+    ) {
+        /** The two texts under the **current** names of what they read — what a save writes. */
+        var xText: String = xSource
+
+        var yText: String = ySource
+    }
+
+    private val funcCurves = HashMap<Step, FuncCurveBinding>()
+    private var pendingFuncCurve: FuncCurveBinding? = null
+
+    /** The binding [step] recorded, or null — how the writer restates that step's own two texts. */
+    internal fun funcCurveBinding(step: Step): FuncCurveBinding? = funcCurves[step]
+
+    /** The curve [el] is, or null — what the inspector and a refusal quote. */
+    fun funcCurveOf(el: Element): FuncCurveBinding? = funcCurves.values.firstOrNull { it.element === el }
+
+    /** The parameter name every function curve's expressions are read in — see [FUNC_PARAM_NOTE]. */
+    val funcCurveParam: String get() = "t"
+
+    /**
+     * A **function curve** from the two texts [xText] and [yText] over the domain [t0]..[t1] — the whole of
+     * the curve half's vocabulary, and deliberately no primitive per curve family (the user's own design:
+     * *"allow to define such curve segments using arbitrary functions — with an involute as example"*).
+     *
+     * Everything it can refuse, it refuses **by name** and before anything is built: a text that is not an
+     * expression (with the character position and what was expected there), and a name nothing in the
+     * drawing carries (with the cure, through [unknownName] — the hyphenated scalar and the function written
+     * without its arguments both speak). Everything about the *values* — a domain that does not run
+     * forwards, an expression that leaves its own domain part-way, a coordinate that is not a length — is
+     * the node's business and comes back as the named invalidity that heals (OP-3).
+     */
+    fun functionCurve(
+        xText: String,
+        yText: String,
+        t0: Double,
+        t1: Double,
+    ): Element? =
+        recording("funccurve", Arg.Label(xText), Arg.Label(yText), skipIfEmpty = true) {
+            functionCurveNow(xText, yText, t0, t1)
+        }
+
+    private fun functionCurveNow(
+        xText: String,
+        yText: String,
+        t0: Double,
+        t1: Double,
+    ): Element? {
+        val param = funcCurveParam
+        val xAst =
+            try {
+                ExprParser.parse(xText)
+            } catch (err: ExprError) {
+                note = "Can't read x($param) from '${xText.trim()}': ${err.message}"
+                return null
+            }
+        val yAst =
+            try {
+                ExprParser.parse(yText)
+            } catch (err: ExprError) {
+                note = "Can't read y($param) from '${yText.trim()}': ${err.message}"
+                return null
+            }
+        val names = ArrayList<String>()
+        val refs = ArrayList<ScalarEntry>()
+        for (n in (xAst.refNames() + yAst.refNames()).distinct()) {
+            // the parameter is a **binder** and wins over everything, which is what makes `cos(t)` mean
+            // what it says; a constant is what is left when nothing in the drawing carries the name
+            if (n == param) continue
+            val target = scalars.firstOrNull { it.name == n }
+            if (target == null) {
+                if (n in EXPR_CONSTANTS) continue
+                note = "Can't build the curve: ${unknownName(n)}"
+                return null
+            }
+            names.add(n)
+            refs.add(target)
+        }
+        val a = SourceNode(nextId("ft"), ScalarValue(Quantity.number(t0)))
+        val b = SourceNode(nextId("ft"), ScalarValue(Quantity.number(t1)))
+        val ref =
+            cx.funcCurve(
+                xAst,
+                yAst,
+                names,
+                refs.map { it.ref },
+                Ref<ScalarValue>(a),
+                Ref<ScalarValue>(b),
+                param,
+                text = "x($param) = $xText, y($param) = $yText",
+            )
+        val el = add(ref, ElementKind.FUNC_CURVE, Styles.CURVE)
+        el.handle = FuncCurveHandle(a, b)
+        pendingFuncCurve = FuncCurveBinding(el, xText, yText, xAst, yAst, names, refs, param, a, b)
+        return el
+    }
+
+    /** The domain [el] currently runs over — what its own step restates (OP-18: state restates as a value). */
+    internal fun funcCurveDomain(el: Element): Pair<Double, Double>? =
+        funcCurveOf(el)?.let { b ->
+            val lo = (b.t0.value as? ScalarValue)?.q?.base ?: return null
+            val hi = (b.t1.value as? ScalarValue)?.q?.base ?: return null
+            lo to hi
+        }
+
+    /**
+     * Why a tangent-dependent construction cannot use [el], or null when it can (the session-69 predicate
+     * rule): a function curve whose derivative the vocabulary cannot state has no tangent to be anchored on,
+     * and the honest answer is to say which function stopped it rather than to difference numerically.
+     */
+    fun funcTangentRefusal(el: Element): String? {
+        val c = (Evaluator().valueOf(el.ref) as? FuncCurveValue)?.curve ?: return null
+        return c.noTangent?.let { "${nameOf(el)}: $it" }
+    }
+
     // ---- relational constructions ----
 
     /**
@@ -12682,7 +13024,18 @@ class Document {
         when {
             leg1.isLinear && leg2.isLinear -> filletLineLine(leg1, leg2, radius, clickA, clickB, signs)
             isFilletLeg(leg1) && isFilletLeg(leg2) -> filletMixed(leg1, leg2, radius, clickA, clickB, signs)
-            else -> null
+            else -> {
+                // named rather than dropped: a leg has to carry a line or a circle for the rounding to be
+                // *tangent by construction*, and a spline, a conic and a function curve carry none — their
+                // offsets are not curves of their own kind (OP-15), so a fillet against one could only be
+                // fitted. That is the chamfer-on-arc convention's own spirit, said out loud.
+                val bad = listOf(leg1, leg2).firstOrNull { !isFilletLeg(it) }
+                if (bad != null) {
+                    note = "Fillet: ${nameOf(bad)} is ${kindWord(bad)}, and a rounding is tangent by " +
+                        "construction to a line or a circle — pick a line, a segment, a circle or an arc"
+                }
+                null
+            }
         }
 
     /** Whether [el] can be a fillet leg at all: it must carry a line or a circle to be tangent to. */
@@ -13802,6 +14155,12 @@ class Document {
             ElementKind.ELLIPSE ->
                 measurement("len", cx.measureCircumference(seg.ref as EllipseRef)).also {
                     note = "${it.name} is computed numerically to ±${Conics.LENGTH_TOL_MM} mm — an ellipse's circumference has no closed form (OP-15)"
+                }
+            // the same statement one curve family on: a construction over a function curve is exact, and its
+            // *measured* length is not — so the number is flagged where it is taken (OP-15, OP-24's line)
+            ElementKind.FUNC_CURVE ->
+                measurement("len", cx.measureFuncCurveLength(seg.ref as FuncCurveRef)).also {
+                    note = "${it.name} is computed numerically to ±${FuncCurves.LENGTH_TOL_MM} mm — a function curve's length has no closed form (OP-15)"
                 }
             else -> {
                 note = "${nameOf(seg)} has no length to measure"

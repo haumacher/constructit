@@ -246,12 +246,16 @@ class ExpressionTest {
         assertTrue(ed.doc.bindParameter(bad, "asin(sin(a))"), "corrected")
         assertClose(Evaluator().scalar(bad.ref).deg, 30.0, tol = 1e-9, msg = "and it healed, with no repair anywhere else")
 
-        // (b) a plain number where an angle is demanded
+        // (b) a **length** where an angle or a plain number is demanded.
+        // Amended in the session-71 curve half: `sin`/`cos`/`tan` now take an angle *or a plain number read
+        // as radians* — `java.lang.Math`'s own reading, and the one a dimensionless curve parameter needs
+        // (`cos(t)`). So `sin(n)` is legal from that build on, and the violation the other way is a length.
+        val w = ed.doc.newParameter("w", 40.0.mm)
         val bad2 = ed.doc.newParameter("bad2", Quantity.number(0.0))
-        assertTrue(ed.doc.bindParameter(bad2, "sin(n)"))
+        assertTrue(ed.doc.bindParameter(bad2, "sin(w)"))
         val why2 = assertNotNull((Evaluator().eval(bad2.ref.node) as? EvalResult.Invalid)?.reason, "invalid the other way")
         assertTrue(why2.contains("sin") && why2.contains("angle"), "and says which way: $why2")
-        assertTrue(ed.doc.bindParameter(bad2, "sin(n * 1rad)"), "corrected")
+        assertTrue(ed.doc.bindParameter(bad2, "sin(n)"), "corrected — a plain number is read as radians")
         assertClose(Evaluator().scalar(bad2.ref).value, kotlin.math.sin(0.5), tol = 1e-12, msg = "healed")
 
         // a re-bound parameter keeps *both* steps, each stating the text it stated — and the file round-trips
@@ -551,7 +555,8 @@ class ExpressionTest {
         assertTrue(bad("min(1mm, 1deg)").contains("same dimension"), "and so does min")
         assertTrue(bad("sqrt(1mm)").contains("divisible"), "sqrt refuses an odd exponent by name: ${bad("sqrt(1mm)")}")
         assertTrue(bad("cbrt(1mm)").contains("divisible"), "cbrt likewise")
-        assertTrue(bad("sin(1mm)").contains("angle"), "sin takes an angle")
+        assertTrue(bad("sin(1mm)").contains("angle"), "sin takes an angle (or a plain number of radians)")
+        assertEquals("no error at all", bad("sin(0.5)"), "…and a plain number is read as radians (session 71)")
         assertTrue(bad("asin(1deg)").contains("plain number"), "asin does not")
         assertTrue(bad("exp(1mm)").contains("plain number"), "exp does not either")
         assertTrue(bad("round(1mm)").contains(ExprEval.ROUNDING_NOTE), "and rounding says which unit it would round in")

@@ -3,6 +3,7 @@ package constructit.editor
 import constructit.core.CircleValue
 import constructit.core.EllipseValue
 import constructit.core.Evaluator
+import constructit.core.FuncCurveValue
 import constructit.core.LineValue
 import constructit.core.PointValue
 import constructit.core.RayValue
@@ -11,6 +12,8 @@ import constructit.dsl.valueOf
 import constructit.geom.Circle
 import constructit.geom.Conics
 import constructit.geom.Ellipse
+import constructit.geom.FuncCurve
+import constructit.geom.FuncCurves
 import constructit.geom.GeomMath
 import constructit.geom.Line
 import constructit.geom.Vec2
@@ -155,6 +158,7 @@ object Snap {
                 is Line -> GeomMath.intersectLL(axisLine, f).points
                 is Circle -> GeomMath.intersectLC(axisLine, f).points
                 is Ellipse -> Conics.intersectLE(axisLine, f).points
+                is FuncCurve -> FuncCurves.intersectImplicit(f, FuncCurves.lineImplicit(axisLine)).points
                 else -> null
             } ?: return null
         return points.minByOrNull { (it - near).length() }
@@ -168,7 +172,8 @@ object Snap {
     ): Vec2? = projection(ev, curve, world)
 
     /** Lines, segments, rays, circles and ellipses can carry a point; arcs can't yet (no carrier circle). */
-    private fun attachable(el: Element) = el.isLinear || el.kind == ElementKind.CIRCLE || el.kind == ElementKind.ELLIPSE
+    private fun attachable(el: Element) =
+        el.isLinear || el.kind == ElementKind.CIRCLE || el.kind == ElementKind.ELLIPSE || el.kind == ElementKind.FUNC_CURVE
 
     /** [el]'s geometry as an infinite line or a circle, for intersecting and projecting. */
     private fun formOf(
@@ -181,6 +186,7 @@ object Snap {
             is SegmentValue -> (v.seg.b - v.seg.a).let { d -> if (d.length() < Vec2.EPS) null else Line(v.seg.a, d.normalized()) }
             is CircleValue -> v.circle
             is EllipseValue -> v.ellipse
+            is FuncCurveValue -> v.curve
             else -> null
         }
 
@@ -204,6 +210,14 @@ object Snap {
             fa is Circle && fb is Ellipse -> Conics.intersect(Conics.ofCircle(fa), fb).points
             fa is Ellipse && fb is Circle -> Conics.intersect(fa, Conics.ofCircle(fb)).points
             fa is Ellipse && fb is Ellipse -> Conics.intersect(fa, fb).points
+            // …and the function curve's own, numeric but deterministic and seeded from its tessellation:
+            // the same solver the intersection *op* uses, run one frame early on values (session 71)
+            fa is FuncCurve && fb is Line -> FuncCurves.intersectImplicit(fa, FuncCurves.lineImplicit(fb)).points
+            fa is Line && fb is FuncCurve -> FuncCurves.intersectImplicit(fb, FuncCurves.lineImplicit(fa)).points
+            fa is FuncCurve && fb is Circle -> FuncCurves.intersectImplicit(fa, FuncCurves.circleImplicit(fb)).points
+            fa is Circle && fb is FuncCurve -> FuncCurves.intersectImplicit(fb, FuncCurves.circleImplicit(fa)).points
+            fa is FuncCurve && fb is Ellipse -> FuncCurves.intersectImplicit(fa) { p -> Conics.implicit(fb, p) }.points
+            fa is Ellipse && fb is FuncCurve -> FuncCurves.intersectImplicit(fb) { p -> Conics.implicit(fa, p) }.points
             else -> null
         }
     }
@@ -220,6 +234,7 @@ object Snap {
                 if (d.length() < Vec2.EPS) f.center + Vec2(f.radius, 0.0) else f.center + d * (f.radius / d.length())
             }
             is Ellipse -> Conics.nearestPoint(f, world)
+            is FuncCurve -> FuncCurves.nearestPoint(f, world)
             else -> null
         }
 }

@@ -70,6 +70,16 @@
         #params-form { display: flex; gap: 4px; margin-bottom: 6px; }
         #params-form input { width: 44px; } #params-form #p-name { width: 52px; }
         #params-form select, #params-form input, #params-form button { font-size: 12px; padding: 2px 4px; }
+        /* the function-curve form (session 71): two texts and a domain, so the texts get the room */
+        /* closed by default so the panel keeps its height; the summary is the section heading */
+        #fc-form { margin: 6px 0; }
+        #fc-form > summary { font: 600 11px/1.6 inherit; text-transform: uppercase; letter-spacing: .04em; cursor: pointer; }
+        #fc-form[open] { display: flex; flex-wrap: wrap; gap: 4px; }
+        #fc-form > summary { flex: 1 1 100%; }
+        #fc-form input { font-size: 12px; padding: 2px 4px; }
+        #fc-form #fc-x, #fc-form #fc-y { flex: 1 1 100%; }
+        #fc-form #fc-from, #fc-form #fc-to { width: 52px; }
+        #fc-form button { font-size: 12px; padding: 2px 6px; }
         .prow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
         .prow:hover { background: #eef4fb; }
         .prow.active { background: #e2eefb; outline: 1px solid #1f77b4; }
@@ -258,6 +268,14 @@
                 <button id="p-add">+</button>
             </div>
             <div id="params-list"></div>
+            <details id="fc-form" title="A curve piece defined by two expressions over the parameter t: x(t), y(t) over a stated domain, reading any parameter above. An involute of the circle of radius r is x = r*(cos(t)+t*sin(t)), y = r*(sin(t)-t*cos(t)).">
+                <summary>Function curve</summary>
+                <input id="fc-x" placeholder="x(t)" value="r * (cos(t) + t * sin(t))">
+                <input id="fc-y" placeholder="y(t)" value="r * (sin(t) - t * cos(t))">
+                <input id="fc-from" type="number" step="0.1" value="0" title="t from">
+                <input id="fc-to" type="number" step="0.1" value="1.6" title="t to">
+                <button id="fc-add">Draw</button>
+            </details>
             <h3>Measurements</h3>
             <div id="measure-list"></div>
             <h3>Elements</h3>

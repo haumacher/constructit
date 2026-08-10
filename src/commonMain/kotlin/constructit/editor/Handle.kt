@@ -5,6 +5,7 @@ import constructit.core.EllipseValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
+import constructit.core.FuncCurveValue
 import constructit.core.LineValue
 import constructit.core.Node
 import constructit.core.ParameterNode
@@ -16,6 +17,7 @@ import constructit.core.ScalarValue
 import constructit.core.SourceNode
 import constructit.dsl.CircleRef
 import constructit.dsl.EllipseRef
+import constructit.dsl.FuncCurveRef
 import constructit.dsl.LineRef
 import constructit.dsl.Path3Ref
 import constructit.dsl.PlaneRef
@@ -25,6 +27,7 @@ import constructit.dsl.ScalarRef
 import constructit.dsl.valueOf
 import constructit.geom.Conics
 import constructit.geom.Curve3Element
+import constructit.geom.FuncCurves
 import constructit.geom.Plane3
 import constructit.geom.Vec2
 import constructit.geom.Vec3
@@ -970,6 +973,61 @@ class OnEllipseHandle(val ellipse: EllipseRef, private val t: SourceNode) : Hand
     }
 
     override fun fields(): List<HandleField> = listOf(angleField("parameter", t))
+}
+
+/** A field for a plain-number [node] — the dimensionless freedom a function curve's parameter is. */
+fun numberField(
+    label: String,
+    node: SourceNode,
+) = HandleField(
+    label,
+    node,
+    Dimension.NONE,
+    { ev -> baseOf(node, ev)?.let { Quantity.number(it) } },
+    { q -> node.value = ScalarValue(Quantity.number(q.base)) },
+)
+
+/**
+ * A **function curve's own two freedoms**: the ends of the domain its parameter runs over (the session-71
+ * entry, curve half).
+ *
+ * The curve has no draggable point of its own — its shape is the two texts, which are edited as text — so
+ * this handle is fields only, and that is the honest reading of OP-13 here rather than a gap: every degree
+ * of freedom the element owns *is* reachable by number, and the ones that are not numbers are reachable
+ * where they live.
+ */
+class FuncCurveHandle(private val t0: SourceNode, private val t1: SourceNode) : Handle {
+    override val dragNodes: List<SourceNode> get() = emptyList()
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) = Unit
+
+    override fun fields(): List<HandleField> = listOf(numberField("from", t0), numberField("to", t1))
+}
+
+/**
+ * Point on a **function curve** (the session-71 entry, curve half): the one DOF is the curve's **own
+ * parameter**, absolute in the curve's own frame for exactly [OnEllipseHandle]'s reason — it is measured in
+ * the function's parametrization, which no edit to the curve's extent re-anchors.
+ *
+ * The drag projects the cursor onto the curve by [FuncCurves.nearestParam], which needs no derivative — so
+ * a rider rides a curve whose *tangent* this drawing cannot state, and only the tangent-dependent
+ * constructions refuse. The field writes the same node, so a number and a drag are one operation (OP-13).
+ */
+class OnFuncCurveHandle(val curve: FuncCurveRef, private val t: SourceNode) : Handle {
+    override val dragNodes: List<SourceNode> get() = listOf(t)
+
+    override fun drag(
+        world: Vec2,
+        ev: Evaluator,
+    ) {
+        val c = (ev.valueOf(curve) as? FuncCurveValue)?.curve ?: return
+        t.value = ScalarValue(Quantity.number(FuncCurves.nearestParam(c, world)))
+    }
+
+    override fun fields(): List<HandleField> = listOf(numberField("parameter", t))
 }
 
 /**

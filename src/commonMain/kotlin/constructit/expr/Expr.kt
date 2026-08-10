@@ -245,6 +245,11 @@ class ExprParser private constructor(private val src: String) {
         // from a subtraction, so such a name simply cannot be referenced (the binding says so, by name)
         while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) i++
         val word = src.substring(start, i)
+        // the reference's span ends **at the word**, taken before the look-ahead below: [peek] skips
+        // whitespace, so reading it first would stretch the span over the space after the name and a rename
+        // would then eat that space out of the stored text (`r * 2` re-stamping to `module* 2`). The text is
+        // the record, so a re-stamp must rewrite exactly the name and not one character more.
+        val end = i
         // **the '(' is what makes a word a function** — see the class note. Nothing else does, so no name
         // is spent and no future vocabulary addition can change what a stored file means.
         if (peek() == '(') {
@@ -275,7 +280,7 @@ class ExprParser private constructor(private val src: String) {
             }
             return Expr.Apply(word, args)
         }
-        return Expr.Ref(word, start, i)
+        return Expr.Ref(word, start, end)
     }
 }
 
@@ -294,7 +299,7 @@ class ExprParser private constructor(private val src: String) {
  * | `^` / `pow` | exponent dimensionless; a **dimensioned base is allowed only under an integer literal exponent**, which scales the exponents (`r^2` is an area) |
  * | `sqrt` | halves the exponents, refusing an odd one by name |
  * | `cbrt` | thirds them, refusing a non-multiple of three by name |
- * | `sin` `cos` `tan` | an angle in, a plain number out |
+ * | `sin` `cos` `tan` | an angle **or a plain number of radians** in, a plain number out — see [radians] |
  * | `asin` `acos` `atan` | a plain number in, an angle out |
  * | `atan2` | two of equal dimension in, an angle out |
  * | `exp` `log` `log10` | plain number in and out |
@@ -309,6 +314,17 @@ object ExprEval {
      * writable — `round(x/1mm) * 1mm` states the unit it rounds in.
      */
     const val ROUNDING_NOTE = "rounds a plain number: divide by the unit you mean to round in (round(x/1mm)*1mm)"
+
+    /**
+     * The one operation the **parser never produces**: an angle read as its plain number of radians (a plain
+     * number passing through unchanged, anything else a [DimensionError]).
+     *
+     * It exists for [Derive], which needs it to state `d sin(u) = cos(u)·num(u')` without the radian
+     * surviving into a slope that is then added to a plain one. Not in the vocabulary table, so `num(x)`
+     * typed into a formula is the ordinary unknown-function refusal — the derived AST is evaluated, never
+     * parsed, so nothing is spent and no stored text changes meaning.
+     */
+    const val NUM = "num"
 
     fun eval(
         e: Expr,
@@ -381,9 +397,10 @@ object ExprEval {
                 Quantity(sqrt(a[0].base), root(op, a[0].dim, 2))
             }
             "cbrt" -> Quantity(cbrt(a[0].base), root(op, a[0].dim, 3))
-            "sin" -> Quantity.number(sin(angle(op, a[0])))
-            "cos" -> Quantity.number(cos(angle(op, a[0])))
-            "tan" -> Quantity.number(tan(angle(op, a[0])))
+            "sin" -> Quantity.number(sin(radians(op, a[0])))
+            "cos" -> Quantity.number(cos(radians(op, a[0])))
+            "tan" -> Quantity.number(tan(radians(op, a[0])))
+            NUM -> Quantity.number(radians(op, a[0]))
             "asin" -> Quantity.rad(asin(domain(op, plain(op, a[0]), -1.0, 1.0)))
             "acos" -> Quantity.rad(acos(domain(op, plain(op, a[0]), -1.0, 1.0)))
             "atan" -> Quantity.rad(atan(plain(op, a[0])))
@@ -420,11 +437,25 @@ object ExprEval {
         return a[1]
     }
 
-    private fun angle(
+    /**
+     * An operand read **in radians**: an angle as itself, and a plain number as the radians it already is.
+     *
+     * The plain-number reading is the session-71 curve half's one widening of the table, and it is a
+     * widening in the strict sense — nothing that computed a number before computes a different one now,
+     * only texts that were invalid have become valid. Three reasons it is the right rule rather than a
+     * concession: it is `java.lang.Math`'s own (`Math.sin(double)` takes radians, and the user's phrase named
+     * that vocabulary); the radian is dimensionless in SI, so this engine's `ANGLE` is a bookkeeping
+     * convenience rather than a physical dimension; and a function curve's parameter `t` is dimensionless by
+     * construction, so `cos(t)` — the involute as the user wrote it — must mean what it says. What the rule
+     * still refuses is the case that was ever in doubt: `cos` of a *length* is a dimension error as before.
+     */
+    private fun radians(
         op: String,
         q: Quantity,
     ): Double {
-        if (q.dim != Dimension.ANGLE) throw DimensionError("$op takes an angle, and this is ${q.dim}")
+        if (q.dim != Dimension.ANGLE && q.dim != Dimension.NONE) {
+            throw DimensionError("$op takes an angle or a plain number of radians, and this is ${q.dim}")
+        }
         return q.base
     }
 

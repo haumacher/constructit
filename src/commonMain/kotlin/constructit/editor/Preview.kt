@@ -26,6 +26,7 @@ import constructit.geom.Ellipse
 import constructit.geom.EllipticArc
 import constructit.geom.FilletLeg
 import constructit.geom.FilletMath
+import constructit.geom.FuncCurves
 import constructit.geom.GeomMath
 import constructit.geom.Justification
 import constructit.geom.Line
@@ -382,6 +383,8 @@ object Previews {
                 is ProfileElement.BezierE -> PreviewShape.Bez(it.bezier)
                 is ProfileElement.EllipticArcE -> PreviewShape.EllArc(it.arc)
                 is ProfileElement.EllipseE -> PreviewShape.Ell(it.ellipse)
+                // a function curve has no primitive to ghost, so it previews as the polyline it draws as
+                is ProfileElement.FuncE -> PreviewShape.Path(FuncCurves.renderSample(it.curve))
             }
         }
 

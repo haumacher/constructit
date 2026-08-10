@@ -292,6 +292,25 @@ object DocumentFormat {
                 val text = doc.expressionBinding(step)?.node?.text
                 if (text == null) step.args else listOf(step.args[0], Arg.Text("="), Arg.Label(text))
             }
+            // a function curve's two texts are stored **verbatim** for exactly the reason a binding's one
+            // is (session 71, curve half), re-stamped in place under the current names of what they read;
+            // and its **domain is state** — dragged in the fields, typed, and therefore restated from the
+            // very source nodes that carry it, which is the `param` step's own rule
+            "funccurve" -> {
+                val b = doc.funcCurveBinding(step)
+                val el = step.creates.firstOrNull()
+                val domain = el?.let { doc.funcCurveDomain(it) }
+                if (b == null || domain == null) {
+                    step.args
+                } else {
+                    listOf(
+                        Arg.Label(b.xText),
+                        Arg.Label(b.yText),
+                        Arg.Keyed("from", Arg.Num(Quantity.number(domain.first))),
+                        Arg.Keyed("to", Arg.Num(Quantity.number(domain.second))),
+                    )
+                }
+            }
             // freeing a parameter hands it a literal from that step on, so the literal is state on this
             // step — the `param` step's own rule, for the step that gives a value back
             "unbind" -> {
@@ -853,6 +872,16 @@ object DocumentFormat {
                     throw LoadError(doc.note ?: "cannot bind '${words.getOrNull(1)}'")
                 }
             "unbind" -> doc.unwireParameter(scalar(1), quantity(words[3]))
+            // the two expressions are parsed back from the very texts that were stored; a text this build
+            // cannot read, or a name the drawing no longer carries, is a load error with the document's own
+            // reason rather than a curve that comes back a different curve (OP-18: a load is strict)
+            "funccurve" -> {
+                val x = unquote(words.getOrElse(1) { throw LoadError("funccurve is missing x(t)") })
+                val y = unquote(words.getOrElse(2) { throw LoadError("funccurve is missing y(t)") })
+                val from = keyed(words, "from")?.toDoubleOrNull() ?: throw LoadError("funccurve is missing from=")
+                val to = keyed(words, "to")?.toDoubleOrNull() ?: throw LoadError("funccurve is missing to=")
+                doc.functionCurve(x, y, from, to) ?: throw LoadError(doc.note ?: "cannot build the function curve")
+            }
             // `sign=` is the branch the click chose, restated (OP-1); a format-1 script carries none, and the
             // click scores it once more — this time for good, since the save that follows writes it down
             "intersectnear" -> doc.intersectNear(el(1), el(2), parsePos(words[3]), keyedInts(words, "signs").firstOrNull())

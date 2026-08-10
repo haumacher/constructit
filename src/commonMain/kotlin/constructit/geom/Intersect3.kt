@@ -319,6 +319,9 @@ object Intersect3 {
                     if (Conics.contains(e.arc, t)) cands.add(Conics.pointAt(e.arc.ellipse, t))
                 }
             }
+            // a function's own extremes have no closed form, so the candidates are its tessellation's —
+            // exact at every sample, and the samples are the ones every consumer draws and picks against
+            is ProfileElement.FuncE -> cands.addAll(FuncCurves.sample(e.curve, FuncCurves.RENDER_STEPS))
             is ProfileElement.BezierE -> {
                 val b = e.bezier
                 cands.add(b.p0)
@@ -379,6 +382,7 @@ object Intersect3 {
             is ProfileElement.EllipticArcE -> abs(Conics.sweep(e.arc)) * e.arc.ellipse.major
             is ProfileElement.BezierE ->
                 (e.bezier.p1 - e.bezier.p0).length() + (e.bezier.p2 - e.bezier.p1).length() + (e.bezier.p3 - e.bezier.p2).length()
+            is ProfileElement.FuncE -> FuncCurves.arcLength(e.curve)
         }
 
     // ---- lifting one piece into space: exact where there is a case for it, fitted where there is not ----
@@ -455,6 +459,18 @@ object Intersect3 {
                 fit(e.arc.ellipse, e.arc.startT, e.arc.startT + Conics.sweep(e.arc), plane) to true
             is ProfileElement.EllipseE ->
                 fit(e.ellipse, 0.0, if (e.ccw) 2.0 * kotlin.math.PI else -2.0 * kotlin.math.PI, plane) to true
+            // `Curve3Element` has no name for an arbitrary function, and calling one a cubic is exactly what
+            // OP-15 forbids — so it is **fitted**, to the stated [FIT_TOL_MM], and flagged as fitted
+            is ProfileElement.FuncE -> fitPolyline(FuncCurves.sample(e.curve, FuncCurves.chordSteps(e.curve, FIT_TOL_MM)), plane) to true
+        }
+
+    /** A sampled curve as segments in space — the honest lift for a piece the vocabulary cannot name. */
+    private fun fitPolyline(
+        pts: List<Vec2>,
+        plane: Plane3,
+    ): List<Curve3Element> =
+        (0 until maxOf(0, pts.size - 1)).map {
+            Curve3Element.Seg3(plane.toWorld(pts[it]), plane.toWorld(pts[it + 1]))
         }
 
     /**

@@ -7,6 +7,7 @@ import constructit.geom.Circle
 import constructit.geom.Direction
 import constructit.geom.Ellipse
 import constructit.geom.EllipticArc
+import constructit.geom.FuncCurve
 import constructit.geom.Line
 import constructit.geom.Loop
 import constructit.geom.Path3
@@ -83,6 +84,16 @@ data class EllipseValue(val ellipse: Ellipse) : Value
 
 /** A piece of an ellipse, trimmed by **parametric angle** (OP-24) — see [EllipticArc]. */
 data class EllipticArcValue(val arc: EllipticArc) : Value
+
+/**
+ * A **function curve** (the session-71 expressions entry, curve half): the piece traced by `x(t)`, `y(t)`
+ * over a stated domain — see [FuncCurve].
+ *
+ * A value kind of its own, and deliberately **not** a new primitive per curve family: an involute, a
+ * cycloid and a spiral are one value with three different texts. Its inputs are the ordinary scalar nodes
+ * its expressions name, so editing one moves the curve by plain recompute, and the texts are the record.
+ */
+data class FuncCurveValue(val curve: FuncCurve) : Value
 
 data class PointSetValue(val set: PointSet) : Value
 

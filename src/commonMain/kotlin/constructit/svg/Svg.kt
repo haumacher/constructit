@@ -9,6 +9,7 @@ import constructit.core.EllipseValue
 import constructit.core.EllipticArcValue
 import constructit.core.Evaluator
 import constructit.core.FrameValue
+import constructit.core.FuncCurveValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Path3SetValue
@@ -32,6 +33,7 @@ import constructit.dsl.valueOf
 import constructit.geom.Bezier
 import constructit.geom.Chain
 import constructit.geom.Conics
+import constructit.geom.FuncCurves
 import constructit.geom.GeomMath
 import constructit.geom.Line
 import constructit.geom.ProfileElement
@@ -136,6 +138,11 @@ object Svg {
                 is EllipticArcValue -> {
                     sampleChain(listOf(ProfileElement.EllipticArcE(v.arc)), samples)
                     prepared.add(Prepared("chain", d, listOf<ProfileElement>(ProfileElement.EllipticArcE(v.arc))))
+                }
+                // a function curve has no SVG primitive either, and rides the same chain path
+                is FuncCurveValue -> {
+                    sampleChain(listOf(ProfileElement.FuncE(v.curve)), samples)
+                    prepared.add(Prepared("chain", d, listOf<ProfileElement>(ProfileElement.FuncE(v.curve))))
                 }
                 is LineValue -> prepared.add(Prepared("line", d, v.line)) // clipped later; not in bbox
                 is RayValue -> prepared.add(Prepared("ray", d, v.ray))
@@ -275,6 +282,7 @@ object Svg {
                         }
                         is ProfileElement.EllipticArcE -> sb.append(polyTag(Conics.renderSample(el.arc), p.d.stroke))
                         is ProfileElement.EllipseE -> sb.append(polyTag(Conics.renderSampleWhole(el.ellipse, el.ccw), p.d.stroke))
+                        is ProfileElement.FuncE -> sb.append(polyTag(FuncCurves.renderSample(el.curve), p.d.stroke))
                     }
                 }
             }

@@ -102,6 +102,13 @@ sealed interface ProfileElement {
      * faked as a full-turn [EllipticArcE] whose 0-vs-2π sweep would be ambiguous.
      */
     data class EllipseE(val ellipse: Ellipse, val ccw: Boolean = true) : ProfileElement
+
+    /**
+     * A **function curve** as a boundary piece (the session-71 expressions entry): an open piece exactly as
+     * [BezierE] is, joined into a loop by its own two endpoints rather than trimmed by intersection — the
+     * constructive way round, and the same bargain a spline already makes (OP-15).
+     */
+    data class FuncE(val curve: FuncCurve) : ProfileElement
 }
 
 /** An ordered (ideally closed) chain of segments and arcs — the bridge to 3D extrude/revolve. */
@@ -325,6 +332,7 @@ object GeomMath {
             is ProfileElement.BezierE -> e.bezier.p0
             is ProfileElement.EllipticArcE -> Conics.start(e.arc)
             is ProfileElement.EllipseE -> Conics.pointAt(e.ellipse, 0.0)
+            is ProfileElement.FuncE -> FuncCurves.start(e.curve) ?: Vec2(0.0, 0.0)
         }
 
     /** Where a piece ends, following its own orientation. */
@@ -336,6 +344,7 @@ object GeomMath {
             is ProfileElement.BezierE -> e.bezier.p3
             is ProfileElement.EllipticArcE -> Conics.end(e.arc)
             is ProfileElement.EllipseE -> Conics.pointAt(e.ellipse, 0.0)
+            is ProfileElement.FuncE -> FuncCurves.end(e.curve) ?: Vec2(0.0, 0.0)
         }
 
     /** The same piece traversed the other way. */
@@ -349,6 +358,9 @@ object GeomMath {
             is ProfileElement.EllipticArcE ->
                 ProfileElement.EllipticArcE(EllipticArc(e.arc.ellipse, e.arc.endT, e.arc.startT, !e.arc.ccw))
             is ProfileElement.EllipseE -> ProfileElement.EllipseE(e.ellipse, !e.ccw)
+            // the same function walked the other way: the domain is traversed backwards, which is a
+            // *reading* of the very same expressions and needs nothing re-fitted
+            is ProfileElement.FuncE -> ProfileElement.FuncE(FuncCurves.reverse(e.curve))
         }
 
     /**
@@ -383,6 +395,9 @@ object GeomMath {
             // exact, like the arc's — see [Conics.doubleSignedArea] for why the rotation cancels
             is ProfileElement.EllipticArcE -> Conics.doubleSignedArea(e.arc)
             is ProfileElement.EllipseE -> Conics.doubleSignedArea(e.ellipse, e.ccw)
+            // the one piece with no closed form for this integral — numeric, to a stated tolerance, and
+            // the reason a region carrying one reports an **approximated** area (OP-15)
+            is ProfileElement.FuncE -> FuncCurves.doubleSignedArea(e.curve)
         }
 
     /** Signed area of a closed [loop]: positive when it runs counter-clockwise. */
@@ -590,6 +605,10 @@ object GeomMath {
             // the box of the *whole* ellipse at its larger semi-axis, conservative exactly as the circle's is
             is ProfileElement.EllipticArcE -> ellipseBounds(e.arc.ellipse)
             is ProfileElement.EllipseE -> ellipseBounds(e.ellipse)
+            // a function has no hull to read a box off, so the box is the one its own tessellation spans —
+            // exact at every sample, and the samples are the very ones every other consumer draws and picks
+            is ProfileElement.FuncE ->
+                bbox(FuncCurves.sample(e.curve, FuncCurves.RENDER_STEPS)) ?: (Vec2(0.0, 0.0) to Vec2(0.0, 0.0))
         }
 
     /** The conservative box of a whole ellipse: its circumscribed circle's, for [bounds]' own reason. */
@@ -625,6 +644,7 @@ object GeomMath {
             is ProfileElement.EllipticArcE -> ProfileElement.EllipticArcE(Conics.transform(e.arc, t))
             is ProfileElement.EllipseE ->
                 ProfileElement.EllipseE(Conics.transform(e.ellipse, t), if (t.det < 0) !e.ccw else e.ccw)
+            is ProfileElement.FuncE -> ProfileElement.FuncE(FuncCurves.transform(e.curve, t))
         }
 
     /**
@@ -862,6 +882,7 @@ object GeomMath {
                 Conics.sample(e.arc, Conics.chordSteps(e.arc.ellipse, Conics.sweep(e.arc), tolMm, quality))
             is ProfileElement.EllipseE ->
                 Conics.sampleWhole(e.ellipse, max(3, Conics.chordSteps(e.ellipse, 2.0 * PI, tolMm, quality)), e.ccw)
+            is ProfileElement.FuncE -> FuncCurves.sample(e.curve, FuncCurves.chordSteps(e.curve, tolMm, quality))
         }
 
     /**

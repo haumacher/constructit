@@ -5,6 +5,7 @@ import constructit.geom.Chains
 import constructit.geom.Circle
 import constructit.geom.Conics
 import constructit.geom.Direction
+import constructit.geom.FuncCurves
 import constructit.geom.GeomMath
 import constructit.geom.Line
 import constructit.geom.PointSet
@@ -29,6 +30,10 @@ fun transformValue(
         is EllipseValue -> EllipseValue(Conics.transform(v.ellipse, t))
         is EllipticArcValue -> EllipticArcValue(Conics.transform(v.arc, t))
         is BezierValue -> BezierValue(GeomMath.transformBezier(v.bezier, t))
+        // a function curve's map **composes with the function** rather than being fitted to samples, so
+        // this is exact for any affine map at all — the one curve kind `transformArc`'s similarity caveat
+        // can never reach (the session-71 entry, curve half)
+        is FuncCurveValue -> FuncCurveValue(FuncCurves.transform(v.curve, t))
         is DirectionValue -> DirectionValue(Direction(t.linear(v.dir.v).normalized()))
         is PointSetValue -> PointSetValue(PointSet(v.set.points.map { t.apply(it) }))
         is ProfileValue -> ProfileValue(Profile(v.profile.elements.map { GeomMath.transform(it, t) }))

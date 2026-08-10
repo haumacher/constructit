@@ -10,6 +10,7 @@ import constructit.core.EllipticArcValue
 import constructit.core.EvalResult
 import constructit.core.Evaluator
 import constructit.core.FrameValue
+import constructit.core.FuncCurveValue
 import constructit.core.IndirectNode
 import constructit.core.InstanceNode
 import constructit.core.LineValue
@@ -35,6 +36,9 @@ import constructit.core.SourceNode
 import constructit.core.Sphere3Value
 import constructit.core.Value
 import constructit.core.transformValue
+import constructit.expr.Derive
+import constructit.expr.DeriveError
+import constructit.expr.Expr
 import constructit.geom.Affine
 import constructit.geom.Arc
 import constructit.geom.Axis3
@@ -61,6 +65,8 @@ import constructit.geom.EllipticArc
 import constructit.geom.Feature3
 import constructit.geom.FrameSeed
 import constructit.geom.Frames3
+import constructit.geom.FuncCurve
+import constructit.geom.FuncCurves
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Handedness
@@ -136,6 +142,9 @@ typealias ArcRef = Ref<ArcValue>
 /** A first-class conic (OP-24): an ellipse, and a piece of one trimmed by parametric angle. */
 typealias EllipseRef = Ref<EllipseValue>
 typealias EllipticArcRef = Ref<EllipticArcValue>
+
+/** A **function curve** (the session-71 entry, curve half) — see [Construction.funcCurve]. */
+typealias FuncCurveRef = Ref<FuncCurveValue>
 typealias PointSetRef = Ref<PointSetValue>
 typealias RayRef = Ref<RayValue>
 typealias DirectionRef = Ref<DirectionValue>
@@ -735,6 +744,162 @@ class Construction {
     ): PointSetRef =
         op(e1, e2) {
             EvalResult.Ok(PointSetValue(Conics.intersect((it[0] as EllipseValue).ellipse, (it[1] as EllipseValue).ellipse)))
+        }
+
+    // ---- function curves: the same expressions, plus a parameter (the session-71 entry, curve half) ----
+
+    /**
+     * The curve traced by [xText] and [yText] as the dimensionless parameter runs from [t0] to [t1] — the
+     * **whole** of the new curve vocabulary, and deliberately no primitive per curve family: an involute, a
+     * cycloid and a spiral are this one op with three different texts (the user's own design).
+     *
+     * [refs] are the named scalars the two texts read, in the order [names] gives them, and they are
+     * ordinary DAG inputs — so editing one moves the curve by nothing but the recompute every other edit
+     * uses, and no input list is rewired. [t0] and [t1] are scalars too, so the domain is draggable and
+     * typeable like everything else (OP-13).
+     *
+     * The **derivatives are symbolic and computed once, here** ([constructit.expr.Derive]); a function whose
+     * derivative the vocabulary cannot state still draws, still carries a rider and still bounds an area,
+     * and only the tangent-dependent constructions refuse — by name, quoting the function that stopped it.
+     */
+    fun funcCurve(
+        xText: Expr,
+        yText: Expr,
+        names: List<String>,
+        refs: List<ScalarRef>,
+        t0: ScalarRef,
+        t1: ScalarRef,
+        param: String = "t",
+        text: String = "",
+    ): FuncCurveRef {
+        var dx: Expr? = null
+        var dy: Expr? = null
+        var why: String? = null
+        try {
+            dx = Derive.d(xText, param)
+            dy = Derive.d(yText, param)
+        } catch (e: DeriveError) {
+            dx = null
+            dy = null
+            why = e.message
+        }
+        val fdx = dx
+        val fdy = dy
+        val fwhy = why
+        return op(*(refs + listOf(t0, t1)).toTypedArray()) { args ->
+            val env = HashMap<String, Quantity>(names.size)
+            for ((k, n) in names.withIndex()) {
+                val q = (args[k] as? ScalarValue)?.q ?: return@op EvalResult.Invalid("$n is not a number")
+                env[n] = q
+            }
+            val a = (args[names.size] as ScalarValue).q
+            val b = (args[names.size + 1] as ScalarValue).q
+            if (a.dim != Dimension.NONE || b.dim != Dimension.NONE) {
+                return@op EvalResult.Invalid("the domain of $param is a pair of plain numbers, and this one is ${a.dim} to ${b.dim}")
+            }
+            val curve = FuncCurve(xText, yText, fdx, fdy, fwhy, env, a.base, b.base, param, text = text)
+            FuncCurves.invalidity(curve)?.let { return@op EvalResult.Invalid(it) }
+            EvalResult.Ok(FuncCurveValue(curve))
+        }
+    }
+
+    /**
+     * The point of [curve] at parameter [t] — the **exact** position-along a function curve offers (OP-24's
+     * honesty line, one curve family on): the point is the expression itself, evaluated there.
+     */
+    fun pointOnFuncCurve(
+        curve: FuncCurveRef,
+        t: ScalarRef,
+    ): PointRef =
+        op(curve, t) {
+            val c = (it[0] as FuncCurveValue).curve
+            val at = (it[1] as ScalarValue).q
+            if (at.dim != Dimension.NONE) return@op EvalResult.Invalid("a function curve's parameter is a plain number, and this is ${at.dim}")
+            val p = FuncCurves.pointAt(c, at.base) ?: return@op EvalResult.Invalid("the curve has no point at ${c.param} = ${at.base}")
+            EvalResult.Ok(PointValue(p))
+        }
+
+    /** The tangent line of [curve] at [t] — exact, from the symbolic derivative, or refused by name. */
+    fun tangentOnFuncCurve(
+        curve: FuncCurveRef,
+        t: ScalarRef,
+    ): LineRef = tangentLine(curve, t, normal = false)
+
+    /** The normal line of [curve] at [t] — exact, from the symbolic derivative, or refused by name. */
+    fun normalOnFuncCurve(
+        curve: FuncCurveRef,
+        t: ScalarRef,
+    ): LineRef = tangentLine(curve, t, normal = true)
+
+    private fun tangentLine(
+        curve: FuncCurveRef,
+        t: ScalarRef,
+        normal: Boolean,
+    ): LineRef =
+        op(curve, t) {
+            val c = (it[0] as FuncCurveValue).curve
+            val at = (it[1] as ScalarValue).q
+            if (at.dim != Dimension.NONE) return@op EvalResult.Invalid("a function curve's parameter is a plain number, and this is ${at.dim}")
+            c.noTangent?.let { why -> return@op EvalResult.Invalid(why) }
+            val p = FuncCurves.pointAt(c, at.base) ?: return@op EvalResult.Invalid("the curve has no point at ${c.param} = ${at.base}")
+            val d = FuncCurves.tangentAt(c, at.base) ?: return@op EvalResult.Invalid("the curve has no tangent at ${c.param} = ${at.base}")
+            if (d.length() < Vec2.EPS) return@op EvalResult.Invalid("the curve stands still at ${c.param} = ${at.base}, so it has no direction there")
+            EvalResult.Ok(LineValue(Line(p, if (normal) d.normalized().perp() else d.normalized())))
+        }
+
+    /** A function curve's start point — one of its two key points, and what a loop joins onto. */
+    fun funcCurveStart(curve: FuncCurveRef): PointRef = funcEnd(curve, atStart = true)
+
+    /** A function curve's end point — the other key point. */
+    fun funcCurveEnd(curve: FuncCurveRef): PointRef = funcEnd(curve, atStart = false)
+
+    private fun funcEnd(
+        curve: FuncCurveRef,
+        atStart: Boolean,
+    ): PointRef =
+        op(curve) {
+            val c = (it[0] as FuncCurveValue).curve
+            val p = (if (atStart) FuncCurves.start(c) else FuncCurves.end(c)) ?: return@op EvalResult.Invalid("the curve has no end there")
+            EvalResult.Ok(PointValue(p))
+        }
+
+    /** The **measured** length of a function curve — numeric to a stated tolerance, and flagged (OP-15). */
+    fun measureFuncCurveLength(curve: FuncCurveRef): ScalarRef =
+        op(curve) { EvalResult.Ok(ScalarValue(Quantity.mm(FuncCurves.arcLength((it[0] as FuncCurveValue).curve)))) }
+
+    /**
+     * **Line ∩ function curve**: numeric but *deterministic*, ordered by ascending parameter along the
+     * **curve** — OP-1's canonical rule for parametric curves, with the function curve as the first operand
+     * so the rule reads directly (see [FuncCurves.intersectImplicit] for the fixed seeding).
+     */
+    fun intersectFL(
+        curve: FuncCurveRef,
+        line: LineRef,
+    ): PointSetRef =
+        op(curve, line) {
+            val c = (it[0] as FuncCurveValue).curve
+            EvalResult.Ok(PointSetValue(FuncCurves.intersectImplicit(c, FuncCurves.lineImplicit((it[1] as LineValue).line))))
+        }
+
+    /** **Circle ∩ function curve**: the same mechanism over the circle's implicit form, same ordering. */
+    fun intersectFC(
+        curve: FuncCurveRef,
+        circle: CircleRef,
+    ): PointSetRef =
+        op(curve, circle) {
+            val c = (it[0] as FuncCurveValue).curve
+            EvalResult.Ok(PointSetValue(FuncCurves.intersectImplicit(c, FuncCurves.circleImplicit((it[1] as CircleValue).circle))))
+        }
+
+    /** **Ellipse ∩ function curve**: the same mechanism over the ellipse's implicit form, same ordering. */
+    fun intersectFE(
+        curve: FuncCurveRef,
+        e: EllipseRef,
+    ): PointSetRef =
+        op(curve, e) {
+            val c = (it[0] as FuncCurveValue).curve
+            val el = (it[1] as EllipseValue).ellipse
+            EvalResult.Ok(PointSetValue(FuncCurves.intersectImplicit(c) { p -> Conics.implicit(el, p) }))
         }
 
     /**
@@ -1445,7 +1610,8 @@ class Construction {
                         is ArcValue -> ProfileElement.ArcE(v.arc)
                         is BezierValue -> ProfileElement.BezierE(v.bezier)
                         is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
-                        else -> throw IllegalArgumentException("profile element must be a segment, arc, Bézier or elliptic arc")
+                        is FuncCurveValue -> ProfileElement.FuncE(v.curve)
+                        else -> throw IllegalArgumentException("profile element must be a segment, arc, Bézier, elliptic arc or function curve")
                     }
                 }
             EvalResult.Ok(ProfileValue(Profile(elems)))
@@ -1631,7 +1797,8 @@ class Construction {
                         is BezierValue -> ProfileElement.BezierE(v.bezier)
                         is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
                         is EllipseValue -> ProfileElement.EllipseE(v.ellipse)
-                        else -> return@op EvalResult.Invalid("a loop piece must be a segment, an arc, a circle, an ellipse or a Bézier")
+                        is FuncCurveValue -> ProfileElement.FuncE(v.curve)
+                        else -> return@op EvalResult.Invalid("a loop piece must be a segment, an arc, a circle, an ellipse, a Bézier or a function curve")
                     }
                 elems.add(e)
             }
@@ -1786,6 +1953,7 @@ class Construction {
                     is CircleValue -> ProfileElement.CircleE(v.circle)
                     is EllipticArcValue -> ProfileElement.EllipticArcE(v.arc)
                     is EllipseValue -> ProfileElement.EllipseE(v.ellipse)
+                    is FuncCurveValue -> ProfileElement.FuncE(v.curve)
                     else -> return null
                 }
             CarrierCurve(piece, sides.getOrElse(i) { Justification.CENTER })

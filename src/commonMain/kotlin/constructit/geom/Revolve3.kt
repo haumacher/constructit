@@ -251,6 +251,11 @@ object Revolve3 {
                 Band.Unnamed("a surface of revolution swept by an ellipse, which this drawing has no name for")
             is ProfileElement.BezierE ->
                 Band.Unnamed("a surface of revolution swept by a spline, which this drawing has no name for")
+            // the session-69 rule, one curve family on: a band swept by a curve the vocabulary cannot name
+            // refuses **wholly and by name, dispatched here by predicate**, rather than being answered
+            // half-exactly further down
+            is ProfileElement.FuncE ->
+                Band.Unnamed("a surface of revolution swept by a function curve, which this drawing has no name for")
         }
 
     // ---- the face family ----
@@ -837,6 +842,7 @@ object Revolve3 {
             is ProfileElement.EllipseE -> (0 until n).map { Conics.pointAt(e.ellipse, TWO_PI * it / n) }
             is ProfileElement.EllipticArcE -> Conics.sample(e.arc, n)
             is ProfileElement.BezierE -> (0..n).map { GeomMath.bezierPointAt(e.bezier, it.toDouble() / n) }
+            is ProfileElement.FuncE -> FuncCurves.sample(e.curve, n)
         }
 
     /** Where a profile piece crosses a line, analytically per kind (a spline is sampled). */
@@ -870,6 +876,7 @@ object Revolve3 {
                     }
                 }
             }
+            is ProfileElement.FuncE -> FuncCurves.intersectImplicit(e.curve, FuncCurves.lineImplicit(line)).points
         }
 
     // ---- the honest answer where there is no name (OP-15's approximated class) ----

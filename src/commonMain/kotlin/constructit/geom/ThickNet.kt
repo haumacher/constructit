@@ -487,6 +487,9 @@ fun carrierLength(e: ProfileElement): Double =
         // carrier in the same approximated class a Bézier carrier is in
         is ProfileElement.EllipticArcE -> Conics.arcLength(e.arc)
         is ProfileElement.EllipseE -> Conics.circumference(e.ellipse)
+        // numeric to a stated tolerance, which puts a function-curve carrier in the same approximated
+        // class a Bézier and an elliptic one are already in (OP-15)
+        is ProfileElement.FuncE -> FuncCurves.arcLength(e.curve)
     }
 
 /** How many samples an elliptic carrier's offset and its arc-length map are built on (OP-15, OP-24). */
@@ -634,6 +637,12 @@ private fun interiorParam(
                 if (!Conics.contains(host.arc, t)) return null
                 Conics.arcLength(EllipticArc(host.arc.ellipse, host.arc.startT, t, host.arc.ccw))
             }
+            is ProfileElement.FuncE -> {
+                val t = FuncCurves.nearestParam(host.curve, p)
+                val at = FuncCurves.pointAt(host.curve, t) ?: return null
+                if ((at - p).length() > WELD) return null
+                FuncCurves.arcLength(host.curve.copy(t1 = t))
+            }
             is ProfileElement.CircleE, is ProfileElement.EllipseE -> return null
         }
     return d.takeIf { it > WELD && it < length - WELD }
@@ -711,6 +720,15 @@ private fun subCarrier(
                 ),
             )
         }
+        // the domain is cut where the arc-length map says, which is OP-15's sampled map exactly as the
+        // elliptic carrier uses it: the *map* is numeric, the parameters it lands on are the curve's own
+        is ProfileElement.FuncE ->
+            ProfileElement.FuncE(
+                piece.curve.copy(
+                    t0 = if (atStart) piece.curve.t0 else FuncCurves.paramAtDistance(piece.curve, piece.curve.t0, a),
+                    t1 = if (atEnd) piece.curve.t1 else FuncCurves.paramAtDistance(piece.curve, piece.curve.t0, b),
+                ),
+            )
         is ProfileElement.CircleE, is ProfileElement.EllipseE -> piece
     }
 
@@ -834,8 +852,44 @@ private fun offsetWall(
             val pieces = (0 until poly.size - 1).map { ProfileElement.Seg(Segment(poly[it], poly[it + 1])) }
             OffsetWall(pieces, piece, null, null, poly)
         }
+        // a function curve's offset is not a function curve of the same shape — OP-15's spline rule
+        // verbatim — so it is sampled, exact at every sample along the curve's own normal, and the leg
+        // (with it the whole footprint) is flagged approximated
+        is ProfileElement.FuncE -> {
+            val poly = offsetFuncCurve(piece.curve, off)
+            if (poly.size < 2) {
+                null
+            } else {
+                val pieces = (0 until poly.size - 1).map { ProfileElement.Seg(Segment(poly[it], poly[it + 1])) }
+                OffsetWall(pieces, piece, null, null, poly)
+            }
+        }
         is ProfileElement.CircleE, is ProfileElement.EllipseE -> null
     }
+
+/**
+ * A **function curve's** offset at signed distance [off], as a polyline (OP-15's approximated class).
+ *
+ * The same bargain [offsetBezier] and [offsetEllipticArc] make, and made here for the same reason: the
+ * offset of an arbitrary function is not that function displaced, so there is nothing exact to hand back.
+ * Every sample sits at a parameter of the true curve and is displaced along its **exact** normal there — so
+ * the honest claim is "exact at the sample points, chords between". Where the derivative is not statable
+ * there is no normal at all and the offset is empty, which the caller turns into the refusal it is.
+ */
+fun offsetFuncCurve(
+    c: FuncCurve,
+    off: Double,
+): List<Vec2> {
+    val n = max(GeomMath.BEZIER_STEPS, FuncCurves.chordSteps(c))
+    val out = ArrayList<Vec2>(n + 1)
+    for (k in 0..n) {
+        val t = c.t0 + c.span * k / n
+        val p = FuncCurves.pointAt(c, t) ?: return emptyList()
+        val nrm = FuncCurves.normalAt(c, t) ?: return emptyList()
+        out.add(p + nrm * off)
+    }
+    return out
+}
 
 /**
  * A cubic Bézier's offset at signed distance [off], as a polyline (OP-15's **approximated** class).
@@ -886,8 +940,29 @@ private fun outgoingDir(piece: ProfileElement): Vec2 =
                 ((pts.firstOrNull { (it - pts[0]).length() > Vec2.EPS } ?: pts.last()) - pts[0]).normalized()
             }
         is ProfileElement.EllipticArcE -> Conics.walkTangent(piece.arc, piece.arc.startT)
+        is ProfileElement.FuncE -> funcWalkTangent(piece.curve, piece.curve.t0)
         is ProfileElement.CircleE, is ProfileElement.EllipseE -> Vec2(1.0, 0.0)
     }
+
+/**
+ * The unit walk direction of a function curve at [t] — its derivative where the AST states one, and the
+ * chord out of that point where it does not.
+ *
+ * The chord fallback is confined to *this* question deliberately: which way a carrier leaves a vertex is a
+ * fact about the drawn polyline the network is walked on, not a construction anchored on a tangent — the
+ * constructions that *are* refuse by name instead (`Document.funcTangentRefusal`).
+ */
+private fun funcWalkTangent(
+    c: FuncCurve,
+    t: Double,
+): Vec2 {
+    FuncCurves.tangentAt(c, t)?.takeIf { it.length() > Vec2.EPS }?.let { return it.normalized() }
+    val here = FuncCurves.pointAt(c, t) ?: return Vec2(1.0, 0.0)
+    val step = if (t >= c.t1 - Vec2.EPS) -c.span / FuncCurves.RENDER_STEPS else c.span / FuncCurves.RENDER_STEPS
+    val there = FuncCurves.pointAt(c, t + step) ?: return Vec2(1.0, 0.0)
+    val d = if (step > 0) there - here else here - there
+    return if (d.length() < Vec2.EPS) Vec2(1.0, 0.0) else d.normalized()
+}
 
 /**
  * Where two offset walls meet, nearest the shared carrier vertex [v]: `intersectLL` for the classic mitre,
@@ -1077,6 +1152,7 @@ private fun startTangent(e: ProfileElement): Vec2 =
             Vec2(cos(e.arc.startAngle), sin(e.arc.startAngle)).let { if (e.arc.ccw) it.perp() else -it.perp() }
         is ProfileElement.BezierE -> GeomMath.bezierTangentAt(e.bezier, 0.0).normalized()
         is ProfileElement.EllipticArcE -> Conics.walkTangent(e.arc, e.arc.startT)
+        is ProfileElement.FuncE -> funcWalkTangent(e.curve, e.curve.t0)
         is ProfileElement.CircleE, is ProfileElement.EllipseE -> Vec2(0.0, 1.0)
     }
 
@@ -1087,6 +1163,7 @@ private fun endTangent(e: ProfileElement): Vec2 =
             Vec2(cos(e.arc.endAngle), sin(e.arc.endAngle)).let { if (e.arc.ccw) it.perp() else -it.perp() }
         is ProfileElement.BezierE -> GeomMath.bezierTangentAt(e.bezier, 1.0).normalized()
         is ProfileElement.EllipticArcE -> Conics.walkTangent(e.arc, e.arc.endT)
+        is ProfileElement.FuncE -> funcWalkTangent(e.curve, e.curve.t1)
         is ProfileElement.CircleE, is ProfileElement.EllipseE -> Vec2(0.0, 1.0)
     }
 

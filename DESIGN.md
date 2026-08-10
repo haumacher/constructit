@@ -13049,6 +13049,34 @@ the composition table is driven generically as well as by its own test.
   (it wants the plane-valued slot the table has lacked since session 16), the radius drags in the plan only,
   and the locus *family* (a pipe surface, a cylinder or cone locus) is a future extension. **2049 → 2095
   green**, nothing cut, no golden moved. See *The sphere as a locus — distance carried in space* (OP-28).
+- **Session 71 (curve half)** — Delivered the second consumer of the expression language: **a curve a
+  function defines**. One `FuncCurve` value — two `Expr`s, their two **symbolic** derivatives, the scalars
+  they read and a domain — and deliberately **no new primitive curve type per curve family** (the user's own
+  design, quoted in the entry): an involute, a cycloid and a spiral are one element with three different
+  texts. `expr/Derive.kt` is the differentiator: closed form, deterministic, covering everything from
+  polynomials to `atan2` and `hypot`, and **refusing `min max mod floor ceil round sign` by name** rather
+  than differencing numerically — a tangent is a construction input, and one anchored on a difference is
+  anchored on a step size nobody chose. `abs` is in the covered set, written `u·u′/|u|`, so the one point
+  that has no tangent reports itself instead of costing the whole function its derivative. Two dimension
+  moves fell out of the maths: `sin`/`cos`/`tan` now also take a **plain number read as radians** (a strict
+  widening — `java.lang.Math`'s own rule, and what `cos(t)` over a dimensionless parameter must mean), and
+  the derivative **strips the radian** through one operation the parser never produces. The honesty classes
+  are OP-24's verbatim: position-along **exact** (a rider at the parameter — a fifth `RiderForm`, the first
+  whose quantity is a plain number, dragged by golden section so it needs no derivative), the affine image
+  exact because a transform **composes with the function**, and only the genuinely metric approximate and
+  flagged — measured length, spacing, area contribution, offsets — plus intersections, numeric but
+  deterministic, seeded from the curve's own fixed grid and ordered **by parameter along the curve** (OP-1's
+  parametric rule). One new step kind, both texts verbatim, **no version bump**, and `restampExpressions`
+  extended to reach curve steps — which found and fixed a real defect in the scalar half: a reference's span
+  ran past the whitespace after it, so a rename ate a space out of the stored text. The acceptance is the
+  **involute gear**, asserted against the closed form to 1e-9: a flank, its exact mirror, four pieces traced
+  into one tooth, a watertight extrusion whose volume quadruples when `r` doubles, and a circular pattern
+  whose every copy is the exact rotation of the function. Cuts, each whole and each refusing in-app: function
+  curve ∩ function curve (the refusal names what does work), *Break* (the domain **is** the trim), a fillet
+  leg (the chamfer-on-arc convention's own ground — and the refusal now names the leg for splines and conics
+  too, where it used to drop silently), an expression for the domain, and a placed coordinate for the rider.
+  **2165 → 2198 green**, nothing else cut, no golden moved. See the curve half's as-built note under the
+  expressions entry.
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -15795,8 +15823,8 @@ picture is a mesh boolean — the honest preview is the result itself, one click
 body whose whole ancestry is mesh-only (an import, a sweep, a boolean of two such) refuses, since there is no
 analytic base to address. Nothing was cut silently.
 
-**Queued in session 71, behind the blends (user-directed): expressions — the binding generalized to a
-function, and the curve a function defines.** Postponed since the early sessions until ordinary
+**Delivered in session 71 (queued behind the blends, user-directed): expressions — the binding generalized
+to a function, and the curve a function defines.** Postponed since the early sessions until ordinary
 constructions were solid, and arriving now as the user's design, adopted whole. Two consumers of **one
 mechanism**, stated in their words: *"a value could be computed from other values applying an arbitrary
 function — you should be able to use everything java.lang.Math has to offer in addition to plain
@@ -15842,7 +15870,7 @@ One parser, one AST, one differentiator, one dimension check — two consumers. 
 halves are one entry, and the order of work inside it is the scalar half first (it is the smaller and the
 curve half consumes it).
 
-#### Implementation status (as built — the **scalar half**, session 71; the curve half stays queued)
+#### Implementation status (as built — the **scalar half**, session 71)
 
 `constructit/expr/` is the whole language: `Expr` (AST), `ExprParser`, `ExprEval` and `ExprNode`, all in
 `commonMain`. A `ParameterNode` may now be bound to a **pure expression over named scalars** instead of to a
@@ -15965,8 +15993,8 @@ row to type into, so `P.x = w/2` is not reachable yet — it needs the naming au
 coordinate, not more expression machinery. (2) No conditionals, which is v1's own rule (OP-7) and unchanged.
 (3) No `%` operator; `mod(a, b)` is the function, under `java.lang.Math`'s name like everything else. (4) The
 curve half of this entry — function-defined curve pieces, `x(t)`/`y(t)`, the symbolic derivative and the
-involute acceptance — **stays queued**, and is what the AST and the dimension check were shaped to be
-consumed by.
+involute acceptance — was queued behind this one, and is what the AST and the dimension check were shaped to
+be consumed by; it is **delivered in the note below**, and with it this entry closes.
 
 Tests: `ExpressionTest` (22) — the derived radius and the edit that moves it, the undo layering (a live tick
 is no operation, a committed change is, the binding is one of its own), `save → load → save` byte-equal with
@@ -15985,8 +16013,148 @@ an expression through a rename and a reload, and the rename-to-`sin` episode end
 into the panel's form, the formula typed into the row, the drawing following, the value field going read-only
 because the value is derived, and a plain number typed into the same field staying a plain number.
 
-**Beyond those four — the small batch, the blends and the expressions — the numbered queue is empty** (the
-session-59 entry above is closed). What remains is the parked list below, each item recorded at its source.
+#### Implementation status (as built — the **curve half**, session 71; with it this entry closes)
+
+`constructit/geom/FuncCurve.kt` is the whole of it: **`FuncCurve`** — two `Expr`s, their two symbolic
+derivatives, the resolved environment of named scalars, a domain `[t0, t1]` and an `Affine` — plus
+`FuncCurves`, the maths over it. There is **no new primitive curve type per curve family**, which is the
+user's own design and the decision the whole item turns on: an involute, a cycloid, a spiral, a catenary and
+a lemniscate are one element with five different texts. `FuncCurveValue` is the value, `ElementKind.FUNC_CURVE`
+the element, `ProfileElement.FuncE` the boundary piece, and `Construction.funcCurve` the op — the same
+end-to-end shape OP-24 used for the conics, which is why the compiler listed every site that had to learn it.
+
+**The differentiator, and its refusal set.** `expr/Derive.kt` differentiates the AST **symbolically** — one
+differentiator, closed form, deterministic, never a difference quotient. The reason it is symbolic is not
+elegance: a tangent is a *construction input*, and a construction anchored on a difference would be anchored
+on a step size nobody chose (OP-15's *exact paths never degrade silently*, one layer down). Covered:
+`+ − × ÷ neg`, `^`/`pow` in all three readings the dimension table leaves room for, `sqrt cbrt abs hypot sin
+cos tan asin acos atan atan2 exp log log10`. **Refused, by name**: `min max mod floor ceil round sign` —
+each is a function whose derivative exists off a set of jumps and is a *different function* on each side, so
+"0 almost everywhere" would be a lie exactly where it matters. `abs` is deliberately **in**, written as
+`u·u′/|u|`: exact wherever `abs` is differentiable and a division by zero exactly where it is not, so the
+one point that has no tangent reports itself as ordinary invalidity that heals (OP-3) instead of costing the
+whole function its derivative. A curve with no statable derivative still **draws, hit-tests, carries a rider
+and bounds an area**; only the tangent-dependent constructions decline, quoting the function that stopped
+them (`Document.funcTangentRefusal`, and *Combine two views* checks it up front — the session-69 predicate
+rule).
+
+**Two dimension decisions, both of them forced by the maths rather than chosen for taste.**
+
+- **`sin`/`cos`/`tan` now take an angle *or a plain number read as radians*.** A strict widening — nothing
+  that computed a number before computes a different one, only texts that were invalid have become valid —
+  and it is the right rule three times over: it is `java.lang.Math`'s own (the vocabulary the user named),
+  the radian is dimensionless in SI, and the curve parameter is dimensionless *by construction*, so
+  `cos(t)` — the involute exactly as the user wrote it — must mean what it says. What is still refused is
+  what was ever in doubt: `cos` of a **length**. `ExpressionTest`'s "a plain number where an angle is
+  demanded" is amended to a length, with the reversal recorded in the test itself.
+- **The derivative strips the radian**, through one internal operation the parser never produces
+  (`ExprEval.NUM`): `d sin(u) = cos(u)·num(u′)`. Without it the slope of `sin` of an *angle* would carry a
+  spurious `ANGLE`, and adding it to a plain term would be a `DimensionError` a perfectly good curve does
+  not deserve. The inverse functions carry the radian back the other way, as a literal `1rad` factor. The
+  one place a derivative has *no* dimension to carry is an identical zero, and every zero is folded away at
+  construction so the survivors read as "zero in whatever unit is wanted".
+
+**The honesty classes are OP-24's, verbatim, one curve family on.** **Exact**: the point at `t` (it *is* the
+expression), the tangent and the normal (the symbolic derivative), the two endpoints, and the **affine
+image** — a transform **composes with the function** rather than being fitted to samples, so mirror, rotate,
+scale and every copy of a pattern are exact, and `GeomMath.transformArc`'s similarity caveat can never reach
+here. A rider is the fifth `RiderForm`, **`FUNC_PARAM`**, absolute for `ELLIPSE_PARAM`'s exact reason — it is
+measured in the function's own parametrization, which no edit to the extent re-anchors — and it is the first
+whose quantity is a **plain number**. Its drag projects by sampling plus **golden-section** refinement rather
+than Newton, deliberately: the refinement then needs no derivative, so a rider rides a curve whose tangent
+this drawing cannot state. **Approximate and flagged**, only where it is genuinely metric: the measured
+**length** (adaptive Simpson over the symbolic speed, to `FuncCurves.LENGTH_TOL_MM`, and the status line says
+so), equal-**distance** spacing (the sampled arc-length→parameter map — the Bézier bargain), the **area** a
+function piece contributes to a loop (the one boundary piece with no closed form for `∮(x dy − y dx)`), and
+**offsets**, exact at every sample along the true normal with chords between.
+
+**Intersections: numeric, deterministic, ordered along the curve.** One mechanism —
+`FuncCurves.intersectImplicit` over the partner's implicit form — serves **line**, **circle** and **ellipse**
+alike, because what those three have in common is exactly that. The seeding is *fixed*: the curve's own
+parametric grid at a resolution that is a function of the curve alone (not the camera, not the click), every
+sign change bisected to `SAME_PARAM`. The ordering convention is **ascending parameter along the function
+curve**, which is OP-1's canonical rule for parametric curves stated in the spline note years before this
+entry, with the curve as the **first** operand whichever way round the two were clicked — an index means
+nothing unless the set is always ordered the same way. The branch is a persisted index, never re-scored, and
+`FunctionCurveTest.aLineMeetsTheCurveInAnOrderedSetThatSurvivesTheFile` pins it to 1e-12 across a reload.
+The `Snap` layer runs the same solver one frame early on values, so what the snap offers is what the click
+builds.
+
+**Persistence: one new step kind, and no version bump.** `funccurve "r * (cos(t) + t * sin(t))"
+"r * (sin(t) - t * cos(t))" from=0 to=1.6` — both texts **verbatim**, the domain restated from the source
+nodes that carry it (it is state: the fields write it), parsed back on load, and `save → load → save`
+byte-equal with the user's own spacing in it. A *new step kind* changes no stored literal's meaning, so no
+version bump is owed (OP-18's own test). `restampExpressions` was **extended to reach curve steps**, which
+was not optional: a rename that re-stamped a parameter binding but not a curve would leave the curve live
+and its *file* unloadable — precisely the failure the scalar half's probe found, and the reason its lesson
+("a claim about an expression is a claim about the file") is asserted here through the file too.
+
+**The one new refusal the binder forced.** Inside a function curve `t` is the curve's **own parameter** and
+shadows every drawing scalar of that name — a binder, the way a lambda's argument is, permanent rather than a
+growing vocabulary, so it cannot repeat the reserved-word hazard. What it *could* repeat is capture: renaming
+a scalar a curve reads to `t` would re-stamp `r * cos(t)` into `t * cos(t)`, which means something else. So
+**that rename is refused by name, with the cure**, exactly as a hyphenated name is. A *pre-existing* scalar
+called `t` is untouched — it simply cannot be read from inside a curve, and nothing about a stored file
+changes.
+
+**A citizen of the drawing.** It tessellates under the one scale-relative tolerance, and the rule is stated:
+the sagitta bound `max|P″|·Δt²/8` — the arc's, the ellipse's and the Bézier's own — with `max|P″|` estimated
+by second differences over a fixed probe grid, so the count is **adaptive where curvature demands** and
+scale-invariant (GitHub #13's rule). The **renderer** uses a fixed 96 instead, for the reason every other
+render count is fixed: a golden must not depend on the camera — and `HitTest` measures against those very
+chords, so what looks near the curve is near it. It publishes its **two ends** as key points, joins loops by
+them (built onto its neighbours, never trimmed to them — OP-15's spline rule verbatim), the **outline trace**
+crosses it, and a region carrying one has an area like any other (approximated, and said so). **Extrude**
+carries it: the piece tessellates into the mesh like everything else and the body is watertight, while the
+face it sweeps refuses **wholly and by name** (`plane = null` with the reason, `surface = null`, dispatched
+by predicate up front). **Revolve** refuses the band the same way — `Revolve3.Band.Unnamed`, the existing
+shape, the session-69 rule.
+
+**Reachability: the panel, not the tool table** — a *Function curve* section beside the parameter rows, with
+`Editor.addFunctionCurve` behind it. The alternative, a `ToolDef`, was rejected on what a tool *is*: the slot
+table collects **clicks and numbers**, and a function curve's inputs are two **texts**, which is this panel's
+medium and the medium the scalar half already chose for a formula. Building a text-taking slot kind would
+have put a second input language into the tool runner for one tool, and what the form makes is an ordinary
+element the moment it exists — pickable, riddable, traceable and transformable by every tool there is.
+
+**A defect the curve half found in the scalar half, fixed with it.** `Expr.Ref`'s span ended *after* the
+look-ahead that skips whitespace, so a reference followed by a space had that space inside its span and a
+rename ate it: `r * 2` re-stamped to `module* 2`. Live it was invisible; in the file it is a changed text.
+One line (`val end = i` before the `peek()`), and the regression is the involute's own re-stamp.
+
+**Cuts, each whole, each refusing in-app, and each a future extension rather than a non-goal.** (1) **function
+curve ∩ function curve** — two arbitrary functions cross where a two-dimensional system vanishes, and seeding
+that honestly needs a subdivision this package did not build; the refusal *names what does work* ("a function
+curve meets a line, a circle, an arc or an ellipse"). (2) **Break** on a function curve: its extent **is** its
+domain, so the refusal points at the `from`/`to` fields, which are the trim. (3) A **fillet** with a function
+curve as a leg, on the chamfer-on-arc convention's own ground — a rounding is tangent *by construction* to a
+line or a circle, and a function curve's offset is not a curve of its own kind, so a fillet against one could
+only be fitted; the refusal now names the leg for splines and conics too, where it used to drop silently.
+(4) The **domain is two plain numbers**, not two expressions — it is state the fields write, and a formula
+there would need its own binding record. (5) A rider on a function curve has **no say over a placed
+coordinate** (`placeable = false`): an arbitrary function has no closed-form inverse, and solving numerically
+for a position the user did not ask to be approximate is the wrong kind of answer.
+
+Tests: `FunctionCurveTest` (27) — the drawn involute on the true involute to 1e-9 (computed in the test,
+independently of the engine's AST), the tangent against the closed-form derivative, a rider at `t = 1.2` and
+its drag restating the parameter, `r` moving curve and rider by plain recompute, both dimension violations as
+named invalidity that heals, a backwards domain and an unknown name refused by name, the differentiator's
+whole coverage against eighteen hand-written derivatives and its refusal set, a curve with no derivative that
+still draws and rides, `save → load → save` byte-equal with both texts verbatim, the rename re-stamp **through
+the file**, the capture refusal, the domain restated by its own step, a line's ordered intersection persisting
+to 1e-12, the two-function-curves refusal, the affine composition exact to 1e-12, key points, hit-testing, the
+flagged length, the break refusal, the swept face and the revolved band refusing by name, the offset exact at
+every sample (and absent at the involute's cusp), and the scale-relative chord count.
+`InvoluteGearTest` (5) is the acceptance: one flank, its mirror exact in radius and angle, four pieces traced
+into one closed tooth with two function curves in the loop, an extrusion that is watertight and whose volume
+**quadruples** when `r` doubles (nothing rebuilt), a circular pattern whose every copy is the exact rotation
+of the function — with neighbouring teeth meeting at the root to 1e-9 — and the whole gear built through the
+gestures surviving the file with all twelve flanks and the user's own text in it.
+`BrowserE2ETest.aFunctionCurveIsDrawnFromTwoTextsInBrowser` carries it through the real shell: the involute
+typed into the panel's form, drawn, following `r`, and a bad name refusing by name.
+
+**Beyond those four — the small batch, the blends and the expressions (both halves) — the numbered queue is
+empty** (the session-59 entry above is closed). What remains is the parked list below, each item recorded at its source.
 
 Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
 (it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and

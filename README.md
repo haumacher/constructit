@@ -20,8 +20,8 @@ first-class goal and the current implementation focus.
 ## Highlights
 
 - **Construction DAG** — strongly-typed nodes (points, lines, rays, segments, circles, arcs, **ellipses and
-  elliptic arcs**, Béziers, directions, profiles, scalars) with memoized evaluation and transitive
-  invalid-propagation.
+  elliptic arcs**, Béziers, **function curves**, directions, profiles, scalars) with memoized evaluation and
+  transitive invalid-propagation.
 - **Deterministic intersections** — an intersection is an ordered solution set + a `Select` node, so branch
   choice is stable across recompute, undo and reload (no continuity tracking). Two conics cross in **up to
   four** points; the set is ordered by parametric angle on the first operand and the branch is stored as an
@@ -45,6 +45,19 @@ first-class goal and the current implementation focus.
   *approximate* is only what is genuinely metric, and it says so: a conic's measured **length** is computed
   to a stated tolerance (an elliptic integral has no closed form), and a wall thickened over an elliptic
   carrier is flagged, because an ellipse's offset is not an ellipse.
+- **A curve a formula defines — and no new curve type per curve family.** Write `x(t)` and `y(t)` over a
+  stated domain, in the same expression language a parameter's formula is written in, reading any named
+  scalar in the drawing: an **involute**, a cycloid, a spiral, a catenary and a lemniscate are one element
+  with five different texts. The two texts *are* the record — stored verbatim, re-stamped when a scalar is
+  renamed, parsed back on load — and the scalars they read are ordinary inputs, so editing one moves the
+  curve by plain recompute. Position along it is **exact**: a rider lives at the parameter, and the point,
+  the tangent and the normal there come from the expression and its **symbolic derivative**, closed-form and
+  never a numerical difference; a function whose derivative this vocabulary cannot state still draws and
+  still carries a rider, and refuses only the constructions that need a tangent — by name. It mirrors,
+  rotates and patterns **exactly** (an affine map composes with the function), traces into a loop beside
+  segments and arcs, and extrudes to a watertight solid. What stays honestly approximate is what is
+  genuinely metric: its measured length, its offsets, and its intersections — numeric, but deterministic and
+  ordered by parameter along the curve.
 - **Live previews — what the click will make, before you make it.** Every drawing, transform, rounding and
   dimension tool paints its result under the cursor as you move: the growing circle, the circumcircle through
   your two picks and the pointer, the rectangle's outline, ghost copies of what a mirror or an array would
@@ -529,7 +542,7 @@ did not previously complete at all. What the measuring produced:
   picks are highlighted on the canvas and a click that hits nothing says so. The recorded step still lists
   every piece in order, so nothing is re-discovered when the file is reloaded.
 
-1153 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included — down to opening the
+2198 tests pass headlessly; the browser E2E drives a real Chrome, keyboard included — down to opening the
 preview panel and catching a real GLB download.
 
 **Mesh export is done** (GLB / 3MF / binary STL / JT, plus the in-app three.js preview and a material per solid),

@@ -7,6 +7,7 @@ import constructit.core.CircleValue
 import constructit.core.EllipseValue
 import constructit.core.EllipticArcValue
 import constructit.core.Evaluator
+import constructit.core.FuncCurveValue
 import constructit.core.LineValue
 import constructit.core.LoopValue
 import constructit.core.Path3Value
@@ -400,6 +401,9 @@ object HitTest {
                 SceneRenderer.tessellate(v.ellipse, true).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
             is EllipticArcValue ->
                 SceneRenderer.tessellate(v.arc).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
+            // …and a function curve against the very polyline the renderer draws, for the same reason
+            is FuncCurveValue ->
+                SceneRenderer.tessellate(v.curve).zipWithNext().minOfOrNull { (a, b) -> distToSegment(world, a, b) }
             // A Bézier is measured against its own tessellation — the same polyline the renderer
             // draws, so what looks near the curve is near it.
             is BezierValue ->
@@ -728,6 +732,7 @@ object HitTest {
             is ProfileElement.BezierE -> polyMeets(GeomMath.tessellateBezier(e.bezier), lo, hi)
             is ProfileElement.EllipticArcE -> polyMeets(SceneRenderer.tessellate(e.arc), lo, hi)
             is ProfileElement.EllipseE -> polyMeets(SceneRenderer.tessellate(e.ellipse, e.ccw), lo, hi)
+            is ProfileElement.FuncE -> polyMeets(SceneRenderer.tessellate(e.curve), lo, hi)
         }
 
     /**
@@ -766,6 +771,10 @@ object HitTest {
                 SceneRenderer.tessellate(e.arc).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
             is ProfileElement.EllipseE ->
                 SceneRenderer.tessellate(e.ellipse, e.ccw).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
+            // measured against the very polyline the renderer draws, for the ellipse's reason one curve
+            // family on: what looks near the curve is near it
+            is ProfileElement.FuncE ->
+                SceneRenderer.tessellate(e.curve).zipWithNext().minOf { (a, b) -> distToSegment(world, a, b) }
         }
 
     /** Distance to a ray: [distToSegment]'s clamp, on the origin side only — the far side runs on. */
