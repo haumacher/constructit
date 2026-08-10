@@ -68,6 +68,9 @@ import constructit.expr.refNames
 import constructit.expr.refs
 import constructit.geom.Arc
 import constructit.geom.Axis3
+import constructit.geom.Blend3
+import constructit.geom.BlendChoice
+import constructit.geom.BlendKind
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
 import constructit.geom.CarryMode
@@ -1521,12 +1524,31 @@ class Document {
      * The *plane* is a different question and keeps a different answer: it stays anchored to the original
      * base, because the face's geometry is that solid's face — only the boolean's operand advances.
      */
-    fun facePartTip(ev: Evaluator = Evaluator()): Element? {
-        val base = activeSpace.anchor ?: return null
-        return elements.lastOrNull { el ->
+    fun facePartTip(ev: Evaluator = Evaluator()): Element? = activeSpace.anchor?.let { tipOfChain(it, ev) }
+
+    /**
+     * **The drawing's tip of [base]'s own chain**: the most recent visible solid made *of* [base]'s material —
+     * through a boolean, a cut, a blend, anything that consumes a solid — or [base] itself while nothing has
+     * consumed it yet.
+     *
+     * *The* sequential-feature rule (OP-17), extracted from [facePartTip] in session 71 so that its second
+     * consumer reaches the same authority rather than a second reading of it. What it exists to prevent is the
+     * **forked feature chain**: a feature anchored to the body a part *started* as leaves two coincident
+     * solids, each claiming to be the part, and neither of them what the user was looking at when they
+     * clicked. A cut on a second face asks it of the face space's anchor; an **edge blend** asks it of the
+     * body the click landed on, so a fillet, a union with a pad, and then a chamfer are one body and not
+     * three readings of one.
+     *
+     * Null only where [base] is itself hidden and nothing visible is made of it, which is the honest answer:
+     * there is no tip to work on.
+     */
+    fun tipOfChain(
+        base: Element,
+        ev: Evaluator = Evaluator(),
+    ): Element? =
+        elements.lastOrNull { el ->
             el.kind == ElementKind.SOLID && el.visible && (el === base || madeOf(el, base, ev))
         }
-    }
 
     /** Whether [base] is part of [solid]'s **material** — a chain of solid-valued inputs ([isMaterial]). */
     private fun madeOf(
@@ -11241,6 +11263,233 @@ class Document {
             .also { madeSolid(it, "${nameOf(a)} $word ${nameOf(b)}") }
     }
 
+    // ---- edge blends: the 2D fillet, one dimension up (session 71, slice 2) ----
+
+    /**
+     * **Break an edge of [solid]** — a fillet or a chamfer along a provenance-named edge, built as OP-9's own
+     * sentence: the 2D fillet construction run in the edge's normal section, swept along the edge, applied by
+     * a boolean ([Blend3]).
+     *
+     * **One pick, two granularities.** With [whole] false the click names **one edge** — the edge whose
+     * drawing in the space the click was made in runs nearest it, which is the same 2D machinery a section
+     * and a face space already draw the boundary with. With [whole] true it names a **face**, and what is
+     * blended is that face's entire boundary chain ([Blend3.faceNear]) — *"all of the curve parts"* in one
+     * click, which is the user's own words for the motivating case. Neither is new picking machinery.
+     *
+     * **Everything the click decides is scored once and then persisted** (OP-1/OP-18). [signs] is what a
+     * replay hands back — the address first, then four integers per edge — and when it is present nothing is
+     * scored at all: which edge, which face, which of the four sectors round the crease the blend fills, and
+     * whether that sector is material are every one of them answers about geometry that *moves*, so a reload
+     * that scored again would be a reload that re-decided. That is the fillet's own lesson, one dimension up.
+     *
+     * Refused **by name**, building nothing, only for the structural things: a pick that is not a solid, a
+     * body with no named edges (a mesh boolean's result, an import, a sweep — each in [Section3]'s own words),
+     * and a body or a size with no value to score against. Everything geometric — a size that reaches past a
+     * face, a section this rounding has no name for, a bend the wedge outgrows — is the node's business and
+     * comes back as the reason it is invalid, so it heals when the number comes down (OP-3).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun blendEdges(
+        solid: Element,
+        size: ScalarRef,
+        kind: BlendKind,
+        whole: Boolean,
+        at: Vec2,
+        signs: List<Int> = emptyList(),
+    ): Element? {
+        val what = "${kind.word.replaceFirstChar { it.uppercase() }} ${if (whole) "the edges of a face" else "an edge"}"
+        if (solid.kind != ElementKind.SOLID) {
+            note = "$what: ${nameOf(solid)} is ${kindWord(solid)}, not a solid — click the body whose edge you want broken"
+            return null
+        }
+        val ev = Evaluator()
+        // **Two walks, two questions, and they are not the same question** (session 71, slice 2).
+        //
+        // *Whose edges am I naming?* — a walk **backwards** along the picked body's own spine to the nearest
+        // solid that names its edges ([analyticBaseOf]). A blended body is a mesh boolean and names none of
+        // its own (OP-9's sink rule), so the addresses stay against the analytic body that still has them.
+        //
+        // *What body do I apply to?* — a walk **forwards** to the drawing's tip of that body's chain
+        // ([tipOfChain], the sequential-feature rule OP-17 already states for a cut). Without it a blend made
+        // after an ordinary Union or Subtract would land on the pre-boolean body and **fork** the model into a
+        // blended-but-unfused solid beside a fused-but-unblended one — the recorded probe classic, one feature
+        // over. With it, fillet → union → chamfer is one chain whichever body of it the click reached.
+        //
+        // Both are read off the graph and neither is recorded, and that is safe for the reason a `tool` step's
+        // replay is exact at all: each is a pure function of the **picked element the step names** plus the
+        // journal prefix, and replaying the prefix rebuilds exactly the elements and edges they walk. (The
+        // face-space cut records its tip instead because its input — the *space's* anchor — is not named by
+        // its step at all, so there would be nothing durable to re-resolve from.)
+        val baseEl = analyticBaseOf(solid, ev)
+        val body =
+            (ev.valueOf(baseEl?.ref ?: solid.ref) as? SolidValue)?.solid ?: run {
+                note = "$what: ${nameOf(solid)} has no value right now, so it shows no edges to break"
+                return null
+            }
+        if (baseEl == null) {
+            note = "$what: ${nameOf(solid)} — ${Section3.edges(body.feature).second}"
+            return null
+        }
+        val tipEl = tipOfChain(solid, ev) ?: solid
+        val address =
+            signs.getOrNull(0) ?: run {
+                val from =
+                    (ev.valueOf(planeOfSpace(activeSpace.name)) as? PlaneValue)?.plane ?: run {
+                        note = "$what: ${activeSpace.name} has no value right now, so there is nothing to click on"
+                        return null
+                    }
+                val (index, why) =
+                    if (whole) faceUnderClick(body.feature, from, at) else edgeNear(body.feature, from, at)
+                index ?: run {
+                    note = "$what: ${nameOf(solid)} — $why"
+                    return null
+                }
+            }
+        val (targets, whyTargets) = Blend3.targets(body.feature, whole, address)
+        if (targets == null) {
+            note = "$what: ${nameOf(solid)} — $whyTargets"
+            return null
+        }
+        val stored = signs.drop(1).chunked(4).mapNotNull { BlendChoice.of(it) }
+        val choices =
+            if (stored.size >= targets.size) {
+                stored.take(targets.size)
+            } else {
+                val r = ((ev.eval(size.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
+                if (r == null || r <= 0.0) {
+                    note = "$what: type a positive ${kind.sizeWord} first (or pick a parameter in the panel)"
+                    return null
+                }
+                val (scored, why) = Blend3.choicesFor(body, targets, r, kind)
+                scored ?: run {
+                    note = "$what: ${nameOf(solid)} — $why"
+                    return null
+                }
+            }
+        val el =
+            add(
+                cx.blend(
+                    tipEl.ref as SolidRef,
+                    baseEl.ref as SolidRef,
+                    planeOfSpace(baseEl.space),
+                    size,
+                    kind,
+                    whole,
+                    address,
+                    choices,
+                ),
+                ElementKind.SOLID,
+                Styles.SOLID,
+            )
+        el.space = baseEl.space
+        registerSigns(el, listOf(address) + choices.flatMap { it.signs() })
+        val where =
+            if (whole) {
+                Section3.faces(body.feature).first?.getOrNull(address)?.name?.label ?: "a face"
+            } else {
+                Section3.edges(body.feature).first?.getOrNull(address)?.name?.label ?: "an edge"
+            }
+        madeSolid(
+            el,
+            "${nameOf(tipEl)} with a ${kind.word} of ${lengthWord(size)} along ${if (whole) "every edge of " else ""}$where" +
+                (if (baseEl !== tipEl) " of ${nameOf(baseEl)}" else "") +
+                (if (targets.size > 1) " (${targets.size} edges)" else "") +
+                " — the ${kind.sizeWord} is an ordinary parameter, so retyping it re-rounds the body",
+        )
+        return el
+    }
+
+    /**
+     * Which edge of [feature] the click at [at] named, in the space [from] — **the edge whose drawing here
+     * runs nearest it**, measured exactly as any other curve pick is ([HitTest.distanceToPiece]).
+     *
+     * The 2D machinery reaches 3D edges because a working plane's section and a face space's own picture
+     * already draw them: the cap boundary a blend runs along is the very outline the canvas shows. In the 3D
+     * view the click has already been resolved onto the working plane, so one rule covers both.
+     */
+    private fun edgeNear(
+        feature: Feature3,
+        from: Plane3,
+        at: Vec2,
+    ): Pair<Int?, String?> {
+        val (edges, why) = Section3.edges(feature)
+        if (edges == null) return null to why
+        val n = from.normal.normalized()
+        var best: Int? = null
+        var bestDist = Double.MAX_VALUE
+        var bestHeight = -Double.MAX_VALUE
+        for (i in edges.indices) {
+            val path = Blend3.edgePath(edges[i]).first ?: continue
+            val d = Curves3.projectedOnto(path, from).minOfOrNull { HitTest.distanceToPiece(at, it) } ?: continue
+            // **Ties go to the edge nearest the eye**, which is not a preference but the only reading a flat
+            // view has: looking down at a plate, its top rim and its bottom rim draw the *same* line, and the
+            // one the click meant is the one that is not hidden behind the other. The same sentence
+            // [Blend3.faceNear] states for a face, and the same one a projected drawing lands by (OP-26).
+            val height = (path.start ?: continue).let { (it - from.origin).dot(n) }
+            if (d < bestDist - 1e-6 || (d < bestDist + 1e-6 && height > bestHeight)) {
+                if (d < bestDist) bestDist = d
+                bestHeight = height
+                best = i
+            }
+        }
+        return if (best == null) null to "it draws no edge here that a blend could run along" else best to null
+    }
+
+    /**
+     * The solid whose **named edges** a blend on [el] is addressed by: [el] itself where it has them, and
+     * otherwise the body [el] was made *from* — followed down its own **spine**, never sideways.
+     *
+     * The spine is the chain of **first** material inputs, and that is the whole of the rule: every operation
+     * that consumes a solid states the part first and the tool second — *"the solid to keep, then the one to
+     * remove from it"*, a union's first click, a blend's own body — so following input #0 walks back through
+     * the part's history and never wanders into the pad that was fused onto it or the box that was cut out of
+     * it. What it replaced was *"the last solid in creation order that this one depends on and that names its
+     * edges"*, which is right only while a body has one analytic ancestor: a plate fused with a pad has two,
+     * and creation order would have handed back the pad and addressed the wrong body's edge list.
+     *
+     * Structural and therefore not recorded: the graph is the same on a replay, so the walk is the same walk
+     * and no stored address ever means something else. Null when nothing on the spine names its edges — an
+     * imported body, a sweep, a boolean whose kept operand was never analytic — which is refused in
+     * [Section3]'s own words.
+     */
+    private fun analyticBaseOf(
+        el: Element,
+        ev: Evaluator,
+    ): Element? {
+        fun namesEdges(e: Element): Boolean {
+            val f = (ev.valueOf(e.ref) as? SolidValue)?.solid?.feature ?: return false
+            return Section3.edges(f).first != null
+        }
+        var cur: Element? = el
+        val seen = HashSet<String>()
+        while (cur != null && seen.add(cur.id)) {
+            if (namesEdges(cur)) return cur
+            val next = cur.ref.node.inputs.firstOrNull { isMaterial(ev, it) } ?: return null
+            cur = elements.lastOrNull { it.kind == ElementKind.SOLID && it.ref.node === next }
+        }
+        return null
+    }
+
+    /**
+     * Which **face** a click on a body meant, in two readings: the flat face the click falls within as this
+     * space looks at it, and — because a solid is picked by its footprint, which *is* a cap's own outline —
+     * the face the edge it landed on is **seen from** ([Blend3.faceOfEdgeToward]).
+     *
+     * The second is what the everyday gesture uses: clicking a plate anywhere on its rim names its top face,
+     * because that is the face of that rim you are looking at.
+     */
+    private fun faceUnderClick(
+        feature: Feature3,
+        from: Plane3,
+        at: Vec2,
+    ): Pair<Int?, String?> {
+        val (inside, why) = Blend3.faceNear(feature, from, at)
+        if (inside != null) return inside to null
+        val (edge, whyEdge) = edgeNear(feature, from, at)
+        if (edge == null) return null to (whyEdge ?: why)
+        return Blend3.faceOfEdgeToward(feature, edge, from)
+    }
+
     /**
      * The **state** [el] is in, in the words a status line uses — or null when there is nothing to say.
      *
@@ -13719,9 +13968,10 @@ class Document {
          * frame accessor (`facePlane`, `sideFacePlane`) or a `section` passes through a plane or a region and
          * consumes no material at all.
          *
-         * One rule, two readers: [Scene3] tells an operand from an output by it (a plate is still an output
-         * while something is merely sketched on its face), and [facePartTip] follows it to the end of a
-         * part's boolean chain (OP-17's sequential-feature rule).
+         * One rule, three readers: [Scene3] tells an operand from an output by it (a plate is still an
+         * output while something is merely sketched on its face), [tipOfChain] follows it **forwards** to the
+         * end of a part's boolean chain (OP-17's sequential-feature rule), and a blend follows a body's first
+         * material input **backwards** down its spine to the analytic body whose edges it names.
          */
         fun isMaterial(
             ev: Evaluator,

@@ -15142,6 +15142,18 @@ pictures a `SOLID` slot reads and cannot be a further boolean's operand by click
 **silhouette** plan an imported body already gets (`Silhouette.of`, which would make it drawn *and* picked in
 one stroke), or 3D picking. The miss at least says where to look now.
 
+> **Answered in part, session 71 (the edge blend, slice 2): the silhouette, and it works.** The blend's own
+> result *is* a `Feature3.MeshBoolean`, and a second blend has to be able to pick the first one's body — so
+> the parked question stopped being hypothetical and was answered the way this note guessed: `MeshBoolean`
+> gained a `plan` field, filled once by the node that knows which plane the body is shown in
+> (`Construction.blend` → `Silhouette.of`), exactly as `Imported.plan` and `Sweep.plan` are. A blended body
+> therefore draws a footprint hint and is clickable in the plan like any other solid. What is **not** changed
+> is the ordinary boolean tools: they still leave the field empty, because giving *them* a plan is OP-22's
+> decision rather than this package's and would change what every cross-axis boolean draws today — the
+> measurement in `BooleanCrossSpaceTest` stands, unedited, and is now the pin on a deliberate asymmetry
+> rather than on a gap. The mechanism is proven and the general case is one line away when that package wants
+> it. 3D picking stays parked where the rest of the face-ID provenance item waits.
+
 **Retired in session 55, fourth sitting: the group-creation UX** — queued one sitting earlier out of the same
 user's report and delivered whole. What it retires is not a design question but four failures of *speech* around
 a decision that was already right: a created group that never said it had been created, a refusal printing
@@ -15536,7 +15548,8 @@ radius and a stored sign — never a kernel op (OP-9 said so from the start) and
    right anyway; and an extrusion's **arc-swept face names its cylinder only in prose** —
    `FacePatch.surface` is populated for revolutions alone — so the typed surface the blend will read must
    exist for the extrusion too.
-2. **The blend as a construction.** At each station along the edge, the plane **normal to the edge** cuts
+2. **The blend as a construction — done, session 71; see the as-built note below.** At each station along
+   the edge, the plane **normal to the edge** cuts
    the two named surfaces in two traces — lines and circles, for the entire plane / cylinder / cone /
    sphere / torus vocabulary — which is exactly what `FilletMath.FilletLeg` already takes, so the 2D fillet
    construction runs verbatim in the moving section: variant scored from the click, stored as a sign, never
@@ -15638,6 +15651,149 @@ omission. Nothing was cut from the slice.
 faces without a case per feature. `edgeBetween` refuses when two faces meet along **several** edges rather
 than picking one, which is the one-input-is-one-curve rule verbatim: which of two an index meant would change
 as the geometry moved.
+
+#### Implementation status (as built — the blend as a construction: slice 2 of the blends)
+
+Slice 2 shipped whole: `geom/Blend3.kt` is the construction, `Construction.blend` is the node, four `ToolDef`
+rows are the gesture, and there is **no new step kind and no format version bump** — a blend rides the generic
+`tool` step with its address and its scored choices in `signs=`, which is what `EdgeBlendToolTest`'s byte-equal
+round trip asserts. Slice 3 (`Feature3.Blend`) stays queued and is untouched.
+
+**The mechanism is OP-9's own sentence, made literal.** For each edge: the two `FaceName`s slice 1 attached to
+it name two `FacePatch`es; the plane **normal to the edge** at a station cuts each of them in a *trace*; the
+two traces are a `FilletMath.FilletLeg` each, so `lineLineArc` / `arcOf` / `chamferEnds` run **verbatim** in
+that section; the arc closed back to the corner is a **corner wedge**; the edge lifts to a `Path3`
+(`Intersect3.liftedRun`, so a straight edge stays a `Seg3` and a cap arc stays an `Arc3`); `Geom3.sweep`
+carries the wedge along it; and `Geom3.combine` applies it. Nothing new was needed below the blend itself —
+the one extraction is `Geom3.combine`, which is `Construction.booleanValue`'s dispatch moved down so that
+*"which engine ran"* keeps having exactly one answer with three callers instead of two.
+
+**How the legs are derived — from the surface, never from the feature** (OP-8's whole point). A face with a
+`plane` traces the line `tangent × n`. A face with a `Surface3` is dispatched on its **band**: a cut square to
+the axis is a circle about it (cylinder, cone, torus); a cut through the axis is a **ruling** (cylinder, cone
+through its apex) or a **meridian** circle of the minor radius (torus); a **sphere** is a circle whichever way
+it is cut, which is the one band with no case. That is why the *already-easy* cases fall out rather than being
+written: an extrusion's **upright** and a revolution's **ring** have the profile plane for their normal
+section, so their two traces are the profile's own carriers and the arc that lands between them is the arc the
+2D Fillet tool would have drawn. Both are **built through this route**, not refused (`EdgeBlendTest`'s upright
+and the reflex-corner-of-an-L test) — the generality claim is that the easy case is this one collapsed, and a
+route that declined it would be claiming something it had not done. What filleting the *outline* first still
+buys is exactness, and that is said in the tool help rather than enforced.
+
+**The scope is "the section must be rigid", and it is checked rather than assumed.** One section is swept, so
+the traces are read at several stations along the edge and must agree; where they do not, the node is invalid
+with a reason that names the edge and says the varying case is a future extension. In practice the line is:
+every plane-against-plane edge, every extrusion cap edge (a cylinder cut through its axis is a ruling, so an
+arc-swept side face traces a *line*), every revolve **ring**, and a revolve **cap** edge over a profile piece
+parallel or perpendicular to the axis. Outside it, and refused by name, is a revolve cap edge over a
+**slanted or curved** profile piece: the adjacent band is a cone or a torus standing askew to the edge, the
+normal plane cuts it in a conic, and — the reason this is a real limit rather than a missing case — the true
+constant-radius blend there has a **hyperbolic** spine that is not the edge offset at all, so no rigid section
+exists to sweep. Named as a future extension (`EdgeBlendTest.aRevolvesCapEdgeOverASlantedPieceRefusesByName`).
+
+**Convex or concave is derived from the material, and then stored.** The two traces cut the section into four
+sectors, and a blend always fills the **minority** one: at a convex edge exactly one of the four is material
+and the wedge is subtracted out of it; at a concave edge three are and the wedge fills the lone void. One
+rule, not two cases, and the arithmetic is the same wedge with the other sign. The reading is a containment
+question about one probe point per sector, asked of the body by `Geom3.encloses` — the **generalized winding
+number**, chosen over a ray cast because a ray through a vertex or along an edge has to be adjudicated and
+every adjudication is a tolerance that is wrong somewhere, while the solid angle is continuous in the point
+and exactly `4π`/`0` for a closed shell. Reading triangles at all is legitimate here for one reason and it is
+stated on the function: this is a **measurement scored once from the click** (OP-1), whose answer goes into
+`signs=` and is never asked again — no name, no index and no structure comes out of the mesh.
+
+**What a step stores**: `signs = address, then four integers per blended edge`. The address is an index into
+`Section3.edges` (one pick) or into `Section3.faces` (a face's whole chain); the four are the two leg signs,
+the intersection branch, and `±1` for convex/concave. Nothing is derived from live geometry on replay —
+`BlendChoice` deliberately stores *what each kind's construction consumes* rather than the sector it was
+scored from, so a fillet's variant and a chamfer's quadrant are taken verbatim.
+`EdgeBlendToolTest.replayTakesTheStoredEdgeEvenWhereScoringWouldNowChooseAnother` drags the profile until a
+fresh score would pick a different edge and asserts the reload does not.
+
+**The gesture: one `SOLID` pick, four rows.** *Fillet edge* / *Chamfer edge* break the edge whose **drawing in
+the space the click was made in** runs nearest it (`Curves3.projectedOnto` + `HitTest.distanceToPiece` — the
+2D machinery, since a section's and a face space's picture already draw exactly those curves), with ties going
+to the edge **nearest the eye**, because looking down at a plate its top and bottom rims draw one line and the
+one meant is the one not hidden behind the other. *Fillet / Chamfer the edges of a face* break the whole
+boundary chain of the face the click is looking at — the flat face the click falls within, or, since a solid
+is picked by its **footprint** and a footprint *is* a cap's own outline, the face that cap edge is seen from.
+Four rows rather than two with a guess, for OP-18's reason: which granularity a gesture meant is the most
+durable thing a step can carry, and the tool row already carries it. Adding them was four `ToolDef` lines and
+no controller code.
+
+**A chain is one sweep per edge, not one per tangent-continuous run**, and that is a rule rather than a
+shortcut: whether two pieces meet tangentially is a property of *values*, so a construction whose number of
+sweeps moved with the geometry would be structure decided at eval time (OP-21). Two wedges either side of a
+tangency corner abut on exactly the same section in exactly the same plane, so their union is one smooth
+ribbon with nothing between them; at a **sharp** corner they overlap and the boolean trims them. That is
+checked rather than assumed: `EdgeBlendToolTest.aTangentContinuousRimBlendsAsOneRibbon` breaks
+all eight pieces of an extruded rounded rectangle's rim in one click and checks the **volume** against the
+closed form — the wedge's area times each straight run, plus Pappus' `A·2π·(R − ū)` over the four corner
+quarters — because watertightness alone would notice neither a gap nor a double count at the eight joins.
+
+**Blends chain rather than fork — two walks, two questions, and they are not the same question.** A blend's
+result is a mesh boolean and names no edges of its own, so `Construction.blend(applyTo, base, …)` takes two
+solid operands and the editor resolves each by its own walk from the body the click reached:
+
+- *Whose edges am I naming?* — **backwards, down the part's spine** (`Document.analyticBaseOf`): follow the
+  **first** material input of each node until one names its edges. The spine is the rule because every
+  operation that consumes a solid states the part first and the tool second — *"the solid to keep, then the
+  one to remove from it"*, a union's first click, a blend's own body — so input #0 walks the part's history
+  and never wanders into the pad fused onto it.
+- *What body do I apply to?* — **forwards, to the drawing's tip of that body's chain**
+  (`Document.tipOfChain`), so the wedge cuts the part as it stands.
+
+The forward walk was **wrong in the first delivery and a probe caught it**: the chain was followed through
+earlier *blends* but not through an ordinary `Union`/`Subtract`, so plate → fillet → fuse a pad → chamfer put
+the chamfer back on the pre-union body, and the drawing held a chamfered-but-padless solid beside a
+padded-but-unchamfered one. That is the recorded probe classic — *forked feature chains: sequential cuts must
+target the part's tip* — one feature over, and the fix is to reach **the authority that already existed**
+rather than a second reading of it: `facePartTip` was split into `Document.tipOfChain(base)`, the face-space
+cut asks it of its space's anchor and a blend asks it of the picked body, and there is one sentence about what
+"the part" is. The alternative — *refusing* with *"e10 was already fused into e20 — blend e20"* — was rejected
+on the cut's own precedent and on intent: the user clicked the one part they can see, and a refusal that told
+them to click a body they had just clicked would be a rule with nothing behind it. The backward walk was
+wrong in the same delivery for a related reason (it took *the last analytic solid in creation order*, which on
+a plate-plus-pad hands back the pad) and is now the spine.
+
+Neither walk is recorded, and that is safe for the reason a `tool` step's replay is exact at all: each is a
+pure function of the **picked element the step names** plus the journal prefix, and replaying the prefix
+rebuilds exactly the elements and edges they walk. (The face-space cut records its tip instead, because *its*
+input — the space's anchor — is not named by its step at all, so there would be nothing durable to
+re-resolve from.) It is also exactly what lets slice 3 supersede this without changing a stored byte.
+Regressions: `EdgeBlendToolTest.aChamferAfterAUnionCutsThePartsTipRatherThanForking`,
+`aFaceChainAfterAUnionAlsoCutsThePartsTip` and `aBlendAfterABlendAfterAUnionStaysOneChain`. Making the blended
+body **pickable** at all is what retired half of session 55's parked *"a mesh boolean's result has no plan"*
+note — see the inset there.
+
+**Refusals added, all of them naming the element and the way forward**: a size that reaches past one of the
+two faces (*"…reaches past the face over boundary edge #1 … the largest that fits there is about 2.9 mm"* —
+the bound is found by halving, so the message is a number to type); a section this rounding has no name for
+(the conic above); an edge whose section changes along it; a chamfer whose leg is **curved in section**
+(pointing at the fillet — the parked chamfer-on-arc convention inherited unchanged); a crease whose material
+fills neither one nor three of its four sides; two faces too nearly tangent to tell the sides apart; a
+degenerate edge; an elliptic or spline edge; and a body with no named edges at all, in `Section3`'s own words.
+The sweep's own refusals pass through **in the curve's words** (session 65's rule): a radius that outgrows the
+bend of a rim is *the profile's reach into the bend*, not a complaint about triangles.
+
+**The stated cost, and the tolerance that goes with it.** The operands share no axis, so every blend is a
+general boolean and the result is `Feature3.MeshBoolean`: it draws, measures, prints, exports and picks, and
+it offers **no section inputs**. That is this tier's price and slice 3 is the cure. It also fixes the accuracy
+story, and the tests state it as a model rather than as a tuned percentage: the fillet arc reaches the engine
+as an *inscribed* chord polygon at `GeomMath.TESS_TOL_MM`, so a quarter-round takes **at least** the exact
+`(1 − π/4)·r²·L` and at most that plus about `π·r·t/3` per millimetre of edge (2.3% at r = 4 mm, less as the
+radius grows). A chamfer is a triangle and is exact to 0.01 mm³. Where a leg is *curved* the body's own wall
+is a chord polygon too and the blend is tangent to the polygon rather than to the cylinder; those tests say so
+and take a stated band (4% on the extruded rim, asserted against Pappus' exact figure
+`2π·ρ²·[R(1 − π/4) − ρ(5/6 − π/4)]`).
+
+**Cuts, each whole and each refusing in-app**: (1) the varying-section edge above; (2) **vertex blends** where
+three or more edges meet — a chain that stops at a sharp corner leaves that corner sharp, which the *Fillet the
+edges of a face* help states, and the boolean trims the overlap so the result is watertight either way; (3) a chamfer across a curved
+leg; (4) **no live preview** for the four rows (a `preview` lambda may not touch the graph and a blend's
+picture is a mesh boolean — the honest preview is the result itself, one click away); (5) a blend applied to a
+body whose whole ancestry is mesh-only (an import, a sweep, a boolean of two such) refuses, since there is no
+analytic base to address. Nothing was cut silently.
 
 **Queued in session 71, behind the blends (user-directed): expressions — the binding generalized to a
 function, and the curve a function defines.** Postponed since the early sessions until ordinary

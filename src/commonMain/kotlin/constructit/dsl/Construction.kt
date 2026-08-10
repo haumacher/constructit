@@ -39,6 +39,9 @@ import constructit.geom.Affine
 import constructit.geom.Arc
 import constructit.geom.Axis3
 import constructit.geom.Bezier
+import constructit.geom.Blend3
+import constructit.geom.BlendChoice
+import constructit.geom.BlendKind
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
 import constructit.geom.CarryMode
@@ -2871,6 +2874,61 @@ class Construction {
     // belongs (OP-21's rule). The operands are ordinary solid nodes, so a boolean's result is an operand
     // of the next boolean — prisms are closed under these three operations, which is the point.
 
+    // ---- the edge blend: the 2D fillet, one dimension up (session 71, slice 2) ----
+
+    /**
+     * A **blend along the edges of [base]** — the 2D fillet construction run in the edge's own normal
+     * section, swept along the edge, applied by a boolean ([Blend3]).
+     *
+     * One node for the whole feature, exactly as an extrude is one, and both its inputs are nodes: retype
+     * [size] and the rounding changes with nothing rebuilt; edit anything the body is built from and the
+     * blend follows it round (OP-21). **The radius is an ordinary parameter**, so *"the same radius on all
+     * these edges"* is one parameter feeding many blends — equality by sharing, the no-solver stance's own
+     * answer — and it is expression-bindable like any other scalar.
+     *
+     * Everything else is **structure** and therefore an argument rather than a value: [kind] is which tool
+     * row was used, [whole] and [address] are what the click named (one edge, or a face's whole boundary
+     * chain), and [choices] are the discrete choices that click scored — which sector the blend fills, which
+     * branch its centre is, and whether that sector is material. All of them are recorded in the step's
+     * `signs=` and taken verbatim on replay, never re-scored (OP-1/OP-18).
+     *
+     * Invalid with a reason that heals (OP-3) for everything geometric — see [Blend3] for the list, of which
+     * the two that matter are a size that reaches past one of the two faces (the message names the largest
+     * that fits) and an edge whose normal section is not one this rounding can say.
+     */
+    fun blend(
+        applyTo: SolidRef,
+        base: SolidRef,
+        space: PlaneRef,
+        size: ScalarRef,
+        kind: BlendKind,
+        whole: Boolean,
+        address: Int,
+        choices: List<BlendChoice>,
+    ): SolidRef {
+        // structure at build time (OP-21): whether this blend chains onto an earlier one is a fact about the
+        // *graph*, so it decides the arity here rather than being read off a value inside compute
+        val chained = applyTo !== base
+        return op(*listOfNotNull<Ref<*>>(applyTo, base.takeIf { chained }, space, size).toTypedArray()) {
+            val tip = (it[0] as SolidValue).solid
+            val body = if (chained) (it[1] as SolidValue).solid else tip
+            openShellOf(tip)?.let { why -> return@op EvalResult.Invalid(why) }
+            val plane = (it[if (chained) 2 else 1] as PlaneValue).plane
+            val r = sc(it[if (chained) 3 else 2]).requireDim(Dimension.LENGTH, "${kind.word} ${kind.sizeWord}").mm
+            val (targets, whyTargets) = Blend3.targets(body.feature, whole, address)
+            if (targets == null) return@op EvalResult.Invalid(whyTargets ?: "this solid has no edge to blend there")
+            val (out, why) = Blend3.blended(body, tip, targets, r, kind, choices)
+            if (out == null) return@op EvalResult.Invalid(why ?: "cannot blend that edge")
+            // **The result gets a plan** ([Feature3.MeshBoolean.plan]): it is a mesh boolean, so without one
+            // it would be a body the drawing could build and nobody could click — and the *next* blend has to
+            // be able to pick it. Computed once, here, because this is the node that knows which plane the
+            // body is shown in (`Silhouette`, the same field and the same reason a sweep and an import have
+            // one). Retires half of session 55's parked note; see that field.
+            val dressed = (out.feature as? Feature3.MeshBoolean)?.let { f -> out.restated(f.copy(plan = Silhouette.of(out.mesh, plane))) } ?: out
+            EvalResult.Ok(SolidValue(dressed))
+        }
+    }
+
     /** Everything in either [a] or [b] (OP-22). */
     fun union(
         a: SolidRef,
@@ -2938,20 +2996,17 @@ class Construction {
         a: Solid3,
         b: Solid3,
     ): Pair<Solid3?, String?> =
-        if (Geom3.sameAxis(a.feature, b.feature)) {
-            Geom3.boolean(kind, a, b)
-        } else {
-            // **The one operation whose mesh stays eager, and the reason is doctrinal** ([Solid3]). Every
-            // constructed feature can say *in advance* why it cannot be built — a degenerate profile, an empty
-            // area, a bend the section outgrows — so its triangles wait for somebody to want them while its
-            // refusal stays where OP-3 and OP-9 put it, at evaluation time. A general boolean cannot: its
-            // operands *are* triangles, and whether they intersect in a solid at all is the engine's verdict on
-            // them. Deferring it would mean an invalid body first discovered while drawing — either thrown
-            // where nothing catches it or silently absent — which is exactly the outcome watertight-or-refused
-            // exists to forbid. So it runs now, and forcing its operands' meshes is part of running it.
-            val (mesh, why) = MeshBool.boolean(kind, a.mesh, b.mesh)
-            if (mesh == null) null to why else Solid3.of(Feature3.MeshBoolean(kind), mesh) to null
-        }
+        // **The one operation whose mesh stays eager, and the reason is doctrinal** ([Solid3]). Every
+        // constructed feature can say *in advance* why it cannot be built — a degenerate profile, an empty
+        // area, a bend the section outgrows — so its triangles wait for somebody to want them while its
+        // refusal stays where OP-3 and OP-9 put it, at evaluation time. A general boolean cannot: its
+        // operands *are* triangles, and whether they intersect in a solid at all is the engine's verdict on
+        // them. Deferring it would mean an invalid body first discovered while drawing — either thrown
+        // where nothing catches it or silently absent — which is exactly the outcome watertight-or-refused
+        // exists to forbid. So it runs now, and forcing its operands' meshes is part of running it.
+        // The dispatch itself is [Geom3.combine] — one authority for "which engine ran", shared with the
+        // swept cut and (since session 71) with the edge blend.
+        Geom3.combine(kind, a, b)
 
     /**
      * Why [solid] cannot be a boolean operand — an imported **open shell** — or null when it can.

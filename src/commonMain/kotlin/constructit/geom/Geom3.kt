@@ -2,6 +2,7 @@ package constructit.geom
 
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -272,8 +273,28 @@ sealed interface Feature3 {
      * legal operand of the next boolean, which then also takes the general path. Which solids were combined
      * is the op node's input list, not a field here (identity is the node, OP-8).
      */
-    data class MeshBoolean(val kind: BoolOp) : Feature3 {
-        override val footprint: List<Region> get() = emptyList()
+    data class MeshBoolean(
+        val kind: BoolOp,
+        /**
+         * The outline this body projects to in the space it is shown in ([Silhouette]) — **the silhouette
+         * plan**, and empty for the general boolean, which has no space of its own to be drawn in.
+         *
+         * *The parked note, answered where it applies* (session 55, retired in part by session 71). What was
+         * parked is that a mesh boolean's result has no plan, so it draws no footprint hint and cannot be
+         * picked in the plan — a body the drawing can build but not click on. Two honest answers were named
+         * there: the silhouette an imported body already gets, or 3D picking. The **edge blend** (slice 2)
+         * had to have one of them, because its own result is a `MeshBoolean` and a second blend has to be
+         * able to pick the first one's body — so it takes the silhouette, computed once by the node that
+         * knows which plane that is (`Construction.blend`), exactly as [Imported.plan] and [Sweep.plan] are.
+         *
+         * It is deliberately **not** filled by the ordinary boolean tools: giving them a plan is OP-22's
+         * decision to make and would change what every cross-axis boolean draws today (see
+         * `BooleanCrossSpaceTest`, which pins the miss). The field is here, the mechanism is proven, and the
+         * general case is one line away when that package wants it.
+         */
+        val plan: List<Region> = emptyList(),
+    ) : Feature3 {
+        override val footprint: List<Region> get() = plan
     }
 
     /**
@@ -2489,6 +2510,68 @@ object Geom3 {
         // every ring is conformed to, not its chords — so a coarse level would redo all of the expensive part
         // to save the cheap one, and a body whose walls are flat has nothing to gain by it anyway.
         return Solid3.derivedFine(prism, shell) to null
+    }
+
+    /**
+     * **The one place that decides which engine runs** (OP-22 first, then OP-9): the exact slab algebra for
+     * two prisms sharing an axis, the general engine for everything else.
+     *
+     * It lives here rather than inside `Construction` because it has three callers now and *"which path did
+     * this take"* is the one question about a boolean that must have a single answer — the boolean ops
+     * (`Construction.booleanValue`), the cut by an unbounded chain, and the **edge blend** ([Blend3]), whose
+     * swept wedge is applied to the body by exactly this dispatch and no other. A second copy of it would be
+     * a second thing to keep in step.
+     *
+     * The exact path's refusals stay refusals and are never retried on the mesh engine: a general boolean
+     * that quietly answered where the exact one declined would make the exact path impossible to trust.
+     */
+    fun combine(
+        kind: BoolOp,
+        a: Solid3,
+        b: Solid3,
+    ): Pair<Solid3?, String?> =
+        if (sameAxis(a.feature, b.feature)) {
+            boolean(kind, a, b)
+        } else {
+            val (mesh, why) = MeshBool.boolean(kind, a.mesh, b.mesh)
+            if (mesh == null) null to why else Solid3.of(Feature3.MeshBoolean(kind), mesh) to null
+        }
+
+    /**
+     * Whether the **watertight** [mesh] encloses [p] — the generalized winding number, summed over the
+     * triangles as signed solid angles and rounded.
+     *
+     * A ray cast would answer the same question and is what [rayMesh] already does for a *pick*; this is not
+     * that, because a pick may miss and a containment question may not. A ray through a vertex, along an
+     * edge, or exactly in the plane of a triangle has to be adjudicated, and every adjudication is a
+     * tolerance that is wrong somewhere. The solid angle has no such cases: it is continuous in [p], exactly
+     * `4π` inside and exactly `0` outside for a closed oriented shell, and its only degeneracy is a point
+     * *on* the surface — which is a question nobody asks it (the blend probes a stated distance off the
+     * crease, [Blend3]).
+     *
+     * Its one caller reads it as a **measurement scored once and then stored** (OP-1): which side of a crease
+     * the material is on decides subtract-or-add, the answer goes into the step's `signs=`, and nothing ever
+     * asks again. So this reads triangles without breaking *never rediscover* — no name, no index and no
+     * structure comes out of it, only a yes or a no about one point.
+     */
+    fun encloses(
+        mesh: Mesh3,
+        p: Vec3,
+    ): Boolean {
+        var omega = 0.0
+        for (tri in mesh.triangles) {
+            val a = mesh.vertices[tri.a] - p
+            val b = mesh.vertices[tri.b] - p
+            val c = mesh.vertices[tri.c] - p
+            val la = a.length()
+            val lb = b.length()
+            val lc = c.length()
+            if (la <= Vec3.EPS || lb <= Vec3.EPS || lc <= Vec3.EPS) continue
+            val num = a.dot(b.cross(c))
+            val den = la * lb * lc + a.dot(b) * lc + b.dot(c) * la + c.dot(a) * lb
+            omega += 2.0 * atan2(num, den)
+        }
+        return abs(omega) > 2.0 * PI
     }
 
     /**

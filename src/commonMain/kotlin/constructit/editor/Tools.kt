@@ -3,6 +3,7 @@ package constructit.editor
 import constructit.dsl.PointRef
 import constructit.dsl.ScalarRef
 import constructit.geom.Axis3
+import constructit.geom.BlendKind
 import constructit.geom.BoolOp
 import constructit.geom.CarryMode
 import constructit.geom.Continuity
@@ -1002,6 +1003,20 @@ object Tools {
     const val SPLIT_ALONG_CURVE_FLAT = "splitbychainalongflat"
 
     /**
+     * **The edge blends** (session 71, slice 2): the 2D fillet and chamfer, one dimension up.
+     *
+     * Four rows rather than two, because the two granularities are two *statements* and not two readings of
+     * one click: [BLEND_EDGE] breaks the edge nearest the click, [BLEND_FACE] breaks the whole boundary chain
+     * of the face under it. A single tool that guessed which was meant would be re-deciding on every hover
+     * exactly what the file then has to record — and the tool row a gesture used is already the most durable
+     * thing a step can carry (OP-18, and the swept cut's carry mode before it).
+     */
+    const val BLEND_EDGE = "filletedge"
+    const val BLEND_FACE = "filletfaceedges"
+    const val CHAMFER_EDGE = "chamferedge"
+    const val CHAMFER_FACE = "chamferfaceedges"
+
+    /**
      * **Place a solid**: read its own coordinates in the active sketch space's frame, at a picked point,
      * turned by an angle. Generic over solids — an imported reference body and an extruded part place
      * identically — which is why it lives here with the other solid operations and not with the import.
@@ -1312,6 +1327,15 @@ object Tools {
             ToolDef(UNION, "Union", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), crossSpace = true, help = "Click two solids to fuse them into one. Any pair works: solids extruded along the same axis fuse exactly and the result keeps offering section inputs; any other pair — cross-axis, a revolve, a swept body — fuses through the general engine (Manifold) into a watertight body whose sections draw but offer no inputs to build on. Click each solid where the canvas draws it: its footprint in the space its sketch was drawn in, or its section where a working plane cuts it. The two may live in different planes — switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("solid", "solid"), icon = Icons.UNION) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.UNION) },
             ToolDef(SUBTRACT, "Subtract", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), shortcut = 'X', crossSpace = true, help = "Click the solid to keep, then the one to remove from it (a counterbore, a pocket, an opening). Click each where the canvas draws it: its footprint in the space its sketch was drawn in, or its section where a working plane cuts it. The two may live in different planes — switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("kept solid", "removed solid"), icon = Icons.SUBTRACT) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.SUBTRACT) },
             ToolDef(INTERSECT_SOLIDS, "Intersect solids", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.SOLID), crossSpace = true, help = "Click two solids to keep only what they have in common. Click each where the canvas draws it: its footprint in the space its sketch was drawn in, or its section where a working plane cuts it. The two may live in different planes — switch the sketch plane between clicks and the picks are kept.", slotNames = listOf("solid", "solid"), icon = Icons.INTERSECT_SOLIDS) { d, p, _ -> d.combineSolids(p.elements[0], p.elements[1], BoolOp.INTERSECT) },
+            // ----- Edge blends (session 71, slice 2): the 2D fillet, one dimension up. One `SOLID` pick and
+            // one length, and everything else the click decides — which edge or which face, which of the four
+            // sectors round the crease the blend fills, whether that sector is material — is scored once and
+            // written into the step's `signs=` (OP-1/OP-18). The construction itself is the op node's job
+            // ([Blend3]), so these are data like every other tool.
+            ToolDef(BLEND_EDGE, "Fillet edge", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("radius")), help = "Type a radius (or pick a parameter in the panel), then click a body near the edge you want rounded: the rounding is the 2D fillet run in the plane square to that edge, swept along it and taken out of the corner (or filled into it, at an inside corner). Click where the canvas draws the edge — the body's footprint in the space it was sketched in, or its section on a working plane. The radius stays an ordinary parameter, so retyping it re-rounds the body, and the same parameter feeding two blends keeps them equal by construction. A radius that reaches past one of the two faces says so and names the largest that fits. The result is a mesh body (a general boolean, OP-9): it draws a footprint hint you can click, measures, prints and exports, and a working plane's section of it offers no construction inputs.", slotNames = listOf("solid, clicked near an edge")) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.FILLET, whole = false, at = p.clicks.firstOrNull() ?: p.at, signs = p.signs) },
+            ToolDef(BLEND_FACE, "Fillet the edges of a face", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("radius")), help = "Type a radius, then click a body **on** the face whose edges you want broken: every piece of that face's boundary is rounded in one gesture — the two cap faces of an outline revolved less than a full turn, the rim of an extruded plate. Where the boundary runs on smoothly from one piece to the next the rounding does too, with no crack at the join; where it turns a sharp corner the corner itself stays sharp — a vertex blend where three or more edges meet is a future extension. One radius for the whole chain, and it stays a parameter. The result is a mesh body (a general boolean, OP-9): it draws a footprint hint you can click, measures, prints and exports, and a working plane's section of it offers no construction inputs.", slotNames = listOf("solid, clicked on a face")) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.FILLET, whole = true, at = p.clicks.firstOrNull() ?: p.at, signs = p.signs) },
+            ToolDef(CHAMFER_EDGE, "Chamfer edge", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("setback")), help = "Type a setback, then click a body near the edge you want bevelled: the same construction as Fillet edge with a straight bevel in place of the arc. Both legs of the corner must be straight in section — a leg that is curved there says so and points at the fillet, which is the parked chamfer-on-arc convention one dimension up. The result is a mesh body (a general boolean, OP-9): it draws a footprint hint you can click, measures, prints and exports, and a working plane's section of it offers no construction inputs.", slotNames = listOf("solid, clicked near an edge")) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.CHAMFER, whole = false, at = p.clicks.firstOrNull() ?: p.at, signs = p.signs) },
+            ToolDef(CHAMFER_FACE, "Chamfer the edges of a face", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("setback")), help = "Type a setback, then click a body on the face whose edges you want bevelled: every piece of that face's boundary gets the same bevel in one gesture. A leg that is curved in section says so and points at the fillet. The result is a mesh body (a general boolean, OP-9): it draws a footprint hint you can click, measures, prints and exports, and a working plane's section of it offers no construction inputs.", slotNames = listOf("solid, clicked on a face")) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.CHAMFER, whole = true, at = p.clicks.firstOrNull() ?: p.at, signs = p.signs) },
             // Placement (the JT-import package, OP-9): a solid, a point in the space you are looking at,
             // and a **defaulted** angle — so the everyday gesture is two clicks and typing a number first
             // turns the body. Every input is a node, which is the whole point: weld the point onto a
