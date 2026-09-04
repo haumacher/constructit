@@ -50,6 +50,16 @@ good delivery contains, in order:
 - **User fixtures embedded verbatim** as required regression tests.
 - **Explicit acceptance tests**, including exact numbers where computable (volumes, positions,
   byte-equality). "save → load → save byte-equal" belongs in almost every brief.
+- **The gradle discipline block** (measured on two session-79 deliveries: gradle was 10–23% of an
+  agent's wall time, the rest was the model writing and deliberating — so the discipline is about
+  not *wasting* runs, not about avoiding them): the full suite runs **twice per delivery**, once
+  before the first edit (only when taking over foreign or uncommitted work) and once at the end
+  before the report; the edit loop runs the **targeted** class (`--tests`); `--rerun-tasks` is
+  taken **only on the `NoClassDefFoundError` symptom and only on a full run** (a targeted rerun
+  recompiles everything for nothing, ~90 s); a run whose inputs did not change is not repeated
+  "to be sure" — the same tree gives the same verdict; a full warm run is ~30 s, so never skip
+  it at the end either. Batch independent lookups (several greps in one call) instead of one
+  grep per turn — each turn costs a minute of deliberation, the grep costs nothing.
 - **The standing rules block**: ALL existing tests green; `--rerun-tasks` on stale
   NoClassDefFoundError; ktlintFormat; jsBrowserDistribution builds; `-De2e=1` green; do NOT
   commit; commonMain platform-free; comments cite OP-n; **nothing half-done — cut whole items
@@ -134,6 +144,10 @@ must target the part's tip), and cracked shells (assertManifold on every solid i
 ```
 
 All green or no commit. On weird failures: `--rerun-tasks` (stale compilation), then a real look.
+Since session 79 the bundle is a declared input of `jvmTest` under `-De2e=1`, so one invocation builds
+it first and a jsMain-only change re-runs the E2E (before, the E2E could pass against the previous
+bundle); `gradle.properties` carries the daemon heap, the build cache and the configuration cache, so
+the `-Pkotlin.daemon.jvmargs` flag and per-invocation configuration time are gone.
 The E2E needs Playwright browsers; it has always worked here. Count PASSED lines when in doubt —
 "BUILD FAILED" from a racing daemon has lied before; a clean rerun is the arbiter.
 

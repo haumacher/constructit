@@ -138,7 +138,13 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask<*>>().con
 
 tasks.named<Test>("jvmTest") {
     useJUnitPlatform()
-    // forward -De2e=1 to the test JVM so the (otherwise-skipped) browser E2E can opt in
-    System.getProperty("e2e")?.let { systemProperty("e2e", it) }
+    // forward -De2e=1 to the test JVM so the (otherwise-skipped) browser E2E can opt in — and since the
+    // E2E loads build/dist/js/productionExecutable by path, make that bundle a real input of the test task:
+    // it is then built first and *current*, and a jsMain-only change re-runs the E2E instead of leaving the
+    // test task up-to-date against yesterday's bundle (which `jvmTest jsBrowserDistribution -De2e=1` did).
+    System.getProperty("e2e")?.let {
+        systemProperty("e2e", it)
+        inputs.files(tasks.named("jsBrowserDistribution"))
+    }
     testLogging { events("passed", "failed", "skipped") }
 }
