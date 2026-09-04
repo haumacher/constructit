@@ -18566,3 +18566,14 @@ view a leg already publishes, tangency recorded and inherited, the single pick r
 see *A fillet supersedes the corner* under OP-1; the format's version rose to 4 as a marker so old files are told
 once what they now mean. **Entry 3 (custom blend profiles, #30) stands**, and the parked twisted-facet warp
 (recorded under the family's as-built note) is the other open item.
+
+**Queued in session 79, from the issue tracker — the vertex blends (GitHub #31, #32), ahead of entry 3.** The two
+cuts the corner package named are the next two reports: at a **concave** corner two bands butt and the sharp cap
+corner stands between their ends as a spike (#31), and where **three** blends meet at a convex vertex the bands
+end in sharp creases rather than a round surface (#32 — *"shouldn't the filleted extrusion edge also fillet the
+fillets of the top-face edges?"*). Both are the one place the rolling ball *does* stand still: touching all
+three faces at once. There the corner is the ball's own surface — the sphere patch bounded by the band ends
+that meet it (two bands and the cap at a concave corner, three bands at a convex vertex) — and for a chamfer
+the planar facet through the three setback points. This is the rolling-ball patch entry 1's ruling asked for,
+at the corners where it exists; a new face kind, named, sectioned and pickable like every other; exact for the
+chamfer, bracketed by chords for the fillet; watertight or refused, addresses unchanged.
