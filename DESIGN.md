@@ -17166,6 +17166,112 @@ refuses, **`Blend` refuses in the same words and through the same code** — one
 the varying-section edge, vertex blends at a corner where three edges meet, a chamfer across a curved leg, no
 live preview, and a body whose whole ancestry is mesh-only. Nothing was cut silently.
 
+#### Implementation status (as built — **the corner where two blends meet**, session 79; GitHub #27 and #28)
+
+**The two reports were one fault, and it was never the angle.** Slice 2's recorded rule was *"one sweep and
+one boolean per edge, deliberately … at a **sharp** corner they overlap and the boolean trims them, leaving
+the corner itself sharp"*. The overlap is the fault. Two wedges meeting at a shared vertex are two cylinders
+of one radius that are both **tangent to the shared face** where they meet it, so the crossing curve the
+general engine has to find there is the worst-conditioned intersection there is. It came out as no closed
+shell at all — *"boundary edge #2 of the top face: … a tangent or self-touching contact has no watertight
+mesh"* on a 47°/64°/69° triangle (#28) — and, where it did come out, with sliver triangles of about
+`1e-6 mm²` (#27's *"broken … or at least rendering artefacts"*). The rectangle survived it by luck of the
+tessellation, which is why both reports read as being about the corner *angle*.
+
+**The corner is now built rather than found, and the construction is one sentence.** Two equal wedges sharing
+a face are congruent in that face's own frame — *in* from the edge, *down* from the face — and at any depth
+each wedge is everything from the crease out to the rolling curve. So a point nearer its own edge than the
+neighbour's is inside the neighbour's wedge too, and splitting the removal on the surface **equidistant from
+the two edges** loses nothing and takes nothing extra. For two straight edges that surface is a plane: the one
+through the corner along the in-face bisector, square to the shared face. A section point standing `s` in from
+its own edge and `h` below the face lands there on the point standing `s` in from *both* edges at that depth,
+`corner + bisector·s/sin(θ/2)` dropped `h` — **affine** in the section's own coordinates, so each side places
+its own section by an affine map and the two land on the **same ring of points** (`Blend3.mitrePlacement`,
+checked by `ringsAgree`). The two tubes are then stitched into one closed tool (`Blend3.toolMesh`) and one
+boolean applies the whole chain.
+
+**What did not change.** One sweep per target, in the step's own order; the addresses stay edge indices and
+`signs=` is untouched; a **smooth** hand-over builds no corner at all, because the two sections already abut
+on the same plane, and each such piece is swept and applied exactly as before (`aTangentHandOverIsUntouched`,
+and `aTangentContinuousRimBlendsAsOneRibbon` unchanged). What the old rule traded away — *"a construction
+whose number of sweeps moved with the geometry would be structure decided at eval time"* (OP-21) — is not
+spent: the number of **booleans** is now a fact about which targets *share a vertex*, which is topology and
+not measurement, and the number of sweeps is still the address list's length.
+
+**A blend of a blend on an adjacent edge gets the same corner** (#27). The band already off the body is still
+on record in the `Feature3.Blend` underneath, so `Blend3.chainPieces` walks the chain to the bottom, rebuilds
+each band's crease, wedge and choice, and puts them in the tool beside the new one — marked *existing*, so a
+group of nothing but those is skipped. Cutting a band that is already off costs nothing (a coincident-face
+no-op) and buys the corner. The result is **order-independent**: `fillet edge 7` then `edge 6`, `edge 6` then
+`edge 7`, and the two-edge chain in one gesture are one body, agreeing to `5e-9` relative.
+
+**The tool is grown a micron out through both faces, and that is the second half of the cure**
+(`Blend3.sectionPolygons`). The wedge's two legs lie exactly *in* the two faces, so the tool has a flat side
+coincident with a face of the body over a strip as wide as the tangency. One such contact the engine resolves;
+two overlapping at a corner, or one meeting a face another blend has already trimmed, is a coplanar overlap
+decided by a fraction of a float32 — and that, not the corner, is what still refused one of #27's two orders.
+Stepping the legs `1e-3 mm` **outside** their own faces makes both contacts ordinary transversal crossings,
+and the arc between the two tangencies — the only part that decides any geometry — is untouched. Nothing extra
+is removed: at a convex crease the material is inward of both faces. The growth is **tapered** — grown at a
+corner ring, plain at a free end — because a tool proud of two faces at a free end leaves a micron notch at
+the upright there, which is a worse contact than the one it cured. Every volume in the suite is unchanged by
+it, which is what says so.
+
+**The arithmetic, and it is exact where it can be.** A whole-face blend of one size takes
+
+```
+Σ_edges (wedge area)·L  −  Σ_corners cot(θ/2)·∫₀^d δ(h)² dh
+```
+
+where `δ(h)` is the section's own inset at depth `h` below the shared face. `cot(θ/2)` is the two sweeps'
+overlap read in that face — a wedge's cut-off at a corner is `∫ cot(θ/2)·δ(h)²/2 dh`, twice for the two sides.
+For a **chamfer** `δ(h) = c − h`, so `∫ δ² = c³/3`, the wedge is a triangle, nothing is tessellated and the
+whole figure is **exact**: asserted to `1e-5` relative (the general engine's own float32 noise) on the
+reporter's triangle and on 30°, 60°, 90°, 120° and 170° corners. For a **fillet** `δ(h) = r − √(2rh − h²)` and
+`∫₀^r δ² = r³(5/3 − π/2)`; its arc reaches the engine as an inscribed chord polygon, so the figure is
+two-sided — never below the exact one, never above it by more than `π·r·t·ΣL/3` — and that bound *is* the
+discriminator, since the no-corner figure lies above its upper end.
+
+**The refusal.** A corner eats `cot(θ/2)` times the tangency's own setback off each of its two edges, so a
+corner sharp enough, or an edge short enough, leaves it nowhere to stand. `Blend3.crowdedCorner` says so by
+name — *"the corner where boundary edge #1 of the top face meets boundary edge #2 of the top face on the top
+face is too sharp for a fillet of radius 16 mm — the corner the two roundings share would reach further along
+an edge than the edge is long. The largest that fits there is about 15 mm"* (a 40 × 30 plate, whose 30 mm
+edges have two corners to host) — and it heals when the size comes down (`aCornerWithNoRoomSaysSoAndHeals`).
+
+**Cuts, each whole, each named and none silent.** (1) **The corner between two edges that are not both
+straight** — the equidistant surface is then a curved medial one, not a plane, so an arc handing over to
+another edge at a sharp corner is left to overlap and be trimmed exactly as before; a future extension with
+offset-curve intersections behind it. (2) **The corner between two wedges that are not congruent** — two
+edges whose faces stand at different dihedrals put their tangencies at different distances, the two sides do
+not land on one ring, and the pair is left as it was; the same future extension. (3) **The inside (reflex)
+corner** — there the two bands do not overlap at all but leave a wedge between them, and the ball that would
+round it pivots about the upright, which is a different construction; that corner keeps exactly what it kept,
+and the two bands butting at it are pulled a micron apart along their own edges so the one tool they share is
+a shell at all (`Blend3.buttEnds`, asserted by `anInsideCornerIsLeftAloneAndTheOthersAreStillBuilt`, where the
+other five corners of an L-shaped cap *are* built and the chamfer's exact figure says so). (4) **A vertex
+where three or more blended edges meet** — a ring is shared by two tubes and no more; the vertex blend stays
+the named future extension. (5) **The band's own face outline is still the full sweep**: `bandPatchOf` states
+the band over the whole edge, so a working plane's section through a corner still draws the two bands crossing
+where the solid has a crease. The *surface* each band names is exact and unchanged, only its own boundary is
+unstated at the corner — the same honesty class as slice 3's curved-face trim, and the same offset machinery
+behind the cure.
+
+**The premise the ruling carried, corrected.** The package was dispatched with *"the rolling-ball corner
+between two constant-radius bands … its surface patch bounded by the two bands' end circles"* and asked for a
+new **face kind** per corner. There is no such patch to name. The ball of radius `r` tangent to the cap and to
+both side faces touches each side face at one point, so the two bands' end circles meet at the cap tangency
+and their other ends do not close: the third boundary would be the *third* band's end circle, and that band
+only exists if the upright between the two side faces is blended too. Where two blended edges meet and the
+upright between them stays sharp — every case in both reports — the corner is the two bands **crossing**, and
+that crossing is planar (two equal cylinders whose axes intersect meet in two plane ellipses), which is exactly
+the mitre this session builds. So the corner adds **no new face**: it adds a crease between two existing
+bands. It would deserve a named *edge* — the ellipse arc in the mitre plane, the wedge's own blend curve
+stretched by `1/sin(θ/2)` — and that is not built either; `dressedEdges` still lists base edges and rails, and
+naming the mitre crease is a small, separable addition. Related: the reporter's #27 body was already
+geometrically **right** before this session (its volume matched the corner figure to a part in ten million);
+what was wrong was its mesh.
+
 **Delivered in session 71 (queued behind the blends, user-directed): expressions — the binding generalized
 to a function, and the curve a function defines.** Postponed since the early sessions until ordinary
 constructions were solid, and arriving now as the user's design, adopted whole. Two consumers of **one

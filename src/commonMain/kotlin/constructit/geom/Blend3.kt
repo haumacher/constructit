@@ -115,6 +115,19 @@ object Blend3 {
     /** How many stations a blend band's own section is sampled at (OP-15: deterministic, never adaptive). */
     private const val BAND_SECTION_STEPS = 64
 
+    /**
+     * How far **outside** its own two faces the stitched tool's section is stepped, in mm — see
+     * [sectionPolygons]. A micron: four orders below any feature this drawing carries, and two orders above
+     * the general engine's own float32 resolution at drawing sizes, which is the gap it exists to open.
+     */
+    private const val GROW_MM = 1e-3
+
+    /** How far apart two mitre rings' points may be (mm) and still be the same ring — see [ringsAgree]. */
+    private const val RING_TOL = 1e-6
+
+    /** How nearly two in-face directions must agree for the hand-over to be smooth rather than a corner. */
+    private const val TANGENT_TOL = 1e-9
+
     // ---- what a blend is addressed by ----
 
     /**
@@ -689,6 +702,520 @@ object Blend3 {
         return lo
     }
 
+    // ---- the corner where two blends meet: the mitre, built rather than found (session 79) ----
+
+    /**
+     * How a **section's own 2D coordinates** are placed in space at one ring of the blend's cutting tool —
+     * an affine map, and that is the whole reason the corner works.
+     *
+     * A ring is either a plain one (the section standing square to the edge at one station) or a **mitre**
+     * one (the section stretched into the surface that splits the corner). Both are affine in the section's
+     * `(x, y)`, so one representation carries both, and the cap triangles ([Geom3.triangulate] of the very
+     * polygon the ring is) go through the same map as the ring itself.
+     */
+    private class Placement(val origin: Vec3, val cx: Vec3, val cy: Vec3) {
+        fun at(q: Vec2): Vec3 = origin + cx * q.x + cy * q.y
+    }
+
+    /**
+     * One target edge **prepared for the tool**: the crease, the wedge and the choice that made it, plus the
+     * wedge's own boundary as a polygon and that polygon triangulated.
+     *
+     * [existing] marks a band that is **already off the body** — the chain this blend continues (see
+     * [chainPieces]). Such a piece is never cut again; it is in the list so that the corner where a *new*
+     * band meets it is built by construction instead of being looked for by the general boolean, which is
+     * what GitHub #27 asked for.
+     */
+    private class Piece(
+        val index: Int,
+        val existing: Boolean,
+        val crease: Crease,
+        val wedge: Wedge,
+        val choice: BlendChoice,
+        /** The wedge's boundary, counter-clockwise in the section frame, starting at the section's corner. */
+        val section: List<Vec2>,
+        /** The same boundary grown out through both faces, point for point — see [sectionPolygons]. */
+        val grown: List<Vec2>,
+        /** The same polygon triangulated once — the tool's cap at every free end. */
+        val caps: List<Geom3.Tri3>,
+        /** The edge as one straight run, or null: only a straight edge can carry a mitre (see [jointsOf]). */
+        val seg: Curve3Element.Seg3?,
+    ) {
+        /** How long the run is — asked only where [seg] is there. */
+        val length: Double get() = seg!!.let { (it.end - it.start).length() }
+    }
+
+    /**
+     * A **mitre corner**: where two pieces meet at a shared vertex, the ring both of them end on.
+     *
+     * The ring is stored per side, as each side's own placement of its own section, and the two are *the
+     * same points* — [ringsAgree] is what says so, and a pair that cannot say so is not a joint (the two
+     * sweeps then overlap and the boolean trims them, exactly as before this session).
+     */
+    private class Joint(
+        val a: Int,
+        val aAtStart: Boolean,
+        val placeA: Placement,
+        val b: Int,
+        val bAtStart: Boolean,
+        val placeB: Placement,
+        val shared: FacePatch,
+    )
+
+    /**
+     * The two section polygons the **stitched** tool is swept between: the wedge's own boundary, and the
+     * same boundary **grown out through both faces** by [GROW_MM] — point for point, so a ring may be
+     * either without the quads between two rings losing their correspondence.
+     *
+     * *Why grown.* The wedge's two legs lie exactly *in* the two faces, so the tool it sweeps has a flat
+     * side coincident with a face of the body over a strip as wide as the tangency. One such contact a mesh
+     * boolean can resolve; two of them overlapping at a corner — or one meeting a face another blend has
+     * already trimmed — is a coplanar overlap whose answer is a fraction of a float32, and that is the
+     * *"used 2 times with 2 opposite uses"* both reporters met. Stepping the legs a micron **outside** their
+     * own faces turns those contacts into ordinary transversal crossings: the flat sides now cross the faces
+     * at exactly the tangency lines instead of lying along them, and the arc between the two tangencies —
+     * the only part of the section that decides any geometry — is untouched.
+     *
+     * *Why only at a corner.* A **free** end is capped on the plane square to the edge, where the body has
+     * its own upright edge, and a tool a micron proud of two faces there leaves a micron-wide notch at that
+     * upright which is a worse contact than the one it cured. So the growth is tapered: the ring at a corner
+     * is the grown section, the ring at a free end is the plain one, and the flat side between them touches
+     * its face along a *line* rather than over a strip.
+     *
+     * *And nothing extra is removed.* At a convex crease the material is inward of both faces, so a micron
+     * beyond either is outside the body; at a concave one the wedge is added and the growth lies inside
+     * material already there. Every volume in the suite is unchanged by it, which is what says so.
+     *
+     * A **round** leg (a fillet against a cylinder) has no straight offset in this vocabulary, so it is
+     * swept as it always was — a plane against a curved band is not the degenerate case.
+     */
+    private fun sectionPolygons(
+        crease: Crease,
+        wedge: Wedge,
+    ): Pair<Pair<List<Vec2>, List<Vec2>>?, String?> {
+        val o = Vec2(0.0, 0.0)
+        val arc = GeomMath.tessellatePiece(wedge.piece, GeomMath.TESS_TOL_MM)
+        val n1 = outwardAt(wedge.t1, wedge.t2)
+        val n2 = outwardAt(wedge.t2, wedge.t1)
+        val plain: List<Vec2>
+        val grown: List<Vec2>
+        if (crease.leg1.line != null && crease.leg2.line != null && n1 != null && n2 != null) {
+            val corner = offsetCorner(n1, n2) ?: return null to "the two faces at that crease run too nearly parallel to step off"
+            plain = listOf(o, wedge.t1) + arc + listOf(wedge.t2)
+            grown = listOf(corner, wedge.t1 + n1 * GROW_MM) + arc + listOf(wedge.t2 + n2 * GROW_MM)
+        } else {
+            val pts = ArrayList<Vec2>()
+            pts.add(o)
+            pts.addAll(GeomMath.tessellatePiece(sidePiece(crease.leg1, o, wedge.t1), GeomMath.TESS_TOL_MM))
+            pts.addAll(arc)
+            pts.addAll(GeomMath.tessellatePiece(sidePiece(crease.leg2, wedge.t2, o), GeomMath.TESS_TOL_MM))
+            val kept = ArrayList<Vec2>(pts.size)
+            for (q in pts) if (kept.isEmpty() || (q - kept.last()).length() > Geom3.WELD_TOL) kept.add(q)
+            while (kept.size > 1 && (kept.first() - kept.last()).length() <= Geom3.WELD_TOL) kept.removeAt(kept.size - 1)
+            plain = kept
+            grown = kept
+        }
+        if (plain.size < 3) return null to "the rounding's own section has fewer than three corners"
+        // one winding for both, so index k of either ring is the same point of the same section
+        return if (Geom3.polygonArea(grown) >= 0.0) {
+            (plain to grown) to null
+        } else {
+            (reversedFromFirst(plain) to reversedFromFirst(grown)) to null
+        }
+    }
+
+    /** [poly] traversed the other way round, keeping its first point first — the same points, one permutation. */
+    private fun reversedFromFirst(poly: List<Vec2>): List<Vec2> = listOf(poly.first()) + poly.drop(1).reversed()
+
+    /** The unit normal of the straight leg through [t], pointing **away** from the material ([other]'s side). */
+    private fun outwardAt(
+        t: Vec2,
+        other: Vec2,
+    ): Vec2? {
+        if (t.length() <= Geom3.WELD_TOL) return null
+        val p = t.normalized().perp()
+        return if (other.dot(p) > 0.0) p * -1.0 else p
+    }
+
+    /** Where the two legs stepped [GROW_MM] outward meet — the grown section's own corner. */
+    private fun offsetCorner(
+        n1: Vec2,
+        n2: Vec2,
+    ): Vec2? {
+        val det = n1.x * n2.y - n1.y * n2.x
+        if (abs(det) <= 1e-9) return null
+        return Vec2(GROW_MM * (n2.y - n1.y) / det, GROW_MM * (n1.x - n2.x) / det)
+    }
+
+    /** One target edge prepared: everything the tool needs about it, computed once. */
+    private fun pieceOf(
+        index: Int,
+        existing: Boolean,
+        crease: Crease,
+        wedge: Wedge,
+        choice: BlendChoice,
+    ): Pair<Piece?, String?> {
+        val (polys, whyPoly) = sectionPolygons(crease, wedge)
+        if (polys == null) return null to "${crease.edge.name.label}: $whyPoly"
+        val (plain, grown) = polys
+        val distinct = ArrayList<Vec2>(plain.size)
+        for (q in plain) if (distinct.none { (it - q).length() <= Geom3.WELD_TOL }) distinct.add(q)
+        val (caps, whyCaps) = Geom3.triangulate(Geom3.TessRegion(distinct, emptyList()))
+        if (caps == null) {
+            return null to "${crease.edge.name.label}: ${whyCaps ?: "the rounding's section cannot be triangulated"}"
+        }
+        return Piece(index, existing, crease, wedge, choice, plain, grown, caps, soleElement(crease) as? Curve3Element.Seg3) to null
+    }
+
+    /**
+     * The bands **already taken off** the body this blend dresses — its own chain, walked to the bottom.
+     *
+     * *Why a blend looks at what is under it* (GitHub #27). A blend of a blend on an **adjacent** edge meets
+     * the first band at a shared vertex, and the corner there is the same corner a one-gesture chain would
+     * build. The first band's crease, wedge and choice are all still on record in the [Feature3.Blend] under
+     * this one, so that corner can be *constructed* rather than left to the boolean to find — and since the
+     * tool then carries that band along with the new one, the two routes (two gestures, or one) take away
+     * the very same region and the two bodies agree to the boolean's own arithmetic noise.
+     *
+     * Cutting the same band twice costs nothing and changes nothing: the tool is subtracted from a body that
+     * band is already off, so the second cut is a coincident-face no-op. What it buys is the corner.
+     *
+     * A level whose crease can no longer be read is **skipped** rather than refused: it was built once, and
+     * this is a better corner and never a new requirement (OP-3 — a reason belongs where the decision is).
+     */
+    private fun chainPieces(feature: Feature3): List<Piece> {
+        val out = ArrayList<Piece>()
+        var f = feature
+        while (f is Feature3.Blend) {
+            val below = f.base
+            val (edges, _) = Section3.edges(below)
+            if (edges != null) {
+                for ((k, i) in f.targets.withIndex()) {
+                    val edge = edges.getOrNull(i) ?: continue
+                    val crease = creaseOf(below, edge).first ?: continue
+                    val choice = f.choices.getOrNull(k) ?: continue
+                    val wedge = wedgeOf(crease, f.size, f.kind, choice).first ?: continue
+                    out.add(pieceOf(i, true, crease, wedge, choice).first ?: continue)
+                }
+            }
+            f = below
+        }
+        return out
+    }
+
+    /** Whether two rings are the **same** ring — the same points, however each side happens to order them. */
+    private fun ringsAgree(
+        a: List<Vec3>,
+        b: List<Vec3>,
+    ): Boolean {
+        if (a.size != b.size) return false
+        val used = BooleanArray(b.size)
+        for (p in a) {
+            var hit = -1
+            for (j in b.indices) {
+                if (!used[j] && (b[j] - p).length() <= RING_TOL) {
+                    hit = j
+                    break
+                }
+            }
+            if (hit < 0) return false
+            used[hit] = true
+        }
+        return true
+    }
+
+    /** The in-face direction the wedge reaches along on [shared] — the way its tangency there lies. */
+    private fun inFaceOf(
+        piece: Piece,
+        shared: FacePatch,
+    ): Vec3? {
+        val t = if (shared.name == piece.crease.face1.name) piece.wedge.t1 else piece.wedge.t2
+        val w = piece.crease.e1 * t.x + piece.crease.ref.e2 * t.y
+        return if (w.length() <= Geom3.WELD_TOL) null else w.normalized()
+    }
+
+    /**
+     * The mitre ring one piece puts at [corner], as the affine placement of its own section.
+     *
+     * **The whole corner, in one sentence.** The wedge's section is carried along the edge, and where two
+     * such sweeps meet, the removal on each side of the surface *equidistant from the two edges* is that
+     * side's own sweep — because the wedge, at any depth below the shared face, is everything from the
+     * crease out to the rolling curve, so a point nearer its own edge than the neighbour's is inside the
+     * neighbour's wedge as well. Splitting there therefore loses nothing and takes nothing extra, and for
+     * two **straight** edges that surface is a plane: the one through the corner along the in-face bisector,
+     * square to the shared face.
+     *
+     * So a section point standing `s` in from its own edge and `h` below the shared face lands, at the
+     * corner, on the point standing `s` in from *both* edges at that depth — `corner + bisector·s/sin(θ/2)`
+     * dropped `h` — which is affine in the section's own coordinates and therefore a [Placement]: the map
+     * sends the in-face axis to `bisector/sin(θ/2)` and the face's normal to itself. Both sides compute it
+     * from their own frame and land on the same points, which is what [ringsAgree] checks and what lets the
+     * two tubes stitch into one watertight tool with no boolean between them.
+     */
+    private fun mitrePlacement(
+        piece: Piece,
+        shared: FacePatch,
+        corner: Vec3,
+        bis: Vec3,
+        c: Double,
+    ): Placement? {
+        val n = shared.plane?.normal?.normalized() ?: return null
+        val e = inFaceOf(piece, shared) ?: return null
+
+        fun map(axis: Vec3): Vec3 = bis * (axis.dot(e) / c) + n * axis.dot(n)
+        return Placement(corner, map(piece.crease.e1), map(piece.crease.ref.e2))
+    }
+
+    /** Where [p] stands along [piece]'s own run, as a length from its start. */
+    private fun stationOf(
+        piece: Piece,
+        p: Vec3,
+    ): Double {
+        val seg = piece.seg ?: return 0.0
+        val v = seg.end - seg.start
+        return (p - seg.start).dot(v) / v.length()
+    }
+
+    /**
+     * The **mitre corners** among [pieces] — one per shared vertex that can carry one.
+     *
+     * What a corner must be to be built rather than found, each condition with its reason:
+     *
+     * - **Two straight edges.** The splitting surface is equidistant from both edges, which is a *plane*
+     *   only when both are straight; a corner where a circular edge turns into another is a curved medial
+     *   surface, and that is a future extension rather than something to approximate. Such a pair is left
+     *   to overlap and be trimmed by the boolean, as every pair was before this session.
+     * - **One shared, flat face.** The corner is stated in that face's own frame — in from the edge, down
+     *   from the face — so the face has to have a plane to be measured from.
+     * - **The same sector.** Two bands filling opposite sectors are not one corner: one is subtracted and
+     *   the other added, so they are two operations and stay two.
+     * - **A sharp turn.** Where the boundary runs on smoothly there is no corner to build: the two sections
+     *   abut on the very same plane already and their union has no crack in it (the rounded rim, exact
+     *   before this session and untouched by it).
+     * - **Rings that agree.** Both sides must land on the same points, which is the same thing as the two
+     *   wedges being congruent in that face's frame — one size, one kind, one dihedral. Where the two edges'
+     *   faces stand at different angles the corner is a surface this rounding cannot state exactly, and the
+     *   pair is left to overlap as it did.
+     * - **Only two at a vertex.** A ring is shared by two tubes; a vertex where three or more blended edges
+     *   meet is the vertex blend that is already on record as a future extension.
+     */
+    private fun jointsOf(pieces: List<Piece>): List<Joint> {
+        val out = ArrayList<Joint>()
+        val taken = HashSet<Pair<Int, Boolean>>()
+        for (i in pieces.indices) {
+            for (j in i + 1 until pieces.size) {
+                val a = pieces[i]
+                val b = pieces[j]
+                val sa = a.seg ?: continue
+                val sb = b.seg ?: continue
+                if (a.choice.convex != b.choice.convex) continue
+                val shared =
+                    listOf(a.crease.face1, a.crease.face2)
+                        .firstOrNull { f -> f.plane != null && (f.name == b.crease.face1.name || f.name == b.crease.face2.name) }
+                        ?: continue
+                for (aAtStart in listOf(true, false)) {
+                    for (bAtStart in listOf(true, false)) {
+                        if ((i to aAtStart) in taken || (j to bAtStart) in taken) continue
+                        val corner = if (aAtStart) sa.start else sa.end
+                        if ((corner - (if (bAtStart) sb.start else sb.end)).length() > RING_TOL) continue
+                        val ea = inFaceOf(a, shared) ?: continue
+                        val eb = inFaceOf(b, shared) ?: continue
+                        // a smooth hand-over is not a corner: the two sections already abut on one plane
+                        if (ea.dot(eb) >= 1.0 - TANGENT_TOL) continue
+                        val sum = ea + eb
+                        if (sum.length() <= Geom3.WELD_TOL) continue
+                        val bis = sum.normalized()
+                        val c = ea.dot(bis)
+                        if (c <= Geom3.WELD_TOL) continue
+                        val placeA = mitrePlacement(a, shared, corner, bis, c) ?: continue
+                        val placeB = mitrePlacement(b, shared, corner, bis, c) ?: continue
+                        if (!ringsAgree(a.grown.map { placeA.at(it) }, b.grown.map { placeB.at(it) })) continue
+                        // **a corner that turns the other way is not this corner** (a reflex corner of the
+                        // shared face): the mitre then stands *outside* both edges and the two bands do not
+                        // overlap at all but leave a wedge between them, which is the inside-corner patch a
+                        // ball rolls round — a future extension. Left to overlap and be trimmed, as before.
+                        if (!turnsInward(a, aAtStart, bis) || !turnsInward(b, bAtStart, bis)) continue
+                        out.add(Joint(i, aAtStart, placeA, j, bAtStart, placeB, shared))
+                        taken.add(i to aAtStart)
+                        taken.add(j to bAtStart)
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /**
+     * Whether the corner's bisector turns **into** the shared face, which is what says the corner is a
+     * convex one — `bis·d = cos(θ/2)` along the edge's own direction out of the corner, so this is the
+     * statement `θ < 180°` and nothing more. See the reflex-corner note in [jointsOf].
+     */
+    private fun turnsInward(
+        piece: Piece,
+        atStart: Boolean,
+        bis: Vec3,
+    ): Boolean {
+        val seg = piece.seg ?: return false
+        val d = (if (atStart) seg.end - seg.start else seg.start - seg.end).normalized()
+        return bis.dot(d) > 1e-9
+    }
+
+    /**
+     * How far into its own edge one mitre ring reaches — `cot(θ/2)` times the tangency's own setback, which
+     * is the number that decides whether a corner has room for the size asked for.
+     */
+    private fun reachOf(
+        piece: Piece,
+        atStart: Boolean,
+        place: Placement,
+    ): Double {
+        val from = if (atStart) 0.0 else piece.length
+        return piece.grown.maxOf { abs(stationOf(piece, place.at(it)) - from) }
+    }
+
+    /**
+     * Why the corners cannot host this size, or null when they can — *"the ball no longer fits in the
+     * corner"*, named and healing (OP-3, session 65's rule that a refusal says what to do instead).
+     *
+     * The two corners of one edge each eat `cot(θ/2)` times the setback off it, so a corner sharp enough,
+     * or an edge short enough, leaves them nothing to stand in. Where that happens the *whole* blend is
+     * refused rather than the corner quietly dropped: a corner that does not fit is a rounding the user
+     * cannot have, and saying so with the largest size that would is what makes it actionable.
+     */
+    private fun crowdedCorner(
+        pieces: List<Piece>,
+        joints: List<Joint>,
+    ): Joint? {
+        val reach = HashMap<Int, Double>()
+        val blame = HashMap<Int, Joint>()
+        for (j in joints) {
+            for ((who, pair) in listOf(j.a to (j.aAtStart to j.placeA), j.b to (j.bAtStart to j.placeB))) {
+                val r = reachOf(pieces[who], pair.first, pair.second)
+                reach[who] = (reach[who] ?: 0.0) + r
+                if (blame[who] == null) blame[who] = j
+            }
+        }
+        // the pieces in **their own order**, never the map's: which corner a refusal names has to be a
+        // function of the drawing and not of a hash (OP-15's determinism rule)
+        for (who in pieces.indices) {
+            val r = reach[who] ?: continue
+            if (r >= pieces[who].length - Geom3.WELD_TOL) return blame[who]
+        }
+        return null
+    }
+
+    /**
+     * The free ends of one group that **meet another member's free end** — a vertex the two sweeps butt at
+     * without a corner between them.
+     *
+     * Where it happens, and why it must be said. A chain round a face whose boundary turns a **reflex**
+     * corner (an L-shaped cap) has no corner built there: the two bands do not overlap at an inside corner,
+     * they leave a wedge between them, and the ball that would round it pivots about the upright — the
+     * inside-corner patch, a future extension. So the two sweeps are butt-ended at that vertex, and their
+     * two caps, standing in the two planes square to the two edges, **share a segment of the upright**
+     * where those planes meet. One mesh with that in it is not a shell, and the tool would refuse.
+     *
+     * The cure is a micron of daylight: the two butting ends are pulled back along their own edges by
+     * [GROW_MM], which parts the caps completely (each tube then lies strictly on its own side of the
+     * other's cap plane) and leaves a micron of material at a corner that already keeps a whole spike
+     * there. Nothing else about the chain changes, so the five corners of a six-sided L-shaped cap are
+     * still built and only its inside corner is still left alone.
+     */
+    private fun buttEnds(
+        pieces: List<Piece>,
+        group: List<Int>,
+        rings: Map<Pair<Int, Boolean>, Placement>,
+    ): Set<Pair<Int, Boolean>> {
+        val free = ArrayList<Pair<Pair<Int, Boolean>, Vec3>>()
+        for (at in group) {
+            val seg = pieces[at].seg ?: continue
+            for (atStart in listOf(true, false)) {
+                if ((at to atStart) in rings) continue
+                free.add((at to atStart) to (if (atStart) seg.start else seg.end))
+            }
+        }
+        val out = HashSet<Pair<Int, Boolean>>()
+        for (i in free.indices) {
+            for (j in free.indices) {
+                if (i == j || free[i].first.first == free[j].first.first) continue
+                if ((free[i].second - free[j].second).length() <= RING_TOL) out.add(free[i].first)
+            }
+        }
+        return out
+    }
+
+    /** The pieces grouped by the corners that join them — one tool, and one boolean, per group. */
+    private fun groupsOf(
+        count: Int,
+        joints: List<Joint>,
+    ): List<List<Int>> {
+        val owner = IntArray(count) { it }
+
+        fun root(x: Int): Int {
+            var r = x
+            while (owner[r] != r) r = owner[r]
+            return r
+        }
+        for (j in joints) {
+            val ra = root(j.a)
+            val rb = root(j.b)
+            if (ra != rb) owner[max(ra, rb)] = min(ra, rb)
+        }
+        val out = LinkedHashMap<Int, MutableList<Int>>()
+        for (i in 0 until count) out.getOrPut(root(i)) { ArrayList() }.add(i)
+        return out.values.toList()
+    }
+
+    /**
+     * One group's whole cutting tool as **one closed mesh** — each edge's wedge carried between its two
+     * rings, the mitre rings shared with the neighbour, a cap at every free end.
+     *
+     * Watertight by construction, and that is the point of the exercise: the two tubes either side of a
+     * corner end on the *same* ring, so there is nothing left there for a boolean to intersect. What used to
+     * happen instead is what GitHub #27 and #28 reported — two bands meeting almost tangentially where both
+     * touch the shared face, whose crossing curve the general engine had to find in the worst conditioning
+     * there is: it came out as slivers a millionth of a square millimetre across (the reporter's *"rendering
+     * artefacts"*) or as no closed shell at all (*"a tangent or self-touching contact"*).
+     *
+     * The winding is stated rather than fixed up afterwards. The section is counter-clockwise in `(e1, e2)`
+     * and `(e1, e2, u)` is right-handed, so the quads run from the ring nearer the run's start to the one
+     * further along it, the far cap keeps the section's own winding and the near cap is reversed.
+     */
+    private fun toolMesh(
+        pieces: List<Piece>,
+        group: List<Int>,
+        rings: Map<Pair<Int, Boolean>, Placement>,
+        butts: Set<Pair<Int, Boolean>>,
+    ): Pair<Mesh3?, String?> {
+        val b = Geom3.MeshBuilder()
+        for (at in group) {
+            val piece = pieces[at]
+            val seg = piece.seg ?: return null to "${piece.crease.edge.name.label} is not one straight run, so it carries no corner"
+            val atStart = rings[at to true]
+            val atEnd = rings[at to false]
+            val u = (seg.end - seg.start).normalized()
+            val back0 = if ((at to true) in butts) GROW_MM else 0.0
+            val back1 = if ((at to false) in butts) GROW_MM else 0.0
+            val p0 = atStart ?: Placement(seg.start + u * back0, piece.crease.e1, piece.crease.ref.e2)
+            val p1 = atEnd ?: Placement(seg.end - u * back1, piece.crease.e1, piece.crease.ref.e2)
+            // grown at a corner, plain at a free end: the growth tapers along the run ([sectionPolygons])
+            val r0 = (if (atStart != null) piece.grown else piece.section).map { p0.at(it) }
+            val r1 = (if (atEnd != null) piece.grown else piece.section).map { p1.at(it) }
+            for (m in piece.section.indices) {
+                val n = (m + 1) % piece.section.size
+                b.triangle(r0[m], r0[n], r1[n])
+                b.triangle(r0[m], r1[n], r1[m])
+            }
+            if (atStart == null) for (t in piece.caps) b.triangle(p0.at(t.c), p0.at(t.b), p0.at(t.a))
+            if (atEnd == null) for (t in piece.caps) b.triangle(p1.at(t.a), p1.at(t.b), p1.at(t.c))
+        }
+        val mesh = b.build()
+        if (mesh.triangles.isEmpty()) return null to "the rounding's own tool has no triangles"
+        if (Geom3.volume(mesh) <= 0.0) return null to "the rounding's own tool encloses no volume"
+        MeshCanon.fault(mesh)?.let { return null to "the rounding's own tool is not a closed shell: $it" }
+        return mesh to null
+    }
+
     // ---- the whole construction ----
 
     /**
@@ -755,13 +1282,32 @@ object Blend3 {
      * part-and-tip split OP-17's sequential features already make, said one operation further, and it is
      * what let slice 3 supersede the mesh tier without changing a single stored address.
      *
-     * One sweep and one boolean **per edge**, deliberately, rather than one sweep per tangent-continuous run:
-     * whether two pieces meet tangentially is a property of *values*, and a construction whose number of
-     * sweeps moved with the geometry would be structure decided at eval time (OP-21's rule). Two wedges either
-     * side of a tangency corner abut on exactly the same section in exactly the same plane, so their union is
-     * the one smooth ribbon with no crack in it; at a **sharp** corner they overlap and the boolean trims
-     * them, leaving the corner itself sharp — a vertex blend where three or more edges meet is the named
-     * future extension.
+     * **One sweep per edge, still** — and, since session 79, one boolean per *group of edges joined by a
+     * corner*.
+     *
+     * The old rule read *"one sweep and one boolean per edge, deliberately … at a sharp corner they overlap
+     * and the boolean trims them"*, on the argument that a construction whose number of sweeps moved with
+     * the geometry would be structure decided at eval time (OP-21). The first half of it stands untouched:
+     * there is exactly one sweep per target, in the step's own order, and the count is the address list's.
+     * The second half is what GitHub #27 and #28 came from. Two wedges that overlap at a sharp corner are
+     * two cylinders of one radius that are both **tangent to the shared face** where they meet it, so the
+     * curve the boolean has to find there is the worst-conditioned intersection there is: the reporters got
+     * *"a tangent or self-touching contact has no watertight mesh"* on a triangle, and sliver triangles a
+     * millionth of a square millimetre across where it did come out.
+     *
+     * So the corner is **built** ([mitrePlacement]): the two sweeps are cut on the surface equidistant from
+     * their two edges — a plane, for two straight edges — where both of them place their own section and
+     * land on the same ring of points, and the two tubes are stitched into one closed tool that one boolean
+     * applies. Nothing about the *result* changes: the region removed is the very same union it always was
+     * (its volume is the machinist's figure to the last digit for a chamfer), and what changes is that no
+     * engine has to discover it. The number of booleans is a fact about which targets **share a vertex**,
+     * which is topology and not measurement, so OP-21's concern is answered rather than traded away.
+     *
+     * Where the boundary runs on **smoothly** nothing at all happens: the two sections already abut on the
+     * same plane, no corner is built, and each piece is swept and applied exactly as before (the rounded
+     * rim, bit for bit). The corners still left to the boolean, each for a stated reason, are listed at
+     * [jointsOf]; an **inside** corner and a vertex where three or more blended edges meet remain the named
+     * future extensions.
      */
     fun blended(
         base: Solid3,
@@ -776,7 +1322,10 @@ object Blend3 {
         val (edges, whyEdges) = Section3.edges(feature)
         if (edges == null) return null to whyEdges
         if (choices.size < targets.size) return null to "this blend recorded ${choices.size} choices for ${targets.size} edges"
-        var result = applyTo
+        // **Every target prepared first, then the corners, then one tool per group.** The pieces are built
+        // in the step's own order, so a blend with no corner in it reaches [Geom3.sweep] exactly as it did
+        // before this session and its triangles are the same triangles.
+        val pieces = ArrayList<Piece>()
         for ((k, i) in targets.withIndex()) {
             val edge = edges.getOrNull(i) ?: return null to "this solid has no edge #${i + 1} (it has ${edges.size})"
             val (crease, why) = creaseOf(feature, edge)
@@ -791,16 +1340,88 @@ object Blend3 {
                     "or ${crease.face2.name.label} at ${crease.edge.name.label} — the largest that fits there is " +
                     "about ${Frames3.mm(fits)} mm"
             }
+            val (piece, whyPiece) = pieceOf(i, false, crease, wedge, choice)
+            if (piece == null) return null to whyPiece
+            pieces.add(piece)
+        }
+        // …and the bands already under this one, so a blend of a blend on an adjacent edge builds the same
+        // corner a one-gesture chain would (GitHub #27, [chainPieces]).
+        pieces.addAll(chainPieces(feature))
+        val joints = jointsOf(pieces)
+        crowdedCorner(pieces, joints)?.let { j ->
+            val a = pieces[j.a]
+            val b = pieces[j.b]
+            val fits = largestCornerFitting(pieces, size, kind)
+            return null to
+                "the corner where ${a.crease.edge.name.label} meets ${b.crease.edge.name.label} on " +
+                "${j.shared.name.label} is too sharp for a ${kind.word} of ${kind.sizeWord} " +
+                "${Frames3.mm(size)} mm — the corner the two roundings share would reach further along an edge " +
+                "than the edge is long. The largest that fits there is about ${Frames3.mm(fits)} mm"
+        }
+        val rings = HashMap<Pair<Int, Boolean>, Placement>()
+        for (j in joints) {
+            rings[j.a to j.aAtStart] = j.placeA
+            rings[j.b to j.bAtStart] = j.placeB
+        }
+        var result = applyTo
+        for (group in groupsOf(pieces.size, joints)) {
+            // a group of nothing but bands already off the body has nothing left to cut
+            if (group.all { pieces[it].existing }) continue
+            val fresh = group.filter { !pieces[it].existing }
+            val lead = pieces[fresh.first()]
             val (tool, whyTool) =
-                Geom3.sweep(crease.path, crease.e1, SweepProfile.Section(wedge.region), plan = null)
-            if (tool == null) return null to "${edge.name.label}: ${whyTool ?: "the blend cannot be swept along it"}"
-            val (next, whyBool) = Geom3.combine(if (choice.convex) BoolOp.SUBTRACT else BoolOp.UNION, result, tool)
+                if (fresh.size == 1 && group.size == 1) {
+                    Geom3.sweep(lead.crease.path, lead.crease.e1, SweepProfile.Section(lead.wedge.region), plan = null)
+                } else {
+                    val (mesh, whyMesh) = toolMesh(pieces, group, rings, buttEnds(pieces, group, rings))
+                    if (mesh == null) {
+                        null to whyMesh
+                    } else {
+                        // the tool is a union of bands and states nothing else about itself: it is a mesh
+                        // with no analytic reading, which is exactly what [Feature3.MeshBoolean] means (OP-9)
+                        Solid3.of(Feature3.MeshBoolean(BoolOp.UNION), mesh) to null
+                    }
+                }
+            if (tool == null) {
+                return null to "${lead.crease.edge.name.label}: ${whyTool ?: "the blend cannot be swept along it"}"
+            }
+            val op = if (lead.choice.convex) BoolOp.SUBTRACT else BoolOp.UNION
+            val (next, whyBool) = Geom3.combine(op, result, tool)
             if (next == null) {
-                return null to "${edge.name.label}: ${whyBool ?: "the blend cannot be applied to this body"}"
+                return null to "${lead.crease.edge.name.label}: ${whyBool ?: "the blend cannot be applied to this body"}"
             }
             result = next
         }
         return result to null
+    }
+
+    /**
+     * The largest size whose corners all have room, by halving — what the crowded-corner refusal names so it
+     * can be acted on, the same shape of answer [largestFitting] gives for a size that outgrows a face.
+     */
+    private fun largestCornerFitting(
+        pieces: List<Piece>,
+        size: Double,
+        kind: BlendKind,
+    ): Double {
+        var lo = 0.0
+        var hi = size
+        repeat(FIT_STEPS) {
+            val mid = (lo + hi) / 2.0
+            val trial = ArrayList<Piece>(pieces.size)
+            var ok = true
+            for (p in pieces) {
+                val w = wedgeOf(p.crease, mid, kind, p.choice).first
+                val q = if (w == null) null else pieceOf(p.index, p.existing, p.crease, w, p.choice).first
+                if (q == null) {
+                    ok = false
+                    break
+                }
+                trial.add(q)
+            }
+            if (ok && crowdedCorner(trial, jointsOf(trial)) == null) lo = mid else hi = mid
+        }
+        return lo
     }
 
     // ---- what a click names: the **face**, since an edge is picked by its own drawing (see `Document`) ----
