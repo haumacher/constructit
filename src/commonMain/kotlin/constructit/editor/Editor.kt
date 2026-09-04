@@ -544,8 +544,31 @@ class Editor(
      */
     var pointing: PlaneProjection? = null
 
-    /** [pointing] when the 3D view is editing, the 2D camera otherwise — the one accessor both paths use. */
-    private fun proj(): PlaneProjection = pointing ?: camera
+    /**
+     * What a **3D view has parked here** — the same thing [pointing] is, but *lent* rather than set.
+     *
+     * The difference is who takes it back, and it had to be said because nobody did (session 80). `Viewport3`
+     * parks its projection at the top of every one of its own entries and nothing ever cleared it, so a
+     * drawing that had been in the 3D view stayed measured through that camera afterwards: switch back to the
+     * flat canvas and every pick, snap and tolerance still went through the 3D projection, and a click landed
+     * wherever that view happened to put it. Now the loan ends the moment another surface delivers a gesture
+     * (every pointer entry takes the projection its own surface measures in — null for the flat canvas) or
+     * the view stops being shown (`Viewport3.shown`).
+     *
+     * [pointing] itself is untouched and still means what it always did: a projection **set** on the editor,
+     * which is how the headless suite drives a 3D gesture with no viewport at all (OP-12), and which stays
+     * until whoever set it clears it.
+     */
+    var viewPointing: PlaneProjection? = null
+
+    /** What is doing the measuring: a set projection first, then a view's loan, then the 2D camera. */
+    private fun proj(): PlaneProjection = through() ?: camera
+
+    /**
+     * The projection a **3D view** is driving through, or null for the flat canvas — the question every
+     * *"which view is this gesture in"* asks, and the one place the two ways of holding it are read as one.
+     */
+    private fun through(): PlaneProjection? = pointing ?: viewPointing
 
     var toolId: String = Tools.SELECT
         private set
@@ -1332,7 +1355,7 @@ class Editor(
         // …**and only in the 2D canvas** (edit-in-3D slice 2): in the 3D view the pick is a ray against the
         // bodies themselves, which reaches every face from wherever the camera stands, so there is nothing to
         // switch to and switching would throw away the plane the user is working on for no gain.
-        val backToPlan = id == Tools.SKETCH_ON_FACE && !doc.activeSpace.isPlan && pointing == null
+        val backToPlan = id == Tools.SKETCH_ON_FACE && !doc.activeSpace.isPlan && through() == null
         if (backToPlan) setActiveSpace(Document.PLAN_SPACE)
         // **Arming the tool that is already armed keeps what it has collected.** Arming a *different* tool
         // abandons the half-finished one, which is honest — it is a different operation. Re-arming the same
@@ -1348,7 +1371,7 @@ class Editor(
         statusHint =
             if (backToPlan) {
                 "Plan view — Sketch on face picks a solid's footprint edge, which is drawn here; click the edge you want"
-            } else if (id == Tools.SKETCH_ON_FACE && pointing != null) {
+            } else if (id == Tools.SKETCH_ON_FACE && through() != null) {
                 "3D view — Sketch on face takes the face you click on, wherever the camera stands; hold Ctrl to orbit"
             } else if (rearming) {
                 // …and it says where the gesture stands, because a click that deliberately does nothing must
@@ -1622,7 +1645,7 @@ class Editor(
         val hit = rayed?.first ?: doc.solidEdgeNear(world, tolWorld(), ev())
         if (hit == null) {
             statusHint =
-                if (pointing != null) {
+                if (through() != null) {
                     "Click a face of a solid — the ray met nothing here"
                 } else {
                     "Click a solid's footprint edge — that edge is the side face, seen from above"
@@ -2956,7 +2979,7 @@ class Editor(
         // The wheel is the *view's*, and while the 3D view is doing the editing the view it belongs to is
         // that one ([Viewport3.wheel] never forwards it here). Zooming the invisible 2D camera instead would
         // silently move where the next 2D click lands.
-        if (pointing != null) return
+        if (through() != null) return
         camera = camera.zoomAt(screen, if (deltaY < 0) 1.1 else 1.0 / 1.1)
         changed()
     }
@@ -2965,12 +2988,25 @@ class Editor(
      * Press. [additive] is Shift held: in SELECT mode it makes the *click* toggle one element's
      * membership — which is why the toggle is applied on release and not here, since Shift held during
      * a drag means axis lock and must leave the selection alone.
+     *
+     * **Whoever delivers the gesture owns the mapping.** Every pointer entry takes the projection its own
+     * surface measures in — [through], null for the flat canvas, whose [camera] *is* that mapping — and
+     * lends it to the editor ([viewPointing]) before anything reads it.
+     *
+     * *Why it is an argument.* The 3D view used to park its projection on the editor and nothing ever took it
+     * back ([viewPointing]), so a gesture on the flat canvas **after** one in the 3D view was still measured
+     * through the 3D camera — the pick, the snap and the tolerance all read `proj()`, so the click landed
+     * wherever that view happened to project it and usually hit nothing. The 3D view's own drawing is
+     * unaffected: it re-states its projection at the top of every one of its own entries, paints included.
+     * A projection **set** directly on the editor ([pointing]) is not a loan and is not touched here.
      */
     fun pointerDown(
         screen: Vec2,
         button: PointerButton = PointerButton.PRIMARY,
         additive: Boolean = false,
+        through: PlaneProjection? = null,
     ) {
+        viewPointing = through
         downScreen = screen
         pendingToggle = null
         // the terminal cue lasts until the user's next *action*, which this is. Deliberately not cleared by
@@ -2981,7 +3017,7 @@ class Editor(
             // ...except in the 3D view, where "move the drawing under the cursor" is the 3D camera's own pan
             // (Space+drag there too — one habit, two views) and panning a 2D camera nobody is looking through
             // would do nothing visible
-            if (pointing != null) return
+            if (through() != null) return
             panning = true
             lastScreen = screen
             return
@@ -4006,7 +4042,11 @@ class Editor(
             }
     }
 
-    fun pointerMove(screen: Vec2) {
+    fun pointerMove(
+        screen: Vec2,
+        through: PlaneProjection? = null,
+    ) {
+        viewPointing = through
         // panning first: it is a button, so it works under every tool — including the ones whose own
         // move handler returns early to show a preview
         if (panning) {
@@ -4089,7 +4129,11 @@ class Editor(
         }
     }
 
-    fun pointerUp(screen: Vec2) {
+    fun pointerUp(
+        screen: Vec2,
+        through: PlaneProjection? = null,
+    ) {
+        viewPointing = through
         val from = marqueeFrom
         marqueeFrom = null
         marqueeTo = null
@@ -5345,7 +5389,7 @@ class Editor(
         world: Vec2,
         ev: Evaluator = ev(),
     ): RayHit? {
-        val ray = pointing?.eyeRay(world) ?: return null
+        val ray = through()?.eyeRay(world) ?: return null
         // the caller's own memo pass where there is one ([pickAt] already holds one): a fresh [Evaluator] here
         // would re-evaluate every solid in the drawing on every press, which is a cost the triangle loop's own
         // argument does not cover

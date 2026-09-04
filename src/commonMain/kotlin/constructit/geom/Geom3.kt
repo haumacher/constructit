@@ -3555,11 +3555,15 @@ object Geom3 {
             // walls, so the area at a height inside the rounding is not the base's area there. Refused by
             // name rather than answered with the base's — a working plane's section (`Section3.sectionOf`)
             // is the exact reading that does work on a dressed part, and it says so.
+            // A **horizontal** cut of a blended body is not one of the base's slabs — the blend rounds the
+            // walls, so the area at a height inside the rounding is not the base's area there. It used to be
+            // refused for that reason and pointed at a working plane; since session 80 it is *answered* by
+            // the very reading that pointer named. Every face of a dressed part is named and every cut of it
+            // is stated, so the structural section at that height already is the outline; what was missing
+            // was the step from curves to a closed area ([Section3.regionsOf]). It refuses by name when the
+            // section does not close, so nothing here is guessed.
             is Feature3.Blend ->
-                return null to
-                    "this solid is a blended body, so its horizontal cross-section is not one of the base's slabs — " +
-                    "the rounding changes the area through the blend; cut it with a working plane instead, " +
-                    "whose section of a dressed part is exact and offers inputs"
+                return Section3.regionsOf(feature, Plane3(Vec3(0.0, 0.0, height), Vec3.X, Vec3.Y))
             // The same sentence for the same reason, one feature over: the area at a height inside the cavity
             // is a **wall ring**, not the base's area there, so answering with the base's slab would be a
             // wrong area rather than a missing one. A working plane's section of a shelled part is exact and

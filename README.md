@@ -416,9 +416,17 @@ edges and corners of a working plane's section of it as construction inputs, non
 could offer. Blends chain: round one edge, fuse a pad on, chamfer another, and it is one part throughout. What
 it declines, it declines by name and heals: a radius that reaches past one of the two faces says so *and names
 the largest that fits*, so the message is a number to type; an edge whose shape changes along it (a turned cap edge over a slanted piece) is named as the
-future extension it is. Two limits are stated rather than hidden: a corner where three or more broken edges
-meet stays sharp, and a blend applied to a body that was **fused** with another one is a mesh body — it draws,
-measures, prints and exports, and its section offers no inputs.
+future extension it is. **Where two roundings meet, so does the ball that made them**: at an ordinary corner
+they cross in a proper mitre, at an **inside** corner the ball pivots round the upright instead of leaving the
+corner's own spike, and where three broken edges meet at a vertex the corner is the ball itself — a round
+corner, not three sharp edges — appended to the face list as a face of its own, which a working plane cuts in
+the exact circle a plane cuts a sphere in. A size the corner cannot host says so and names the largest that
+fits. *Fillet the edges of a face* takes the edges of that face that are **still sharp** — the ones an earlier
+gesture already rounded are named in the note and left alone — so a box is finished by four clicks, one per
+face, and every corner of it comes out round. A rounded body's **cross-section** is an ordinary area too: the
+outline the rounding leaves at that height, bands, balls and all. One limit is stated rather than hidden: a
+blend applied to a body that was **fused** with another one is a mesh body — it draws, measures, prints and
+exports, and its section offers no inputs.
 
 **Hollowing a solid to a wall thickness.** *Shell (open a face)* takes a wall thickness and one click on the
 body **on the face you want left open** — a cup, a box, a housing — and *Hollow (closed shell)* leaves the body

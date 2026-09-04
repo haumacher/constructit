@@ -470,10 +470,13 @@ class Face3DPickTest {
         assertEquals(ed.doc.nameOf(far), again.nameOf(assertNotNull(reloaded.anchor)), "on the same body")
         assertEquals(text, DocumentFormat.save(again), "byte-equal")
 
-        // …and re-resolving *would* have chosen otherwise: the same pixel now answers with the occluder
+        // …and re-resolving *would* have chosen otherwise: the same pixel now answers with the occluder.
+        // Through the viewport, because that is what a click in the 3D view is: since session 80 a
+        // projection the view lends is released the moment another surface delivers a gesture
+        // ([Editor.viewPointing]), and the flat clicks that built the occluder are such gestures.
         ed.setTool(Tools.SKETCH_ON_FACE)
-        ed.pointerDown(screen)
-        ed.pointerUp(screen)
+        vp.pointerDown(screen)
+        vp.pointerUp(screen)
         assertEquals(near, ed.activeSpace.anchor, "a fresh ray meets the near body now: ${ed.statusHint}")
         assertTrue(ed.activeSpace !== space, "which is a different face space altogether")
     }

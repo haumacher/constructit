@@ -118,7 +118,7 @@ class Viewport3(
      */
     private fun syncPointing() {
         val e = editor ?: return
-        e.pointing = projection()
+        e.viewPointing = projection()
     }
 
     private fun ownerNow(button: PointerButton): Owner =
@@ -132,7 +132,7 @@ class Viewport3(
         val owner = ownerNow(button)
         dragOwner = owner
         if (owner == Owner.TOOL) {
-            editor?.pointerDown(screen, button)
+            editor?.pointerDown(screen, button, through = projection())
             return
         }
         lastScreen = screen
@@ -145,7 +145,7 @@ class Viewport3(
         // snap marker following the cursor in this view (`ToolDef.preview`), which is half of what makes
         // drawing here usable at all.
         if (dragOwner == Owner.TOOL || (dragOwner == null && editing())) {
-            editor?.pointerMove(screen)
+            editor?.pointerMove(screen, through = projection())
             return
         }
         val last = lastScreen ?: return
@@ -178,7 +178,7 @@ class Viewport3(
         val owner = dragOwner
         dragOwner = null
         if (owner == Owner.TOOL) {
-            editor?.pointerUp(screen)
+            editor?.pointerUp(screen, through = projection())
             return
         }
         if (lastScreen == null) return
@@ -247,7 +247,7 @@ class Viewport3(
     ) {
         syncPointing()
         val e = editor
-        val on = e != null && e.pointing != null
+        val on = e != null && projection() != null
         Painter3.render(scene, camera, target, widthPx, heightPx) { t ->
             if (on) e!!.draw(t, widthPx, heightPx)
         }
@@ -262,7 +262,7 @@ class Viewport3(
         syncPointing()
         val e = editor ?: return
         target.begin(widthPx, heightPx)
-        if (e.pointing != null) e.draw(target, widthPx, heightPx)
+        if (projection() != null) e.draw(target, widthPx, heightPx)
         target.end()
     }
 

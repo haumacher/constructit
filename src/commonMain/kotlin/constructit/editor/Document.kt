@@ -13529,7 +13529,8 @@ class Document {
         val where = if (activeSpace.isPlan) "the plan" else activeSpace.name
         note =
             "${nameOf(area)} is the cross-section of ${nameOf(el)} at ${lengthWord(height)} — a 2D area " +
-            "drawn in $where, so a prism's lands exactly on its own footprint and nothing looks new. " +
+            "drawn in $where, so a prism's lands exactly on its own footprint and nothing looks new; a " +
+            "rounded one's is the outline the rounding leaves at that height, bands and corners and all. " +
             "Dimension it, or extrude it again."
         return area
     }
@@ -13895,7 +13896,18 @@ class Document {
             el,
             "${nameOf(tipEl)} with a ${kind.word} of ${lengthWord(size)} along ${if (whole) "every edge of " else ""}$where" +
                 (if (baseEl !== tipEl) " of ${nameOf(baseEl)}" else "") +
-                (if (targets.size > 1) " (${targets.size} edges)" else "") +
+                (
+                    if (targets.size > 1 || (whole && Blend3.roundedAlready(body.feature, address) > 0)) {
+                        // …and what it did **not** take, where an earlier rounding got there first: a face
+                        // gesture breaks the edges of that face that are still sharp (session 80), and the
+                        // note says so rather than leaving "(2 edges)" on a four-edged face to be a surprise
+                        val already = if (whole) Blend3.roundedAlready(body.feature, address) else 0
+                        " (${targets.size} edge${if (targets.size == 1) "" else "s"}" +
+                            (if (already > 0) " — $already ${if (already == 1) "was" else "were"} already rounded" else "") + ")"
+                    } else {
+                        ""
+                    }
+                ) +
                 // **which picture named it**, said out loud for the reason *Sketch on face* says it (the
                 // `Face3DPickTest` precedent): the two views answer this question by different evidence, and a
                 // user who got an edge they did not expect must be able to read which one answered.

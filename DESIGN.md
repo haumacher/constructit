@@ -17272,6 +17272,146 @@ naming the mitre crease is a small, separable addition. Related: the reporter's 
 geometrically **right** before this session (its volume matched the corner figure to a part in ten million);
 what was wrong was its mesh.
 
+#### Implementation status (as built — **the two corners where the ball stands still**, session 80; GitHub #31 and #32)
+
+**Session 79's two named cuts came back as the two reports, and they are one case.** The crossing it built is
+what happens while the ball is *rolling*: two bands overlap and the removal splits on the surface equidistant
+from their two edges. Both reports are the case where the ball is **standing still**. At an **inside** corner
+of the shared face the two bands do not overlap at all — each stops on the plane square to its own edge and
+the face's own sharp corner stands between the two ends, which is #31's *"spike"*. At a **convex vertex** three
+bands meet, and a ring is shared by two tubes and no more, so only two of them could claim each other and the
+third butted: #32's *"this produces sharp edges, not a round surface … shouldn't the filleted extrusion edge
+also fillet the fillets of the top-face edges?"*.
+
+**The inside corner is the ball's pivot, and it is a revolution.** Having reached the end of its own edge the
+ball turns about the upright, its centre on a circle of radius `r` while it stays tangent to the shared face.
+So the corner is the band's **own section carried round that axis** through the corner's exterior angle
+(`Blend3.Turn`, `turnOf`): at zero turn the map is the identity, so the first ring *is* the first band's own
+end section, and at the full turn it must be the second band's — the very congruence a crossing asks for, put
+to the same `ringsAgree`. The surface it adds is the horn torus the pivot sweeps (tube and centre circle both
+`r`, so its hole closes to the point where the ball touches the upright) and a cone for a bevel; both are the
+section revolved, which is why `Revolve3` names and cuts them with no new table. Pappus gives what it takes
+exactly: `φ · ∫δ(h)²/2 dh`, i.e. `φ·r³(5/6 − π/4)` and `φ·c³/6`, and it *adds* to the removal because the two
+bands never overlapped there. Session 79's `buttEnds` micron of daylight is no longer needed at such a corner —
+the patch closes the tool — and it stays for the corners that still butt.
+
+**The convex vertex is the ball itself.** It sits touching all three faces at once, and each band's section
+circle at the station through its centre **is a great circle of it** — a cylinder whose axis passes through a
+sphere's centre meets that sphere exactly in the plane through the centre square to the axis. So the three
+bands end there and the spherical triangle between the three end arcs closes the tool (`Blend3.Vertex`,
+`vertexOf`, `spherePatch`). The stations are **solved, not assumed**: each pair of bands shares a face, on which
+their two tangency lines must cross at one point — the ball's own tangency there — and the three answers
+agreeing *is* the statement that a ball of this size sits in this corner. For a fillet they always agree (every
+tangency is the ball's foot, and a face's normal is square to the edges in it); for a **chamfer** they agree
+when the three faces turn through the same angle at the vertex — a box corner, and every prism whose plan turns
+a right angle — and where they do not, the trio is left as it was.
+
+**It takes more than three bands do, and that is the whole of #32.** Three cylinders keep the intersection of
+three cylinders, which has a **point** sticking out toward the vertex that no ball of radius `r` can touch: on
+a box corner at `(1−1/√2)r` along the diagonal, `1.22 r` from the ball's centre, and that point is the
+reporter's sharp corner. The figures are closed form. In the corner cell `[0,r]³` the ball keeps its own
+octant, so the three bands' own sum loses
+
+```
+3(1−π/4)r³ − (1−π/6)r³ = (2 − 7π/12) r³
+```
+
+there; a **bevel** keeps a quarter of the cell (the three half-spaces `x+y ≥ c` and its two mates), so its sum
+loses `(3/2 − 3/4)c³ = (3/4)c³`. The bevel is asserted **exactly** (`1e-5` relative — the general engine's own
+float32 noise) and the round two-sided, never below the exact figure and never above it by more than the
+chords. The surface itself is asserted where the two constructions really part company: every direction inside
+the patch, walked out from the ball's centre, meets the body at the ball's radius (`Geom3.encloses` bisected),
+which the three-cylinder point did not.
+
+**A chamfer's vertex takes nothing extra**, and that is a correction to the ruling. It asked for *"the planar
+facet through the three setback points"*; there is no such facet. The three bevel planes already meet in a
+point of their own — on a box corner at `(c/2, c/2, c/2)`, and cutting with the plane through the three
+setback points would leave a large wedge of material behind. So the bevelled patch is the **three bevel
+triangles running to that apex**, each lying exactly in its own band's plane, which is why it adds no new face
+either: those triangles are the bands' own surfaces continued.
+
+**One over-strict check had to go, and it was a session-71 cut coming due.** A dressed face's boundary steps
+inward wherever a *neighbouring* edge is rounded, while the edge itself keeps its full carrier ("the
+neighbours' ends"). `Blend3.tangenciesFit` sampled the far stations of an edge against the *corrected* face and
+refused a rounding that fits perfectly well — which is why three edges of one corner, taken one gesture at a
+time, could not be had at all. A station now has to still **be** a crease of that face to be asked about it
+(the edge point itself on the face), which changes nothing where nothing was trimmed and is what makes the
+vertex reachable by three ordinary gestures. With it, the three edges of a box corner come out **bit-identical
+in all six orders**.
+
+**Named, sectioned and pickable** (`FaceName.BlendCorner`). The ball and the pivot are surfaces of their own,
+so they are faces of their own — appended **after** the bands, named by the set of blended edges that meet
+there (indices into the base's own edge list, which every dressed list preserves, so one set of numbers names
+the corner at whatever depth of chain it was found). `Section3.faceAt` names them, the 3D face pick lands on
+them, and a working plane cuts them exactly: a pivot is a revolution and gets `Revolve3`'s whole table, and a
+**ball is cut in a circle by every plane** — clipped to its own spherical triangle by the three great circles
+that bound it, which are three half-spaces through the centre and therefore an angular interval on that circle
+(`Blend3.cornerCut`, `ballCut`). Nothing is sampled. They carry a reason rather than a plane, as a band does:
+there is nothing to sketch on a ball, and the message says to put a datum plane where you want to sketch.
+
+**Nothing recorded changed.** `signs=` addresses stay edge indices, both reporters' files replay and save back
+byte-equal, and the corner faces are appended last so no other face's index moved. The **deliberate change**:
+those two files, and every file with an inside corner or a three-band vertex in it, now build the patched
+body — which is the fix.
+
+**Cuts, each whole, each named and none silent.** (1) **A concave vertex** — three bands meeting at an inside
+trihedral corner — is not built: the patch is the ball's octant *added* rather than taken, and the sign of the
+fill is the one thing the construction guesses rather than derives, so it is left as it was rather than
+guessed. (2) **A chamfer vertex whose three faces turn through different angles** has no single station where
+its three bands' setback points agree, so it is left as it was; the round has no such condition. (3) **Four or
+more bands at one vertex** — a ring is shared by two tubes, and the ball's patch is bounded by three arcs;
+that stays a future extension. (4) **A corner where the two edges are not both straight** is still left to the
+boolean (session 79's cut, unchanged): the equidistant surface is then a curved medial one. (5) **The band's
+own face outline is still the full sweep**, so a working plane's section through a corner still draws the
+bands crossing where the solid has a crease or a patch — the *surfaces* are each exact and now each named, and
+only their own boundaries are unstated, which is the same honesty class as slice 3's curved-face trim. (6)
+**The mitre crease still has no named edge**; `dressedEdges` lists base edges and rails, and naming the crease
+(and now the patch's three rails) remains the small separable addition session 79 named.
+
+**What the probe found, and the four things it took (session 80, second pass).** The orchestrator's probe
+rounds **all twelve** edges of a box by four *Fillet the edges of a face* gestures — and it could not be done
+at all. Each gap was general and each is fixed generally.
+
+1. **A face gesture took the face's whole boundary and refused the moment one piece of it was already round**
+   — *"boundary edge #4 of the bottom face was rounded away by the fillet of 4 mm"* — so after rounding a
+   box's top and bottom, neither side face could be rounded, and the only route to a three-band vertex was one
+   upright at a time. That is exactly the detour GitHub #32's reporter took. The gesture now takes the edges of
+   that face that are **still creases** (`Blend3.targets`): an edge an earlier rounding consumed is not one
+   (it keeps its index and says so), and neither is a **rail of a round**, where a band hands over to the face
+   it is tangent to — structural, from the kind recorded in the feature, so a *chamfer*'s rails stay the sharp
+   edges they are. The already-round ones are the *existing* bands the chain stitches into the same tool, so
+   the vertex comes out the same whichever gesture arrives last. The note says what it skipped —
+   *"(2 edges — 2 were already rounded)"* — and where **nothing** is left the refusal names the cure.
+2. **A projection the 3D view lent was never taken back.** `Viewport3` parked its `PlanePerspective` on the
+   editor at the top of every one of its entries, and only a view switch (`shown = false`) ever cleared it — so
+   a gesture delivered by the flat canvas afterwards was still measured through the 3D camera, and its pick,
+   snap and tolerance all landed wherever that view happened to project them. It is now two fields with two
+   meanings: `Editor.pointing` is a projection **set** on the editor (the headless idiom this suite drives 3D
+   gestures with, unchanged), and `Editor.viewPointing` is one a view **lends**, released by the next gesture
+   another surface delivers — every pointer entry takes the projection its own surface measures in.
+3. **A band or a corner made by an earlier gesture was not cut by the tip's section.** A chain of blends is a
+   chain of face lists, each keeping its base's and appending its own, and the cut asked only the level it was
+   called on — so a section through a plate whose rim was rounded two gestures ago drew that band's *refusal*
+   instead of the band. A band is now read at the **tip** (`Blend3.bandOf` over `piecesOf`), which is also what
+   makes the next item possible.
+4. **A band's cut now knows its own extent, and the cut a rounded plate is actually asked for is exact.** A
+   band stops at the corners at its ends, and a corner can be made by a *later* gesture than the band — round a
+   rim, then round an upright, and the rim's band now stops at the ball. `Blend3.spanOf` states that extent and
+   every ruling runs only that far, which retires the *"the band's own face outline is still the full sweep"*
+   cut for a section. And the one cut the rulings could never answer — a plane **parallel** to them, which is
+   what sectioning a rounded box half-way up its top band is — is stated exactly instead
+   (`Blend3.parallelBandCut`): the surface is a cylinder about the band's spine, and a plane parallel to that
+   axis cuts a cylinder in a pair of rulings, which is what [Revolve3]'s own table says of it.
+
+**With those four, a dressed part's horizontal cross-section is answered rather than refused.** The old
+refusal — *"this solid is a blended body, so its horizontal cross-section is not one of the base's slabs …
+cut it with a working plane instead, whose section of a dressed part is exact and offers inputs"* — was right
+that it is not a slab and right about where the answer lives; what was missing was only the step from curves
+to a closed area. `Section3.regionsOf` chains the structural section's own pieces into loops and hands back
+what they enclose, refusing by name when they do not close. On the fully rounded box the section at half the
+top band's height comes back as **eight exact pieces** — four band rulings and four ball arcs — meeting end to
+end to the last bits: the rounded rectangle the balls say, with no chord anywhere in it.
+
 **Delivered in session 71 (queued behind the blends, user-directed): expressions — the binding generalized
 to a function, and the curve a function defines.** Postponed since the early sessions until ordinary
 constructions were solid, and arriving now as the user's design, adopted whole. Two consumers of **one
@@ -18577,3 +18717,14 @@ that meet it (two bands and the cap at a concave corner, three bands at a convex
 the planar facet through the three setback points. This is the rolling-ball patch entry 1's ruling asked for,
 at the corners where it exists; a new face kind, named, sectioned and pickable like every other; exact for the
 chamfer, bracketed by chords for the fillet; watertight or refused, addresses unchanged.
+
+**Retired in session 80: the vertex blends (#31, #32).** Delivered as queued, with two corrections argued on the
+geometry and recorded in the as-built note: a chamfer takes nothing extra at a vertex (its three bevel planes
+already meet in a point, so the "facet through the three setback points" would have left a wedge), and the inside
+corner is not a sphere patch but the **horn torus** the ball's pivot about the upright sweeps. The probe review
+(a box rounded on all twelve edges by four face gestures) retired one more limit in the same delivery — a face
+gesture now takes the edges that are still creases and stitches the already-rounded ones as existing bands — and
+on the way found and fixed a user-visible defect nobody had reported: the 3D view lent its projection to the editor
+and never took it back, so a flat-canvas gesture after a 3D one was measured through the camera. Horizontal
+sections through a dressed part are answered exactly now rather than refused. **Entry 3 (custom blend profiles,
+#30) is the numbered queue's one open entry**; the parked twisted-facet warp stands beside it.

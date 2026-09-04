@@ -67,6 +67,32 @@ sealed interface FaceName {
     }
 
     /**
+     * The **corner patch** where a blend's own bands meet — the one place the rolling ball stands still
+     * (session 80): the ball's spherical triangle at a convex vertex, and the surface its pivot sweeps at an
+     * inside corner (a horn torus for a round, a cone for a bevel).
+     *
+     * [edges] are the blended edges that meet there, as indices into the base's own [Section3.edges] order —
+     * which every dressed list preserves ([Feature3.Blend]), so one set of numbers names the corner whatever
+     * depth of chain it was found at. Sorted, so the name is a function of the corner and not of the order
+     * the bands were built in.
+     *
+     * These faces are appended **after** the bands, and that is deliberate: how many corners a blend has is
+     * a fact about which of its edges share a vertex, so it can change when the drawing's shape does, and
+     * putting them last keeps every other face's index exactly where it was (OP-17). What moves with them is
+     * an address that points *at* a corner, which is the same exposure a band whose surface cannot be stated
+     * already carries.
+     */
+    data class BlendCorner(val edges: List<Int>) : FaceName {
+        override val label: String
+            get() =
+                "the rounded corner where " +
+                    edges.joinToString(", ") { "edge #${it + 1}" }.let {
+                        val at = it.lastIndexOf(", ")
+                        if (at < 0) it else it.substring(0, at) + " and " + it.substring(at + 2)
+                    } + " meet"
+    }
+
+    /**
      * The **inner twin** of one face of a shelled body (session 75): the cavity's own face standing behind
      * face [face] of the base, at the wall's thickness.
      *
@@ -1589,6 +1615,78 @@ object Section3 {
         return List(pieces.size) { pieces[(best + it) % pieces.size] }
     }
 
+    /**
+     * The **regions** [plane] cuts [feature] into, in that plane's own `(u, v)` — the section read as area
+     * rather than as curves, for the bodies whose faces are all named.
+     *
+     * *Why it exists* (session 80). A **dressed** part has no prismatic cross-section: the rounding changes
+     * the area through the blend, so no slab of the base answers for it, and `Geom3.sectionAt` refused by
+     * name and pointed at a working plane instead. But the structural section already *is* the answer —
+     * every face of a dressed part is named and every cut of it is stated — so what was missing was only the
+     * step from curves to a closed area. The pieces come back in one plane and meet end to end by
+     * construction, so this chains them and hands back what they enclose; where they do not close, that is
+     * said rather than papered over (OP-3), and the caller keeps its own refusal.
+     *
+     * The class is the section's own (OP-15): where every piece of it is exact the area is exact, and where
+     * a face is cut in chords the area is those chords'.
+     */
+    fun regionsOf(
+        feature: Feature3,
+        plane: Plane3,
+    ): Pair<List<Region>?, String?> {
+        val fs = faces(feature).first ?: return null to structuralRefusal(feature)
+        if (!facesAreWholeBoundary(feature)) return null to (structuralRefusal(feature) ?: MESH_ONLY)
+        val section = structuralSection(feature, fs, plane)
+        if (section.isEmpty) return null to "the plane does not cut this solid"
+        val loops =
+            chainLoops(section.drawn) ?: return null to
+                "the plane's section of this solid does not close into an area — one of the faces it crosses is " +
+                "cut in a way this drawing states only as curves; read the section on a working plane instead"
+        return nest(loops) to null
+    }
+
+    /** [pieces] chained end to end into closed loops, or null when one of them does not close. */
+    private fun chainLoops(pieces: List<ProfileElement>): List<Loop>? {
+        val left = pieces.filter { (GeomMath.endOf(it) - GeomMath.startOf(it)).length() > Geom3.WELD_TOL }.toMutableList()
+        val out = ArrayList<Loop>()
+        while (left.isNotEmpty()) {
+            val run = arrayListOf(left.removeAt(0))
+            while ((GeomMath.startOf(run.first()) - GeomMath.endOf(run.last())).length() > CHAIN_TOL) {
+                val end = GeomMath.endOf(run.last())
+                val at =
+                    left.indexOfFirst {
+                        (GeomMath.startOf(it) - end).length() <= CHAIN_TOL || (GeomMath.endOf(it) - end).length() <= CHAIN_TOL
+                    }
+                if (at < 0) return null
+                val piece = left.removeAt(at)
+                run.add(if ((GeomMath.startOf(piece) - end).length() <= CHAIN_TOL) piece else GeomMath.reverse(piece))
+            }
+            if (run.size < 2) return null
+            out.add(Loop(run))
+        }
+        return out.ifEmpty { null }
+    }
+
+    /** The loops sorted into areas: the ones no other contains are outers, the rest are their holes. */
+    private fun nest(loops: List<Loop>): List<Region> {
+        val rings = loops.map { Geom3.tessellateLoop(it) }
+        val inside = loops.indices.map { i -> loops.indices.filter { j -> j != i && RegionBool.contains(listOf(rings[j]), rings[i].first()) } }
+        val out = ArrayList<Region>()
+        for (i in loops.indices) {
+            if (inside[i].isNotEmpty()) continue
+            out.add(Region(loops[i], loops.indices.filter { j -> inside[j] == listOf(i) }.map { loops[it] }))
+        }
+        return out
+    }
+
+    /** How far apart two of a section's own pieces may be (mm) and still be one boundary. */
+    private const val CHAIN_TOL = 1e-6
+
+    /** Why a face the plane crosses more than once names no single input — the section still draws both. */
+    private const val CUT_TWICE =
+        "the plane cuts that face into separate pieces, and one input is one curve — move the plane to where " +
+            "that face is crossed once"
+
     /** The general case: cut every named face, cross every named edge. */
     private fun structuralSection(
         feature: Feature3,
@@ -1670,10 +1768,35 @@ object Section3 {
         // own, and it is cut the way the blend was built: one section at a time along the edge.
         if (feature is Feature3.Blend) {
             val n = patch.name
+            // **A band or a corner belongs to the level that made it**, and a chain of blends is a chain of
+            // face lists: each keeps its base's and appends its own. So a face this level did not append is
+            // asked of the level that did, exactly as a face the blend only *trimmed* is asked of the base —
+            // one recursion, no special case, and a section through a plate whose rim was rounded two
+            // gestures ago draws that rim's band rather than its refusal.
+            if (n is FaceName.BlendCorner) {
+                if (n.edges.none { it in feature.targets }) return cutFace(feature.base, patch, cut)
+                // a **corner** patch is the one place the rolling ball stands still (session 80): a pivot is
+                // a surface of revolution and gets [Revolve3]'s table, and a ball is cut in a circle by every
+                // plane — that circle clipped to its own spherical triangle
+                Blend3.cornerCut(feature, n, cut)?.let { return bandCutToEdge(label, it) }
+                return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
+            }
             if (n !is FaceName.BlendBand) return cutFace(feature.base, patch, cut)
             // a band about a circular edge is a surface of revolution and gets [Revolve3]'s whole table;
-            // a band along a straight one is a swept strip and gets the rulings, exact at every one of them
+            // a band along a straight one is a swept strip and gets the rulings, exact at every one of them —
+            // except where the plane runs **parallel** to those rulings, which no ruling crosses and which
+            // the band states exactly instead (`Blend3.parallelBandCut`, the cut a sectioned rounded plate
+            // is actually asked for)
             Blend3.bandCut(feature, n.edge, cut)?.let { return bandCutToEdge(label, it) }
+            Blend3.parallelBandCut(feature, n.edge, cut)?.let { pieces ->
+                // the extras are what *no index names*, so a single piece is the edge's own curve and
+                // nothing besides — [bandCutToEdge]'s convention, kept
+                return if (pieces.size == 1) {
+                    SectionEdge(label, pieces[0], null, null) to emptyList()
+                } else {
+                    SectionEdge(label, null, null, CUT_TWICE) to pieces.map { DrawnPiece(it, false) }
+                }
+            }
             val strip = Blend3.bandStrip(feature, n.edge)
             if (strip != null) return cutRuledStrip(label, strip, cut)
             return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
@@ -2118,6 +2241,7 @@ object Section3 {
      * cylinder no longer arrives here at all: it is answered exactly, one level up (see
      * [inclinedCylinderCut]), which is the change first-class conics bought.
      */
+
     private fun cutRuledStrip(
         label: String,
         strip: RuledStrip,

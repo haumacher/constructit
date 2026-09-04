@@ -2,10 +2,13 @@ package constructit.geom
 
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.acos
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Which blend a corner gets — the 2D pair, one dimension up.
@@ -161,7 +164,55 @@ object Blend3 {
         val face = faces[address].name
         val hits = edges.indices.filter { edges[it].between.has(face) }
         if (hits.isEmpty()) return null to "${face.label} has no edges to blend"
-        return hits to null
+        // **A face gesture takes the edges of that face that are still creases** (session 80). Two kinds are
+        // not: one an earlier rounding already took (it keeps its index and its carrier and says so —
+        // [SolidEdge.reason]), and a **rail of a round**, where a band hands over to the face it is tangent
+        // to and there is no crease at all. Without this a box could not be finished by faces: rounding its
+        // top and bottom leaves every side face carrying two consumed edges and two rails, and the gesture
+        // refused in the consumed edge's own words rather than rounding the two uprights that are still
+        // sharp — which is exactly the detour GitHub #32's reporter had to take.
+        val live = hits.filter { edges[it].reason == null && !smoothRail(feature, it) }
+        if (live.isEmpty()) {
+            return null to
+                "every edge of ${face.label} has already been rounded, so there is nothing left there to " +
+                "break — pick a face that still has a sharp edge on it, or change the size on the rounding " +
+                "that took them"
+        }
+        return live to null
+    }
+
+    /**
+     * Whether edge [index] is a **rail of a round** — where a band meets the face it is tangent to.
+     *
+     * Structural, never measured: a fillet's arc is tangent to both its legs *by construction*, so every rail
+     * a [BlendKind.FILLET] appends is a smooth hand-over and no crease. A **chamfer**'s bevel meets its faces
+     * at an angle, so its rails are ordinary sharp edges and a later gesture may break them. Which level a
+     * rail was appended at is read by walking the chain — every dressed list keeps its base's indices and
+     * appends its own after them ([dressedEdges]) — so the answer is a fact about the feature and not about
+     * the geometry (OP-21).
+     */
+    private fun smoothRail(
+        feature: Feature3,
+        index: Int,
+    ): Boolean {
+        if (feature !is Feature3.Blend) return false
+        val below = Section3.edges(feature.base).first ?: return false
+        if (index < below.size) return smoothRail(feature.base, index)
+        return feature.kind == BlendKind.FILLET
+    }
+
+    /**
+     * How many of the face's own edges an earlier rounding already took — what a face gesture's note says so
+     * that *"(2 edges)"* on a four-edged face reads as the statement it is rather than as a surprise.
+     */
+    fun roundedAlready(
+        feature: Feature3,
+        address: Int,
+    ): Int {
+        val edges = Section3.edges(feature).first ?: return 0
+        val faces = Section3.faces(feature).first ?: return 0
+        val face = faces.getOrNull(address)?.name ?: return 0
+        return edges.indices.count { edges[it].between.has(face) && edges[it].reason != null }
     }
 
     /**
@@ -648,6 +699,14 @@ object Blend3 {
                 val plane = face.plane ?: continue
                 val rings = Project3.ringsOf(face.outline)
                 if (rings.isEmpty()) continue
+                // **the station has to still be a crease of this face to be asked about** (session 80). A
+                // dressed face's boundary steps inward wherever a *neighbouring* edge was rounded, so on a
+                // second blend the far stations of this edge can stand in the strip that blend already took
+                // — the edge keeps its full carrier ("the neighbours' ends", session 71's own cut) while the
+                // face no longer reaches it. Asking whether the tangency lies on the face *there* is asking
+                // about a crease that is gone, and its answer refused a rounding that fits perfectly well:
+                // three edges of one corner, taken one gesture at a time, could not be had (GitHub #32).
+                if (!onFace(rings, plane.toLocal(st.at))) continue
                 val world = st.at + crease.e1 * t.x + st.e2 * t.y
                 if (!onFace(rings, plane.toLocal(world))) return false
             }
@@ -732,13 +791,14 @@ object Blend3 {
         val crease: Crease,
         val wedge: Wedge,
         val choice: BlendChoice,
+        val kind: BlendKind,
         /** The wedge's boundary, counter-clockwise in the section frame, starting at the section's corner. */
         val section: List<Vec2>,
         /** The same boundary grown out through both faces, point for point — see [sectionPolygons]. */
         val grown: List<Vec2>,
         /** The same polygon triangulated once — the tool's cap at every free end. */
         val caps: List<Geom3.Tri3>,
-        /** The edge as one straight run, or null: only a straight edge can carry a mitre (see [jointsOf]). */
+        /** The edge as one straight run, or null: only a straight edge can carry a corner (see [cornersOf]). */
         val seg: Curve3Element.Seg3?,
     ) {
         /** How long the run is — asked only where [seg] is there. */
@@ -760,7 +820,21 @@ object Blend3 {
         val bAtStart: Boolean,
         val placeB: Placement,
         val shared: FacePatch,
-    )
+    ) : Corner {
+        override val ends: List<Pair<Int, Boolean>> get() = listOf(a to aAtStart, b to bAtStart)
+
+        override fun ringAt(end: Pair<Int, Boolean>): Placement = if (end.first == a && end.second == aAtStart) placeA else placeB
+
+        /** Nothing: the two tubes end on the same ring, so the surface is already closed there. */
+        override fun emit(
+            pieces: List<Piece>,
+            out: Geom3.MeshBuilder,
+        ) = Unit
+
+        override fun label(pieces: List<Piece>): String =
+            "the corner where ${pieces[a].crease.edge.name.label} meets ${pieces[b].crease.edge.name.label} " +
+                "on ${shared.name.label}"
+    }
 
     /**
      * The two section polygons the **stitched** tool is swept between: the wedge's own boundary, and the
@@ -854,6 +928,7 @@ object Blend3 {
         crease: Crease,
         wedge: Wedge,
         choice: BlendChoice,
+        kind: BlendKind,
     ): Pair<Piece?, String?> {
         val (polys, whyPoly) = sectionPolygons(crease, wedge)
         if (polys == null) return null to "${crease.edge.name.label}: $whyPoly"
@@ -864,7 +939,7 @@ object Blend3 {
         if (caps == null) {
             return null to "${crease.edge.name.label}: ${whyCaps ?: "the rounding's section cannot be triangulated"}"
         }
-        return Piece(index, existing, crease, wedge, choice, plain, grown, caps, soleElement(crease) as? Curve3Element.Seg3) to null
+        return Piece(index, existing, crease, wedge, choice, kind, plain, grown, caps, soleElement(crease) as? Curve3Element.Seg3) to null
     }
 
     /**
@@ -895,12 +970,549 @@ object Blend3 {
                     val crease = creaseOf(below, edge).first ?: continue
                     val choice = f.choices.getOrNull(k) ?: continue
                     val wedge = wedgeOf(crease, f.size, f.kind, choice).first ?: continue
-                    out.add(pieceOf(i, true, crease, wedge, choice).first ?: continue)
+                    out.add(pieceOf(i, true, crease, wedge, choice, f.kind).first ?: continue)
                 }
             }
             f = below
         }
         return out
+    }
+
+    // ---- where the ball stands still: the two corner patches (session 80, GitHub #31 and #32) ----
+
+    /**
+     * What closes one end of a band in the stitched tool, and the surface it puts between the ends.
+     *
+     * Three kinds, and they are three *geometries* rather than three special cases. Where two bands cross
+     * they are split on the plane equidistant from their edges and there is nothing to fill ([Joint],
+     * session 79). Where the ball **stands still** the corner is the ball's own surface, and there are
+     * exactly two such places: it pivots about a concave upright, sweeping the band's section round it
+     * ([Turn], GitHub #31), or it sits in a convex vertex touching all three faces at once, and the corner
+     * is the patch its surface makes between the three band ends ([Vertex], GitHub #32).
+     */
+    private sealed interface Corner {
+        /** Which band ends this corner closes — `(piece, atStart)`. */
+        val ends: List<Pair<Int, Boolean>>
+
+        /** The ring that end stands on. */
+        fun ringAt(end: Pair<Int, Boolean>): Placement
+
+        /** The surface between the ends — nothing for a crossing, the patch for the other two. */
+        fun emit(
+            pieces: List<Piece>,
+            out: Geom3.MeshBuilder,
+        )
+
+        /** What a refusal calls this corner. */
+        fun label(pieces: List<Piece>): String
+
+        /**
+         * The **face** this corner adds to the dressed list, or null where it adds none.
+         *
+         * A crossing adds nothing: the two bands are trimmed against each other and every triangle still
+         * belongs to one of them. A bevelled vertex adds nothing either, for the same reason one level up —
+         * its three triangles lie exactly in the three bevel planes the bands already are. What *is* a new
+         * surface is the ball: the spherical triangle at a convex vertex, and the horn torus (or cone) a
+         * pivot sweeps at an inside corner.
+         */
+        fun face(
+            pieces: List<Piece>,
+            name: FaceName,
+        ): FacePatch? = null
+    }
+
+    /**
+     * A **concave corner**: the ball pivots about the upright and the band's own section turns with it
+     * (GitHub #31).
+     *
+     * *Why a turn and not a plane.* At a **convex** corner the two bands overlap and the removal splits on
+     * the surface equidistant from the two edges. At a **concave** one they do not overlap at all: each
+     * stops on the plane square to its own edge and the shared face's sharp corner stands between the two
+     * ends — the reporter's *"spike"*. What belongs there is what the rolling ball does: having reached the
+     * end of its own edge it **pivots about the upright**, its centre turning on a circle of radius `r`
+     * about that line while it stays tangent to the shared face. So the corner is the band's own section
+     * carried round that axis through the corner's exterior angle, and at the two ends of the turn it *is*
+     * the two bands' own end sections — which is why nothing has to be matched: the first ring is one band's
+     * end and the last is the other's.
+     *
+     * The surface it adds is the horn torus the pivoting ball sweeps (a torus whose tube and centre circle
+     * are both `r`, so its hole closes to the point where the ball touches the upright), and for a chamfer
+     * the cone the bevel sweeps. Both are exact statements of the section revolved, and the volume it takes
+     * is Pappus' to the last digit: `φ · ∫ δ(h)²/2 dh`, which is `φ·r³(5/6 − π/4)` for a round and
+     * `φ·c³/6` for a bevel.
+     */
+    private class Turn(
+        val a: Int,
+        val aAtStart: Boolean,
+        val placeA: Placement,
+        val b: Int,
+        val bAtStart: Boolean,
+        val placeB: Placement,
+        val shared: FacePatch,
+        /** The rings from [a]'s own end round to [b]'s, [a]'s section placed at each; the first is [placeA]. */
+        val rings: List<Placement>,
+        val at: Vec3,
+        /** The in-face direction [a]'s wedge reaches along, which is the frame's own `θ = 0`. */
+        val ea: Vec3,
+        /** How far the pivot turns, signed about the shared face's normal. */
+        val total: Double,
+    ) : Corner {
+        override val ends: List<Pair<Int, Boolean>> get() = listOf(a to aAtStart, b to bAtStart)
+
+        override fun ringAt(end: Pair<Int, Boolean>): Placement = if (end.first == a && end.second == aAtStart) placeA else placeB
+
+        override fun emit(
+            pieces: List<Piece>,
+            out: Geom3.MeshBuilder,
+        ) {
+            val section = pieces[a].grown
+            for (l in 0 until rings.size - 1) {
+                val lo = section.map { rings[l].at(it) }
+                val hi = section.map { rings[l + 1].at(it) }
+                for (m in section.indices) {
+                    val n = (m + 1) % section.size
+                    // the turn continues [a]'s own tube, so the two rings take the same roles its two did
+                    if (aAtStart) {
+                        out.triangle(hi[m], hi[n], lo[n])
+                        out.triangle(hi[m], lo[n], lo[m])
+                    } else {
+                        out.triangle(lo[m], lo[n], hi[n])
+                        out.triangle(lo[m], hi[n], hi[m])
+                    }
+                }
+            }
+        }
+
+        override fun label(pieces: List<Piece>): String =
+            "the inside corner where ${pieces[a].crease.edge.name.label} meets ${pieces[b].crease.edge.name.label} " +
+                "on ${shared.name.label}"
+
+        /**
+         * The pivot's own surface, as the **revolution it is**: the band's section turned about the axis
+         * square to the shared face, which [Revolve3] then names — a torus where the section is an arc, a
+         * cone where it is a bevel — and cuts by its own table, meridian column included.
+         */
+        override fun face(
+            pieces: List<Piece>,
+            name: FaceName,
+        ): FacePatch? {
+            val (frame, sr) = frameOf(pieces) ?: return null
+            return inCornersWords(Revolve3.bandPatch(frame, sr, name), name)
+        }
+
+        /** The pivot as an axis frame and a profile in its own `(s, r)` — all [Revolve3] ever needs. */
+        fun frameOf(pieces: List<Piece>): Pair<Revolve3.Frame, ProfileElement>? {
+            val piece = pieces[a]
+            val n = shared.plane?.normal?.normalized() ?: return null
+            val axis = n * -1.0
+            val frame =
+                Revolve3.Frame(
+                    Vec2(1.0, 0.0),
+                    Vec2(0.0, 1.0),
+                    Vec2(0.0, 0.0),
+                    at,
+                    axis,
+                    ea,
+                    axis.cross(ea),
+                    min(0.0, -total),
+                    max(0.0, -total),
+                    false,
+                )
+            val e1 = piece.crease.e1
+            val e2 = piece.crease.ref.e2
+            // the section's own `(x, y)` read as the frame's `(s, r)`: down the axis, out along the radius
+            val map = Affine(e1.dot(axis), e1.dot(ea), e2.dot(axis), e2.dot(ea), 0.0, 0.0)
+            val (mid, _) = midOf(piece.wedge.piece) ?: return null
+            val outward = bandOutward(piece.wedge, piece.choice, mid) ?: return null
+            return frame to materialLeft(GeomMath.transform(piece.wedge.piece, map), map.linear(outward).normalized())
+        }
+    }
+
+    /**
+     * A **convex vertex**: three bands meet, the ball touches all three faces at once, and the corner is the
+     * patch its own surface makes between the three band ends (GitHub #32).
+     *
+     * *Why the ball reaches further than the three bands do.* Each band keeps the material inside its own
+     * cylinder, so three of them keep the intersection of three cylinders — and that intersection has a
+     * **point** sticking out toward the vertex which no ball of radius `r` can touch. On a box corner it
+     * stands at `(1−1/√2)r` from the vertex along the diagonal, and it is exactly the *"sharp edges, not a
+     * round surface"* the reporter saw. The ball's own surface cuts it off: the three bands end on the
+     * plane square to each edge through the ball's centre — where each band's own section circle **is** a
+     * great circle of that ball — and the spherical triangle between the three end arcs closes the tool.
+     *
+     * A **chamfer**'s three bevel planes already meet in a point of their own, so there is nothing extra to
+     * take: its patch is the three bevel triangles running to that apex, which is where the three planes
+     * cross. Both patches are stated the same way — three quads on the three faces, and a fill bounded by
+     * the three band ends — and both are exact.
+     */
+    private class Vertex(
+        val members: List<Triple<Int, Boolean, Placement>>,
+        val patch: List<Triple<Vec3, Vec3, Vec3>>,
+        val at: Vec3,
+        val faces: List<FacePatch>,
+        /** Where the ball sits and how big it is, for a round — null for a bevel, whose patch is three planes. */
+        val ball: Pair<Vec3, Double>?,
+    ) : Corner {
+        override val ends: List<Pair<Int, Boolean>> get() = members.map { it.first to it.second }
+
+        override fun ringAt(end: Pair<Int, Boolean>): Placement =
+            members.first { it.first == end.first && it.second == end.second }.third
+
+        override fun emit(
+            pieces: List<Piece>,
+            out: Geom3.MeshBuilder,
+        ) {
+            for ((x, y, z) in patch) out.triangle(x, y, z)
+        }
+
+        override fun label(pieces: List<Piece>): String =
+            "the vertex where ${members.joinToString(", ") { pieces[it.first].crease.edge.name.label }} meet"
+
+        /**
+         * The ball's own surface, stated as the sphere it is. A **bevelled** vertex states none: its three
+         * triangles lie exactly in the three bevel planes, which are the bands' own faces, so there is no
+         * new surface there to name.
+         */
+        override fun face(
+            pieces: List<Piece>,
+            name: FaceName,
+        ): FacePatch? {
+            val (centre, radius) = ball ?: return null
+            // a sphere reads the same from every axis, so the frame takes the one the corner itself names —
+            // from the vertex toward the ball — which makes the surface a function of the corner alone
+            val axis = (centre - at).let { if (it.length() <= Geom3.WELD_TOL) return null else it.normalized() }
+            val ref = Frames3.startReference(axis, Vec3(0.0, 0.0, 1.0))
+            val frame =
+                Revolve3.Frame(Vec2(1.0, 0.0), Vec2(0.0, 1.0), Vec2(0.0, 0.0), centre, axis, ref, axis.cross(ref), 0.0, 2.0 * PI, true)
+            return inCornersWords(
+                FacePatch(name, null, emptyList(), null, frame.surfaceOf(Revolve3.Band.Sphere(0.0, radius))),
+                name,
+            )
+        }
+    }
+
+    /**
+     * A corner patch's refusal **in the rounding's own words** — the same rule a band's is restated under
+     * (session 65): the surface is the rounding's, nobody drew it, so it is not spoken of as a profile edge.
+     */
+    private fun inCornersWords(
+        patch: FacePatch,
+        name: FaceName,
+    ): FacePatch =
+        patch.copy(
+            name = name,
+            reason =
+                "${name.label} is ${patch.surface?.band?.label ?: "a surface this drawing has no name for"} and not " +
+                    "a plane — it is where the rounding's own ball stands, so there is nothing to sketch on there; " +
+                    "put a datum plane where you want to sketch",
+        )
+
+    /** Where the three planes `n·x = d` cross, or null when they have no single crossing. */
+    private fun meetOfPlanes(planes: List<Pair<Vec3, Double>>): Vec3? {
+        val (n1, d1) = planes[0]
+        val (n2, d2) = planes[1]
+        val (n3, d3) = planes[2]
+        val det = n1.dot(n2.cross(n3))
+        if (abs(det) <= 1e-9) return null
+        return (n2.cross(n3) * d1 + n3.cross(n1) * d2 + n1.cross(n2) * d3) * (1.0 / det)
+    }
+
+    /** How far along `p + u·s` and `q + v·t` the two lines cross, or null when they run parallel. */
+    private fun crossingOf(
+        p: Vec3,
+        u: Vec3,
+        q: Vec3,
+        v: Vec3,
+    ): Pair<Double, Double>? {
+        val w = u.cross(v)
+        val len2 = w.dot(w)
+        if (len2 <= 1e-18) return null
+        val r = q - p
+        return (r.cross(v).dot(w) / len2) to (r.cross(u).dot(w) / len2)
+    }
+
+    /**
+     * Where a section's tangency on [face] stands when the band's section is placed at the run's own
+     * endpoint — the fixed point the vertex station is solved from ([vertexOf]).
+     */
+    private fun tangencyAt(
+        piece: Piece,
+        face: FacePatch,
+        origin: Vec3,
+    ): Vec3 {
+        val t = if (face.name == piece.crease.face1.name) piece.wedge.t1 else piece.wedge.t2
+        return origin + piece.crease.e1 * t.x + piece.crease.ref.e2 * t.y
+    }
+
+    /** The direction [piece]'s run takes **out of** the corner at that end. */
+    private fun outOf(
+        piece: Piece,
+        atStart: Boolean,
+    ): Vec3 {
+        val seg = piece.seg!!
+        return (if (atStart) seg.end - seg.start else seg.start - seg.end).normalized()
+    }
+
+    /**
+     * The **three-band vertex** at [at], or null when these three bands do not make one.
+     *
+     * The stations are *solved* rather than assumed: each pair of bands shares a face, and on that face
+     * their two tangency lines must meet at one point — the ball's own tangency there. Two lines crossing
+     * gives each band's station, three pairs give each band two of them, and the three answers agreeing is
+     * exactly the statement that a ball of this size sits in this corner. For a **fillet** they always do
+     * (the ball is at distance `r` from all three faces and every tangency is its own foot); for a
+     * **chamfer** they do when the three faces turn through the same angle at the vertex — a box corner,
+     * and every prism whose plan turns a right angle — and where they do not, the pair is left as it was.
+     */
+    private fun vertexOf(
+        pieces: List<Piece>,
+        trio: List<Pair<Int, Boolean>>,
+        at: Vec3,
+    ): Vertex? {
+        val faces = ArrayList<FacePatch>()
+        for ((i, _) in trio) {
+            for (f in listOf(pieces[i].crease.face1, pieces[i].crease.face2)) {
+                if (f.plane == null) return null
+                if (faces.none { it.name == f.name }) faces.add(f)
+            }
+        }
+        if (faces.size != 3) return null
+        // each face must be shared by exactly two of the three bands, or this is not one vertex
+        val onFace = faces.map { f -> trio.indices.filter { k -> pieces[trio[k].first].crease.let { c -> c.face1.name == f.name || c.face2.name == f.name } } }
+        if (onFace.any { it.size != 2 }) return null
+
+        val dirs = trio.map { outOf(pieces[it.first], it.second) }
+        val station = DoubleArray(trio.size) { Double.NaN }
+        for ((k, f) in faces.withIndex()) {
+            val (p, q) = onFace[k]
+            val cross =
+                crossingOf(
+                    tangencyAt(pieces[trio[p].first], f, at),
+                    dirs[p],
+                    tangencyAt(pieces[trio[q].first], f, at),
+                    dirs[q],
+                ) ?: return null
+            for ((who, s) in listOf(p to cross.first, q to cross.second)) {
+                if (s <= Geom3.WELD_TOL || s >= pieces[trio[who].first].length) return null
+                if (station[who].isNaN()) {
+                    station[who] = s
+                } else if (abs(station[who] - s) > RING_TOL) {
+                    return null
+                }
+            }
+        }
+
+        val members =
+            trio.indices.map { k ->
+                val piece = pieces[trio[k].first]
+                Triple(
+                    trio[k].first,
+                    trio[k].second,
+                    Placement(at + dirs[k] * station[k], piece.crease.e1, piece.crease.ref.e2),
+                )
+            }
+        val (patch, ball) = vertexPatch(pieces, trio, members, faces, onFace, at) ?: return null
+        return Vertex(members, patch, at, faces, ball)
+    }
+
+    /** How far [p] stands off [plane], signed by its own normal. */
+    private fun offPlane(
+        plane: Plane3,
+        p: Vec3,
+    ): Double = (p - plane.origin).dot(plane.normal.normalized())
+
+    /** [a] [b] [c] wound so that their normal points the way [want] does. */
+    private fun facing(
+        a: Vec3,
+        b: Vec3,
+        c: Vec3,
+        want: Vec3,
+    ): Triple<Vec3, Vec3, Vec3> = if ((b - a).cross(c - a).dot(want) >= 0.0) Triple(a, b, c) else Triple(a, c, b)
+
+    /**
+     * The vertex corner's own surface: one quad on each of the three faces, and the fill bounded by the
+     * three band ends — the ball's spherical triangle for a round, the three bevels' own apex for a bevel.
+     *
+     * Each band's ring is read by position rather than by index arithmetic: its first point is the section's
+     * corner, its next and last-but-one are the two tangencies, and everything between them is the blend
+     * curve. Which tangency belongs to which face is asked of the faces themselves, so a ring that came out
+     * the other way round reads the same.
+     */
+    private fun vertexPatch(
+        pieces: List<Piece>,
+        trio: List<Pair<Int, Boolean>>,
+        members: List<Triple<Int, Boolean, Placement>>,
+        faces: List<FacePatch>,
+        onFace: List<List<Int>>,
+        at: Vec3,
+    ): Pair<List<Triple<Vec3, Vec3, Vec3>>, Pair<Vec3, Double>?>? {
+        val rings = members.map { m -> pieces[m.first].grown.map { m.third.at(it) } }
+        if (rings.any { it.size < 5 }) return null
+        val tangency = arrayOfNulls<Vec3>(3)
+        val grownTangency = arrayOfNulls<Vec3>(3)
+        val blends = ArrayList<List<Vec3>>(3)
+        for (ring in rings) {
+            val n = ring.size
+            for ((plain, grown) in listOf(ring[2] to ring[1], ring[n - 2] to ring[n - 1])) {
+                val k = faces.indices.firstOrNull { abs(offPlane(faces[it].plane!!, plain)) <= RING_TOL } ?: return null
+                if (abs(offPlane(faces[k].plane!!, grown) - GROW_MM) > RING_TOL) return null
+                val known = tangency[k]
+                if (known != null && (known - plain).length() > RING_TOL) return null
+                tangency[k] = plain
+                grownTangency[k] = grown
+            }
+            blends.add(ring.subList(2, n - 1))
+        }
+        if (tangency.any { it == null }) return null
+
+        val out = ArrayList<Triple<Vec3, Vec3, Vec3>>()
+        // **the three flat quads**, one per face: the vertex, the two bands' own section corners, and the
+        // ball's tangency between them — all four a micron outside that face, where the tool's flat side is
+        val grownVertex =
+            meetOfPlanes(
+                faces.map { f ->
+                    val n = f.plane!!.normal.normalized()
+                    n to (f.plane.origin.dot(n) + GROW_MM)
+                },
+            ) ?: return null
+        for (k in faces.indices) {
+            val want = faces[k].plane!!.normal.normalized()
+            val cp = rings[onFace[k][0]][0]
+            val cq = rings[onFace[k][1]][0]
+            val tk = grownTangency[k]!!
+            out.add(facing(grownVertex, cp, tk, want))
+            out.add(facing(grownVertex, tk, cq, want))
+        }
+
+        // **the fill**, bounded by the three band ends chained into one loop
+        val loop = chainOfBlends(blends) ?: return null
+        val first = pieces[members[0].first]
+        var ball: Pair<Vec3, Double>? = null
+        val fill =
+            when (val piece = first.wedge.piece) {
+                is ProfileElement.ArcE -> {
+                    val centre = members[0].third.at(piece.arc.center)
+                    for (m in members.drop(1)) {
+                        val other = (pieces[m.first].wedge.piece as? ProfileElement.ArcE) ?: return null
+                        if ((m.third.at(other.arc.center) - centre).length() > RING_TOL) return null
+                    }
+                    ball = centre to piece.arc.radius
+                    spherePatch(centre, piece.arc.radius, loop)
+                }
+                is ProfileElement.Seg -> apexPatch(pieces, members, loop)
+                else -> null
+            } ?: return null
+        for ((a, b, c) in fill) out.add(facing(a, b, c, (a + b + c) * (1.0 / 3.0) - at))
+        return out to ball
+    }
+
+    /** The three band ends chained end to end into one closed loop of points. */
+    private fun chainOfBlends(blends: List<List<Vec3>>): List<Vec3>? {
+        val used = BooleanArray(blends.size)
+        val loop = ArrayList<Vec3>(blends.sumOf { it.size })
+        loop.addAll(blends[0])
+        used[0] = true
+        repeat(blends.size - 1) {
+            val tail = loop.last()
+            var found = false
+            for (i in blends.indices) {
+                if (used[i]) continue
+                val run =
+                    when {
+                        (blends[i].first() - tail).length() <= RING_TOL -> blends[i]
+                        (blends[i].last() - tail).length() <= RING_TOL -> blends[i].reversed()
+                        else -> continue
+                    }
+                loop.addAll(run.drop(1))
+                used[i] = true
+                found = true
+                break
+            }
+            if (!found) return null
+        }
+        if ((loop.first() - loop.last()).length() > RING_TOL) return null
+        loop.removeAt(loop.size - 1)
+        return loop
+    }
+
+    /**
+     * The **spherical triangle** bounded by [loop], on the ball of [radius] about [centre] — the rolling
+     * ball's own surface where it stands still.
+     *
+     * A polar mesh rather than a fan: rings walk out from the patch's own middle to [loop] along great
+     * circles, so the last ring **is** the boundary, point for point, and every step's sag is the one
+     * [GeomMath.chordSteps] gives a curve of this radius (OP-15 — deterministic, never adaptive).
+     */
+    private fun spherePatch(
+        centre: Vec3,
+        radius: Double,
+        loop: List<Vec3>,
+    ): List<Triple<Vec3, Vec3, Vec3>>? {
+        if (radius <= Geom3.WELD_TOL) return null
+        val dirs = loop.map { (it - centre) * (1.0 / radius) }
+        var sum = Vec3(0.0, 0.0, 0.0)
+        for (d in dirs) sum = sum + d
+        if (sum.length() <= Geom3.WELD_TOL) return null
+        val mid = sum.normalized()
+        val reach = dirs.maxOf { acos(mid.dot(it).coerceIn(-1.0, 1.0)) }
+        if (reach <= 1e-9) return null
+        val steps = GeomMath.chordSteps(radius, reach, GeomMath.TESS_TOL_MM)
+
+        fun slerp(
+            to: Vec3,
+            t: Double,
+        ): Vec3 {
+            val omega = acos(mid.dot(to).coerceIn(-1.0, 1.0))
+            if (omega <= 1e-12) return to
+            return (mid * sin((1.0 - t) * omega) + to * sin(t * omega)) * (1.0 / sin(omega))
+        }
+        val out = ArrayList<Triple<Vec3, Vec3, Vec3>>()
+        val apex = centre + mid * radius
+        var previous: List<Vec3>? = null
+        for (l in 1..steps) {
+            val ring = if (l == steps) loop else dirs.map { centre + slerp(it, l.toDouble() / steps) * radius }
+            val below = previous
+            if (below == null) {
+                for (i in ring.indices) out.add(Triple(apex, ring[i], ring[(i + 1) % ring.size]))
+            } else {
+                for (i in ring.indices) {
+                    val j = (i + 1) % ring.size
+                    out.add(Triple(below[i], ring[i], ring[j]))
+                    out.add(Triple(below[i], ring[j], below[j]))
+                }
+            }
+            previous = ring
+        }
+        return out
+    }
+
+    /**
+     * The **three bevels' own apex** — a chamfer's vertex, where the three cutting planes cross.
+     *
+     * There is nothing extra to take at a bevelled vertex and that is the whole of it: three planes already
+     * meet in a point, so the patch is the three triangles running from [loop]'s three ends to that point,
+     * each one lying exactly in its own band's plane. Exact, and it is the same sentence the two-band mitre
+     * says one dimension down.
+     */
+    private fun apexPatch(
+        pieces: List<Piece>,
+        members: List<Triple<Int, Boolean, Placement>>,
+        loop: List<Vec3>,
+    ): List<Triple<Vec3, Vec3, Vec3>>? {
+        val planes = ArrayList<Pair<Vec3, Double>>(members.size)
+        for (m in members) {
+            val piece = pieces[m.first]
+            val bevel = (piece.wedge.piece as? ProfileElement.Seg) ?: return null
+            val from = m.third.at(bevel.segment.a)
+            val to = m.third.at(bevel.segment.b)
+            val along = outOf(piece, m.second)
+            val n = (to - from).cross(along)
+            if (n.length() <= Geom3.WELD_TOL) return null
+            val unit = n.normalized()
+            planes.add(unit to unit.dot(from))
+        }
+        val apex = meetOfPlanes(planes) ?: return null
+        return loop.indices.map { Triple(apex, loop[it], loop[(it + 1) % loop.size]) }
     }
 
     /** Whether two rings are the **same** ring — the same points, however each side happens to order them. */
@@ -999,9 +1611,24 @@ object Blend3 {
      * - **Only two at a vertex.** A ring is shared by two tubes; a vertex where three or more blended edges
      *   meet is the vertex blend that is already on record as a future extension.
      */
-    private fun jointsOf(pieces: List<Piece>): List<Joint> {
-        val out = ArrayList<Joint>()
+    private fun cornersOf(pieces: List<Piece>): List<Corner> {
+        val out = ArrayList<Corner>()
         val taken = HashSet<Pair<Int, Boolean>>()
+        // **vertices first, and that order is the rule.** A ring is shared by two tubes, so three bands at
+        // one point cannot be three crossings; taking the vertex first is what stops two of them claiming
+        // each other and leaving the third to butt — which is exactly the crease GitHub #32 reported.
+        for (i in pieces.indices) {
+            for (j in i + 1 until pieces.size) {
+                for (k in j + 1 until pieces.size) {
+                    val three = listOf(i, j, k)
+                    if (three.any { pieces[it].seg == null || !pieces[it].choice.convex }) continue
+                    val (trio, at) = endsMeeting(pieces, three, taken) ?: continue
+                    val vertex = vertexOf(pieces, trio, at) ?: continue
+                    out.add(vertex)
+                    taken.addAll(vertex.ends)
+                }
+            }
+        }
         for (i in pieces.indices) {
             for (j in i + 1 until pieces.size) {
                 val a = pieces[i]
@@ -1030,12 +1657,16 @@ object Blend3 {
                         val placeA = mitrePlacement(a, shared, corner, bis, c) ?: continue
                         val placeB = mitrePlacement(b, shared, corner, bis, c) ?: continue
                         if (!ringsAgree(a.grown.map { placeA.at(it) }, b.grown.map { placeB.at(it) })) continue
-                        // **a corner that turns the other way is not this corner** (a reflex corner of the
-                        // shared face): the mitre then stands *outside* both edges and the two bands do not
-                        // overlap at all but leave a wedge between them, which is the inside-corner patch a
-                        // ball rolls round — a future extension. Left to overlap and be trimmed, as before.
-                        if (!turnsInward(a, aAtStart, bis) || !turnsInward(b, bAtStart, bis)) continue
-                        out.add(Joint(i, aAtStart, placeA, j, bAtStart, placeB, shared))
+                        val made =
+                            if (turnsInward(a, aAtStart, bis) && turnsInward(b, bAtStart, bis)) {
+                                Joint(i, aAtStart, placeA, j, bAtStart, placeB, shared)
+                            } else {
+                                // **the corner turns the other way**: an inside corner of the shared face,
+                                // where the two bands do not overlap at all. The ball pivots about the
+                                // upright and its section turns with it (GitHub #31, [Turn]).
+                                turnOf(pieces, i, aAtStart, j, bAtStart, shared, corner, ea, eb) ?: continue
+                            }
+                        out.add(made)
                         taken.add(i to aAtStart)
                         taken.add(j to bAtStart)
                     }
@@ -1045,10 +1676,85 @@ object Blend3 {
         return out
     }
 
+    /** The ends of [which] that all stand at one point and are not spoken for, with that point. */
+    private fun endsMeeting(
+        pieces: List<Piece>,
+        which: List<Int>,
+        taken: Set<Pair<Int, Boolean>>,
+    ): Pair<List<Pair<Int, Boolean>>, Vec3>? {
+        fun endOf(
+            i: Int,
+            atStart: Boolean,
+        ): Vec3 = pieces[i].seg!!.let { if (atStart) it.start else it.end }
+        for (e0 in listOf(true, false)) {
+            for (e1 in listOf(true, false)) {
+                for (e2 in listOf(true, false)) {
+                    val ends = listOf(which[0] to e0, which[1] to e1, which[2] to e2)
+                    if (ends.any { it in taken }) continue
+                    val at = endOf(which[0], e0)
+                    if (ends.all { (endOf(it.first, it.second) - at).length() <= RING_TOL }) return ends to at
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * The **turn** between two bands at an inside corner, or null where they cannot make one.
+     *
+     * The rings are the section carried round the axis square to the shared face through the corner: at zero
+     * turn the map is the identity, so the first ring **is** the first band's own end section, and at the
+     * full turn it must be the second band's — which is the same congruence the crossing asks for, put to
+     * [ringsAgree]. The turn is cut into steps by the same sag rule every arc in this drawing gets.
+     */
+    private fun turnOf(
+        pieces: List<Piece>,
+        i: Int,
+        aAtStart: Boolean,
+        j: Int,
+        bAtStart: Boolean,
+        shared: FacePatch,
+        at: Vec3,
+        ea: Vec3,
+        eb: Vec3,
+    ): Turn? {
+        val a = pieces[i]
+        val b = pieces[j]
+        val n = shared.plane?.normal?.normalized() ?: return null
+        val perp = n.cross(ea)
+        if (abs(perp.length() - 1.0) > 1e-6) return null
+        val total = atan2(eb.dot(perp), eb.dot(ea).coerceIn(-1.0, 1.0))
+        if (abs(total) <= TANGENT_TOL) return null
+        val placeA = Placement(at, a.crease.e1, a.crease.ref.e2)
+        val placeB = Placement(at, b.crease.e1, b.crease.ref.e2)
+        val reach = a.grown.maxOf { it.length() }
+        if (reach <= Geom3.WELD_TOL) return null
+        val steps = GeomMath.chordSteps(reach, abs(total), GeomMath.TESS_TOL_MM)
+        val rings =
+            (0..steps).map { l ->
+                val dir = ea * cos(total * l / steps) + perp * sin(total * l / steps)
+                Placement(at, turnAxis(dir, n, ea, a.crease.e1), turnAxis(dir, n, ea, a.crease.ref.e2))
+            }
+        if (!ringsAgree(a.grown.map { rings.last().at(it) }, b.grown.map { placeB.at(it) })) return null
+        return Turn(i, aAtStart, placeA, j, bAtStart, placeB, shared, rings, at, ea, total)
+    }
+
+    /**
+     * One axis of a section frame turned to [dir] — the in-face direction goes to [dir], the face's own
+     * normal stays put, and `(ea, n)` being an orthonormal basis of the section plane is what makes that a
+     * rotation rather than a shear.
+     */
+    private fun turnAxis(
+        dir: Vec3,
+        n: Vec3,
+        ea: Vec3,
+        axis: Vec3,
+    ): Vec3 = dir * axis.dot(ea) + n * axis.dot(n)
+
     /**
      * Whether the corner's bisector turns **into** the shared face, which is what says the corner is a
      * convex one — `bis·d = cos(θ/2)` along the edge's own direction out of the corner, so this is the
-     * statement `θ < 180°` and nothing more. See the reflex-corner note in [jointsOf].
+     * statement `θ < 180°` and nothing more. See [cornersOf], where the other way round becomes a [Turn].
      */
     private fun turnsInward(
         piece: Piece,
@@ -1084,15 +1790,15 @@ object Blend3 {
      */
     private fun crowdedCorner(
         pieces: List<Piece>,
-        joints: List<Joint>,
-    ): Joint? {
+        corners: List<Corner>,
+    ): Corner? {
         val reach = HashMap<Int, Double>()
-        val blame = HashMap<Int, Joint>()
-        for (j in joints) {
-            for ((who, pair) in listOf(j.a to (j.aAtStart to j.placeA), j.b to (j.bAtStart to j.placeB))) {
-                val r = reachOf(pieces[who], pair.first, pair.second)
-                reach[who] = (reach[who] ?: 0.0) + r
-                if (blame[who] == null) blame[who] = j
+        val blame = HashMap<Int, Corner>()
+        for (c in corners) {
+            for (end in c.ends) {
+                val r = reachOf(pieces[end.first], end.second, c.ringAt(end))
+                reach[end.first] = (reach[end.first] ?: 0.0) + r
+                if (blame[end.first] == null) blame[end.first] = c
             }
         }
         // the pieces in **their own order**, never the map's: which corner a refusal names has to be a
@@ -1147,7 +1853,7 @@ object Blend3 {
     /** The pieces grouped by the corners that join them — one tool, and one boolean, per group. */
     private fun groupsOf(
         count: Int,
-        joints: List<Joint>,
+        corners: List<Corner>,
     ): List<List<Int>> {
         val owner = IntArray(count) { it }
 
@@ -1156,10 +1862,12 @@ object Blend3 {
             while (owner[r] != r) r = owner[r]
             return r
         }
-        for (j in joints) {
-            val ra = root(j.a)
-            val rb = root(j.b)
-            if (ra != rb) owner[max(ra, rb)] = min(ra, rb)
+        for (c in corners) {
+            for (end in c.ends.drop(1)) {
+                val ra = root(c.ends.first().first)
+                val rb = root(end.first)
+                if (ra != rb) owner[max(ra, rb)] = min(ra, rb)
+            }
         }
         val out = LinkedHashMap<Int, MutableList<Int>>()
         for (i in 0 until count) out.getOrPut(root(i)) { ArrayList() }.add(i)
@@ -1186,8 +1894,11 @@ object Blend3 {
         group: List<Int>,
         rings: Map<Pair<Int, Boolean>, Placement>,
         butts: Set<Pair<Int, Boolean>>,
+        corners: List<Corner>,
     ): Pair<Mesh3?, String?> {
         val b = Geom3.MeshBuilder()
+        // the corners' own surfaces first, so the tool is one shell before a single tube is drawn
+        for (c in corners) if (c.ends.any { it.first in group }) c.emit(pieces, b)
         for (at in group) {
             val piece = pieces[at]
             val seg = piece.seg ?: return null to "${piece.crease.edge.name.label} is not one straight run, so it carries no corner"
@@ -1306,8 +2017,9 @@ object Blend3 {
      * Where the boundary runs on **smoothly** nothing at all happens: the two sections already abut on the
      * same plane, no corner is built, and each piece is swept and applied exactly as before (the rounded
      * rim, bit for bit). The corners still left to the boolean, each for a stated reason, are listed at
-     * [jointsOf]; an **inside** corner and a vertex where three or more blended edges meet remain the named
-     * future extensions.
+     * [cornersOf]. Since session 80 the two places the ball **stands still** are built too: an inside
+     * corner turns the section about the upright ([Turn]) and a convex vertex where three bands meet gets
+     * the ball's own patch ([Vertex]).
      */
     fun blended(
         base: Solid3,
@@ -1340,31 +2052,25 @@ object Blend3 {
                     "or ${crease.face2.name.label} at ${crease.edge.name.label} — the largest that fits there is " +
                     "about ${Frames3.mm(fits)} mm"
             }
-            val (piece, whyPiece) = pieceOf(i, false, crease, wedge, choice)
+            val (piece, whyPiece) = pieceOf(i, false, crease, wedge, choice, kind)
             if (piece == null) return null to whyPiece
             pieces.add(piece)
         }
         // …and the bands already under this one, so a blend of a blend on an adjacent edge builds the same
         // corner a one-gesture chain would (GitHub #27, [chainPieces]).
         pieces.addAll(chainPieces(feature))
-        val joints = jointsOf(pieces)
-        crowdedCorner(pieces, joints)?.let { j ->
-            val a = pieces[j.a]
-            val b = pieces[j.b]
+        val corners = cornersOf(pieces)
+        crowdedCorner(pieces, corners)?.let { c ->
             val fits = largestCornerFitting(pieces, size, kind)
             return null to
-                "the corner where ${a.crease.edge.name.label} meets ${b.crease.edge.name.label} on " +
-                "${j.shared.name.label} is too sharp for a ${kind.word} of ${kind.sizeWord} " +
-                "${Frames3.mm(size)} mm — the corner the two roundings share would reach further along an edge " +
-                "than the edge is long. The largest that fits there is about ${Frames3.mm(fits)} mm"
+                "${c.label(pieces)} is too sharp for a ${kind.word} of ${kind.sizeWord} ${Frames3.mm(size)} mm — " +
+                "the corner the roundings share would reach further along an edge than the edge is long. " +
+                "The largest that fits there is about ${Frames3.mm(fits)} mm"
         }
         val rings = HashMap<Pair<Int, Boolean>, Placement>()
-        for (j in joints) {
-            rings[j.a to j.aAtStart] = j.placeA
-            rings[j.b to j.bAtStart] = j.placeB
-        }
+        for (c in corners) for (end in c.ends) rings[end] = c.ringAt(end)
         var result = applyTo
-        for (group in groupsOf(pieces.size, joints)) {
+        for (group in groupsOf(pieces.size, corners)) {
             // a group of nothing but bands already off the body has nothing left to cut
             if (group.all { pieces[it].existing }) continue
             val fresh = group.filter { !pieces[it].existing }
@@ -1373,7 +2079,7 @@ object Blend3 {
                 if (fresh.size == 1 && group.size == 1) {
                     Geom3.sweep(lead.crease.path, lead.crease.e1, SweepProfile.Section(lead.wedge.region), plan = null)
                 } else {
-                    val (mesh, whyMesh) = toolMesh(pieces, group, rings, buttEnds(pieces, group, rings))
+                    val (mesh, whyMesh) = toolMesh(pieces, group, rings, buttEnds(pieces, group, rings), corners)
                     if (mesh == null) {
                         null to whyMesh
                     } else {
@@ -1412,14 +2118,14 @@ object Blend3 {
             var ok = true
             for (p in pieces) {
                 val w = wedgeOf(p.crease, mid, kind, p.choice).first
-                val q = if (w == null) null else pieceOf(p.index, p.existing, p.crease, w, p.choice).first
+                val q = if (w == null) null else pieceOf(p.index, p.existing, p.crease, w, p.choice, p.kind).first
                 if (q == null) {
                     ok = false
                     break
                 }
                 trial.add(q)
             }
-            if (ok && crowdedCorner(trial, jointsOf(trial)) == null) lo = mid else hi = mid
+            if (ok && crowdedCorner(trial, cornersOf(trial)) == null) lo = mid else hi = mid
         }
         return lo
     }
@@ -1552,7 +2258,126 @@ object Blend3 {
             )
         }
         for (d in dressings) out.add(bandPatchOf(d))
+        // …and the corners this blend's own bands make, **appended last** ([FaceName.BlendCorner]): the ball
+        // at a convex vertex and the surface its pivot sweeps at an inside one are new surfaces, and a
+        // crossing and a bevelled vertex are not
+        for (patch in cornerFacesOf(f)) out.add(patch)
         return out to null
+    }
+
+    /**
+     * The pieces a dressed feature's own corners are read from — its own targets, then the chain under it,
+     * exactly the list [blended] builds, so the faces the drawing states are the faces the tool cut.
+     */
+    private fun piecesOf(f: Feature3.Blend): List<Piece>? {
+        val (edges, _) = Section3.edges(f.base) ?: return null
+        if (edges == null) return null
+        val out = ArrayList<Piece>(f.targets.size)
+        for ((k, i) in f.targets.withIndex()) {
+            val edge = edges.getOrNull(i) ?: return null
+            val crease = creaseOf(f.base, edge).first ?: return null
+            val choice = f.choices.getOrNull(k) ?: return null
+            val wedge = wedgeOf(crease, f.size, f.kind, choice).first ?: return null
+            out.add(pieceOf(i, false, crease, wedge, choice, f.kind).first ?: return null)
+        }
+        out.addAll(chainPieces(f.base))
+        return out
+    }
+
+    /**
+     * Where [cut] crosses the corner patch [name] — **exactly**, in both of the shapes a corner can be.
+     *
+     * A **pivot** is a surface of revolution, so [Revolve3]'s whole table answers it verbatim, meridian
+     * column included. A **ball** is cut by every plane in a circle (the one band with no case), and the
+     * patch is that circle **clipped to the spherical triangle**: its three sides are great circles, so each
+     * is a half-space through the ball's own centre and the answer is an angular interval on the cut circle
+     * — three half-planes intersected, still exact, no sampling anywhere.
+     */
+    fun cornerCut(
+        f: Feature3.Blend,
+        name: FaceName.BlendCorner,
+        cut: Plane3,
+    ): Revolve3.BandCut? {
+        val pieces = piecesOf(f) ?: return null
+        for (c in cornersOf(pieces)) {
+            if (FaceName.BlendCorner(c.ends.map { pieces[it.first].index }.distinct().sorted()) != name) continue
+            if (c is Turn) return c.frameOf(pieces)?.let { (frame, sr) -> Revolve3.cutBandOf(frame, sr, cut) }
+            if (c is Vertex) {
+                val (centre, radius) = c.ball ?: return null
+                return ballCut(centre, radius, c.members.map { outOf(pieces[it.first], it.second) }, c.at, cut)
+            }
+            return null
+        }
+        return null
+    }
+
+    /**
+     * The circle a plane cuts a ball in, clipped to the spherical triangle whose three sides stand square to
+     * [dirs] through the centre and whose inside is the side [at] is on.
+     */
+    private fun ballCut(
+        centre: Vec3,
+        radius: Double,
+        dirs: List<Vec3>,
+        at: Vec3,
+        cut: Plane3,
+    ): Revolve3.BandCut? {
+        val n = cut.normal.normalized()
+        val off = (centre - cut.origin).dot(n)
+        if (abs(off) >= radius) return Revolve3.BandCut(emptyList(), null)
+        val rho = sqrt(radius * radius - off * off)
+        if (rho <= Geom3.WELD_TOL) return Revolve3.BandCut(emptyList(), null)
+        var live = listOf(0.0 to 2.0 * PI)
+        for (d in dirs) {
+            val w = d * (if ((at - centre).dot(d) >= 0.0) 1.0 else -1.0)
+            val a = rho * cut.u.dot(w)
+            val b = rho * cut.v.dot(w)
+            val k = off * n.dot(w)
+            val reach = sqrt(a * a + b * b)
+            live =
+                when {
+                    reach <= abs(k) -> if (k <= -reach) live else emptyList()
+                    else -> {
+                        val mid = atan2(b, a)
+                        val half = acos((k / reach).coerceIn(-1.0, 1.0))
+                        clipTurn(live, mid - half, mid + half)
+                    }
+                }
+            if (live.isEmpty()) return Revolve3.BandCut(emptyList(), null)
+        }
+        val here = cut.toLocal(centre - n * off)
+        return Revolve3.BandCut(live.map { (from, to) -> ProfileElement.ArcE(Arc(here, rho, from, to, true)) }, null)
+    }
+
+    /** [live] intersected with the turn interval `[lo, hi]`, both read round the whole circle. */
+    private fun clipTurn(
+        live: List<Pair<Double, Double>>,
+        lo: Double,
+        hi: Double,
+    ): List<Pair<Double, Double>> {
+        val out = ArrayList<Pair<Double, Double>>()
+        for ((a, b) in live) {
+            // the allowed band repeats every turn, so it is met with each live span at three offsets — one
+            // is enough for a span shorter than a full turn, and three covers the wrap either way
+            for (shift in listOf(-2.0 * PI, 0.0, 2.0 * PI)) {
+                val from = max(a, lo + shift)
+                val to = min(b, hi + shift)
+                if (to - from > 1e-12) out.add(from to to)
+            }
+        }
+        return out
+    }
+
+    /** One face per corner **this** blend's bands take part in that has a surface of its own. */
+    private fun cornerFacesOf(f: Feature3.Blend): List<FacePatch> {
+        val pieces = piecesOf(f) ?: return emptyList()
+        val out = ArrayList<FacePatch>()
+        for (c in cornersOf(pieces)) {
+            if (c.ends.none { it.first < f.targets.size }) continue
+            val name = FaceName.BlendCorner(c.ends.map { pieces[it.first].index }.distinct().sorted())
+            out.add(c.face(pieces, name) ?: continue)
+        }
+        return out
     }
 
     /**
@@ -1785,16 +2610,30 @@ object Blend3 {
         d: Dressing,
         el: Curve3Element.Arc3,
         piece: ProfileElement,
+    ): Pair<Revolve3.Frame, ProfileElement>? = revolvedBand(d.crease, d.wedge, d.choice, el, piece)
+
+    private fun revolvedBand(
+        p: Piece,
+        el: Curve3Element.Arc3,
+        piece: ProfileElement,
+    ): Pair<Revolve3.Frame, ProfileElement>? = revolvedBand(p.crease, p.wedge, p.choice, el, piece)
+
+    private fun revolvedBand(
+        crease: Crease,
+        wedge: Wedge,
+        choice: BlendChoice,
+        el: Curve3Element.Arc3,
+        piece: ProfileElement,
     ): Pair<Revolve3.Frame, ProfileElement>? {
         val axis = el.normal.normalized()
-        val sigmaS = d.crease.e1.dot(axis)
+        val sigmaS = crease.e1.dot(axis)
         if (abs(abs(sigmaS) - 1.0) > 1e-7) return null
-        val at = d.crease.ref.at
+        val at = crease.ref.at
         val rel = at - el.center
         val s0 = rel.dot(axis)
         val radial = rel - axis * s0
         if (radial.length() <= Geom3.WELD_TOL) return null
-        val sigmaR = d.crease.ref.e2.dot(radial.normalized())
+        val sigmaR = crease.ref.e2.dot(radial.normalized())
         if (abs(abs(sigmaR) - 1.0) > 1e-7) return null
         val a = Affine(if (sigmaS > 0) 1.0 else -1.0, 0.0, 0.0, if (sigmaR > 0) 1.0 else -1.0, s0, radial.length())
         val turnA = el.startAngle
@@ -1816,8 +2655,8 @@ object Blend3 {
         // is what [Revolve3.bandOf] reads a flat band's outward side from — so it is re-established *after*
         // the map rather than assumed to survive it
         val moved = GeomMath.transform(piece, a)
-        val (mid, _) = midOf(d.wedge.piece) ?: return null
-        val outward = bandOutward(d.wedge, d.choice, mid) ?: return null
+        val (mid, _) = midOf(wedge.piece) ?: return null
+        val outward = bandOutward(wedge, choice, mid) ?: return null
         return frame to materialLeft(moved, a.linear(outward).normalized())
     }
 
@@ -1882,52 +2721,207 @@ object Blend3 {
         edge: Int,
         cut: Plane3,
     ): Revolve3.BandCut? {
-        val d = dressingOf(f, edge) ?: return null
-        val el = soleElement(d.crease) as? Curve3Element.Arc3 ?: return null
-        val (frame, sr) = revolvedBand(d, el, orientedSection(d) ?: return null) ?: return null
+        val (pieces, at) = bandOf(f, edge) ?: return null
+        val piece = pieces[at]
+        val el = soleElement(piece.crease) as? Curve3Element.Arc3 ?: return null
+        val (frame, sr) = revolvedBand(piece, el, orientedSection(piece) ?: return null) ?: return null
         return Revolve3.cutBandOf(frame, sr, cut)
     }
 
     /**
+     * The band along base edge [edge], with **the whole chain's pieces it stands among** — which is what a
+     * cut needs, and it is not the same list its own level holds.
+     *
+     * A band's own **extent** is decided by the corners at its ends, and a corner can be made by a *later*
+     * gesture than the one that made the band: round a plate's rim, then round an upright, and the rim's
+     * band now stops at the ball. So a band is read at the **tip** — [piecesOf] gathers the level's own
+     * targets and the chain under it, and every band in that chain is here — rather than at the level that
+     * appended it, which is what session 80's cut *"the band's own face outline is still the full sweep"*
+     * came down to for a section.
+     */
+    private fun bandOf(
+        f: Feature3.Blend,
+        edge: Int,
+    ): Pair<List<Piece>, Int>? {
+        val pieces = piecesOf(f) ?: return null
+        val at = pieces.indexOfFirst { it.index == edge }
+        return if (at < 0) null else pieces to at
+    }
+
+    /**
+     * Where the band along a **straight** edge stands along its own run at each point of its section: from
+     * the corner at one end to the corner at the other, or from end to end where it has none.
+     *
+     * This is the band's **extent**, and it is a function of the corners as they stand now (see [bandOf]).
+     */
+    private fun spanOf(
+        pieces: List<Piece>,
+        at: Int,
+        corners: List<Corner>,
+    ): (Vec2) -> Pair<Double, Double> {
+        val piece = pieces[at]
+        val len = piece.length
+        val ends = HashMap<Boolean, Placement>()
+        for (c in corners) for (e in c.ends) if (e.first == at) ends[e.second] = c.ringAt(e)
+        val lo = ends[true]
+        val hi = ends[false]
+        return { p ->
+            (lo?.let { stationOf(piece, it.at(p)) } ?: 0.0) to (hi?.let { stationOf(piece, it.at(p)) } ?: len)
+        }
+    }
+
+    /**
      * The band along a **straight** edge as its family of rulings — the blend's section curve carried
-     * along the edge, one straight ruling per point of that curve.
+     * along the edge, one straight ruling per point of that curve, each running only as far as the band
+     * itself does ([spanOf]).
      *
      * Exact at every ruling and chords between, which is OP-15's approximated class and exactly what an
      * extrusion's own cylindrical side face gets: the two are the same surface reached by the same sweep,
-     * so they are cut by the same machinery ([Section3.cutRuledStrip]) rather than by two.
+     * so they are cut by the same machinery ([Section3.cutRuledStrip]) rather than by two. The one cut this
+     * cannot answer is a plane **parallel to the rulings** — no ruling crosses it — and that is exactly the
+     * one [parallelBandCut] states exactly instead.
      */
     internal fun bandStrip(
         f: Feature3.Blend,
         edge: Int,
     ): Section3.RuledStrip? {
-        val d = dressingOf(f, edge) ?: return null
-        val el = soleElement(d.crease) as? Curve3Element.Seg3 ?: return null
-        val piece = orientedSection(d) ?: return null
+        val (pieces, at) = bandOf(f, edge) ?: return null
+        val piece = pieces[at]
+        val el = piece.seg ?: return null
+        val section = orientedSection(piece) ?: return null
         val v = el.end - el.start
         val len = v.length()
         if (len <= Geom3.WELD_TOL) return null
         val u = v * (1.0 / len)
+        val span = spanOf(pieces, at, cornersOf(pieces))
         val steps =
-            when (piece) {
-                is ProfileElement.ArcE -> max(BAND_SECTION_STEPS, GeomMath.chordSteps(piece.arc.radius, GeomMath.sweep(piece.arc), GeomMath.TESS_TOL_MM))
+            when (section) {
+                is ProfileElement.ArcE ->
+                    max(BAND_SECTION_STEPS, GeomMath.chordSteps(section.arc.radius, GeomMath.sweep(section.arc), GeomMath.TESS_TOL_MM))
                 else -> BAND_SECTION_STEPS
             }
         return Section3.RuledStrip(false, { t ->
-            val p = sectionPointAt(piece, t) ?: Vec2(0.0, 0.0)
-            worldOnStraight(d.crease, el.start, u, p, 0.0) to worldOnStraight(d.crease, el.start, u, p, len)
+            val p = sectionPointAt(section, t) ?: Vec2(0.0, 0.0)
+            val (s0, s1) = span(p)
+            worldOnStraight(piece.crease, el.start, u, p, s0) to worldOnStraight(piece.crease, el.start, u, p, s1)
         }, steps)
     }
 
-    private fun dressingOf(
+    /**
+     * The band along a **straight** edge cut by a plane the edge runs **parallel to** — exactly, or null
+     * when that is not the cut this is.
+     *
+     * *The one case the rulings cannot answer, and the one a rounded plate is usually asked.* Sectioning a
+     * rounded box half-way up its top band is a plane parallel to every ruling of that band, so no ruling
+     * crosses it and the sampler finds nothing at all — the face came back as its own refusal in a section
+     * that plainly does cut it. But the surface is a **cylinder about the band's spine** (or a plane, for a
+     * bevel), and a plane parallel to that axis cuts a cylinder in a **pair of rulings** — which is exactly
+     * what [Revolve3]'s own table says of it. So the answer is stated: the section curve's own crossings of
+     * the cut plane, each carried along the edge over the band's own extent.
+     */
+    internal fun parallelBandCut(
         f: Feature3.Blend,
         edge: Int,
-    ): Dressing? = dressingsOf(f).first?.firstOrNull { it.index == edge }
+        cut: Plane3,
+    ): List<ProfileElement>? {
+        val (pieces, at) = bandOf(f, edge) ?: return null
+        val piece = pieces[at]
+        val el = piece.seg ?: return null
+        val v = el.end - el.start
+        val len = v.length()
+        if (len <= Geom3.WELD_TOL) return null
+        val u = v * (1.0 / len)
+        val n = cut.normal.normalized()
+        if (abs(u.dot(n)) > DIR_EPS) return null
+        val section = orientedSection(piece) ?: return null
+        // the section's own points that lie in the cut plane: a straight leg meets it once, an arc twice
+        val e1 = piece.crease.e1
+        val e2 = piece.crease.ref.e2
+        val here = worldOnStraight(piece.crease, el.start, u, Vec2(0.0, 0.0), 0.0)
+        val depth = (here - cut.origin).dot(n)
+        val hits = sectionOnPlane(section, Vec2(e1.dot(n), e2.dot(n)), -depth)
+        if (hits.isEmpty()) return null
+        val span = spanOf(pieces, at, cornersOf(pieces))
+        val out = ArrayList<ProfileElement>(hits.size)
+        for (p in hits) {
+            val (s0, s1) = span(p)
+            if (s1 - s0 <= Geom3.WELD_TOL) continue
+            val a = cut.toLocal(worldOnStraight(piece.crease, el.start, u, p, s0))
+            val b = cut.toLocal(worldOnStraight(piece.crease, el.start, u, p, s1))
+            if ((b - a).length() > Geom3.WELD_TOL) out.add(ProfileElement.Seg(Segment(a, b)))
+        }
+        return out.ifEmpty { null }
+    }
+
+    /** The points of a section curve where `q·[dir] = [off]` — a straight leg's one, an arc's two. */
+    private fun sectionOnPlane(
+        e: ProfileElement,
+        dir: Vec2,
+        off: Double,
+    ): List<Vec2> {
+        if (dir.length() <= DIR_EPS) return emptyList()
+        return when (e) {
+            is ProfileElement.Seg -> {
+                val a = e.segment.a
+                val d = e.segment.b - a
+                val den = d.dot(dir)
+                if (abs(den) <= 1e-12) {
+                    emptyList()
+                } else {
+                    val t = (off - a.dot(dir)) / den
+                    if (t < -1e-9 || t > 1.0 + 1e-9) emptyList() else listOf(a + d * t.coerceIn(0.0, 1.0))
+                }
+            }
+            is ProfileElement.ArcE -> {
+                val unit = dir.normalized()
+                val k = (off / dir.length())
+                val c = e.arc.center.dot(unit)
+                val h = k - c
+                if (abs(h) > e.arc.radius) {
+                    emptyList()
+                } else {
+                    val half = kotlin.math.acos((h / e.arc.radius).coerceIn(-1.0, 1.0))
+                    val base = unit.angle()
+                    listOf(base + half, base - half)
+                        .map { GeomMath.arcPointAt(e.arc, it) to it }
+                        .filter { (_, ang) -> onArc(e.arc, ang) }
+                        .map { it.first }
+                }
+            }
+            else -> emptyList()
+        }
+    }
+
+    /** Whether the angle [th] lies within [arc]'s own sweep. */
+    private fun onArc(
+        arc: Arc,
+        th: Double,
+    ): Boolean {
+        val sweep = GeomMath.sweep(arc)
+        var t = th - arc.startAngle
+        val two = 2.0 * PI
+        if (sweep >= 0.0) {
+            while (t < -1e-9) t += two
+            while (t > two) t -= two
+            return t <= sweep + 1e-9
+        }
+        while (t > 1e-9) t -= two
+        while (t < -two) t += two
+        return t >= sweep - 1e-9
+    }
 
     /** The blend's section curve, traversed with the material to its left — the band's own generator. */
-    private fun orientedSection(d: Dressing): ProfileElement? {
-        val (mid, _) = midOf(d.wedge.piece) ?: return null
-        val outward = bandOutward(d.wedge, d.choice, mid) ?: return null
-        return materialLeft(d.wedge.piece, outward)
+    private fun orientedSection(d: Dressing): ProfileElement? = orientedSection(d.wedge, d.choice)
+
+    private fun orientedSection(p: Piece): ProfileElement? = orientedSection(p.wedge, p.choice)
+
+    private fun orientedSection(
+        wedge: Wedge,
+        choice: BlendChoice,
+    ): ProfileElement? {
+        val (mid, _) = midOf(wedge.piece) ?: return null
+        val outward = bandOutward(wedge, choice, mid) ?: return null
+        return materialLeft(wedge.piece, outward)
     }
 
     private fun sectionPointAt(

@@ -459,19 +459,21 @@ tool filletedge els=e12 clicks=3.392929260632428,51.410033777603246 scalar="r" s
     // ---- what the corner does not touch ----
 
     /**
-     * **An inside corner keeps what it always kept, and the corners beside it are still built.**
+     * **An inside corner is rounded too, and the corners beside it are still built** — the cut this test
+     * pinned in session 79 is retired by session 80 (GitHub #31).
      *
-     * The cap of an L-shaped prism turns five convex corners and one **reflex** one. At the reflex one the
-     * two bands do not overlap — they leave a wedge between them, and the ball that would round it pivots
-     * about the upright, which is the inside-corner patch this session did not build (a future extension).
-     * So that corner is left alone, exactly as before, and the other five are built: the chamfer's figure
-     * says both at once, since it deducts one mitre per convex corner and none at the inside one.
+     * What it used to say: *"at the reflex one the two bands do not overlap — they leave a wedge between
+     * them, and the ball that would round it pivots about the upright, which is a different construction;
+     * that corner keeps exactly what it kept"*. It is now built: the ball's pivot is the band's own section
+     * carried round the upright through the corner's exterior angle ([constructit.geom.Blend3]'s `Turn`), and
+     * the chamfer's figure says so — five planar mitres, and a turn that takes Pappus' own `φ·c³/6`.
      *
-     * The two bands butting at that vertex are pulled a micron apart along their own edges so the one tool
-     * they are in is a shell at all (see `Blend3.buttEnds`) — which is what the stated 0.02 mm³ allows for.
+     * The turn reaches the engine as flat facets round its axis, exactly as every arc reaches it as chords,
+     * so it takes `sin(Δ)/Δ` of the exact figure at a step of Δ — under a percent at this drawing's sag, and
+     * bounded from both sides here rather than absorbed into a tolerance.
      */
     @Test
-    fun anInsideCornerIsLeftAloneAndTheOthersAreStillBuilt() {
+    fun anInsideCornerIsRoundedByTheBallsOwnPivot() {
         // an L: five 90 degree corners and one at 270
         val ell =
             listOf(
@@ -494,9 +496,12 @@ tool filletedge els=e12 clicks=3.392929260632428,51.410033777603246 scalar="r" s
                 blend(cx, base, c, BlendKind.CHAMFER, whole = true, address = faceIndex(base, "the top face")),
                 "the L-shaped cap, bevelled all round",
             )
-        // five mitres at 90 degrees (cot 45 = 1), and none at the inside corner
-        val exact = c * c / 2.0 * sideLengths(ell).sum() - 5.0 * chamferCorner(c)
-        assertClose(before - after, exact, 0.02, "five planar mitres and one inside corner left as it was")
+        // five mitres at 90 degrees (cot 45 = 1), and the inside corner's own quarter turn
+        val turn = (PI / 2.0) * c * c * c / 6.0
+        // …and the turn *adds* to the removal: the two bands never overlapped there, so the patch is all new
+        val exact = c * c / 2.0 * sideLengths(ell).sum() - 5.0 * chamferCorner(c) + turn
+        assertTrue(before - after <= exact + 1e-6, "the turn cannot take more than the exact $exact mm^3 — it took ${before - after}")
+        assertTrue(before - after >= exact - 0.02 * turn, "…nor less than that minus its own facets — it took ${before - after}")
     }
 
     /**
