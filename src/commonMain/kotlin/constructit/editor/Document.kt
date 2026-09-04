@@ -54,6 +54,7 @@ import constructit.dsl.RoundedRectArgs
 import constructit.dsl.ScalarRef
 import constructit.dsl.SectionRef
 import constructit.dsl.SegmentRef
+import constructit.dsl.SkinPart
 import constructit.dsl.SolidRef
 import constructit.dsl.Sphere3Ref
 import constructit.dsl.instance
@@ -109,6 +110,8 @@ import constructit.geom.Revolve3
 import constructit.geom.Section3
 import constructit.geom.Segment
 import constructit.geom.Shell3
+import constructit.geom.SkinMatch
+import constructit.geom.SkinRow
 import constructit.geom.Solid3
 import constructit.geom.SolidFace
 import constructit.geom.Stations3
@@ -1424,6 +1427,11 @@ class Document {
             // (OP-26, session 77): the writer restates it under the current names, and nothing else may
             pendingSweepLaw?.let { sweepLaws[step] = it }
             pendingSweepLaw = null
+            // …and the correspondence this operation's skin states, owned by its step for the same reason
+            // (session 78): the writer restates the pairs under the current names, and nothing else may —
+            // which is what makes a rename re-stamp them and a *Match* an edit of this very step
+            pendingSkinMatch?.let { skinMatches[step] = it }
+            pendingSkinMatch = null
             // which step *owns* each re-parameterization this operation performed (OP-4 case b), so the writer
             // restates an offset on the step that made it and nowhere else — a step that merely *uses* a
             // relative point (a circle through it) must not carry its distance and angle
@@ -1441,6 +1449,7 @@ class Document {
             pendingDofs.clear()
             pendingExprBinding = null
             pendingFuncCurve = null
+            pendingSkinMatch = null
             throw t
         } finally {
             recordDepth--
@@ -3318,6 +3327,10 @@ class Document {
         exprBindings[step]?.let { b -> out.addAll(b.refs.mapNotNull { it.point }) }
         funcCurves[step]?.let { c -> out.addAll(c.pointRefs()) }
         sweepLaws[step]?.let { l -> out.addAll(l.pointRefs()) }
+        // …and the curves a skin's stated correspondence names (session 78), which live in the writer's own
+        // registry rather than in the step's original arguments once a *Match* has re-stamped them: a step
+        // left behind by a deleted curve would name it on load and the file would not open (OP-18).
+        skinMatches[step]?.let { out.addAll(it) }
         return out
     }
 
@@ -10283,6 +10296,288 @@ class Document {
         registerSigns(el, seams)
         note = loftNote(el, roles)
         return el
+    }
+
+    // ---- the loft as a skin over drawn sections (OP-26's hull route, session 78 — queue entry 1) ----
+
+    /** Every stated correspondence a skin's step carries, in pairs — `match=` and the writer's authority. */
+    private val skinMatches = HashMap<Step, List<Element>>()
+    private var pendingSkinMatch: List<Element>? = null
+
+    private var restampScript: String? = null
+
+    /**
+     * The **re-stamped script** the last gesture produced instead of building anything, if it did — read
+     * once, by the editor, which adopts it ([constructit.editor.Editor.maybeCompleteTool]).
+     *
+     * The one seam a tool that *edits an existing step* needs: a `ToolDef.build` cannot replace the document
+     * it is handed, so it hands back the text and the editor does the adopting — exactly as the panel's
+     * *Section law* field and the wall extension already do, now reachable from the tool table.
+     */
+    fun takeRestamp(): String? = restampScript.also { restampScript = null }
+
+    /**
+     * **Match sections** (session 78): state that the curve [a] and the curve [b] correspond, and re-stamp
+     * every skin that runs between the sections they belong to ([skinMatched]).
+     *
+     * A click is a choice, and this is the whole of the choice: the pair is recorded on the loft's own step by
+     * the two curves' script names, so a replay re-discovers nothing, a rename re-stamps it, and deleting
+     * either curve takes the skin with it like any other reference.
+     */
+    fun matchSections(
+        a: Element,
+        b: Element,
+    ) {
+        val script = skinMatched(a, b) ?: return
+        restampScript = script
+        note = "${nameOf(a)} now runs to ${nameOf(b)} — the loft's correspondence is stated on its own step"
+    }
+
+    /** The pairs [step] states, or null — how the writer restates that step's own `match=` (see [skinMatched]). */
+    internal fun skinMatchesOf(step: Step): List<Element>? = skinMatches[step]
+
+    /**
+     * The **skin over the drawn sections** [picks] — the loft of OP-26's hull route, ruled or [row]-wise
+     * faired (session 78; the correspondence design is the user's own, see DESIGN.md).
+     *
+     * One node, one element, and three things worth stating about the gesture:
+     *
+     * - **Every section is an ordinary sketch on a station of one common run**, which is the whole of what
+     *   makes this a construction rather than a new concept: the sections are embedded on their stations' own
+     *   plane nodes, so retyping a distance slides that station and the skin follows it, and everything drawn
+     *   on the station stays a live sketch.
+     * - **The order is the stations' stated distances**, read here once and thereby structural (OP-21): the
+     *   picks may be clicked in any order, and the node's inputs stand in station order. The distances are
+     *   recorded parameters, so this is a fact of the file rather than a discovery — and a slide that puts two
+     *   stations in one plane, or one past its neighbour, is reported by the body itself, by their distances
+     *   (OP-3).
+     * - **[matches] are stated pairs of curves**, in the order the *Match sections* tool recorded them, and
+     *   they are resolved here to the piece indices the geometry speaks ([SkinMatch]) — the naming authority's
+     *   own division of labour: the file names curves, the feature names pieces.
+     *
+     * Refused by name and building nothing where the *structure* is wrong — a pick that bounds no area, a
+     * section that is not on a station, sections on two different runs, a closed run, fewer than two sections,
+     * a matched curve that belongs to neither of two consecutive sections. Everything geometric is the node's
+     * own business and is reported as the reason it is invalid, so it heals when the drawing moves (OP-3).
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun skinSolid(
+        picks: List<Element>,
+        row: SkinRow,
+        matches: List<Element> = emptyList(),
+    ): Element? {
+        val what = if (row == SkinRow.RULED) "Loft (ruled)" else "Loft (faired)"
+        val ev = Evaluator()
+        // one region node per section, built once: [regionOf] *constructs* one, so asking twice would leave a
+        // node nothing references behind (harmless, but this is the graph and it should stay tidy)
+        val regions = HashMap<String, RegionRef>()
+        val order = ArrayList<Triple<Element, ScalarEntry, Double>>()
+        var spine: Element? = null
+        for (el in picks) {
+            val region = regionOf(el)
+            if (region == null) {
+                note = "$what: ${nameOf(el)} bounds no area, so it is no section"
+                return null
+            }
+            regions[el.id] = region
+            val space = spaceOf(el)
+            val station = space.station
+            val along = space.along
+            if (station == null || along == null) {
+                note =
+                    "$what: ${nameOf(el)} is drawn in ${spaceLabel(space)}, which does not stand across a run — " +
+                    "a skin's sections live on stations of one run, so put a station on the run with *Station* " +
+                    "and draw the section there"
+                return null
+            }
+            val first = spine
+            if (first == null) {
+                spine = station
+            } else if (first !== station) {
+                note =
+                    "$what: ${nameOf(el)} is on a station of ${nameOf(station)} and the first section is on a " +
+                    "station of ${nameOf(first)} — one skin runs over stations of **one** run, so loft each run's " +
+                    "sections on their own"
+                return null
+            }
+            order.add(Triple(el, along, evalMm(along.ref)))
+        }
+        val run = spine
+        if (order.size < 2 || run == null) {
+            note = "$what: pick at least two sections, each drawn on a station of one run"
+            return null
+        }
+        // **A ring of sections has no first and no last section to cap** (the design's first-slice cut, named):
+        // the run's closure is a fact of its construction, so this is a gesture refusal and not a value.
+        val path = spaceCurveRef(run, what) ?: return null
+        if ((ev.valueOf(path) as? Path3Value)?.path?.closed == true) {
+            note =
+                "$what: ${nameOf(run)} is a closed run, so its stations come round to where they started and " +
+                "there is no first or last section to cap — a ring skin is a future extension; cut the run open, " +
+                "or loft the sections of each part of it"
+            return null
+        }
+        // the stations' own distances are the order (a stable sort, so nothing about equal ones is invented —
+        // two sections at one distance are refused by the body itself, naming the distance)
+        val sorted = order.sortedBy { it.third }
+        val sections = sorted.map { it.first }
+        val stated = ArrayList<SkinMatch>()
+        if (matches.size % 2 != 0) {
+            note = "$what: a stated match is two curves, and this step names ${matches.size}"
+            return null
+        }
+        for (i in matches.indices step 2) {
+            val m = skinMatchOf(sections, matches[i], matches[i + 1], what, ev, regions) ?: return null
+            stated.add(m)
+        }
+        val parts = sorted.map { (el, along, _) -> SkinPart(cx.sketchOn(planeOfSpace(el.space), regions[el.id]!!), along.ref) }
+        val solid = add(cx.skin(parts, row, stated), ElementKind.SOLID, Styles.SOLID)
+        // the first section's own space, exactly as a loft belongs to its first section's: that is where its
+        // footprint hint is drawn and the coordinates a pick of it measures against
+        solid.space = sections.first().space
+        if (matches.isNotEmpty()) pendingSkinMatch = matches
+        madeSolid(
+            solid,
+            "${sections.size} sections skinned along ${nameOf(run)}" +
+                (if (row == SkinRow.RULED) " with straight rulings" else ", faired through every station") +
+                (if (stated.isEmpty()) "" else ", with ${stated.size} matched ${if (stated.size == 1) "pair" else "pairs"}"),
+        )
+        return solid
+    }
+
+    /**
+     * The pair `(a, b)` as a [SkinMatch] over [sections], or null with [note] set.
+     *
+     * Two curves of **consecutive** sections, in either order — which one is the lower is the stations' own
+     * business and not the click's, so the tool takes them as they were clicked and this puts them the right
+     * way round.
+     */
+    private fun skinMatchOf(
+        sections: List<Element>,
+        a: Element,
+        b: Element,
+        what: String,
+        ev: Evaluator,
+        regions: Map<String, RegionRef> = emptyMap(),
+    ): SkinMatch? {
+        val pa = skinPieceOf(sections, a, ev, regions)
+        val pb = skinPieceOf(sections, b, ev, regions)
+        if (pa == null || pb == null) {
+            val lost = if (pa == null) a else b
+            note =
+                "$what: ${nameOf(lost)} is no piece of any of these sections' outlines, so there is nothing to " +
+                "match with it — click a curve of one section and a curve of the next"
+            return null
+        }
+        val (ka, ia) = pa
+        val (kb, ib) = pb
+        if (ka == kb) {
+            note =
+                "$what: ${nameOf(a)} and ${nameOf(b)} are both pieces of section ${ka + 1}, and a match runs " +
+                "from one section to the next — click a curve of each"
+            return null
+        }
+        if (ka + 1 == kb) return SkinMatch(ka, ia, ib)
+        if (kb + 1 == ka) return SkinMatch(kb, ib, ia)
+        note =
+            "$what: sections ${minOf(ka, kb) + 1} and ${maxOf(ka, kb) + 1} are not neighbours along the run, and " +
+            "a match pairs the curves of **consecutive** sections — match each interval's own curves"
+        return null
+    }
+
+    /**
+     * Which section of [sections] the curve [curve] is a boundary piece of, and **which piece** — the one
+     * translation from the file's own name for a curve to the index the geometry speaks ([SkinMatch]).
+     *
+     * The index is the piece's position in the section's own outline loop, which is what a stored face address
+     * already means ([constructit.geom.Section3.FACE_ADDRESS_CONVENTION]) — and it is read off the *region the
+     * skin is built from* rather than off the click order, because a chain's pieces are chained into a loop
+     * and the loop's order is the one the feature indexes.
+     */
+    private fun skinPieceOf(
+        sections: List<Element>,
+        curve: Element,
+        ev: Evaluator,
+        regions: Map<String, RegionRef> = emptyMap(),
+    ): Pair<Int, Int>? {
+        for ((k, section) in sections.withIndex()) {
+            val pieces = boundaryPiecesOf(section) ?: if (section === curve) listOf(section) else continue
+            if (pieces.none { it === curve }) continue
+            val ref = regions[section.id] ?: regionOf(section) ?: continue
+            val region = (ev.valueOf(ref) as? RegionValue)?.region ?: continue
+            val want = profilePieceOf(ev.valueOf(curve.ref) ?: continue) ?: continue
+            val at = region.outer.elements.indexOfFirst { samePiece(it, want) }
+            if (at >= 0) return k to at
+        }
+        return null
+    }
+
+    /** Whether two boundary pieces are the same curve — walked either way, since a loop may reverse one. */
+    private fun samePiece(
+        a: ProfileElement,
+        b: ProfileElement,
+    ): Boolean {
+        if (a::class != b::class) return false
+        val tol = Geom3.WELD_TOL
+        val a0 = GeomMath.startOf(a)
+        val a1 = GeomMath.endOf(a)
+        val b0 = GeomMath.startOf(b)
+        val b1 = GeomMath.endOf(b)
+        return ((a0 - b0).length() <= tol && (a1 - b1).length() <= tol) ||
+            ((a0 - b1).length() <= tol && (a1 - b0).length() <= tol)
+    }
+
+    /**
+     * The whole journal with the pair `(a, b)` **stated on every skin that spans those two sections** — or
+     * null with [note] set, by name.
+     *
+     * A Match is an **edit** of the bodies it concerns and never a feature of its own, which is the size
+     * law's own mechanism read once more ([sweepLawRestated], and OP-23's re-stamp precedent before it): the
+     * step that already declares the skin gains one argument, so the body keeps its identity, its name and
+     * everything built on it, nothing downstream is rewired, and the whole thing is one undo.
+     *
+     * **Every** skin that runs over both sections, deliberately: a stated pair is a fact about two curves of
+     * the drawing, so a second skin over the same sections reads the same statement rather than needing the
+     * click again.
+     *
+     * This document is left exactly as it was — what comes back is text, and the caller adopts it
+     * ([constructit.editor.Editor.matchSections]).
+     */
+    fun skinMatched(
+        a: Element,
+        b: Element,
+    ): String? {
+        val ev = Evaluator()
+        val touched = ArrayList<Pair<Step, List<Element>>>()
+        for (step in journal) {
+            if (step.kind != "tool") continue
+            val id = (step.args.firstOrNull() as? Arg.Text)?.s ?: continue
+            if (id != Tools.LOFT_RULED && id != Tools.LOFT_FAIRED) continue
+            val sections = referencedElements(step).filter { el -> el.isArea || boundaryPiecesOf(el) != null }
+            if (skinPieceOf(sections, a, ev) == null || skinPieceOf(sections, b, ev) == null) continue
+            val now = skinMatches[step] ?: emptyList()
+            if (now.indices.step(2).any { (now[it] === a && now[it + 1] === b) || (now[it] === b && now[it + 1] === a) }) {
+                note = "Match sections: ${nameOf(a)} and ${nameOf(b)} are matched already"
+                return null
+            }
+            touched.add(step to (now + listOf(a, b)))
+        }
+        if (touched.isEmpty()) {
+            note =
+                "Match sections: no loft runs between the sections ${nameOf(a)} and ${nameOf(b)} belong to — " +
+                "loft the sections first (*Loft (ruled)* or *Loft (faired)*) and then match the curves that " +
+                "should meet; a loft whose sections have different piece counts says so and waits for exactly this"
+            return null
+        }
+        val before = touched.map { (step, _) -> step to skinMatches[step] }
+        return try {
+            for ((step, pairs) in touched) skinMatches[step] = pairs
+            DocumentFormat.save(this)
+        } finally {
+            for ((step, was) in before) {
+                if (was == null) skinMatches.remove(step) else skinMatches[step] = was
+            }
+        }
     }
 
     /**

@@ -316,6 +316,27 @@ object Icons {
         path("M3 19 L12 22 L21 19 L12 16 Z", """opacity=".5"""") + path("M7.5 5 L12 6.6 L16.5 5 L12 3.4 Z") +
             path("M3 19 L7.5 5") + path("M21 19 L16.5 5") + path("M12 22 L12 6.6", """opacity=".3"""")
 
+    /**
+     * The **skin over drawn sections** (session 78), as a family of three: two sections standing across a run
+     * — the run itself soft, because it is the context and not the operation — and the rails that skin them.
+     * The variants differ by exactly one mark, which is this file's own rule: the rails are **straight** for
+     * the ruled row and **bowed** for the faired one.
+     */
+    private val SKIN_SECTIONS = soft("M3 12 L21 12") + oval(7.0, 12.0, 2.6, 6.0) + oval(17.5, 12.0, 3.4, 8.0)
+
+    val LOFT_RULED = SKIN_SECTIONS + path("M7 6 L17.5 4") + path("M7 18 L17.5 20")
+
+    val LOFT_FAIRED =
+        SKIN_SECTIONS + path("M7 6 C 10.5 2.4, 14 2.2, 17.5 4") + path("M7 18 C 10.5 21.6, 14 21.8, 17.5 20")
+
+    /**
+     * A stated correspondence: one curve of each section, and the tie between them — dashed, because the pair
+     * is a *statement* about the two curves rather than geometry the drawing gains.
+     */
+    val MATCH_SECTIONS =
+        path("M6 4 C 3.5 8, 3.5 16, 6 20") + path("M18 4 C 20.5 8, 20.5 16, 18 20") +
+            dashed("M4.2 12 L19.8 12") + dot(4.2, 12.0, 2.0) + dot(19.8, 12.0, 2.0)
+
     val SECTION = rect(5.0, 6.0, 14.0, 13.0) + dashed("M2 12 L22 12") + path("M5 12 L19 12")
 
     val CUT =

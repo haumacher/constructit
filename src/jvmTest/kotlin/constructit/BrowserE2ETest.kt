@@ -2398,4 +2398,110 @@ class BrowserE2ETest {
             browser.close()
         }
     }
+
+    /**
+     * **The loft over drawn sections through the real shell** (OP-26's hull route, session 78 — queue entry
+     * 1): the three rows are in the palette, two sections drawn on two stations of one run are skinned by
+     * clicking them across a change of sketch space, and *Match sections* re-stamps the body it names.
+     *
+     * The claim is reachability, made where a user makes it — the palette, the space indicator and the status
+     * line — and the one thing only a browser can answer: that a tool whose picks span two station planes
+     * survives the shell's own space switch, and that a gesture which *re-stamps a step and reloads the
+     * document* leaves the shell's tree, canvas and status where they should be.
+     */
+    @Test
+    fun aLoftOverDrawnSectionsIsReachableInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            fun tree(): List<String> = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+            fun solids(): Int = tree().count { it.startsWith("solid") }
+
+            // the three rows exist, each with a glyph of its own
+            for (row in listOf(Tools.LOFT_RULED, Tools.LOFT_FAIRED, Tools.MATCH_SECTIONS)) {
+                assertTrue(page.querySelector("#tool-$row") != null, "the palette has a row for $row")
+            }
+
+            val box = page.querySelector("#canvas").boundingBox()
+            val a = Pair(box.x + box.width * 0.2, box.y + box.height * 0.5)
+            val b = Pair(box.x + box.width * 0.8, box.y + box.height * 0.5)
+
+            // a run in the plan, through two plain points
+            page.click("#tool-point")
+            page.mouse().click(a.first, a.second)
+            page.mouse().click(b.first, b.second)
+            page.click("#tool-curve3")
+            page.mouse().click(a.first, a.second)
+            page.mouse().click(b.first, b.second)
+            page.keyboard().press("Enter")
+            assertTrue(tree().any { it.startsWith("space_curve") }, "the run is in the tree: ${tree()}")
+
+            // …a station a third of the way along it, and a section drawn there
+            page.click("#tool-${Tools.STATION}")
+            page.keyboard().press("2")
+            page.keyboard().press("0")
+            page.keyboard().press("Enter")
+            page.mouse().click(box.x + box.width * 0.4, box.y + box.height * 0.5)
+            assertTrue(page.querySelector("#v-space").inputValue() == "station1", "the station opened: ${status()}")
+            val cx = box.x + box.width * 0.5
+            val cy = box.y + box.height * 0.5
+            page.click("#tool-${Tools.RECTANGLE}")
+            page.mouse().click(cx - 90.0, cy - 70.0)
+            page.mouse().click(cx + 90.0, cy + 70.0)
+
+            // …and a second station further along, with a smaller section
+            page.selectOption("#v-space", "plan")
+            page.click("#tool-${Tools.STATION}")
+            page.keyboard().press("6")
+            page.keyboard().press("0")
+            page.keyboard().press("Enter")
+            page.mouse().click(box.x + box.width * 0.6, box.y + box.height * 0.5)
+            assertTrue(page.querySelector("#v-space").inputValue() == "station2", "the second station opened: ${status()}")
+            page.click("#tool-${Tools.RECTANGLE}")
+            page.mouse().click(cx - 45.0, cy - 35.0)
+            page.mouse().click(cx + 45.0, cy + 35.0)
+
+            // the skin: one section clicked here, the space switched, the other clicked there — the picks
+            // survive the switch, which is what `crossSpace` promises
+            page.click("#tool-${Tools.LOFT_RULED}")
+            page.mouse().click(cx, cy + 35.0)
+            page.selectOption("#v-space", "station1")
+            page.mouse().click(cx, cy + 70.0)
+            page.keyboard().press("Enter")
+            assertTrue(status().contains("2 sections skinned"), "the shell says what it built: ${status()}")
+            assertTrue(
+                !status().contains("nothing is drawn"),
+                "and the body is there rather than invalid: ${status()} / ${tree()}",
+            )
+            assertTrue(solids() == 1, "and a solid is in the tree: ${tree()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/40-loft-over-sections.png")))
+
+            // …and a Match on the two sides just clicked: an edit of that body, not a second one
+            page.click("#tool-${Tools.MATCH_SECTIONS}")
+            page.mouse().click(cx, cy + 70.0)
+            page.selectOption("#v-space", "station2")
+            page.mouse().click(cx + 45.0, cy)
+            assertTrue(status().contains("now runs to"), "the shell states the pair: ${status()}")
+            assertEquals(1, solids(), "and made no second body: ${tree()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/41-loft-matched.png")))
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

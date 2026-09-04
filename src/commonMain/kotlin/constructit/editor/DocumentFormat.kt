@@ -464,7 +464,27 @@ object DocumentFormat {
                         stated -> step.args.map { if (it is Arg.Keyed && it.key == "law") Arg.Keyed("law", Arg.Label(lawNow)) else it }
                         else -> step.args + Arg.Keyed("law", Arg.Label(lawNow))
                     }
-                args + signsOf(doc, step) + if (dofs.isEmpty()) emptyList() else listOf(Arg.Keyed("dofs", Arg.Nums(dofs)))
+                // …and a **skin's stated correspondence**, written as the matched curves' own script names
+                // and read from the same kind of registry for the same two reasons (session 78): a *Match* is
+                // an edit of this very step ([Document.skinMatched]), and an element reference is what makes
+                // the pairs travel through the name map and the delete cascade like every other reference —
+                // so a renamed curve re-stamps here and a deleted one takes the skin with it.
+                val pairsNow = doc.skinMatchesOf(step)
+                val hadPairs = step.args.any { it is Arg.Keyed && it.key == "match" }
+                val withPairs =
+                    when {
+                        pairsNow == null && !hadPairs -> args
+                        pairsNow == null -> args.filterNot { it is Arg.Keyed && it.key == "match" }
+                        else -> {
+                            val arg = Arg.Keyed("match", Arg.Refs(pairsNow.map { Arg.El(it) }))
+                            if (hadPairs) {
+                                args.map { if (it is Arg.Keyed && it.key == "match") arg else it }
+                            } else {
+                                args + arg
+                            }
+                        }
+                    }
+                withPairs + signsOf(doc, step) + if (dofs.isEmpty()) emptyList() else listOf(Arg.Keyed("dofs", Arg.Nums(dofs)))
             }
             // the branch this step's click chose, restated so replay never scores it again (OP-1) — see
             // [Document.intersectNear]
@@ -1446,6 +1466,7 @@ object DocumentFormat {
         var scalars = emptyList<ScalarEntry>()
         var count = 0
         var law: String? = null
+        var matches = emptyList<Element>()
         // **A traced boundary is re-followed when a re-stamp changes how many pieces it has** (OP-23).
         // The tracer's follow is edit-time bookkeeping (OP-14/OP-18): the file keeps the whole ordered
         // boundary and a *load* discovers nothing, but a re-stamp is an edit, and re-running the same follow
@@ -1491,6 +1512,13 @@ object DocumentFormat {
                 "count" -> count = v.toIntOrNull() ?: throw LoadError("malformed count '$v'")
                 // a **variable section's size law**, verbatim — the text is the record (OP-26, session 77)
                 "law" -> law = unquote(v)
+                // a **skin's stated correspondence** (session 78): the matched curves in pairs, by name, so a
+                // replay re-discovers nothing at all — the pairing is the file's and never the geometry's
+                "match" ->
+                    matches =
+                        v.split(',').filter { it.isNotEmpty() }.map {
+                            byName[it] ?: throw LoadError("unknown element '$it'")
+                        }
                 else -> throw LoadError("unknown tool argument '$key'")
             }
         }
@@ -1500,7 +1528,10 @@ object DocumentFormat {
             throw LoadError("${tool.id} carries no size law over the run, and this step states law=\"$law\"")
         }
         val at = clicks.lastOrNull() ?: Vec2(0.0, 0.0)
-        val picks = Picks(points, elements, at, clicks, dofs, count, signs, law = law)
+        if (matches.isNotEmpty() && !tool.carriesMatches) {
+            throw LoadError("${tool.id} states no correspondence between sections, and this step carries match=")
+        }
+        val picks = Picks(points, elements, at, clicks, dofs, count, signs, law = law, matches = matches)
         // replay through the same recorder the click used, so the reloaded document can be saved again
         doc.runTool(tool, picks, scalars)
     }

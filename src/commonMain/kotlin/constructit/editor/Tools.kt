@@ -9,6 +9,7 @@ import constructit.geom.CarryMode
 import constructit.geom.Continuity
 import constructit.geom.Handedness
 import constructit.geom.Justification
+import constructit.geom.SkinRow
 import constructit.geom.Vec2
 import constructit.units.Dimension
 import constructit.units.Quantity
@@ -354,6 +355,15 @@ class Picks(
      * exactly what it meant (OP-18).
      */
     val law: String? = null,
+    /**
+     * The **stated correspondence** a skin was lofted with (session 78) — the matched curves in pairs, in the
+     * order *Match sections* recorded them — or empty for a skin whose sections pair by traversal order alone.
+     *
+     * Elements rather than indices, and that is the naming authority doing the work: the pairs ride the step
+     * as an optional `match=` of script names, so a rename re-stamps them, a delete takes the skin with the
+     * curve, and the *feature* still speaks piece indices (`Document.skinSolid` is the one translation).
+     */
+    val matches: List<Element> = emptyList(),
 )
 
 /**
@@ -378,6 +388,13 @@ class ToolDef(
      * any other step is refused by name at load rather than silently dropped.
      */
     val carriesLaw: Boolean = false,
+    /**
+     * Whether this tool carries a **stated correspondence** between its sections — declared by the two loft
+     * rows of session 78 and by nothing else, so a `match=` on any other step is refused by name at load
+     * rather than silently dropped ([ToolDef.carriesLaw]'s own rule, and for its own reason: a file that
+     * says *matched* and builds *unmatched* is the one thing a load may not do).
+     */
+    val carriesMatches: Boolean = false,
     val help: String = "",
     /**
      * The single key that arms this tool, uppercase. A **tool option like any other**: the palette
@@ -962,6 +979,34 @@ object Tools {
     const val LOFT = "loft"
     const val EXTRUDE_TO_POINT = "extrudepoint"
 
+    /**
+     * **The loft as a skin over drawn sections** (OP-26's hull route, session 78 — the hull, the wing, the
+     * duct transition): an ordered run of closed sections, each an ordinary sketch on a **station of one
+     * run**, skinned between consecutive pairs.
+     *
+     * Two ids because the geometry *between* the sections differs — straight rulings or one interpolating
+     * cubic per correspondence family through every station — and that is a discrete structural choice, so it
+     * is stated by which row was used and recorded by recording the tool (OP-1/OP-18). Exactly the argument
+     * [CURVE3] and [CURVE3_SMOOTH] make one dimension down, and the reason neither build has to read a mode
+     * off a number an edit could change.
+     *
+     * A row of their own beside [LOFT] rather than an argument on it, and the reason is what a tool id is: the
+     * two features pair boundaries by different mechanisms — a global arc-length parameter and a scored seam
+     * there, *stated* piece pairs here — so one row that guessed which was meant would be guessing about
+     * geometry (see [constructit.geom.Feature3.Skin]).
+     */
+    const val LOFT_RULED = "loftruled"
+    const val LOFT_FAIRED = "loftfair"
+
+    /**
+     * **Match sections** (session 78): state that this curve of one section runs to that curve of the next.
+     *
+     * The one mechanism doing three jobs — the seam, the rotational offset and the degeneracy — and it builds
+     * nothing at all: it re-stamps the loft's own step with the pair, by the two curves' script names, which
+     * is what makes it one undo and keeps the body's identity (`Document.matchSections`).
+     */
+    const val MATCH_SECTIONS = "loftmatch"
+
     // ...and back down again: a sketch on a solid's face, and a solid's section as 2D geometry
     const val EXTRUDE_ON_FACE = "extrudeface"
     const val SECTION = "section"
@@ -1405,6 +1450,14 @@ object Tools {
             // click named, scored once and written into the step's `signs=` (OP-1/OP-18). The construction is
             // the op node's ([Shell3]); the two rows are one build with one flag, which is what keeps the
             // open-vs-closed choice structural rather than a reading of a miss.
+            // ----- the loft as a **skin over drawn sections** (OP-26's hull route, session 78 — queue entry 1).
+            // Three rows, one mechanism: two geometries over one correspondence, and the Match that states it.
+            // The sections are ordinary sketches on stations of one run, so `crossSpace` for the loft's own
+            // reason — the picks come from several station planes and each keeps the space it was made in —
+            // and the order is the stations' own stated distances rather than the click order.
+            ToolDef(LOFT_RULED, "Loft (ruled)", ToolCategory.SOLIDS, listOf(SlotKind.AREA), repeating = true, minPicks = 2, crossSpace = true, carriesMatches = true, help = "Click the closed sections you have drawn on stations of one run — in any order — then press Enter: what you get is the skin over them, straight from each section to the next, capped at both ends with the end sections themselves. Switch station between clicks and the picks are kept. The sections run in the order of their stations' own distances, so sliding a station slides the skin with it and every section stays a live sketch you can reshape. Corresponding curves are paired by going round each outline the same way: with the same number of pieces on both sections that is all it takes. Where the counts differ, either split a curve with *Break* so they agree, or state one pair with *Match sections* — then what nobody matched collapses honestly to a point, which is how a rectangle becomes a triangle. Every strip and both caps are faces of the body: click one in the 3D view to sketch on it, give it its own colour, or cut through it.", slotNames = listOf("section"), icon = Icons.LOFT_RULED) { d, p, _ -> d.skinSolid(p.elements, SkinRow.RULED, p.matches) },
+            ToolDef(LOFT_FAIRED, "Loft (faired)", ToolCategory.SOLIDS, listOf(SlotKind.AREA), repeating = true, minPicks = 2, crossSpace = true, carriesMatches = true, help = "The same gesture as *Loft (ruled)* and the same correspondence, with one difference: instead of running straight from each section to the next, the skin follows one smooth curve through **all** the stations — so a three-station hull swells through its middle section instead of kinking at it. It still passes exactly through every section you drew. Two sections make the same body either row builds, since a curve through two points is a straight line.", slotNames = listOf("section"), icon = Icons.LOFT_FAIRED) { d, p, _ -> d.skinSolid(p.elements, SkinRow.FAIRED, p.matches) },
+            ToolDef(MATCH_SECTIONS, "Match sections", ToolCategory.SOLIDS, listOf(SlotKind.CURVE, SlotKind.CURVE), replicates = false, crossSpace = true, help = "Click a curve of one section, then the curve of the next section it should run to: from now on those two correspond, and the loft over those sections is re-stamped with the pair — one undo, and the body keeps its name and everything built on it. This is what a loft asks for when its two sections have different numbers of pieces, and it is also how you *turn* a loft whose counts already agree: the first pair you state is the seam, so matching a corner to its neighbour twists the skin by one piece. Match more pairs to line up more of the outline; curves nobody matched fan to the point where their matched neighbours meet, and *Break* is the way to get real strips there instead.", slotNames = listOf("curve of one section", "curve of the next"), icon = Icons.MATCH_SECTIONS) { d, p, _ -> d.matchSections(p.elements[0], p.elements[1]) },
             ToolDef(SHELL, "Shell (open a face)", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("wall thickness")), help = "Type a wall thickness (or pick a parameter in the panel), then click the body on the face you want left open: what you get is that body hollowed out to a wall of that thickness, with the face you clicked taken away — a cup, a box, a housing. The cavity is the body's own profile stepped inward by the thickness, exactly: straight walls stay straight and round ones stay round, so nothing is approximated and the wall is that thickness everywhere. In the 3D view the face is the one your pointer is on; on a flat canvas it is the face you are looking at where you clicked. The thickness stays an ordinary parameter, so retyping it re-hollows the body and the same parameter feeding two shells keeps them equal by construction. A thickness the body cannot host says so and names the thickest wall that fits. The result is a feature of its own: its faces are the body's own faces — the open one becomes the wall's rim — with the inner faces appended, so you can still sketch on the outside, sketch on a pocket floor, drill a Cut through the wall, and cut it with a working plane, whose section shows both walls. Extruded and fully revolved bodies can be shelled today; anything else — a fused part, an imported mesh, a swept or lofted body, a partial revolve, an already-rounded one — says so and names what to do instead.", slotNames = listOf("solid, clicked on the face to open"), icon = Icons.SHELL) { d, p, s -> d.shellSolid(p.elements[0], s[0], open = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
             ToolDef(SHELL_CLOSED, "Hollow (closed shell)", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("wall thickness")), help = "Type a wall thickness, then click a body: what you get is that body hollowed out to a wall of that thickness with **no** opening — a sealed vessel, a float, a part whose weight you are taking out and whose surface you are keeping. The same exact construction as Shell, with every face walled instead of one left open. The thickness stays an ordinary parameter. A thickness the body cannot host says so and names the thickest wall that fits.", slotNames = listOf("solid"), icon = Icons.SHELL_CLOSED) { d, p, s -> d.shellSolid(p.elements[0], s[0], open = false, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
             // Placement (the JT-import package, OP-9): a solid, a point in the space you are looking at,

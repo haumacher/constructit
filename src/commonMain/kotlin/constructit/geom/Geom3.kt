@@ -510,6 +510,37 @@ sealed interface Feature3 {
     ) : Feature3 {
         override val footprint: List<Region> get() = base.footprint
     }
+
+    /**
+     * **The loft as a skin over drawn sections** (OP-26's hull route, session 78 — queue entry 1): the ordered
+     * [sections], each an ordinary sketch on a station of one common spine, skinned [row]-wise with the
+     * correspondence [matches] states (see [Skin3], which is the whole of the geometry).
+     *
+     * A feature of its own beside [Loft], and the difference is the one the user's design turns on:
+     * **correspondence is stated here and discovered there**. A loft pairs boundaries by a global arc-length
+     * parameter and a scored seam, which is the right answer for sections on arbitrary planes with guides; a
+     * skin pairs *pieces* — by traversal order where the counts agree, by a recorded Match where they do not,
+     * with what nobody matched collapsing honestly to a point. Neither subsumes the other and neither is
+     * changed by the other's existence.
+     *
+     * `(sections, row, matches)` is enough to rebuild the identical body — the sections carry their own planes
+     * and their stations' distances, [row] is the structural ruled/faired choice the tool id records, and the
+     * matches are piece indices — so [Solid3]'s purity claim holds verbatim and a reload derives the same
+     * triangles from the same numbers.
+     *
+     * [footprint] is the **first section's own regions**, which is the loft's own rule and is chosen for the
+     * same reason: it is analytic, it forces no mesh, and it is *structural*, so the face address space that
+     * starts past it ([Section3.FACE_ADDRESS_CONVENTION]) cannot move when the drawing does. What it costs is
+     * stated: the hint is drawn in the first station's own space rather than in the plan, and a footprint edge
+     * of a skin names no face — a face of one is picked in the 3D view or reached through its own address.
+     */
+    data class Skin(
+        val sections: List<SkinSection>,
+        val row: SkinRow,
+        val matches: List<SkinMatch>,
+    ) : Feature3 {
+        override val footprint: List<Region> get() = sections.firstOrNull()?.sketch?.regions ?: emptyList()
+    }
 }
 
 /** Whether any boundary piece of [region] is curved — OP-15's question, asked structurally. */
@@ -720,7 +751,7 @@ object Geom3 {
     const val WELD_TOL = 1e-7
 
     /** Areas below this (mm²) count as zero — a degenerate ear, a collinear vertex, a sliver. */
-    private const val AREA_EPS = 1e-12
+    internal const val AREA_EPS = 1e-12
 
     /**
      * How far along [ray] it meets [plane], or **null** when it never does *ahead of the origin*: the ray
@@ -844,7 +875,7 @@ object Geom3 {
      * twin; the scan order is fixed, so the result is deterministic. Indices are handed out in
      * insertion order — never in hash order — which is what makes a mesh byte-comparable.
      */
-    private class MeshBuilder {
+    internal class MeshBuilder {
         private val vertices = ArrayList<Vec3>()
         private val buckets = HashMap<Long, MutableList<Int>>()
         private val tris = ArrayList<Tri>()
@@ -2399,7 +2430,7 @@ object Geom3 {
      * pass close without meeting while the patch between them folds. That limit is recorded in DESIGN.md; the
      * degenerate cases a user actually reaches are the ones where rails meet.
      */
-    private fun crossingRails(
+    internal fun crossingRails(
         a: List<Vec3>,
         b: List<Vec3>,
     ): Pair<Int, Int>? {
@@ -2580,6 +2611,9 @@ object Geom3 {
             is Feature3.Loft -> null to NOT_PRISMATIC
             // A sweep's axis is a curve, so there is no one direction to stack slabs along at all (OP-26).
             is Feature3.Sweep -> null to NOT_PRISMATIC
+            // …and a skin over drawn sections for the loft's own reason, one feature along: its area changes
+            // along the run, so there is no slab stack to be exact about (session 78).
+            is Feature3.Skin -> null to NOT_PRISMATIC
             // A blend's walls are rounded, so it is not a stack of slabs however prismatic its base was —
             // refused rather than approximated by the base, which would silently give the exact algebra a
             // body that is not the body (OP-22's dispatch is a *predicate*, and it must not lie).
@@ -2623,6 +2657,7 @@ object Geom3 {
             is Feature3.Imported -> null
             is Feature3.Loft -> null
             is Feature3.Sweep -> null
+            is Feature3.Skin -> null
             // Null and **not** the base's plane: this predicate decides whether the exact algebra runs, and
             // a blend has no prismatic reading to run it on ([prismatic] refuses it). Naming an axis here
             // would send a blended body down a path that then declines — and the exact path's refusals are
@@ -3018,7 +3053,7 @@ object Geom3 {
      * both sides, because the test is a function of the edge alone. The budget is a guard, not a policy:
      * exceeding it refuses the mesh (OP-3) rather than emitting one with a T-junction in it.
      */
-    private fun splitToRequired(
+    internal fun splitToRequired(
         tris: List<Tri3>,
         required: List<Vec2>,
     ): Pair<List<Tri3>?, String?> {
@@ -3136,6 +3171,13 @@ object Geom3 {
             // frames are the moving frame's at each end — which for a closed path do not exist at all — so
             // naming one TOP would invent a convention. A datum plane reaches either of them.
             is Feature3.Sweep -> null to "a swept solid has no top or bottom face — put a datum plane where you want to sketch"
+            // A skin's two ends are its own end **sections**, which are faces of the body and are named
+            // ([Skin3.faces]) — but neither is a *top* or a *bottom*, because the run they stand across is a
+            // curve. So the same refusal the sweep gives, pointing at the face that does exist.
+            is Feature3.Skin ->
+                null to
+                    "a skin over drawn sections has no top or bottom face — its ends are its own end sections, " +
+                    "which you can sketch on by clicking one, and a datum plane reaches anywhere else"
             // **The dressed part keeps its named faces** (session 71, slice 3): a blend does not move a face's
             // plane, it trims the face's outline, so `TOP` of a filleted plate is the plate's own top face and
             // a boss sketched on it before the fillet is on it after. That is the whole point of the feature
@@ -3198,6 +3240,9 @@ object Geom3 {
             is Feature3.Imported -> null
             is Feature3.Loft -> null
             is Feature3.Sweep -> null
+            // Null for the skin, and its own refusal says so by name: a skin has no prism form, and its faces
+            // are not addressed through the footprint at all ([Section3.facePatchOfFootprintPiece]).
+            is Feature3.Skin -> null
             // **The base's span**, and only for [sideFace]'s question, which is *which plane a face is*: a
             // blend does not move a face, it trims it, so the frame a sketch on a dressed part's side face
             // is measured in must be the very frame it was measured in before (OP-18 — a stored
@@ -3368,6 +3413,12 @@ object Geom3 {
             // *path*, which a horizontal cut is not — the station of OP-26's step 4 is where that lives.
             is Feature3.Sweep ->
                 return null to "a swept solid has no prismatic cross-section, because its axis is a curve; sectioning one needs an analytic sweep section (OP-26)"
+            // The loft's own answer, for the loft's own reason (session 78): a skin's area changes along its
+            // run, so no height names a slab of it. A working plane's section is the reading that does work.
+            is Feature3.Skin ->
+                return null to
+                    "a skin over drawn sections has no prismatic cross-section, because its outline changes " +
+                    "along the run; cut it with a working plane instead"
             // A **horizontal** cut of a blended body is not one of the base's slabs: the blend rounds the
             // walls, so the area at a height inside the rounding is not the base's area there. Refused by
             // name rather than answered with the base's — a working plane's section (`Section3.sectionOf`)

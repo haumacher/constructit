@@ -78,6 +78,20 @@ sealed interface FaceName {
     data class ShellInner(val face: Int) : FaceName {
         override val label: String get() = "the inner face behind face #${face + 1}"
     }
+
+    /**
+     * One **strip of a skin** (session 78): the band between sections [interval] and `interval + 1` at
+     * [strip] of the correspondence's own cyclic walk.
+     *
+     * A name of its own rather than the loft's [Band], and for the reason a name is a name: a loft's band is
+     * addressed *through its footprint* by the rail a footprint edge is, and a skin's strip is not — it is one
+     * entry of a constructed list, reached at the address that list gives it. Two features, two orders, no
+     * arithmetic in common.
+     */
+    data class SkinBand(val interval: Int, val strip: Int) : FaceName {
+        override val label: String
+            get() = "the skin between sections ${interval + 1} and ${interval + 2} at strip #${strip + 1}"
+    }
 }
 
 /**
@@ -437,6 +451,10 @@ object Section3 {
             is Feature3.MeshBoolean -> null to MESH_ONLY
             is Feature3.Imported -> null to IMPORT_ONLY
             is Feature3.Sweep -> null to SWEEP_ONLY
+            // **The skin's list is constructed** (session 78): one strip per (interval × piece) in the
+            // correspondence's own order, then the two caps. The skin owns that order, so it is stated once
+            // in [Skin3] and read from here — the very discipline the loft's `LoftPlan` exists for.
+            is Feature3.Skin -> Skin3.faces(feature)
             // **The dressed list** (session 71, slice 3): the base's faces at their own indices, outlines
             // corrected where the blend consumed an edge, one band appended per blended edge. The blend owns
             // that arithmetic, so it is stated once in [Blend3] and read from here.
@@ -468,6 +486,12 @@ object Section3 {
             is Feature3.MeshBoolean -> false
             is Feature3.Imported -> false
             is Feature3.Sweep -> false
+            // **False for a skin, and that is the honesty line rather than a gap.** Its faces are named and
+            // they *are* the whole boundary — but a strip is a ruled or faired band, so the curve a plane
+            // cuts it in is not one this drawing can state (OP-15). So a skin's section draws from the mesh
+            // and names nothing, with [Skin3.LOFT_ONLY] as the reason; a plane lying **on** one of its faces
+            // is the exact case that does work, and [sectionOf] takes it before ever asking this.
+            is Feature3.Skin -> false
             // A dressed part's faces are whole exactly when its base's are: the blend replaces a strip of two
             // faces with a band it appends, so nothing leaves the shell and nothing is added outside it.
             is Feature3.Blend -> facesAreWholeBoundary(feature.base)
@@ -504,6 +528,7 @@ object Section3 {
             is Feature3.MeshBoolean -> MESH_ONLY
             is Feature3.Imported -> IMPORT_ONLY
             is Feature3.Sweep -> SWEEP_ONLY
+            is Feature3.Skin -> Skin3.LOFT_ONLY
         }
 
     private fun extrusionFaces(f: Feature3.Extrusion): List<FacePatch> {
@@ -660,7 +685,7 @@ object Section3 {
     private fun capMap(mirror: Boolean): Affine =
         if (mirror) Affine(1.0, 0.0, 0.0, -1.0, 0.0, 0.0) else Affine(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
-    private fun capFace(
+    internal fun capFace(
         regions: List<Region>,
         plane: Plane3,
         mirror: Boolean,
@@ -916,6 +941,12 @@ object Section3 {
             is Feature3.MeshBoolean -> null to MESH_ONLY
             is Feature3.Imported -> null to IMPORT_ONLY
             is Feature3.Sweep -> null to SWEEP_ONLY
+            // **A skin's edges are the one half of its provenance this cut does not build** (session 78, and
+            // it is recorded in DESIGN.md as such): its faces are named, and the creases between them are the
+            // rails and the ring intervals — but an edge list is what a *blend* is a construction over, and a
+            // blend of a mesh-tier body has no analytic face to run tangent onto. So it refuses in the
+            // skin's own words rather than handing out edges nothing may build on.
+            is Feature3.Skin -> null to Skin3.LOFT_ONLY
             // the dressed list: every base edge at its own index (a consumed one flagged with its reason and
             // never removed), then two tangent rails appended per blended edge — see [Blend3.dressedEdges]
             is Feature3.Blend -> Blend3.dressedEdges(feature)
@@ -1131,6 +1162,15 @@ object Section3 {
         // …and past the footprint's own pieces, the flat ends, in the face list's order
         // ([FACE_ADDRESS_CONVENTION]) — which is where the revolution's caps have always been.
         if (piece >= Geom3.boundaryPieces(feature).size) return endFacePatch(feature, piece)
+        // **A skin's faces stand over no footprint piece** (session 78), and that is what keeps their stored
+        // addresses still: its plan hint is its first section's outline, drawn in that station's own space, so
+        // a footprint edge of one names nothing. Every face it *has* is reached past the footprint, at the
+        // address a click on it records ([FACE_ADDRESS_CONVENTION], and [Skin3.faces] for the order).
+        if (feature is Feature3.Skin) {
+            return null to
+                "a skin over drawn sections is not addressed by a footprint edge — click the face itself in the " +
+                "3D view, or click one of its end sections to sketch on it"
+        }
         if (feature !is Feature3.Loft) {
             // The prism route is [Geom3.sideFace] verbatim — frame, anchor and refusals — because that frame
             // is the **sketching** convention (OP-17): the picked segment on the x axis, v into the face,

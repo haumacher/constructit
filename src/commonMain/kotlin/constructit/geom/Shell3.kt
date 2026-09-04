@@ -88,6 +88,10 @@ object Shell3 {
             is Feature3.Loft ->
                 "this solid's cross-section changes along the run (a loft), so one wall thickness is not a constant " +
                     "offset of its sections — a shell of a loft is a future extension"
+            is Feature3.Skin ->
+                "this solid is a skin over drawn sections, so its outline changes along the run and one wall " +
+                    "thickness is not a constant offset of its sections — loft the outer sections, loft the inner " +
+                    "ones and subtract; a shell of a skin is a future extension"
             is Feature3.Blend ->
                 "this solid is a blended body, so the surface to offset inward is the rounding's own — shell the body " +
                     "first and round it afterwards, which is the same part by construction"

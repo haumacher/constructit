@@ -1892,6 +1892,7 @@ it:
 
 | `tool sweep signs=` again — **a closed run's seam counts among the crossings** (OP-26, session 66) | **v2 → v3, the format's second bump.** `Pierce3.crossings` could not see a change of side across a closed run's own start, so a ring whose seam lies exactly in the section's plane reported one crossing where it has two. Correcting the walk inserts that crossing at index **0** (its arc length is nothing), so every index a v2 file recorded on such a drawing now names the crossing one place further along | **the recorded index is shifted on load by exactly the crossing that was inserted in front of it** — one where the run crosses at its seam right now (`Pierce3.crossesAtSeam`), nothing otherwise (`Document.migratedPierce`). The migration is *exact*, which is the whole reason it is one: the new set is the old set with at most one crossing put in front, so what a v2 reader would have shown for this file at this load is `all[k]` of the seam-blind walk and the very same crossing is `all[k + δ]` of this one. A **negative** index is the origin reading and is never shifted; an index that had already outrun its set stays out of it, refusing in the words it always used. Where the run or the plane has **no value** the shift cannot be measured, so the number is kept exactly as written and the load **names the element** (`loadNotes`) |
 | `tool tube law=` / `tool sweep law=` — **a section that changes size along its run** (OP-26's item 3, session 77) | a new *optional* argument on two steps that already existed: one expression over the run parameter `t`, stored **verbatim** and quoted so it may breathe (`splitWords` reads a quoted argument already — the expression half's own doing). A tube reads it as `r(t)`, a length that supersedes the typed radius; a sweep reads it as `scale(t)`, a plain factor about the point the section rides on | none, and **no version bump**, by the `tool sweep signs=` row's own argument read once more. What matters is the **absence**: a step with no `law=` is a section of one size, which is what every file written before this reading existed carries and keeps for ever — and it is asserted character for character (`SweepLawToolTest`), not argued. A law that reads no `t` is additionally asserted to build the constant body **vertex for vertex**, so the frozen reading covers the degenerate case too. No migration is possible or needed, since nothing a file ever stored changes meaning. A `law=` on a step whose tool carries none (`ToolDef.carriesLaw`, declared by exactly those two) is refused **at load** rather than dropped, because a file that says *tapered* and builds *straight* is the one thing a load may not do |
+| `tool loftruled` / `tool loftfair`, and `match=` on either — **the loft over drawn sections** (OP-26's hull route, session 78) | **two new tool ids** plus one new *optional* argument on those two steps and on nothing else: the matched curves in pairs, by the script names the naming authority already gives every element (`match=e6,e17`). The row a gesture used is what says ruled from faired, so the geometry between the sections needs no argument at all | none, and **no version bump**, by the `tool lift` row's own argument: a new tool id is the format's ordinary extension point, and `match=` is an argument that never existed before, so it cannot have meant something else. What matters is the **absence** — a step with no `match=` pairs its sections by traversal order, which is what every file written from now on without a Match means and will go on meaning. A `match=` on a step whose tool carries none (`ToolDef.carriesMatches`, declared by exactly these two rows) is refused **at load** rather than dropped, for the `law=` row's reason: a file that says *matched* and builds *unmatched* is the one thing a load may not do. The pairs are **element references**, so they travel through the name map and the delete cascade like every other reference — a renamed curve keeps its pair and a deleted one takes the skin with it |
 | `sketchspace el= piece=` on a **revolution** — a turned part's flat faces, and a partial turn's caps (OP-17's item 4 of the sphere queue, session 69) | **no new argument and no new spelling**: the same two arguments the face variant has always carried, over the same address space (`Geom3.boundaryPieces`), now answered for a feature kind that used to refuse them. A revolution's face indices `0 until n` are its profile's own boundary pieces and `n` / `n + 1` its low- and high-angle caps | none, and **no version bump**, and this one is airtight rather than argued: before this build `createFaceSpace` on a revolve **always** returned null (`Geom3.sideFace` → *"this solid is not a prism"*), and the loader threw `LoadError` on such a step — so no build could ever write one and no file can contain one. A `piece=` that names a face a *later* edit turned curved refuses in the words of the surface it became (a cylinder, a cone, a torus) and heals when it flattens again, which is OP-3 and not a format question |
 
 **Why a bump, and what was rejected** — the two rows above both argued their way *out* of one, so the argument
@@ -10701,6 +10702,15 @@ r₁²)/3`), a horn (`2mm + 8mm*t*t` — refined for its own law, every ring on 
 via `scale(t)` about the point the section rides on. **2343 → 2383 green** (`SweepLawTest`, 20;
 `SweepLawToolTest`, 19; one browser E2E for the field).
 
+### The loft over drawn sections — OP-26's other half (session 78)
+
+The sentence this section closed with — *"sections drawn in stations, lofted along the path as spine"* — is
+answered in full by the package recorded at the end of this document: **The loft over drawn sections, as
+built (session 78 — queue entry 1 closed)**. It belongs to OP-26 by its inputs (a station of a run is step 4's
+own space) and is recorded at the queue's tail with the other as-built notes; what it adds to OP-26 proper is
+one line: a body may now change its **outline** along a run and not only its size, and the correspondence that
+makes that statable is the user's own design.
+
 ## The sphere as a locus — distance carried in space (OP-28 — RESOLVED)
 
 In the plane, **distance is carried by the circle**. `circle ∩ circle` is an ordered solution set whose branch
@@ -17383,46 +17393,38 @@ session** with the two general readings the sweep's own record foreshadowed (*"s
 lofted along the path as spine"*, written when OP-26 was resolved). The user asked for bodies that vary
 their outline in both directions — a wing, a hull — and those are these two entries:
 
-1. **The loft: a skin over drawn sections (the hull's route).** Design proposed in session 77 and
-   **ruled by the user the same session — all three forks as recommended** (ruled + faired as two rows
-   in one package; sections on stations of one spine; correspondence per the refined design below).
-   **Dispatch next**, as soon as the icons package (issue #22) is out of the tree. An ordered run of ≥2 closed sections, each an ordinary
-   sketch on a **station of one common run** (order = the stations' own stated distances, a recorded fact —
-   two sections at one distance refuse by name). The load-bearing design is **correspondence, stated and
-   never discovered** — refined in session 77 by the user's own two mechanisms, adopted verbatim: outer
-   loop to outer loop (sections with holes refuse in the first slice, cut whole); loop orientation is
-   normalized by area sign (a fact, not a guess); **equal piece counts pair by the outline's cyclic
-   traversal order** with nothing stored. Where counts differ, the user's design takes over: (1) a curve
-   that must become two is **split with Break** — a recorded step, so the equalized counts are facts of
-   the drawing (one-to-many mapping could later subsume the split, noted, not built); (2) a curve with no
-   counterpart is handled by an explicit **Match tool** — a click is a choice: each stated pair (curve in
-   section i, curve in section i+1) is recorded verbatim on the loft's step by script name, re-stamping on
-   rename, and **every unmapped curve collapses to the point between its mapped neighbours' images** — a
-   triangle fan to one shared vertex, which is how a rectangle honestly becomes a triangle and stays
-   watertight. Rules that keep it safe: mappings must be cyclically order-preserving (a crossing pair
-   refuses naming both pairs — a crossed mapping is a self-intersecting skin, not a body), and differing
-   counts with no stated pair refuse asking for one (with zero anchors the cyclic offset is a guess). The
-   first stated pair **is also the seam** — a stated match outranks the drawn-order inference (explicit
-   anchors beat compensation), so the same tool deliberately twists an equal-count loft's alignment. One
-   mechanism, three jobs: seam, offset, degeneracy. Acceptance fixtures from the discussion: circle →
-   (half-circle, segment, half-circle, segment) for the split; rectangle → triangle for the collapse.
-   Within a piece pair, points correspond arc-length-proportionally at the finer tessellation's count. Geometry:
-   **ruled** skin (linear between corresponding points) as the first row, a **faired** row through all
-   stations riding `Path3.smoothThrough` per correspondence family as the second — two tool rows, one
-   mechanism, exactly the sweep/tube pattern. Ends cap with the end sections' own exact planar regions;
-   a closed spine (ring loft) refuses in the first slice. Tier honesty: mesh tier (`LOFT_ONLY` beside
-   `SWEEP_ONLY`), watertight by construction, assertManifold everywhere; the skin's criteria speak per
-   interval — corresponding rings that cross refuse naming the two stations by their distances, never the
-   sampling. Faces are **constructed, not emergent**: one strip per (interval × piece) plus two caps, an
-   ordered face list with stored addresses exactly like the shell's arithmetic twins — so click-a-face,
-   per-face appearance and sketch-on-cap arrive with the feature. Storage: `tool loft els=<sections in
-   station order>` per row id — a new tool id (the format's ordinary extension point, no version bump),
-   no signs (no scored choice exists). Editing: stations slide on their stated distance and the skin
-   follows; every section stays a live sketch.
+1. ~~**The loft: a skin over drawn sections (the hull's route).**~~ **Built in session 78 — see *The loft:
+   a skin over drawn sections, as built* at this queue's tail.** Design proposed in session 77 and **ruled by
+   the user the same session — all three forks as recommended** (ruled + faired as two rows in one package;
+   sections on stations of one spine; correspondence per the refined design below, which is **the user's
+   own**). The entry is kept in full because the as-built note answers it line by line: an ordered run of ≥2
+   closed sections, each an ordinary sketch on a **station of one common run** (order = the stations' own
+   stated distances, a recorded fact — two sections at one distance refuse by name); **correspondence stated
+   and never discovered** — outer loop to outer loop, orientation normalized by area sign, equal counts
+   pairing by cyclic traversal order with nothing stored, a **Break** where a curve must become two, a
+   **Match** where a curve has no counterpart, every unmapped curve collapsing to the point between its
+   mapped neighbours' images, mappings required to be cyclically order-preserving, an anchor-less mismatch
+   refusing by name, and the first stated pair doubling as the seam; **ruled** and **faired** rows over that
+   one mechanism; caps from the end sections' own regions; a closed spine refused in the first slice; the
+   mesh tier, watertight by construction; a **constructed** face list with stored addresses; criteria that
+   speak per interval by the stations' distances. **Two things were cut, both named:** an edge list (so no
+   blend runs along a skin's own crease) and the *Match sections* row's ability to name a body that does not
+   exist yet — see the note's *what it cost* paragraph.
+
 2. **The function-family section (the wing's route)** — the general tier the session-77 sweep ruling
    recorded: named scalars of one section sketch become laws over `t` (chord, thickness, twist), one 2D
-   DAG evaluated per station. Wants its own design pass **after** the loft, whose correspondence rules it
-   will reuse; not designed yet.
+   DAG evaluated per station. Wants its own design pass, and it is now **next**, the loft being out of the
+   tree. What it inherits from the loft, stated so the design pass starts from it rather than re-deriving
+   it: **correspondence is a piece-to-piece statement**, so a family of regions evaluated per station has to
+   keep its **piece count structural** — a law that changed how many pieces a section has would change the
+   skin's face list and every stored address in it, which is OP-21's own rule read one level up; the
+   **`Skin3` families and their rails** are the machinery a station-dependent section would feed (one
+   sampling count per family, resampled arc-length-proportionally), so the geometry half is already there
+   and what is missing is the 2D DAG per station; and the **refusals speak per interval by the stations'
+   distances**, never by sampling, which is the session-65 law the loft restated and the function family
+   will restate again. The one thing it must *not* inherit is the loft's own answer to differing counts: a
+   law that varies a section's shape continuously has no *Break* to reach for, so the design pass owes an
+   answer of its own for a family whose piece count would change.
 
 What remains beyond those two —
 vertex blends, text as geometry, silhouette edges in the 3D view, the panel's scalar tiering,
@@ -17698,3 +17700,164 @@ the dimensioned domain saying so and healing, a unit not read as its number, the
 and the domain's reference counting as use. `BrowserE2ETest.theExpressionFollowUpsAreReachableInBrowser`
 carries both through the real shell: a point named in the inspector, `P.x/2` typed into the formula field and
 the circle following it, then an involute drawn over `0..T` and the flank extending when `T` is retyped.
+
+### The loft over drawn sections, as built (session 78 — queue entry 1 closed)
+
+**What was missing, in the sweep's own words.** OP-26's record closed with the sentence *"sections drawn in
+stations, lofted along the path as spine"*, and session 77's variable-section sweep answered half of it: a body
+can now change **size** along its run, rigidly, by one expression. What it still could not do is change its
+**outline** — a hull's, a wing's, a duct transition's — because a rigid scale is a scale and no formula over
+`t` turns a rectangle into a triangle. The other half is this: the sections are *drawn*, one per station, and
+what runs between them is a skin.
+
+**Why it is a feature of its own beside the session-23 loft, which also takes ordered sections.** Because the
+two answer the correspondence question differently, and the difference is the whole of the user's design. A
+`Feature3.Loft` pairs boundaries by a **global arc-length parameter** and a **scored seam** — a reading of the
+outlines, taken once from where they were clicked — which is exactly right for sections on arbitrary planes
+with guide curves, and is a *discovery*. A `Feature3.Skin` pairs **pieces**, and every pairing is either a fact
+of the drawing (equal counts, walked the same way round) or a **recorded statement** (a Match). Neither
+subsumes the other: the loft can do things a skin cannot (guides, an apex, sections on unrelated planes) and
+the skin can do the one thing the loft cannot (say *this curve becomes that one*, and collapse what nobody
+said). So they stand side by side, with two tool rows each and nothing shared but `Section3`'s address space
+— and the record says so rather than leaving the next reader to wonder which is the loft.
+
+**The correspondence, which is the user's own design, adopted verbatim.** Five rules, each one a fact or a
+statement and never a guess:
+
+- **Orientation is normalized by area sign.** Every station's plane has the spine's tangent for its normal, so
+  a loop that turns counter-clockwise *in its own station frame* turns the same way about the run as every
+  other one. The mirrored correspondence — the "flip" a feature-CAD loft offers, and the one that makes rails
+  cross — therefore cannot arise at all, rather than being refused after the fact.
+- **Equal piece counts pair by the outline's cyclic traversal order**, with nothing stored. A rectangle to a
+  rectangle, a broken circle to four arcs: no anchor, no seam, no file argument.
+- **A stated pair anchors the walk, and the first one is the seam.** Pieces pair in traversal order from each
+  anchor onward, which is why one Match on an equal-count skin **twists** it by exactly the offset stated —
+  one mechanism doing the seam's job, the rotational offset's job and the degeneracy's job, which is what the
+  user's design says it should do. *Explicit anchors beat compensation*: the stated pair outranks the
+  drawn-order inference for ever, and nothing is re-scored on replay because nothing was ever scored.
+- **What nobody mapped collapses to the point between its mapped neighbours' images** — a triangle fan to one
+  shared vertex. That is how a rectangle honestly becomes a triangle and stays watertight, and the vertex is
+  not chosen: it is where the images of the pieces on either side of the gap **meet**, which is a single ring
+  vertex by construction. Where real strips are wanted instead, the cure is a **Break**, which makes the
+  equalized counts facts of the drawing rather than a rule inside the kernel.
+- **Order-preservation is required and a crossing refuses naming both pairs.** Worth stating precisely,
+  because the arithmetic surprised the first test written for it: *two* pairs on two closed outlines can never
+  cross — the cyclic order of two things is trivial, so any two pairs are order-preserving and what is left is
+  a rotation with unequal gaps. A genuine crossing needs **three**, and that is what the refusal is asserted
+  on. The two-pair case that folds the body all the same is caught by the geometric criterion below, which is
+  defence in depth rather than a duplicate.
+
+**Storage: the pairs are element references, and that is the naming authority doing the work.** `match=e6,e17`
+on the loft's own step, read two at a time. A *Match* is therefore an **edit** of that step and never a feature
+of its own — the size law's mechanism read once more (`Document.skinMatched`, `sweepLawRestated`'s precedent,
+OP-23's re-stamp before it): the body keeps its identity, its name and everything built on it, nothing
+downstream is rewired, and the whole thing is one undo. Two properties come free with the reference form and
+are asserted rather than argued: a **renamed** curve keeps its pair (the writer resolves the names through the
+one map that declares every element), and a **deleted** one takes the skin with it and leaves a loadable file
+(`referencedElements` walks the registry the writer reads). And a Match states the pair on **every** skin that
+runs between those two sections, because a stated pair is a fact about two curves rather than a property of one
+body.
+
+**Why differing counts make an *invalid* body rather than a refused gesture, which is a decision.** The
+alternative was refusing the loft outright, and it does not work: there would then be no body for *Match
+sections* to name, so the user could never get from the refusal to the cure. So the counts are a **value**
+question answered where value questions are answered (OP-3): the loft builds, the node is invalid **with the
+reason**, the status line says it, and the Match heals it. That is the station's own doctrinal point
+(*"out of range is node invalidity, not a gesture refusal"*) applied one feature along, and it is what makes
+the refusal *constructive* — it names both counts, `Match sections` and `Break`, and it goes away.
+
+**The rails, the families, and why the skin is watertight by construction.** A mapped chain of pieces through
+the whole run is a **family** (`Skin3.Family`); every member is resampled to the family's own count — the
+finest tessellation among them — so a mapped pair always has the same number of rails and no strip can carry a
+T-junction. Each section's ring is built as **one** point list, so the vertex where two pieces meet is one
+vertex rather than two that agree; a strip's boundary rail is therefore *shared* with its neighbour rather than
+merely equal to it, and a fan's apex is the junction its neighbours' images already have. The two rows differ
+in one thing only, which is what makes them one mechanism: **ruled** samples each rail's chord (one row per
+interval, so a skin between two parallel polygons is exactly the prismatoid its rings state), **faired** runs
+`Curves3.smoothThrough` over every station the rail passes through and samples the piece for this interval —
+so a faired skin passes **exactly** through every section that was drawn, which is asserted vertex for vertex.
+The caps are the end sections' own planar regions, triangulated **over the strips' own ring** rather than over
+a second tessellation of the region: a prism can conform its cap afterwards because both come from one
+tessellation, and a skin's ring is resampled, so building the cap from the region's own points would keep
+vertices the strips have not got. That was a real crack before it was a rule.
+
+**One emission convention had to be stated, because a volume depends on it.** A strip's quad is split from its
+own lower rail. Where the four corners are coplanar the split is immaterial and the body **is** the prismatoid
+(a square frustum's volume is asserted to 1e-9). Where they are not, the two diagonals are two different
+bodies — and a rectangle running to a triangle *always* has one such strip, because three of the four sides
+cannot be parallel to their partners and close a triangle. So the convention is part of the feature, it is
+recorded in `Skin3`'s own KDoc, and the rectangle-to-triangle volume is asserted against the polyhedron the
+correspondence states with that split (`SkinTest.ruledBody`), with the difference from the smooth prismatoid
+asserted to be real.
+
+**The criteria speak per interval, about the stations, by their distances** — the session-65 law, restated for
+a third family of refusals. A ruling that runs backwards and two rulings that meet are the two ways a strip can
+be a fold rather than a skin (the loft's own pair, `Geom3.crossingRails` reached rather than restated), and
+both name *the station 60 mm along the run and the one 240 mm along it*, never the sampling. `Skin3.FAIR_ROWS`
+is a fixed number for exactly that reason: refining the picture may not change a verdict.
+
+**Faces are constructed, not emergent, and they join the address space rather than extending it.** One
+`FaceName.SkinBand(interval, strip)` per (interval × piece) in the correspondence's own cyclic order, then the
+two `FaceName.SectionFace` caps — low end first, which is what `Section3.FACE_ADDRESS_CONVENTION` already says
+of every flat end. Nothing stands over a footprint boundary piece, so the whole list is addressed **past** the
+footprint, and every one of those addresses was a refusal before this feature existed: no stored byte changes
+meaning (OP-18). The footprint itself is the **first section's own regions**, which is the loft's own rule and
+is chosen for the same reason plus one more: it is *structural*, so the address space that starts past it
+cannot move when the drawing does (a silhouette's piece count is a value, and stored face addresses may not
+ride one). What that costs is stated: the plan hint is drawn in the first station's own space, and a footprint
+edge of a skin names no face — it refuses by name and points at the 3D view. A strip whose corners happen to be
+coplanar **is** a plane you can sketch on; one that is not says so and says by how many millimetres, which is
+the loft's own sentence. A cap is picked by a ray, opened as a working plane at the address the pick records,
+drawn on, and drilled through — asserted end to end, byte-equal replay included.
+
+**Tier honesty, and what refuses.** A strip is a ruled or faired band, so the body is the **mesh tier**
+(`Skin3.LOFT_ONLY`, beside the sweep's own sentence): a *general* section of one draws from the mesh and offers
+no construction inputs, `prismatic` and `sectionAt` refuse it in the loft's own words, and `facePlane` refuses
+a top or a bottom because the run they stand across is a curve. The degenerate section that **is** exact is
+the one that matters and is taken first: a plane lying *on* one of its faces is that face's own boundary, which
+is what makes sketch-on-a-cap exact. A **shell** of a skin refuses by name and points at *loft the outer
+sections, loft the inner ones, subtract*.
+
+**What it cost, stated: two cuts, both whole and both refusing in the app.** (1) **A skin has no edge list.**
+`Section3.edges` refuses it in the skin's own words, so no *blend* runs along a strip's crease. That is not
+laziness but the tier: a blend is a construction over two faces' **surfaces**, and a ruled band has none — the
+same reason the sweep has no edge list, and the same future extension (a surface layer, which OP-26's own
+to-be-discussed list names as outside it). (2) **A Match cannot name a body that does not exist yet.** It
+re-stamps the loft steps that already run between the two sections and refuses by name when there are none,
+naming both rows — which is the workflow the invalid-body decision above makes whole (loft first, then match),
+and it means the pair is not a statement the drawing holds *independently* of a skin. Making it one would mean
+a `loftmatch` step of its own and a rule for which skins later read it; recorded here as a future extension
+rather than half-built.
+
+**Not built, and named rather than left to be found:** a **ring** skin over a closed spine (refused in the
+first slice, by name, pointing at cutting the run open — the design's own cut); sections with **holes** (refused
+by name, pointing at *loft the outer outlines and subtract a loft of the holes* — the session-23 loft's own
+sentence); **guides** (the loft has them and this deliberately does not — a skin's shape between stations is
+the row's business, and a guide is the other feature's mechanism); and **per-face appearance** on a skin's
+faces, which is not this package's to deliver: appearance Tier 3 does not exist for *any* feature yet
+(`Appearance` is one material per solid), and what the skin owes it — a face list, `faceAt`, `addressOfFace` —
+is exactly what it now has, which is asserted as the prerequisite it is.
+
+**Editing is ordinary, which is the claim the gesture half is there to make.** A station **slides** on its
+stated distance and the skin follows by recompute (the distances are the node's own inputs); every section
+stays a live sketch and reshaping one reshapes the body; undo and redo layer as they do everywhere; a reloaded
+document equals the live one to 1e-12. One limit is recorded because it is a real one: the **order** of the
+sections is read from the stated distances at build time and is therefore structural (OP-21), so sliding a
+station *past* its neighbour reverses that reading on the next load — the body is the same shape either way
+(the geometry reads the chord direction, not the index), but the strips' stored **addresses** permute. That is
+the same class of hazard a *Break* on an extruded profile already has (its cap addresses shift), and it is
+accepted for the same reason.
+
+Tests: `SkinTest` (11) — the exact prismatoid, the rectangle-to-triangle fan against the polyhedron its
+correspondence states, the stated twist (and the strip corner it lands on), the user's circle-against-a-stadium
+fixture refused and then built after a Break, the faired row passing through every station and swelling
+between them, two sections at one distance, a holed section, three crossed pairs, a curve matched twice, the
+face list with every address round-tripped, and the caps' outward normals. `SkinToolTest` (12) — the two-station
+frustum with its byte-equal file and its one undo, a station sliding, the differing counts waiting for a Match
+and the Match as an edit of the loft's own step (with no step of its own), a renamed matched curve and a
+deleted one, the stated twist stored, a section that is not on a station, sections on two runs, a closed run, a
+Match with no loft to name, a cap picked in the 3D view and drilled, the faired row over three stations, and a
+`match=` on a tool that carries none refused at load. `BrowserE2ETest.aLoftOverDrawnSectionsIsReachableInBrowser`
+carries the three rows through the real shell — picks spanning two station planes, and a Match that re-stamps
+and reloads without disturbing the tree. **2383 → 2407 green**, `assertManifold` on every solid in every one
+of them.

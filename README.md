@@ -68,6 +68,14 @@ first-class goal and the current implementation focus.
   fit round, the run it must not come back into, the corner it must not mitre away — is read at the size the
   law states **at that station**, so a run that is thin where it bends and thick where it is straight builds
   where a section of one size could not.
+- **A skin over drawn sections — the loft that changes outline, not just size.** Draw a closed section on
+  each of several **stations of one run** and *Loft (ruled)* or *Loft (faired)* skins them: straight rulings,
+  or one smooth curve through every station. Which curve of one section runs to which curve of the next is
+  **stated, never guessed** — going round both outlines the same way where their piece counts agree, a
+  *Break* where a curve must become two, and a *Match sections* click where a curve has no counterpart, after
+  which whatever nobody matched collapses to the point where its matched neighbours meet. That is how a
+  rectangle honestly becomes a triangle and stays watertight, and the same one click twists a skin whose
+  sections already pair up. Every strip and both caps are faces you can sketch on, cut through and colour.
 - **Live previews — what the click will make, before you make it.** Every drawing, transform, rounding and
   dimension tool paints its result under the cursor as you move: the growing circle, the circumcircle through
   your two picks and the pointer, the rectangle's outline, ghost copies of what a mirror or an array would
@@ -432,6 +440,35 @@ curve itself — exactly on a straight run and on a helix, and by a numeric inte
 billionths of a millimetre — so a station at 340 mm is 340 mm of travel and not 340 mm of chords.
 A distance past the end of the run does not refuse the gesture: the plane simply has no value, everything drawn
 on it hides and says why, and bringing the number back brings all of it back.
+
+**The loft over drawn sections — the hull, the wing, the duct transition.** *Loft (ruled)* and *Loft (faired)*
+skin a run of closed sections you have drawn on **stations of one run**: draw each section where you want it,
+click them in any order, press Enter, and what comes out is the body between them, capped at both ends with the
+end sections themselves. They run in the order of their stations' own distances, so sliding a station slides
+the skin with it, and every section stays a live sketch you can reshape. The ruled row runs straight from each
+section to the next; the faired row follows one smooth curve through **all** the stations, so a three-station
+hull swells through its middle section instead of kinking at it — and it still passes exactly through every
+section you drew.
+
+Which curve of one section runs to which curve of the next is never guessed. Going round each outline the same
+way is enough when both have the same number of pieces — a rectangle to a rectangle, a broken circle to four
+arcs, nothing to state and nothing stored. Where the counts differ you have two ways to say what you mean,
+and the loft asks for one of them by name: split a curve with *Break* so the counts agree, or state one pair
+with *Match sections* — click a curve of one section and the curve of the next it should meet. Then whatever
+nobody matched collapses honestly to the point where its matched neighbours meet, which is how a rectangle
+becomes a triangle and stays watertight. The same one gesture turns a loft as well: on two sections that
+already pair up, matching a side to its neighbour twists the skin by exactly one piece, because the first pair
+you state is the seam. A Match builds nothing — it re-stamps the loft that is already there, in one undo,
+keeping its name and everything built on it — and matches that would cross each other are refused as the
+self-intersection they describe.
+
+Every strip and both caps are **faces of the body**: click one in the 3D view to sketch on it, drill a Cut
+through it, or use it as a boolean operand. A skin between flat sections has flat faces you can draw on; a
+twisted one says so and says by how much. What it declines, it declines by name: a closed ring of stations has
+no first or last section to cap, a section with a hole says to loft the outlines and subtract a loft of the
+holes, and two sections at one distance have no run between them. Nothing is ever half-built — a skin is
+watertight by construction, and a ruled skin between two parallel polygons has the exact volume the prismatoid
+formula gives.
 
 **Combine two views — the route drawn twice, in plan and in elevation.** This is how a route was laid out on a
 drawing board long before there were kernels, and *Combine two views* is that construction made parametric:

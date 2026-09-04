@@ -95,6 +95,10 @@ import constructit.geom.Shell3
 import constructit.geom.Silhouette
 import constructit.geom.SizeLaw
 import constructit.geom.Sketch3
+import constructit.geom.Skin3
+import constructit.geom.SkinMatch
+import constructit.geom.SkinRow
+import constructit.geom.SkinSection
 import constructit.geom.Solid3
 import constructit.geom.SolidFace
 import constructit.geom.Sphere3
@@ -194,6 +198,7 @@ typealias Point3SetRef = Ref<Point3SetValue>
  * walks the same layout back. So a three-section loft with two guides is one node with one recompute, and the
  * count of sections is not something a value can change.
  */
+
 sealed interface LoftPart {
     /** An area section: [sketch] is one region on the plane of the space it was drawn in. */
     class Area(val sketch: SketchRef) : LoftPart
@@ -217,6 +222,16 @@ sealed interface LoftPart {
      */
     class Guide(val plane: PlaneRef, val curve: Ref<*>) : LoftPart
 }
+
+/**
+ * One section of a [Construction.skin] (OP-26's hull route): the area [sketch] as it is drawn, together with
+ * [at] — the distance along the run of the **station** it is drawn on.
+ *
+ * Both are nodes, which is the whole reason this is a pair rather than a plane: the station's distance is an
+ * ordinary parameter, so retyping it slides the station and the skin follows by recompute, and two stations
+ * sharing a pitch is one parameter node feeding both (OP-5 — sharing *is* equality).
+ */
+class SkinPart(val sketch: SketchRef, val at: ScalarRef)
 
 /**
  * Builder for a construction DAG. Generates stable ids; supports macro instantiation with
@@ -3118,6 +3133,45 @@ class Construction {
             is LoopValue -> v.loop.elements
             else -> null
         }
+
+    /**
+     * The **skin over drawn sections** (OP-26's hull route, session 78): [parts] in station order, run
+     * [row]-wise, with the correspondence [matches] states.
+     *
+     * One node for the whole body, exactly as the loft is one: every section's own sketch and every station's
+     * own distance are inputs, so retyping a distance slides that station and the skin follows it, and
+     * dragging a corner of any section reshapes the skin with nothing rebuilt (OP-21). What is **structural**
+     * is which sections there are and the order they stand in — read once from the stated distances by the
+     * gesture that recorded them — and what is a value is everything else, the distances included: a slide
+     * that put two stations in one plane, or one past its neighbour, is a fold and the body says so by naming
+     * the two distances (OP-3, and the session-65 law about what a refusal may speak of).
+     *
+     * [matches] are **piece indices**, in each section's own boundary order — the durable name a stored face
+     * address already uses. The *file* records them as the curves' script names, which is the naming
+     * authority's business and not this node's (see `Document.skinSolid`).
+     */
+    fun skin(
+        parts: List<SkinPart>,
+        row: SkinRow,
+        matches: List<SkinMatch> = emptyList(),
+    ): SolidRef {
+        val refs = ArrayList<Ref<*>>(parts.size * 2)
+        for (p in parts) {
+            refs.add(p.sketch)
+            refs.add(p.at)
+        }
+        val n = parts.size
+        return op(*refs.toTypedArray()) { args ->
+            val sections = ArrayList<SkinSection>(n)
+            for (i in 0 until n) {
+                val sketch = (args[2 * i] as SketchValue).sketch
+                val at = sc(args[2 * i + 1]).requireDim(Dimension.LENGTH, "station distance").mm
+                sections.add(SkinSection(sketch, at))
+            }
+            val (solid, why) = Skin3.skin(sections, row, matches)
+            if (solid == null) EvalResult.Invalid(why ?: "cannot skin these sections") else EvalResult.Ok(SolidValue(solid))
+        }
+    }
 
     // ---- booleans between prismatic solids (OP-22) ----
     // One op node each; the slab algebra lives inside `compute`, which is where value-dependent work

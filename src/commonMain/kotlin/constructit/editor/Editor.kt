@@ -4993,6 +4993,30 @@ class Editor(
             changed()
             return true
         }
+        // **A tool that re-stamps an existing step instead of building geometry** — session 78's *Match
+        // sections*, and it is [finishWallExtension]'s own route made general: the build hands back the
+        // edited script (`Document.takeRestamp`), and adopting it is what makes the edit **one undo** with
+        // every body it touched keeping its identity, its name and everything built on it (OP-23's
+        // re-stamp precedent, GitHub #7's mechanism).
+        val restamped = doc.takeRestamp()
+        if (restamped != null) {
+            val said = doc.takeNote() // read before the adopt below replaces the document that said it
+            val fresh =
+                try {
+                    DocumentFormat.load(restamped)
+                } catch (e: Exception) {
+                    statusHint = "${tool.label} failed: ${e.message}"
+                    resetPicks()
+                    changed()
+                    return true
+                }
+            adopt(fresh)
+            checkpoint()
+            resetPicks()
+            statusHint = said ?: tool.label
+            changed()
+            return true
+        }
         checkpoint() // the tool application — earlier slot clicks were only halves of it
         resetPicks()
         val entered = doc.activeSpace.takeIf { it !== spaceBefore }
