@@ -846,6 +846,80 @@ class OrthoVertex(val ref: PointRef, var corner: OrthoCornerHandle, val ownAxis:
 }
 
 /**
+ * One coordinate of an ortho vertex re-parameterized as **an offset from another point** — OP-4 case (b)
+ * applied to a path's coordinate chains rather than to a point literal (GitHub issue #23).
+ *
+ * A vertex is not one point holding two coordinates: it is *two scalar sources* behind a re-pointable
+ * view, and one of them usually follows a neighbour so that the leg between them stays axis-aligned. So
+ * the thing OP-4 case (b) can re-state here is a **coordinate chain**, one axis at a time: [owner] — the
+ * source at the end of that chain, the one a drag actually writes ([writableMaster]) — is bound to
+ * `anchor.coord(axis) + offset`, and from then on the whole chain follows the anchor. Which is exactly
+ * what the report asked for: the closing leg of a loop keeps its length when the far side is dragged,
+ * because its two ends no longer state their x independently.
+ *
+ * The other axis is normally left alone, and that is not a shortcut: a path's own junctions already relate
+ * it (a closed loop binds the last vertex's own coordinate to the first's), and re-stating a relation the
+ * construction already holds is what OP-4 forbids.
+ *
+ * [offset] is the degree of freedom that coordinate has from then on — a signed length, captured from the
+ * geometry the vertex already has so nothing moves at the moment of the change. Everything that used to
+ * write the coordinate writes the offset instead ([place]): the drag, the coordinate field, the leg-length
+ * field, and the offset's own field. That is OP-13's rule, not four cases of it.
+ */
+class OrthoOffset(
+    /** The source at the end of the coordinate chain — see [writableMaster]. */
+    val owner: SourceNode,
+    /** The point the coordinate is measured from. */
+    val anchor: PointRef,
+    /** Which coordinate this states: 0 = x, 1 = y. */
+    val axis: Int,
+    /**
+     * `measureX`/`measureY` of [anchor] — **the very node the sum reads**, so the value a write is
+     * measured against and the value the construction uses can never be two different measurements.
+     */
+    val anchorCoord: ScalarRef,
+    /**
+     * The signed offset from [anchorCoord]: this coordinate's only freedom from now on — and a **named
+     * parameter** (OP-7) rather than an anonymous source.
+     *
+     * That is the report's third ask answered by the substrate that already exists: *"one could wish to fix
+     * the length of an ortho leg — or bind it to a named parameter."* A panel row is exactly what can be
+     * wired to another row, given a formula, renamed by nothing, and read by an expression — so the offset
+     * is one, and *Wire* / the formula field reach it with no route of their own. Owned by the step that
+     * made it, like an opening's `pos` (OP-21): the file names it nowhere, replay recreates it, and
+     * [Document.makeAbsoluteOrtho] takes it back.
+     */
+    val offset: ParameterNode,
+    /** The offset's panel row — what a formula or a wire addresses it by. */
+    val entry: ScalarEntry,
+) {
+    /** [anchor]'s coordinate on [axis] right now, or null while its construction is invalid. */
+    fun anchorAt(): Double? = ((Evaluator().eval(anchorCoord.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
+
+    /**
+     * False once the offset is **driven** — wired to another parameter, or given a formula. Then this
+     * coordinate has no freedom of its own any more and every write to it must refuse, exactly as a welded
+     * one does: the whole point of a wire is that the value comes from somewhere else (OP-5).
+     */
+    val writable: Boolean get() = offset.boundTo == null
+
+    /**
+     * Put this coordinate at [value] by writing the offset — what a drag and every typed field do, since
+     * the coordinate itself is derived from the anchor from here on (OP-13: typing and dragging are one
+     * operation, so they must reach the same node).
+     *
+     * Read through a **fresh** evaluator, exactly as [Junction.place] is: by the time a corner's drag gets
+     * here it has already written the other axis, and a pass-memoized anchor value could be one edit stale.
+     */
+    fun place(value: Double): Boolean {
+        if (!writable) return false
+        val a = anchorAt() ?: return false
+        offset.literal = ScalarValue(Quantity.mm(value - a))
+        return true
+    }
+}
+
+/**
  * A retained rectilinear path: [vertices] in draw order plus the [legs] between them (the closing
  * leg last when [closed]). Retaining the topology is what makes a *leg* addressable: a leg's length
  * is the difference of two consecutive nodes in one coordinate chain, so a handle can only offer
@@ -1414,17 +1488,20 @@ class Document {
         // leg with three), and then a count would mistake shifted survivors for new ones
         val before = elements.toHashSet()
         pendingBefore = before
-        val scalarsBefore = scalars.size
+        // an identity snapshot for the same reason the element one is: a step may **remove** a scalar too —
+        // freeing an anchored ortho coordinate takes the offset's panel row with it (issue #23) — and a
+        // count would then read as "fewer than before" and index past the end of the list
+        val scalarsBefore = scalars.toHashSet()
         val editsBefore = edits
         try {
             val result = body()
             val created = elements.filter { it !in before }
             // a tool whose build had no effect is not part of the construction — where "effect" counts an
             // in-place rewiring too, since a tool may bind rather than build (see [edits])
-            if (skipIfEmpty && created.isEmpty() && scalars.size == scalarsBefore && edits == editsBefore) return result
+            if (skipIfEmpty && created.isEmpty() && scalars.toHashSet() == scalarsBefore && edits == editsBefore) return result
             val step = Step(kind, args.toList() + (argsAfter?.invoke() ?: emptyList()))
             step.creates.addAll(created)
-            step.createsScalars.addAll(scalars.subList(scalarsBefore, scalars.size))
+            step.createsScalars.addAll(scalars.filter { it !in scalarsBefore })
             // …and the freedoms this operation's defaulted slots left it holding (see [toolScalarRefs]).
             // Only when there is an element to reach them through: a step that creates nothing has no field
             // to offer, and a value written to a file that nothing can edit is noise, not a freedom.
@@ -1467,7 +1544,7 @@ class Document {
             // whatever else the failed body touched is the caller's to restore ([Editor.transacted] reloads
             // the whole document from the last checkpoint, which is the complete answer).
             elements.retainAll(before)
-            while (scalars.size > scalarsBefore) scalars.removeAt(scalars.size - 1)
+            scalars.retainAll(scalarsBefore)
             pendingReparams.clear()
             pendingDofs.clear()
             pendingExprBinding = null
@@ -3964,6 +4041,20 @@ class Document {
             }
         }
         val paths = orthoPaths.filter { it.frame == null && ownsPath(it, memberSet) && capturablePath(it) }
+        // …and a path this group owns but cannot carry **because a coordinate is anchored** (OP-4 case b,
+        // GitHub issue #23) says so by name, exactly as a relative point does above: a path is captured whole
+        // or not at all, so one anchored coordinate is the whole reason — and "it owns no degree of freedom"
+        // would be the wrong sentence about a run that owns several (session 65).
+        for (path in orthoPaths.filter { it.frame == null && ownsPath(it, memberSet) && it !in paths }) {
+            for (el in elements.filter { e -> orthoRelatives.containsKey(e.id) && path.vertices.any { it.ref === e.ref } }) {
+                val recs = orthoRelatives[el.id] ?: continue
+                val a = recs.firstNotNullOfOrNull { elementFor(it.anchor)?.let { e -> nameOf(e) } } ?: "a point"
+                uncapturable.add(
+                    "${nameOf(el)} follows $a along ${recs.joinToString(" and ") { axisName(it.axis) }}, so its " +
+                        "path is not carried whole — free it (Make absolute) to place the group",
+                )
+            }
+        }
         // …and the freedom the *connections* own (OP-20): a junction riding a member's wall is the group's
         // own degree of freedom exactly as a rider on a member's curve is, and is carried the same way
         val junctionsToAnchor = ArrayList<Junction>()
@@ -5742,6 +5833,95 @@ class Document {
     /** How [el] is anchored, if it has been made relative. */
     fun relativeOf(el: Element): RelativePoint? = relatives[el.id]
 
+    // ---- relative ortho vertices: OP-4 case (b) on a path's coordinate chains (GitHub issue #23) ----
+
+    /** Ortho vertices whose coordinates were re-anchored, by element id — see [makeRelativeOrtho]. */
+    private val orthoRelatives = HashMap<String, List<OrthoOffset>>()
+
+    /** The same records by the id of the coordinate source they own, for [orthoOffsetOf]. */
+    private val orthoOffsetByOwner = HashMap<String, OrthoOffset>()
+
+    /**
+     * Coordinate sources an ortho vertex got its literal back for ([makeAbsoluteOrtho]), by element id.
+     *
+     * The freed literals are **state on the `absolute` step** for [unweld]'s reason: the `relative` step
+     * replaying before it has just bound them, so a step that restated nothing would put the vertex back
+     * where the anchor holds it.
+     */
+    private val orthoFreed = HashMap<String, List<SourceNode>>()
+
+    /** How [el]'s coordinates are anchored, if it is an ortho vertex that was made relative. */
+    fun orthoRelativeOf(el: Element): List<OrthoOffset> = orthoRelatives[el.id] ?: emptyList()
+
+    /**
+     * The offset owning coordinate [node]'s value, if its chain of bindings ends at one — the same
+     * structural one-hop lookup [junctionOf] is, and for the same reason: a handle whose coordinate is
+     * driven has to find the freedom that moves it without searching.
+     *
+     * It answers for **every vertex sharing that chain**, which is the point: the leg whose length the
+     * offset now states has two ends, and dragging either of them along that axis is the same edit.
+     */
+    fun orthoOffsetOf(node: SourceNode): OrthoOffset? {
+        var n = node
+        var guard = 0
+        while (guard++ < 64) {
+            orthoOffsetByOwner[n.id]?.let { return it }
+            n = n.boundTo as? SourceNode ?: return null
+        }
+        return null
+    }
+
+    /** The offsets reachable through [corner] — the coordinate freedoms an anchored vertex has. */
+    fun orthoOffsetsOf(corner: OrthoCornerHandle): List<OrthoOffset> =
+        listOf(corner.xNode, corner.yNode).mapIndexedNotNull { axis, n -> orthoOffsetOf(n)?.takeIf { it.axis == axis } }
+
+    /**
+     * The offsets of [corner] as typed fields, named after the anchor they are measured from — a relative
+     * point's `distance` field, for the DOF a re-anchored coordinate has (OP-13).
+     */
+    fun orthoOffsetFields(corner: OrthoCornerHandle): List<HandleField> =
+        orthoOffsetsOf(corner).map { o ->
+            val a = elementFor(o.anchor)?.let { nameOf(it) } ?: "anchor"
+            HandleField(
+                "offset from $a along ${axisName(o.axis)}",
+                o.offset,
+                Dimension.LENGTH,
+                { ev -> ((ev.eval(o.offset) as? EvalResult.Ok)?.value as? ScalarValue)?.q },
+                { q -> o.offset.literal = ScalarValue(q) },
+                // …and it refuses exactly as far as the drag does: a driven offset is not this vertex's
+                // freedom any more, and a field that wrote a literal nothing reads would be a no-op (OP-13)
+                writableWhen = { o.writable },
+            )
+        }
+
+    /**
+     * The offset's own panel row, created by the step that anchors the coordinate and owned by it — the
+     * pattern an opening's `pos`/`sill`/`head` already follow (OP-21): the script names it nowhere, so
+     * replay recreates it under the same generated name and no rename can orphan a reference.
+     */
+    private fun offsetParameter(
+        axis: Int,
+        d: Double,
+    ): Pair<ParameterNode, ScalarEntry> {
+        val node = ParameterNode(nextId("op"), ScalarValue(Quantity.mm(d)))
+        val e = ScalarEntry(nextId("s"), uniqueScalarName(if (axis == 0) "dx" else "dy"), Ref<ScalarValue>(node), editable = true)
+        scalars.add(e)
+        return node to e
+    }
+
+    /**
+     * What else reads [o]'s offset — a parameter wired to it, a formula, a curve whose text names it.
+     *
+     * Asked with the vertex's **own** owner seeded into the visited set, so the walk stops there: everything
+     * downstream of the coordinate legitimately depends on the offset (that is what the anchoring means), and
+     * only a reader that arrives by some *other* route is a reference [makeAbsoluteOrtho] would orphan.
+     */
+    private fun offsetReaders(o: OrthoOffset): List<String> =
+        scalars.filter { it !== o.entry && dependsOn(it.ref.node, o.offset, hashSetOf(o.owner.id)) }.map { it.name } +
+            elements.filter { dependsOn(it.ref.node, o.offset, hashSetOf(o.owner.id)) }.map { nameOf(it) }
+
+    private fun axisName(axis: Int): String = if (axis == 0) "x" else "y"
+
     /**
      * Re-parameterize free point [pt] as an offset from [anchor]: **the demand OP-4 case (b) deferred.**
      *
@@ -5779,6 +5959,10 @@ class Document {
         // the point still has exactly the one degree of freedom it had (see [anchorRiderTo]). A polar offset
         // there would be two DOF where the construction allows one, i.e. it would have to leave the curve.
         if (onSharedCarrier(pt, anchor)) return anchorRiderTo(pt, anchor, dofs.firstOrNull { it.dim == Dimension.LENGTH })
+        // …and an **ortho vertex** owns no point literal at all — it is two coordinate chains behind a
+        // re-pointable view — so the polar form below cannot reach it and OP-4 case (b) applies one axis at a
+        // time instead (GitHub issue #23). Before the refusal, because that refusal was the bug.
+        (pt.handle as? OrthoCornerHandle)?.let { return makeRelativeOrtho(pt, it, anchor, dofs) }
         val node = literalNode(pt)
         if (node == null || pt.kind != ElementKind.POINT || node.boundTo != null) {
             val rec = riderOf(pt)
@@ -5839,6 +6023,183 @@ class Document {
     }
 
     /**
+     * Re-anchor **an ortho vertex** onto [anchor] — OP-4 case (b) where the thing that owns the freedom is
+     * not a point literal but a *coordinate chain* (GitHub issue #23).
+     *
+     * The report: a closed rectilinear loop, and the closing leg changes length whenever the far side of the
+     * figure is dragged. The user's own reading of it is the right one — *"in an ortho path the y coordinate
+     * of e1 and e10 already depend on each other, but it is a valid requirement to also make the x dependent"*
+     * — and it is a re-parameterization, not a constraint: the leg's length was always what the user meant,
+     * and the drawing simply never said so.
+     *
+     * *Make relative* refused it because [literalNode] finds no point literal here at all: a vertex is
+     * `pointXY(x, y)` behind a re-pointable view, and each coordinate is a **chain** of `boundTo` links —
+     * usually one link to a neighbour, which is what keeps the leg between them axis-aligned. So this works
+     * one axis at a time, and per axis it re-parameterizes the source at the **end** of that chain
+     * ([writableMaster]), which is the node a drag already writes and therefore the node that owns the DOF.
+     *
+     * An axis is **left exactly as it is** when the anchor's coordinate on it already depends on that owner.
+     * That is one test doing two honest jobs: it is OP-4's acyclicity (a sum reading a value that reads the
+     * sum is a dead graph, not a wrong drawing), *and* it is the recognition that the path's own junctions may
+     * already relate this pair — a closed loop binds the last vertex's own coordinate to the first's, so
+     * "make them depend on each other" is already true there and restating it is what OP-4 forbids. Only when
+     * **no** axis can be bound is there nothing to do, and then it refuses by name (session 65).
+     *
+     * [dofs] is the offsets a replay hands back (OP-18), one signed length per bound axis in axis order;
+     * absent, each is captured from the geometry the vertex already has, so nothing moves at the moment of
+     * the change. [makeAbsoluteOrtho] is the inverse, which is what makes this a conversion.
+     */
+    private fun makeRelativeOrtho(
+        pt: Element,
+        corner: OrthoCornerHandle,
+        anchor: Element,
+        dofs: List<Quantity>,
+    ): Boolean {
+        // one anchor at a time, freed before it is replaced — the polar form's own rule
+        orthoRelativeOf(pt).firstOrNull()?.let { o ->
+            val was = elementFor(o.anchor)?.let { nameOf(it) } ?: "another point"
+            note = "${nameOf(pt)} already follows $was — free it first (Make absolute), then anchor it"
+            return false
+        }
+        // A **placed** path holds the group's own local coordinates (OP-16) while an anchor's are the
+        // world's, so their sum would state a relation in neither space. Refused by name with the cure, the
+        // same rule that stops a placed path being extended in place ([resumableEnd]).
+        if (pathFrameOf(corner) != null) {
+            note = "${nameOf(pt)} belongs to a placed group: its coordinates are the group's own while an " +
+                "anchor's are the world's — take the path out of the group first, then anchor it"
+            return false
+        }
+        // …and a point in **space** cannot be the anchor, for the reason [notInThePlane] states: what would
+        // be read off it is the plane point at its projection, which is a different point.
+        notInThePlane(
+            anchor,
+            "the anchor a coordinate is measured from",
+            "measure ${nameOf(pt)} from a point of the plane — or give it a height, and it is a point in space too",
+        )?.let {
+            note = it
+            return false
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val anchorRef = anchor.ref as? PointRef
+        if (anchorRef == null || !anchor.isPoint || anchor === pt) {
+            note = "${nameOf(anchor)} is not a point to anchor ${nameOf(pt)} to"
+            return false
+        }
+        val ev = Evaluator()
+        val here = pointOf(pt.ref.node, ev)
+        val there = pointOf(anchorRef.node, ev)
+        if (here == null || there == null) {
+            note = "Can't anchor ${nameOf(pt)} to ${nameOf(anchor)} yet — one of them has no position right now"
+            return false
+        }
+        val lengths = dofs.filter { it.dim == Dimension.LENGTH }
+        val made = ArrayList<OrthoOffset>()
+        val reasons = ArrayList<String>()
+        for (axis in 0..1) {
+            val name = axisName(axis)
+            val node = if (axis == 0) corner.xNode else corner.yNode
+            val owner = writableMaster(node)
+            if (owner == null) {
+                // named for what actually drives it: an *anchoring* is not a weld, and telling the user to
+                // free a welded end they never made is a true-sounding sentence about the wrong thing
+                val already = orthoOffsetOf(node)?.takeIf { it.axis == axis }
+                reasons.add(
+                    if (already != null) {
+                        "its $name already follows ${elementFor(already.anchor)?.let { nameOf(it) } ?: "another point"}"
+                    } else {
+                        "its $name is driven by the construction (a welded or attached end)"
+                    },
+                )
+                continue
+            }
+            val coord = if (axis == 0) cx.measureX(anchorRef) else cx.measureY(anchorRef)
+            // the one test, doing both jobs — see the header
+            if (dependsOn(coord.node, owner, HashSet())) {
+                reasons.add("${nameOf(anchor)}'s $name already follows ${nameOf(pt)}'s")
+                continue
+            }
+            // read positionally off the axes that actually bind, which replay reproduces in the same order
+            // because it replays the same construction (OP-18)
+            val d = lengths.getOrNull(made.size)?.mm ?: (if (axis == 0) here.x - there.x else here.y - there.y)
+            val (offset, entry) = offsetParameter(axis, d)
+            // in place, so every vertex on this chain — and every leg between them — follows the anchor
+            // without one input list being rewired (OP-5)
+            owner.boundTo = cx.add(coord, Ref<ScalarValue>(offset)).node
+            val rec = OrthoOffset(owner, anchorRef, axis, coord, offset, entry)
+            orthoOffsetByOwner[owner.id] = rec
+            made.add(rec)
+        }
+        if (made.isEmpty()) {
+            note = "Can't anchor ${nameOf(pt)} to ${nameOf(anchor)}: ${reasons.joinToString(", and ")} — there is " +
+                "nothing left to state. Pick an anchor whose coordinates ${nameOf(pt)}'s do not already follow."
+            return false
+        }
+        orthoRelatives[pt.id] = made
+        orthoFreed.remove(pt.id)
+        noteReparam(pt)
+        noteEdit()
+        val axes = made.map { axisName(it.axis) }
+        val names = made.joinToString(" and ") { it.entry.name }
+        note =
+            if (made.size == 1) {
+                "${nameOf(pt)} now follows ${nameOf(anchor)} along ${axes[0]} — the offset is its degree of " +
+                    "freedom (drag it, type it, or give $names a formula)"
+            } else {
+                "${nameOf(pt)} now follows ${nameOf(anchor)} along ${axes.joinToString(" and ")} — the offsets " +
+                    "are its degrees of freedom (drag it, type them, or give $names a formula)"
+            }
+        return true
+    }
+
+    /**
+     * Give an anchored ortho vertex its coordinates back, where it now stands — [makeRelativeOrtho]'s
+     * inverse, and the reason that re-parameterization is a **conversion** rather than a commitment
+     * (OP-4 case b).
+     *
+     * Every value is read **before** any binding is cleared: two axes of one vertex can sit on chains that
+     * reach each other, and freeing the first would then make the second read a coordinate that has already
+     * moved. [dofs] is the freed literals as a replay hands them back — see [orthoFreed].
+     */
+    private fun makeAbsoluteOrtho(
+        pt: Element,
+        dofs: List<Quantity>,
+    ): Boolean {
+        val recs = orthoRelatives[pt.id] ?: return false
+        // A row something else reads may not simply vanish, [retractParameter]'s own rule: freeing the
+        // coordinate takes the parameter with it, and a `wire` step naming a row that no longer exists is a
+        // file that will not load. Refused by name, with the cure (session 65).
+        recs.firstOrNull { offsetReaders(it).isNotEmpty() }?.let { o ->
+            note = "Can't free ${nameOf(pt)}: its offset ${o.entry.name} drives " +
+                "${offsetReaders(o).joinToString(", ")} — free that first, then free ${nameOf(pt)}"
+            return false
+        }
+        val ev = Evaluator()
+        val lengths = dofs.filter { it.dim == Dimension.LENGTH }
+        val at = recs.mapIndexed { i, r -> lengths.getOrNull(i)?.mm ?: scalarOf(r.owner, ev)?.mm }
+        if (at.any { it == null }) {
+            note = "Can't free ${nameOf(pt)} yet — its coordinates have no value right now"
+            return false
+        }
+        for ((i, r) in recs.withIndex()) {
+            r.owner.boundTo = null
+            r.owner.value = ScalarValue(Quantity.mm(at[i] ?: 0.0))
+            orthoOffsetByOwner.remove(r.owner.id)
+            // the freedom is the vertex's own again, so the row that stood for it goes with it
+            scalars.remove(r.entry)
+        }
+        orthoRelatives.remove(pt.id)
+        orthoFreed[pt.id] = recs.map { it.owner }
+        noteReparam(pt)
+        noteEdit()
+        val axes = recs.map { axisName(it.axis) }
+        note =
+            "${nameOf(pt)} keeps its position and owns its ${axes.joinToString(" and ")} again — " +
+            "drag it, or type ${if (recs.size == 1) "it" else "them"}"
+        return true
+    }
+
+    /**
      * Give a relative point its own coordinates back, at the position it currently has — the inverse of
      * [makeRelative], and the reason the re-parameterization is a *conversion* rather than a commitment
      * (OP-4 case b). Anything else that binds a point ([unweld] — a weld, an attach) is undone here too, so
@@ -5853,6 +6214,9 @@ class Document {
         pt: Element,
         dofs: List<Quantity>,
     ): Boolean {
+        // An **ortho vertex** anchored by [makeRelativeOrtho] publishes no point literal, so every read
+        // below is blind to it: what it owns is two coordinate chains, and this is their inverse (issue #23).
+        if (orthoRelatives.containsKey(pt.id)) return makeAbsoluteOrtho(pt, dofs)
         val node = literalNode(pt)
         // A rider whose parameter was re-anchored to a base of its own carrier has an absolute form to go back
         // to — its position along the world-anchored carrier (OP-20) — so that case is answered first: it is
@@ -6260,6 +6624,13 @@ class Document {
         relativeOf(el)?.let { r ->
             return listOfNotNull(scalarOf(r.distance, ev), scalarOf(r.angle, ev))
         }
+        // an **ortho vertex**'s offsets, in axis order — the order [makeRelativeOrtho] binds them in, so the
+        // list a replay consumes positionally says exactly what it said when it was written (issue #23)
+        orthoRelatives[el.id]?.let { rs -> return rs.map { it.offset.literal.q } }
+        // …and the coordinates [makeAbsoluteOrtho] handed back, read off the **literals** for [unwelded]'s
+        // reason: what that step restored is the literal, and the `relative` step replaying before it has
+        // just bound the same node — so reading the value would describe the anchor instead
+        orthoFreed[el.id]?.let { fs -> return fs.mapNotNull { (it.value as? ScalarValue)?.q } }
         riderOf(el)?.offset?.let { o -> return listOfNotNull(scalarOf(o, ev)) }
         // a **freed** rider (OP-16's view re-pointed, see [detachRider]) owns its coordinates from then on, so
         // what its step restates is the position it now has — through [restatedPosition], because a later
@@ -13067,6 +13438,7 @@ class Document {
         kind: BlendKind,
         whole: Boolean,
         at: Vec2,
+        view: PlaneProjection? = null,
         signs: List<Int> = emptyList(),
     ): Element? {
         val what = "${kind.word.replaceFirstChar { it.uppercase() }} ${if (whole) "the edges of a face" else "an edge"}"
@@ -13105,17 +13477,15 @@ class Document {
             return null
         }
         val tipEl = tipOfChain(solid, ev) ?: solid
+        // how the click named its target, so the note can say it (see [BlendPick]); false on a replay, which
+        // scores nothing at all
+        var inView = false
         val address =
             signs.getOrNull(0) ?: run {
-                val from =
-                    (ev.valueOf(planeOfSpace(activeSpace.name)) as? PlaneValue)?.plane ?: run {
-                        note = "$what: ${activeSpace.name} has no value right now, so there is nothing to click on"
-                        return null
-                    }
-                val (index, why) =
-                    if (whole) faceUnderClick(body.feature, from, at) else edgeNear(body.feature, from, at)
-                index ?: run {
-                    note = "$what: ${nameOf(solid)} — $why"
+                val pick = blendTarget(body, whole, at, view, ev)
+                inView = pick.inView
+                pick.index ?: run {
+                    note = "$what: ${nameOf(solid)} — ${pick.why}"
                     return null
                 }
             }
@@ -13168,6 +13538,10 @@ class Document {
             "${nameOf(tipEl)} with a ${kind.word} of ${lengthWord(size)} along ${if (whole) "every edge of " else ""}$where" +
                 (if (baseEl !== tipEl) " of ${nameOf(baseEl)}" else "") +
                 (if (targets.size > 1) " (${targets.size} edges)" else "") +
+                // **which picture named it**, said out loud for the reason *Sketch on face* says it (the
+                // `Face3DPickTest` precedent): the two views answer this question by different evidence, and a
+                // user who got an edge they did not expect must be able to read which one answered.
+                (if (inView) ", picked in the 3D view" else "") +
                 " — the ${kind.sizeWord} is an ordinary parameter, so retyping it re-rounds the body",
         )
         return el
@@ -13280,7 +13654,192 @@ class Document {
         val from =
             (ev.valueOf(planeOfSpace(activeSpace.name)) as? PlaneValue)?.plane
                 ?: return null to "${activeSpace.name} has no value right now, so there is nothing to click on"
-        return faceUnderClick(feature, from, at)
+        // …and where a 3D view *is* driving but its ray reached no body at all (a click just off the
+        // silhouette), the rim reading below is still asked of the picture the camera shows (issue #24)
+        return if (ray != null) faceUnderClick(feature, from, at, view, body) else faceUnderClick(feature, from, at)
+    }
+
+    /**
+     * What a blend's click named: the index into the list it addresses, the refusal when it named nothing,
+     * and **which picture answered** — see [blendTarget] and the note [blendEdges] writes.
+     */
+    private class BlendPick(val index: Int?, val why: String?, val inView: Boolean = false)
+
+    /**
+     * Which edge (or [whole] face) of [body] a blend's click at [at] named — **the ray's answer where a 3D
+     * view is driving, the flat picture's where one is not** ([faceForOpening]'s own rule, applied to the
+     * other gesture that picks on a body).
+     *
+     * **GitHub issue #24, and the fault it names is one line long.** A click in the 3D view is resolved onto
+     * the working plane first (that is how every existing tool gets a 2D coordinate — edit-in-3D slice 1),
+     * and the flat rule below then measures *plan-projected* edges against that plane point. For an edge that
+     * does not lie in the working plane — the top rim of an extruded plate, 20 mm above the drawing — the
+     * plane point is displaced from the edge by the whole parallax of the view, so which plan-projected edge
+     * comes out nearest depends on where the camera happens to stand. The user's report is exactly that:
+     * *"depends on the camera angle and position — sometimes it works, sometimes not."*
+     *
+     * The cure is not a better tolerance but the right picture: in the 3D view the edge is picked **as seen
+     * from the camera** ([edgeInView]), which is the same sentence the flat rule already states — *the edge
+     * whose drawing here runs nearest the click* — asked of the drawing the user is actually looking at.
+     *
+     * A face is resolved by the ray against the feature's own face list, which is [faceForOpening] verbatim
+     * (`Section3.faceAt`, edit-in-3D slice 2), and falls through to the edge-seen-from reading below.
+     *
+     * **Nothing recorded changes.** The step stores the index in `signs=` and the click in `clicks=`
+     * (OP-1/OP-18), and a replay passes no view at all — so this scores once, exactly as before, and every
+     * file written before it replays to the same body.
+     */
+    private fun blendTarget(
+        body: Solid3,
+        whole: Boolean,
+        at: Vec2,
+        view: PlaneProjection?,
+        ev: Evaluator,
+    ): BlendPick {
+        val feature = body.feature
+        if (view?.eyeRay(at) != null) {
+            if (whole) {
+                val (i, why) = faceForOpening(body, at, view, ev)
+                return BlendPick(i, why, inView = true)
+            }
+            edgeInView(feature, body, view, at)?.let { (i, why) -> return BlendPick(i, why, inView = true) }
+        }
+        val from =
+            (ev.valueOf(planeOfSpace(activeSpace.name)) as? PlaneValue)?.plane
+                ?: return BlendPick(null, "${activeSpace.name} has no value right now, so there is nothing to click on")
+        val (i, why) = if (whole) faceUnderClick(feature, from, at) else edgeNear(feature, from, at)
+        return BlendPick(i, why)
+    }
+
+    /**
+     * Which edge of [feature] the click at [at] named **as the 3D view draws it**: the edge whose projected
+     * path runs nearest the click *on screen*, ties to the edge nearest the eye and never to one hidden
+     * behind the body (GitHub issue #24, and see [blendTarget] for why the flat rule cannot answer here).
+     *
+     * Four readings, in this order, and each is the flat rule's own sentence moved into the right picture:
+     * - **under the cursor or not.** An edge whose drawing runs within the pick tolerance of the click — ten
+     *   pixels, the number `Editor.tolPx` states for every other pick — is *under the cursor*, and one that
+     *   is beats one that is not, however near that one comes.
+     * - among those under the cursor, **the edge in front**, and this is the one place depth outranks screen
+     *   distance rather than only breaking its ties. Inside the tolerance the click has landed *on the body*,
+     *   and there the user cannot have meant an edge the body itself is standing in front of: looking down at
+     *   a plate, its top and bottom rims draw within a pixel or two of each other and the underside is behind
+     *   20 mm of material. A ray shot at the edge that meets the mesh before reaching it says so, forgiven by
+     *   the tessellation sag, so an edge lying *on* the visible surface is never mistaken for a hidden one.
+     * - then **screen distance**, which is the whole of the answer wherever nothing is hidden — a grazing view
+     *   crowds five visible edges into as many pixels, and the one the cursor sits exactly on is the pick.
+     * - and finally **nearest the eye** for two edges drawing at the very same place, which is the flat rule's
+     *   tie-break verbatim.
+     *
+     * Screen distance throughout is measured to the edge's own drawing: the path is tessellated exactly as
+     * the 3D view draws it ([Curves3.polyline], whose contract is *"what is on screen is what the pointer
+     * reaches"*) and each vertex projected through the very projection that drew it, so what looks nearest
+     * *is* nearest.
+     *
+     * Null — not a refusal — when the click has no screen image at all, so the caller falls back to the flat
+     * reading rather than declining a gesture the old code would have answered.
+     */
+    private fun edgeInView(
+        feature: Feature3,
+        body: Solid3,
+        view: PlaneProjection,
+        at: Vec2,
+    ): Pair<Int?, String?>? {
+        val ray = view.eyeRay(at) ?: return null
+        val click = view.toScreen(at) ?: return null
+        val (edges, why) = Section3.edges(feature)
+        if (edges == null) return null to why
+        val eye = ray.origin
+        // the bound a point read off a chord has to be forgiven by — the same number a ray hit is tested
+        // against the analytic faces with (`Section3.faceAt`, edit-in-3D slice 2)
+        val sag = Geom3.meshSag(body.mesh) + Geom3.WELD_TOL
+        // the pick tolerance every other pick in this editor uses (`Editor.tolPx`), and here the width of the
+        // tie: inside it the click cannot say which of two edges it meant, so depth answers instead
+        val tolPx = 10.0
+        var best: Int? = null
+        var bestDist = Double.MAX_VALUE
+        var bestDepth = Double.MAX_VALUE
+        var bestHidden = false
+        var bestUnder = false
+        for (i in edges.indices) {
+            val path = Blend3.edgePath(edges[i]).first ?: continue
+            val pts = Curves3.polyline(path)
+            var d = Double.MAX_VALUE
+            var nearest: Vec3? = null
+            var prevW: Vec3? = null
+            var prevS: Vec2? = null
+            for (w in pts) {
+                val s = view.worldToScreen(w)
+                if (s != null) {
+                    val alone = (s - click).length()
+                    if (alone < d) {
+                        d = alone
+                        nearest = w
+                    }
+                    val pw = prevW
+                    val ps = prevS
+                    if (ps != null && pw != null) {
+                        val t = segmentParam(click, ps, s)
+                        val on = (ps + (s - ps) * t - click).length()
+                        if (on < d) {
+                            d = on
+                            // the world point at the screen parameter, which under perspective is the chord's
+                            // own point rather than exactly the edge's — near enough for a depth comparison
+                            // forgiven by [sag], and the chord is what was measured against anyway
+                            nearest = pw + (w - pw) * t
+                        }
+                    }
+                }
+                prevW = w
+                prevS = s
+            }
+            val p = nearest ?: continue
+            val depth = (p - eye).length()
+            if (depth <= Vec3.EPS) continue
+            // hidden when the body itself stands between the eye and this edge — the ray-hit depth
+            // [faceForOpening] already uses, shot at the edge instead of at the cursor
+            val hidden = Geom3.rayMesh(ray.copy(dir = (p - eye) * (1.0 / depth)), body.mesh)?.let { it < depth - sag } ?: false
+            val under = d <= tolPx
+            val better =
+                when {
+                    best == null -> true
+                    // the tolerance gate: an edge the cursor is *on* beats one it is merely nearest to
+                    under != bestUnder -> under
+                    // outside it there is no tie to break and nothing is hidden from a click that missed
+                    !under -> d < bestDist - 1e-6
+                    // inside it the click has landed on the body, and there you cannot have meant an edge
+                    // the body itself is standing in front of
+                    hidden != bestHidden -> !hidden
+                    d < bestDist - 1e-6 -> true
+                    d > bestDist + 1e-6 -> false
+                    // two edges drawing at the very same place: the flat rule's own tie-break
+                    else -> depth < bestDepth
+                }
+            if (better) {
+                bestDist = d
+                bestDepth = depth
+                bestHidden = hidden
+                bestUnder = under
+                best = i
+            }
+        }
+        return if (best == null) null to "it draws no edge here that a blend could run along" else best to null
+    }
+
+    /**
+     * Where along the screen segment [a]→[b] the point [p] falls, clamped to the segment — the parameter
+     * behind [HitTest.distanceToSegment], needed here because the *world* point at that place is what a depth
+     * comparison is made at (see [edgeInView]).
+     */
+    private fun segmentParam(
+        p: Vec2,
+        a: Vec2,
+        b: Vec2,
+    ): Double {
+        val ab = b - a
+        val len2 = ab.dot(ab)
+        if (len2 <= Vec2.EPS * Vec2.EPS) return 0.0
+        return ((p - a).dot(ab) / len2).coerceIn(0.0, 1.0)
     }
 
     /**
@@ -13288,8 +13847,13 @@ class Document {
      * runs nearest it**, measured exactly as any other curve pick is ([HitTest.distanceToPiece]).
      *
      * The 2D machinery reaches 3D edges because a working plane's section and a face space's own picture
-     * already draw them: the cap boundary a blend runs along is the very outline the canvas shows. In the 3D
-     * view the click has already been resolved onto the working plane, so one rule covers both.
+     * already draw them: the cap boundary a blend runs along is the very outline the canvas shows.
+     *
+     * **The flat reading, and only the flat one.** This used to answer for the 3D view too, on the grounds
+     * that the click had already been resolved onto the working plane — which is exactly the fault GitHub
+     * issue #24 reported: an edge that does not lie in this plane is drawn here by a projection nobody is
+     * looking through. The 3D view has its own reading now ([edgeInView]) and this one is untouched, so every
+     * flat gesture, message and golden is bit-identical to what it always was.
      */
     private fun edgeNear(
         feature: Feature3,
@@ -13361,15 +13925,24 @@ class Document {
      *
      * The second is what the everyday gesture uses: clicking a plate anywhere on its rim names its top face,
      * because that is the face of that rim you are looking at.
+     *
+     * **Which rim it landed on is asked of the view that shows it** where one is driving ([view] and [body]
+     * given, GitHub issue #24): the containment test above is a *drop along this space's normal* and is
+     * unchanged, but the rim reading is a nearest-drawing rule and had the parallax fault this issue names.
+     * Both arguments absent — the 2D canvas, and every replay — is the old behaviour exactly.
      */
     private fun faceUnderClick(
         feature: Feature3,
         from: Plane3,
         at: Vec2,
+        view: PlaneProjection? = null,
+        body: Solid3? = null,
     ): Pair<Int?, String?> {
         val (inside, why) = Blend3.faceNear(feature, from, at)
         if (inside != null) return inside to null
-        val (edge, whyEdge) = edgeNear(feature, from, at)
+        val (edge, whyEdge) =
+            (if (view != null && body != null) edgeInView(feature, body, view, at) else null)
+                ?: edgeNear(feature, from, at)
         if (edge == null) return null to (whyEdge ?: why)
         return Blend3.faceOfEdgeToward(feature, edge, from)
     }

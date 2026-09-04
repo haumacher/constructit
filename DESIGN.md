@@ -3460,10 +3460,91 @@ through), and freeing it is a **re-point**: the view stops naming the on-curve n
   because the point can be dragged anywhere afterwards, and the rider's own parameter no longer describes where
   it is. The step is the ordinary `dofs=` seam every other re-parameterization uses, and it goes through
   `restatedPosition`, so a later placement capture does not make the step describe post-capture geometry.
-- **What still refuses, and why:** an ortho path's **corner**. Its coordinates are *shared* with its neighbours
-  (that sharing is what keeps a leg axis-aligned, OP-19) and a meeting point's freedom belongs to its junction
-  (OP-20) — so a corner freed of its path would be a path that is not rectilinear, which is not a point's
-  decision to make. The refusal there names the construction, which is now the truth.
+- **What still refuses, and why:** an ortho path's **corner** cannot be freed *of its path*. Its coordinates
+  are *shared* with its neighbours (that sharing is what keeps a leg axis-aligned, OP-19) and a meeting
+  point's freedom belongs to its junction (OP-20) — so a corner freed of its path would be a path that is not
+  rectilinear, which is not a point's decision to make. The refusal there names the construction, which is now
+  the truth. What a corner *can* do is have **one coordinate at a time** re-anchored — the next section, on
+  GitHub issue #23 — and *Make absolute* is that conversion's inverse.
+
+### An ortho vertex is re-anchored one coordinate at a time (as built — GitHub issue #23)
+
+*Make relative* refused an ortho vertex outright: *"e10 is not a free point: only a point that owns its
+coordinates can be re-anchored"*. The report is a closed rectilinear loop whose closing leg changes length
+whenever the far side of the figure is dragged, and the user's own reading of it is the design:
+
+> this would be useful to keep the length of e12 when moving e3 or e2. In an ortho-path the y coordinate of e1
+> and e10 already depend on each other — but additionally it is a valid requirement to also make the x
+> coordinate dependent (at least uni-directional). Alternatively or additionally, one could wish to fix the
+> length of an ortho leg — or bind it to a named parameter.
+
+The refusal was **structural rather than principled**. A vertex is not a point holding two coordinates: it is
+two scalar sources behind a re-pointable view (`pointXY(x, y)` under an `IndirectNode`, OP-16), and one of them
+usually *follows a neighbour* — that binding is exactly what keeps the leg between them axis-aligned. So
+`literalNode` finds no point literal, and the polar form (`polarPoint(anchor, d, θ)`) has nothing to bind. But
+the thing that owns the freedom is right there: the source at the **end** of each coordinate chain, which is
+already the node a drag writes (`writableMaster`). OP-4 case (b) applies to *that*.
+
+- **One scalar per axis, and the axes are answered separately.** For each axis the owning source is found by
+  walking the `boundTo` chain exactly as the junction code does, and bound in place (OP-5) to
+  `measureX/Y(anchor) + d` — so every vertex on that chain, and every leg between them, follows the anchor with
+  no input list rewired. In the reported loop e10's `x` is owned by e8's x-source (leg e9 is horizontal, so e8
+  introduced that coordinate), and the drag of leg e3 now carries the whole bottom of the figure: `|e12|` holds.
+- **An axis already related is left exactly as it is,** and one test decides it: *does the anchor's coordinate
+  on this axis already depend on that owner?* That question does two honest jobs at once. It is OP-4's
+  **acyclicity** — a sum reading a value that reads the sum is a dead graph, not a wrong drawing — *and* it is
+  the recognition that the path's own junctions may already hold the relation: closing a loop binds the last
+  vertex's own coordinate to the first's, so in the report the `y` **is** already shared and re-stating it is
+  what OP-4 forbids. Hence *"e10 now follows e1 along x"* and not a word about y. Only when **no** axis can be
+  bound is there nothing to do, and then it refuses by name.
+- **The offset is a named parameter, which is the report's third ask answered by a substrate that existed.**
+  *"…or bind it to a named parameter."* A panel row (OP-7) is precisely the thing that can be wired to another
+  row, given a formula, or read by an expression — so the offset **is** one, created and owned by the step that
+  anchors the coordinate exactly as an opening's `pos`/`sill`/`head` are (OP-21). The file names it nowhere,
+  replay recreates it under the same generated name (`dx`/`dy`), and nothing else had to be written: *Wire* and
+  the formula field reach it as they reach every other parameter. Once it is driven, the coordinate has no
+  freedom of its own and the drag *and* the field refuse in the same breath — they are one operation (OP-13).
+- **Everything that used to write the coordinate writes the offset** (`placeCoord`, one helper rather than four
+  cases): the corner's drag, its `x`/`y` field, the **leg's** drag across itself, and the leg's length field —
+  which is the user's *"fix the length of an ortho leg"*, typed rather than asserted. A vertex sharing the
+  chain writes the same offset, because it is one chain and therefore one edit.
+- **Persistence needed no format change and owes no version bump** (OP-18). The offset is state, so it rides
+  the `dofs=` seam the `relative`/`tool makerel` step already has, one signed length per bound axis in axis
+  order — replay reproduces the same construction and therefore binds the same axes in the same order, so a
+  positional list stays honest. `save → load → save` is byte-equal from the first save. *Make absolute* is the
+  inverse (each owner gets its literal back where it stands, and the offset's row goes with the freedom it
+  stood for), and it restates those literals for `unweld`'s reason: the `relative` step replaying before it has
+  just bound the same nodes.
+- **What it refuses, and in what words** (session 65 — no route declines silently):
+  - a second anchor: *"e10 already follows e1 — free it first (Make absolute), then anchor it"*;
+  - nothing left to state: *"Can't anchor e1 to e10: e10's x already follows e1's, and e10's y already follows
+    e1's — there is nothing left to state. Pick an anchor whose coordinates e1's do not already follow."* A
+    coordinate an **earlier anchoring** took is named for what took it (*"its x already follows e13"*) and not
+    as a weld: telling the user to free an end they never made is a true-sounding sentence about the wrong
+    thing;
+  - a **placed** path, whose coordinates are the group's own while an anchor's are the world's, so their sum
+    would state a relation in neither space: *"e10 belongs to a placed group: its coordinates are the group's
+    own while an anchor's are the world's — take the path out of the group first, then anchor it"*;
+  - an anchor that is not a point, and a point **in space** (`notInThePlane`, whose reading would be the plane
+    point at its projection — a different point);
+  - freeing a vertex whose offset something else reads, `retractParameter`'s own rule, since a `wire` step
+    naming a row that no longer exists is a file that will not load: *"Can't free e10: its offset dx drives
+    gap — free that first, then free e10"*.
+- **The placement interaction is named rather than silent.** A path is captured whole or not at all (OP-16), so
+  one anchored coordinate makes the run uncapturable; the refusal now says which vertex and how to undo it
+  (*"e10 follows e13 along x and y, so its path is not carried whole — free it (Make absolute) to place the
+  group"*) instead of the older, and here untrue, *"it owns no degree of freedom"*.
+- **One generic correction fell out of it:** `recording` snapshotted the scalar panel by **count**, which
+  assumed a step could only ever *add* rows. A step that removes one — this one — indexed past the end of the
+  list. It now snapshots by identity, exactly as it already did for elements and for exactly the same stated
+  reason.
+- **The cut, whole:** the *other three* offset DOFs in the editor — a relative point's distance and angle, a
+  rider's carrier offset, a junction's offset — are still anonymous source nodes rather than panel rows, so
+  they are draggable and typeable but not wire-able. Converting them is the general follow-through and belongs
+  in one delivery of its own: the risk is not in the nodes but in the **group-placement capture sets**, which
+  filter `SourceNode`s and would silently stop seeing a converted DOF. Until then the ortho offset simply has
+  *more* reach than its siblings, which is the direction an inconsistency should point.
+- Regression test: `OrthoVertexAnchorTest` (the reporter's script verbatim).
 
 ### Dimensions (as built)
 
@@ -16673,6 +16754,57 @@ is picked by its **footprint** and a footprint *is* a cap's own outline, the fac
 Four rows rather than two with a guess, for OP-18's reason: which granularity a gesture meant is the most
 durable thing a step can carry, and the tool row already carries it. Adding them was four `ToolDef` lines and
 no controller code.
+
+##### The edge a 3D click names (as built — GitHub issue #24)
+
+The paragraph above is the **flat** rule, and until this fix it was the only one: a blend's edge pick measured
+plan-projected edges against the click's **working-plane point**. In the 3D view that point is the click
+resolved onto the working plane (edit-in-3D slice 1, how every tool gets a 2D coordinate), so for an edge that
+does *not* lie in that plane — the top rim of an extruded plate, 20 mm above the drawing — it is displaced from
+the edge by the whole parallax of the view, and which plan-projected edge came out nearest was a function of
+where the camera stood. The report is exactly that: *"when clicking the extruded leg of leg e12, the extruded
+leg of leg e3 is filleted — depends on the camera angle and position, sometimes it works, sometimes not."*
+
+**The cure is the right picture, not a better tolerance.** The four rows now pass the `view` their `ToolParams`
+already carried (as *Shell* has since edit-in-3D slice 2), and where it yields an eye ray the edge is picked as
+the camera shows it (`Document.edgeInView`): the `Path3` is tessellated exactly as the 3D view draws it
+(`Curves3.polyline` — *"what is on screen is what the pointer reaches"*) and every vertex projected through the
+very projection that drew it (`PlaneProjection.worldToScreen`, the new twin of `eyeRay`, null on the 2D canvas
+for the same reason). The ranking is the flat rule's own sentence in that picture, in four steps: an edge
+**within the pick tolerance** (ten pixels, `Editor.tolPx`) beats one outside it, however near; among those, the
+edge **in front** wins — the one place depth outranks screen distance rather than only breaking its ties, since
+inside the tolerance the click has landed on the body and cannot have meant an edge the body is standing in
+front of (a ray shot at the edge that meets the mesh first says so, forgiven by `Geom3.meshSag`); then plain
+**screen distance**, which is the whole answer where nothing is hidden and is what a grazing view needs, since
+it crowds five visible edges into as many pixels; then **nearest the eye** for two edges drawing at the very
+same place, verbatim from the flat rule. A face pick in 3D resolves by the ray against the feature's own face
+list, which is `faceForOpening` unchanged (`Section3.faceAt`), and falls through to the edge-seen-from reading
+— now also asked of the camera's picture, which incidentally fixes *Shell*'s rim fallback for a click just off
+the silhouette.
+
+**Nothing recorded changed and no version bump is owed** (OP-1/OP-18): the step still stores the index in
+`signs=` and the plane click in `clicks=`, a replay is handed no view at all and re-scores nothing, and every
+file written before this replays to the same body. The status line says which picture answered — *"…, picked in
+the 3D view"*, the sentence *Sketch on face* already says (`Face3DPickTest`).
+
+**The audit the fix owed.** Every route that turns a 3D-view click into a plane point and then applies a 2D
+nearest-drawing rule: `Document.edgeNear` (**fixed**, and left bit-identical for the flat canvas);
+`faceUnderClick`'s rim reading (**fixed**, both callers); `faceForOpening` and *Sketch on face*
+(`Editor.faceUnderRay`) and the 3D `SOLID` pick (`Editor.solidUnderRay`) were **already ray-resolved**;
+`HitTest`'s distances already measure against the pointer's viewing ray for anything out of plane.
+`Blend3.faceNear` is a *containment* test rather than a nearest-drawing one — it drops the click along the
+space's own normal and asks which flat outline holds it — so it cannot pick an arbitrary neighbour, and in the
+3D view it is reached only when the ray met no body at all; it is deliberately unchanged. `sectionSolidNear`
+and `Document`'s intersection-curve chooser measure geometry that **lies in the working plane by definition**
+(a section, a plane∩body curve), where the projection is the identity and there is no parallax to have.
+`Project3.landingFace` scores along a *space's* normal because that is the direction the feature is defined by,
+not the camera's — correct as it stands.
+
+Regression test: `EdgeBlend3DPickTest` — the reporter's script verbatim, six cameras (steep, from the far
+side, grazing along the plan, and from below) all naming the one rim; the reporter's expected step
+`signs=12;-1;1;0;1` as what the gesture writes from the camera that used to answer `17`, with save → load →
+save byte-equal; a chamfer taking the same rim; a click aimed at the **occluded** underside rim taking the
+visible one in front; and the flat canvas picking exactly as it always did.
 
 **A chain is one sweep per edge, not one per tangent-continuous run**, and that is a rule rather than a
 shortcut: whether two pieces meet tangentially is a property of *values*, so a construction whose number of
