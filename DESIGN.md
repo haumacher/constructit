@@ -1463,7 +1463,8 @@ costs the icon nothing. And a glyph draws **the operation, not the result**: at 
 arc, it is *two legs and the corner the arc replaced*, so the fillet and chamfer glyphs keep that corner as a
 ghost — the same reason *Mirror* has a dashed axis with a shape either side and *Translate* a ghost copy.
 
-**Coverage is partial on purpose, and here is the line.** **60 of the 77** palette tools have a glyph, plus
+**Coverage is partial on purpose, and here is the line** — *withdrawn, see the reversal note below; kept as
+written because the reasoning is what the reversal has to answer.* **60 of the 77** palette tools have a glyph, plus
 *Select*, which is not a `ToolDef` and so carries its own; the other **17** keep their text rows in the same
 category, below the grid. A tool gets one when its operation has a picture — every curve, every construction,
 every transform, the result layer, the solids and booleans, and the three dimensions. It does not when a
@@ -1479,6 +1480,50 @@ in the browser: the click delegation cast its target to `HTMLElement`, and an **
 `HTMLElement`** — so every click that landed on a glyph was dropped. Fixed in both directions (the cast is to
 `Element`, and the glyph is `pointer-events: none`), and it is the reason the browser E2E is not optional for
 a change like this one.
+
+#### The partial-coverage cut, reversed (as built, GitHub issue #22)
+
+**The cut above is withdrawn.** What it said was: "**Coverage is partial on purpose, and here is the line.**
+… A tool gets [a glyph] when its operation has a picture. It does not when a picture would be a guess the user
+has to decode: *Point at distance*, *Make relative* / *Make absolute*, *Angle bisector*, the ten scalar
+**measurements** … *Sketch on face*, *Sketch plane* and *Cut openings* … **A glyph nobody can read is worse
+than the label it replaced**." Every tool added in the fifty-odd sessions since then inherited that line by
+default, and the palette drifted back to what the icon pass had been *for*: 57 of 129 rows were full-width
+text again, so the board you aim at had a list to read stapled underneath it. The user asked for the rest, and
+was right to: **the premise was wrong, not the principle.** "This operation has no picture" turned out, nearly
+every time, to mean "nobody had drawn it yet" — *Point at distance* is a stride along a line, *Make absolute*
+is a tether cut and a point wearing [POINT]'s own free-point ticks, a measurement is its subject **ghosted**
+with the measured mark bold. The last clause survives untouched: a glyph nobody can read is still worse than
+the label, which is why every one of the 57 was drawn at 24 px, screenshotted at palette size in both themes,
+and redrawn when it read as a smudge or as its neighbour's twin (six of them were).
+
+What replaced "does it have a picture?" is a **family rule**, because the real risk at 24 px was never a bad
+drawing, it was an *ambiguous* one, and ambiguity arrives in variant clusters — four helices, six cut/split
+rows, two shells, two sphere loci. So a variant is the base glyph **composed** with exactly one modifier
+mark, drawn once in code and shared: handedness is the coil *mirrored*, with the arrow at the winding end
+(`Icons.coil`); rotating against translational is a turn or two parallel strokes in the corner the body leaves
+free (`MOD_ROT` / `MOD_FLAT`); cut against split is one half ghosted against both halves kept with a gap
+(`cutBody`, one function for all six rows); an open shell against a closed one is the same cavity solid
+against dashed (`CAVITY`); and a "…by point" row is its "…by radius" row plus one `dot` on the surface. Two
+variants that differ in anything else are two glyphs to learn instead of one glyph and a mark.
+
+Three glyphs deviate from the proposals in issue #22, each because the drawing argued back. *Angle bisector*
+dashes nothing — the bisector is what the tool **makes**, so it is the bold ray and the two given rays are the
+context, since dashing the product contradicts every other glyph in the set. *Make absolute* adds the
+free-point ticks on top of the cut tether, because one gap in a dashed line is not a difference anybody can
+see at 22 px. And *Point at distance* swapped a dimension bracket for a carrier line with a **one-way** arrow:
+two arrowheads between two witness lines is `DIM_LINEAR`, and the bracket version read as a bench beside
+*Length*'s. Two mechanical notes: the extent measures put **Y on the depth diagonal and Z on the vertical**
+(the issue's parenthetical had those two the other way round, and a cabinet-projection box has only one
+direction that *is* Y); and a long identifying stroke is drawn at `.55` (`soft`) rather than `ghost`'s `.4`,
+which disappears at 22 px — a *Connect two curves* whose two stubs had vanished was just `SEGMENT`.
+
+**The cut that remains is one line wide:** `ToolDef.icon` is still nullable and the palette still renders a
+text row for a tool that has none, which is now only a **user-defined macro** (OP-6) — its name is the user's
+and its picture there is no way to know, so the name is the better button. Nothing in `Tools.all` is a text
+row, which the browser E2E now asserts as *zero* where it used to assert *more than zero*, and a headless test
+(`ToolCompletionsTest.everyToolCarriesAGlyph`) asserts the same on the table itself, so a new `ToolDef`
+without an `icon =` cannot reach a release through the opt-in browser run alone.
 
 #### The inspector is a region of its own (as built)
 
@@ -12304,7 +12349,9 @@ the composition table is driven generically as well as by its own test.
   from becoming a prettier journal.
   (3) **The icon palette's real risk is not drawing badly, it is drawing ambiguously**, so the rule is that a
   glyph shows the *operation* — a fillet is two legs and the ghost of the corner the arc replaced — and a
-  tool whose operation has no picture keeps its text row. 60 of 77, and the 17 are named in the note. The
+  tool whose operation has no picture keeps its text row. 60 of 77, and the 17 are named in the note. (That
+  second half was reversed in issue #22 — the risk was read right, the "has no picture" test was not; every
+  tool now has a glyph and a family rule replaces the test. The reversal note is under the palette section.) The
   bug it produced is the one to remember: an `SVGElement` is **not** an `HTMLElement`, so the palette's click
   delegation dropped every click that landed on a glyph — the entire palette, dead, and every unit test
   green. The browser E2E caught it in one run.
@@ -15285,7 +15332,8 @@ five things the shell owed a person actually using it, and the reason they were 
 one costs something every session. (a) *Dependency visibility* — a selection now shows what it is **built
 from** and what is **used by** it, on canvas and by name, on the honest depth rule (nearest element-bearing
 ancestors); see the note under the editor roadmap. (b) *An icon palette*, 60 of 77 tools, with the other 17
-named where the line is drawn. (c) *A stable inspector*, fixed height and its own scroll, so nothing below it
+named where the line is drawn (that line was later withdrawn — issue #22 gave every tool a glyph; see the
+reversal note under the palette section). (c) *A stable inspector*, fixed height and its own scroll, so nothing below it
 moves when the selection changes. (d) *Renaming*, for groups and for elements, both on OP-7's existing rule
 and one of them exposing a latent save defect in `place`. (e) *A corner scale bar*, on the grid's own
 rounding, shared now by all three consumers of that rule. It leaves **two things parked**, each stated where

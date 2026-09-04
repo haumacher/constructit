@@ -799,8 +799,16 @@ class BrowserE2ETest {
                 tip.startsWith("Circle (centre, radius)") && tip.contains("shortcut C"),
                 "an icon button's tooltip carries the words: label, help and key; got: $tip",
             )
-            // a tool with no legible glyph keeps its text row, which is the stated cut
-            assertTrue(page.querySelectorAll("#palette .tool:not(.icon)").size > 0, "and the rest stay text rows")
+            // **Every** built-in tool now carries a glyph (GitHub issue #22). This assertion used to require the
+            // opposite — that some rows stayed text, "which is the stated cut" — and the reversal is recorded in
+            // DESIGN.md. What survives of the old rule is the *mechanism*: the field is still nullable and the
+            // palette still renders a text row for a tool without one, which is now only a user-defined macro,
+            // whose picture there is no way to know. None is defined here, so the count must be zero.
+            assertTrue(
+                page.querySelectorAll("#palette .tool:not(.icon)").isEmpty(),
+                "no tool is left as a text row; got: " +
+                    page.querySelectorAll("#palette .tool:not(.icon)").map { it.getAttribute("data-tool") },
+            )
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/18-icon-palette.png")))
 
             // ---- a circle over two points, so there is something with inputs ----

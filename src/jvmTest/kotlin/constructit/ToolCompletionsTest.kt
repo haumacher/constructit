@@ -11,6 +11,7 @@ import constructit.editor.Document
 import constructit.editor.DocumentFormat
 import constructit.editor.Editor
 import constructit.editor.ElementKind
+import constructit.editor.Icons
 import constructit.editor.Tools
 import constructit.geom.Vec2
 import constructit.units.mm
@@ -564,6 +565,31 @@ class ToolCompletionsTest {
         assertTrue(ed.key(Tools.SELECT_KEY.toString()))
         assertEquals(Tools.SELECT, ed.toolId, "S is select — the one key that is not a ToolDef's")
         assertTrue(!ed.key("q"), "an unassigned letter is left for the shell")
+    }
+
+    /**
+     * **Every palette row carries a glyph** (GitHub issue #22), and it is a glyph rather than a fetch: the
+     * markup strokes `currentColor` and names no external host, so the palette works from a `file:` URL and in
+     * either theme. Asserted headless as well as in the browser E2E, because the browser run is opt-in
+     * (`-De2e=1`) and a new `ToolDef` without an `icon =` would otherwise reach a release unnoticed.
+     */
+    @Test
+    fun everyToolCarriesAGlyph() {
+        val missing = Tools.all.filter { it.icon == null }.map { it.id }
+        assertTrue(missing.isEmpty(), "these palette rows have no glyph: $missing")
+        for (t in Tools.all) {
+            val g = t.icon!!
+            assertTrue(g.isNotEmpty(), "${t.id}: empty glyph")
+            assertTrue(!g.contains("http") && !g.contains("url("), "${t.id}: a glyph must fetch nothing: $g")
+            assertTrue(!g.contains("#") || g.contains("currentColor"), "${t.id}: a glyph paints currentColor only: $g")
+            val svg = Icons.wrap(g)
+            assertTrue(svg.startsWith("<svg") && svg.endsWith("</svg>"), "${t.id}: wraps into one svg")
+            assertEquals(
+                svg.count { it == '<' },
+                svg.count { it == '>' },
+                "${t.id}: every tag in the glyph is closed: $svg",
+            )
+        }
     }
 
     /** A single-scalar tool still means exactly "the active parameter", so nothing about them changed. */
