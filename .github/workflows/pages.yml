@@ -22,12 +22,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The JT sibling library is an included build (see settings.gradle.kts); CI checks it
+      # out inside the workspace and points the include at it via the gradle property.
+      - uses: actions/checkout@v4
+        with:
+          repository: haumacher/kotlinJT
+          path: kotlinJT
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew jsBrowserDistribution
+      - run: ./gradlew jsBrowserDistribution -Pkotlinjt.path=kotlinJT
       - uses: actions/configure-pages@v5
         with:
           enablement: true
