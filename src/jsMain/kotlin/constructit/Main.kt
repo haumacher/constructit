@@ -750,6 +750,18 @@ private fun setupApp() {
         repaint()
     })
 
+    // ---- the section-law field (OP-26, session 77: the variable-section sweep) ----
+    //
+    // One text, entered where a formula is entered — a size that changes along a run *is* an expression, so
+    // it belongs to the panel's medium and not to the click-collecting tool table (the same decision the
+    // function-curve form records). Two readings and one field: with a swept body selected the field is that
+    // body's own law and Apply re-states it; with nothing selected Apply arms the next Tube or Sweep. See
+    // [Editor.setSectionLaw].
+    (document.getElementById("sl-set") as HTMLElement).addEventListener("click", {
+        editor.setSectionLaw((document.getElementById("sl-text") as HTMLInputElement).value)
+        repaint()
+    })
+
     val paramsList = document.getElementById("params-list") as HTMLElement
     // select active parameter by clicking a row — but NOT when clicking the value field
     // (that would repaint and destroy the input, stealing focus)
@@ -1497,6 +1509,13 @@ private fun renderPanel(
                 "<button class=\"tdrop\" title=\"Retire this tool — the construction it was made from stays\">×</button>" +
                 "</div>"
         }
+
+    // The **section-law field follows the selection** (OP-26, session 77): select a tapered body and the
+    // field is that body's own law, which is what "the panel shows the expression and re-opens it for
+    // editing" means. Left alone while it has the keyboard, exactly as the parameter rows below are —
+    // rewriting a field under a half-typed formula would destroy the caret.
+    val lawField = document.getElementById("sl-text") as HTMLInputElement
+    if (document.activeElement !== lawField) lawField.value = editor.sectionLawText
 
     // parameters (editable). While a row of this list has the keyboard the DOM is left exactly as it is:
     // replacing it under a live spinner or a half-typed name would destroy the focus — and with it the

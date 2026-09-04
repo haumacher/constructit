@@ -447,7 +447,24 @@ object DocumentFormat {
                         step.creates.mapNotNull { it.annotation }.flatMap { it.dofValues() } +
                         relativeDofs(doc, step, ev) +
                         ownDofs(step, ev)
-                step.args + signsOf(doc, step) + if (dofs.isEmpty()) emptyList() else listOf(Arg.Keyed("dofs", Arg.Nums(dofs)))
+                // …and a **variable section's size law** is stored verbatim with the one rewrite every
+                // expression gets: a referenced parameter that has since been renamed is re-stamped in place
+                // (OP-26, session 77; the `bind` and `funccurve` rows' own rule). Written back into the very
+                // argument the gesture recorded, so its position in the step never moves.
+                // …**and the binding is the one authority for it**, which is what makes restating a law an
+                // edit of this very step ([Document.sweepLawRestated]) rather than a second feature: a
+                // binding that has gone takes the argument with it, and one that has arrived writes it where
+                // the gesture would have.
+                val lawNow = doc.sweepLawBinding(step)?.text
+                val stated = step.args.any { it is Arg.Keyed && it.key == "law" }
+                val args =
+                    when {
+                        lawNow == null && !stated -> step.args
+                        lawNow == null -> step.args.filterNot { it is Arg.Keyed && it.key == "law" }
+                        stated -> step.args.map { if (it is Arg.Keyed && it.key == "law") Arg.Keyed("law", Arg.Label(lawNow)) else it }
+                        else -> step.args + Arg.Keyed("law", Arg.Label(lawNow))
+                    }
+                args + signsOf(doc, step) + if (dofs.isEmpty()) emptyList() else listOf(Arg.Keyed("dofs", Arg.Nums(dofs)))
             }
             // the branch this step's click chose, restated so replay never scores it again (OP-1) — see
             // [Document.intersectNear]
@@ -1428,6 +1445,7 @@ object DocumentFormat {
         var signs = emptyList<Int>()
         var scalars = emptyList<ScalarEntry>()
         var count = 0
+        var law: String? = null
         // **A traced boundary is re-followed when a re-stamp changes how many pieces it has** (OP-23).
         // The tracer's follow is edit-time bookkeeping (OP-14/OP-18): the file keeps the whole ordered
         // boundary and a *load* discovers nothing, but a re-stamp is an edit, and re-running the same follow
@@ -1471,11 +1489,18 @@ object DocumentFormat {
                         }
                 // structural (OP-18): how many copies/vertices the tool built, replayed verbatim
                 "count" -> count = v.toIntOrNull() ?: throw LoadError("malformed count '$v'")
+                // a **variable section's size law**, verbatim — the text is the record (OP-26, session 77)
+                "law" -> law = unquote(v)
                 else -> throw LoadError("unknown tool argument '$key'")
             }
         }
+        // **A law on a tool that carries none is refused rather than dropped** (OP-26, session 77): silently
+        // ignoring it would build a body the file says is tapered, which is the one thing a load may not do.
+        if (law != null && !tool.carriesLaw) {
+            throw LoadError("${tool.id} carries no size law over the run, and this step states law=\"$law\"")
+        }
         val at = clicks.lastOrNull() ?: Vec2(0.0, 0.0)
-        val picks = Picks(points, elements, at, clicks, dofs, count, signs)
+        val picks = Picks(points, elements, at, clicks, dofs, count, signs, law = law)
         // replay through the same recorder the click used, so the reloaded document can be saved again
         doc.runTool(tool, picks, scalars)
     }

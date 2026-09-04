@@ -39,6 +39,7 @@ import constructit.core.transformValue
 import constructit.expr.Derive
 import constructit.expr.DeriveError
 import constructit.expr.Expr
+import constructit.expr.ExprError
 import constructit.geom.Affine
 import constructit.geom.Arc
 import constructit.geom.Axis3
@@ -92,6 +93,7 @@ import constructit.geom.Section3
 import constructit.geom.Segment
 import constructit.geom.Shell3
 import constructit.geom.Silhouette
+import constructit.geom.SizeLaw
 import constructit.geom.Sketch3
 import constructit.geom.Solid3
 import constructit.geom.SolidFace
@@ -2855,10 +2857,27 @@ class Construction {
         radius: ScalarRef,
         roll: ScalarRef,
         twist: ScalarRef,
+        law: ExprLaw? = null,
     ): SolidRef =
-        op(path, space, radius, roll, twist) {
-            val r = sc(it[2]).requireDim(Dimension.LENGTH, "tube radius").mm
-            sweptSolid(it, SweepProfile.Round(r))
+        op(*(listOf<Ref<*>>(path, space, radius, roll, twist) + (law?.refs ?: emptyList())).toTypedArray()) {
+            // **A radius that is a law of the station** (OP-26, session 77): `r(t)` is a *length*, so it
+            // supersedes the typed radius rather than scaling it — the radius the region is built at is the
+            // law read at the start of the run ([SweepProfile.of]). With no law the node is exactly the node
+            // it always was, arity and arithmetic alike (OP-18: nothing changes meaning).
+            if (law == null) {
+                val r = sc(it[2]).requireDim(Dimension.LENGTH, "tube radius").mm
+                sweptSolid(it, SweepProfile.Round(r))
+            } else {
+                val profile =
+                    try {
+                        SweepProfile.of(SizeLaw(law.ast, law.env(it, 5), Dimension.LENGTH, law.param, law.text))
+                    } catch (e: DimensionError) {
+                        return@op EvalResult.Invalid("${law.what(Dimension.LENGTH)}: ${e.message}")
+                    } catch (e: ExprError) {
+                        return@op EvalResult.Invalid("${law.what(Dimension.LENGTH)}: ${e.message}")
+                    }
+                sweptSolid(it, profile)
+            }
         }
 
     /**
@@ -2917,18 +2936,36 @@ class Construction {
         anchor: PointRef? = null,
         section: PlaneRef? = null,
         pierce: Int = 0,
+        law: ExprLaw? = null,
     ): SolidRef {
         require(anchor == null || section == null) { "a section rides a stated point or the run's own crossing, never both" }
+        val rides = anchor ?: section
+        // where the law's own inputs start, which is after the optional riding slot — held as a number
+        // because that slot's presence is what decides it, and it is decided here once
+        val lawFrom = if (rides == null) 5 else 6
         // What the section rides on is **one** input, in one slot, because it is one statement: a point the
         // user picked, the plane the run pierces, or — with neither — the profile's own origin, which is the
         // node this always was, arity and value alike (OP-18's rule one level down: nothing changes meaning).
-        return op(*listOfNotNull<Ref<*>>(path, space, profile, roll, twist, anchor ?: section).toTypedArray()) {
+        return op(*(listOfNotNull<Ref<*>>(path, space, profile, roll, twist, rides) + (law?.refs ?: emptyList())).toTypedArray()) {
             val region = (it[2] as RegionValue).region
-            val rides = it.getOrNull(5)
-            when (rides) {
-                is PointValue -> sweptSolid(it, SweepProfile.Section(movedBy(region, -rides.p)))
-                is PlaneValue -> inPlace(it, region, rides.plane, pierce)
-                else -> sweptSolid(it, SweepProfile.Section(region))
+            // **The section's uniform scale as a law of the station** (OP-26, session 77): dimensionless,
+            // about the anchor, never a re-evaluation of the section's own sketch.
+            val sizing =
+                if (law == null) {
+                    null
+                } else {
+                    try {
+                        SizeLaw(law.ast, law.env(it, lawFrom), Dimension.NONE, law.param, law.text)
+                    } catch (e: DimensionError) {
+                        return@op EvalResult.Invalid("${law.what(Dimension.NONE)}: ${e.message}")
+                    } catch (e: ExprError) {
+                        return@op EvalResult.Invalid("${law.what(Dimension.NONE)}: ${e.message}")
+                    }
+                }
+            when (val at = if (rides == null) null else it[5]) {
+                is PointValue -> sweptSolid(it, SweepProfile.Section(movedBy(region, -at.p), sizing))
+                is PlaneValue -> inPlace(it, region, at.plane, pierce, sizing)
+                else -> sweptSolid(it, SweepProfile.Section(region, sizing))
             }
         }
     }
@@ -2953,10 +2990,11 @@ class Construction {
         region: Region,
         section: Plane3,
         pierce: Int,
+        law: SizeLaw? = null,
     ): EvalResult {
         val (reading, why) = Pierce3.readingAt((args[0] as Path3Value).path, section, pierce)
         if (reading == null) return EvalResult.Invalid(why ?: "this section does not cross the run's own plane")
-        return sweptSolid(args, SweepProfile.Section(readFrom(region, reading.anchor, reading.fromBehind)), reading.seed)
+        return sweptSolid(args, SweepProfile.Section(readFrom(region, reading.anchor, reading.fromBehind), law), reading.seed)
     }
 
     /** [region] with [d] added to every one of its coordinates — how an anchored [sweep] reads its section. */

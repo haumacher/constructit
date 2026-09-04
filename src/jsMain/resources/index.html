@@ -80,6 +80,10 @@
         #fc-form #fc-x, #fc-form #fc-y { flex: 1 1 100%; }
         #fc-form #fc-from, #fc-form #fc-to { width: 76px; }
         #fc-form button { font-size: 12px; padding: 2px 6px; }
+        /* the section law (OP-26, session 77) rides the same collapsible as the function curve's texts: both
+           are formulas over the very same parameter `t`, and sharing one summary line is what keeps the
+           panel's idle height exactly where it was (the lists below it may not move — panelPolishInBrowser) */
+        #fc-form #sl-text { flex: 1 1 100%; }
         .prow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
         .prow:hover { background: #eef4fb; }
         .prow.active { background: #e2eefb; outline: 1px solid #1f77b4; }
@@ -268,13 +272,15 @@
                 <button id="p-add">+</button>
             </div>
             <div id="params-list"></div>
-            <details id="fc-form" title="A curve piece defined by two expressions over the parameter t: x(t), y(t) over a stated domain, reading any parameter above. An involute of the circle of radius r is x = r*(cos(t)+t*sin(t)), y = r*(sin(t)-t*cos(t)).">
-                <summary>Function curve</summary>
+            <details id="fc-form" title="Formulas over the parameter t, both reading any value above. A curve piece: x(t), y(t) over a stated domain — an involute of the circle of radius r is x = r*(cos(t)+t*sin(t)), y = r*(sin(t)-t*cos(t)). A swept section's size law: r(t) for a tube, scale(t) for a profile, with t from 0 at the start of the run to 1 at its end.">
+                <summary>Formulas over t</summary>
                 <input id="fc-x" placeholder="x(t)" value="r * (cos(t) + t * sin(t))">
                 <input id="fc-y" placeholder="y(t)" value="r * (sin(t) - t * cos(t))">
                 <input id="fc-from" value="0" title="t from — a number, or a formula over the values above">
                 <input id="fc-to" value="1.6" title="t to — a number, or a formula over the values above">
                 <button id="fc-add">Draw</button>
+                <input id="sl-text" placeholder="section law r(t) / scale(t) — e.g. 5mm * (1 - t/2)" title="A swept section's size along its run: one formula over t, which is 0 at the start of the run and 1 at its end. A tube reads it as the radius itself (5mm * (1 - t/2) is a tapered handle, 2mm + 8mm*t*t a horn); a swept profile reads it as a scale about the point it rides on (1 + t/2 is half again as large at the end). Select a swept body to see and change its own law; select nothing to arm the next Tube or Sweep.">
+                <button id="sl-set" title="State the size law: on the selected swept body, or armed for the next Tube or Sweep. Blank takes it away.">Apply</button>
             </details>
             <h3>Measurements</h3>
             <div id="measure-list"></div>

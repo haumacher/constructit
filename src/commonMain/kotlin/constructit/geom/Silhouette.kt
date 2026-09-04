@@ -102,6 +102,12 @@ object Silhouette {
         radius: Double?,
         closed: Boolean,
         plane: Plane3,
+        /**
+         * The section's size at each station, or null for a section of one size (OP-26, session 77's
+         * variable-section sweep). One factor per entry of [stations]; with null nothing is multiplied and
+         * the outline is bit-identical to the one this always produced.
+         */
+        scales: List<Double>? = null,
     ): List<Region> {
         if (stations.size < 2 || section.isEmpty()) return emptyList()
         val n = stations.size
@@ -127,7 +133,7 @@ object Silhouette {
             val flat = centres[next] - centres[prev]
             val span = (stations[next].at - stations[prev].at).length()
             if (span <= 0.0 || flat.length() <= END_ON * span) continue
-            rails[k] = support(stations[k], section, radius, flat.perp() * (1.0 / flat.length()), plane)
+            rails[k] = support(stations[k], section, radius, flat.perp() * (1.0 / flat.length()), plane, scales?.get(k) ?: 1.0)
         }
 
         val loops = ArrayList<Region>()
@@ -162,7 +168,7 @@ object Silhouette {
         for (k in 0 until n) {
             if (rails[k] != null) continue
             if (k == 0 || k == n - 1 || rails[k - 1] != null || rails[k + 1] != null) {
-                loops.add(sectionLoop(stations[k], section, radius, plane))
+                loops.add(sectionLoop(stations[k], section, radius, plane, scales?.get(k) ?: 1.0))
             }
         }
         return loops
@@ -182,13 +188,17 @@ object Silhouette {
         radius: Double?,
         m: Vec2,
         plane: Plane3,
+        /** The station's own size factor (OP-26, session 77) — exactly 1.0 for a section of one size. */
+        scale: Double,
     ): Pair<Vec2, Vec2> {
         val world = plane.u * m.x + plane.v * m.y
         if (radius != null) {
             val inFrame = Vec2(world.dot(station.ref), world.dot(station.bi))
             val len = inFrame.length()
             if (len > 0.0) {
-                val at = inFrame * (radius / len)
+                // the analytic reading stays analytic under a law: a scaled circle is a circle, so the
+                // support point is at exactly `scale * radius` and no chord of the section is consulted
+                val at = inFrame * (radius * scale / len)
                 return plane.toLocal(station.place(at)) to plane.toLocal(station.place(-at))
             }
         }
@@ -197,7 +207,7 @@ object Silhouette {
         var hiD = Double.NEGATIVE_INFINITY
         var loD = Double.POSITIVE_INFINITY
         for (p in section) {
-            val d = (station.place(p)).dot(world)
+            val d = (station.place(sized(p, scale))).dot(world)
             if (d > hiD) {
                 hiD = d
                 hi = p
@@ -207,8 +217,14 @@ object Silhouette {
                 lo = p
             }
         }
-        return plane.toLocal(station.place(hi)) to plane.toLocal(station.place(lo))
+        return plane.toLocal(station.place(sized(hi, scale))) to plane.toLocal(station.place(sized(lo, scale)))
     }
+
+    /** A section point at a station's own size — the identity where the section has one size (`scale == 1.0`). */
+    private fun sized(
+        p: Vec2,
+        scale: Double,
+    ): Vec2 = if (scale == 1.0) p else p * scale
 
     /**
      * The section's own outline at [station], projected — what a run shows where it points straight at this
@@ -219,12 +235,14 @@ object Silhouette {
         section: List<Vec2>,
         radius: Double?,
         plane: Plane3,
+        /** The station's own size factor (OP-26, session 77) — exactly 1.0 for a section of one size. */
+        scale: Double,
     ): Region {
         val centre = plane.toLocal(station.at)
         if (radius != null) {
-            return Region(Loop(listOf(ProfileElement.CircleE(Circle(centre, radius)))), emptyList())
+            return Region(Loop(listOf(ProfileElement.CircleE(Circle(centre, radius * scale)))), emptyList())
         }
-        return chain(section.map { plane.toLocal(station.place(it)) }, true)
+        return chain(section.map { plane.toLocal(station.place(sized(it, scale))) }, true)
     }
 
     /**

@@ -1834,6 +1834,7 @@ it:
 | `tool revolve` with **no `scalar=`** — the *complete revolution*, and `dofs=` on a partial one (OP-17, session 63) | a new **spelling** rather than a new argument: the angle slot used to be required, so no build could write a `tool revolve` step without a `scalar=`, and the slot owned nothing, so none ever wrote a `dofs=` for one. A step with no scalar now names the complete revolution — a construction with no angle node — and a partial one carries its offset freedom in `dofs=`, appended by the rule the `dofs=` row above states. The **offset never became an argument of its own**: `scalar=` is already an ordered list, so a two-scalar revolve writes `scalar="angle","offset"` exactly as any other two-scalar tool does | none, and **no version bump**. Every revolve any earlier build wrote recorded an angle, and that angle still means what it meant — including `360°`, which still closes the body at the *value* level for exactly that reason (the structural form is what a **new** drawing gets when nothing is typed, never a reinterpretation of an old file). An absent `dofs=` still means "every freedom stands at its default", which for the offset is the zero it always was; the one visible consequence is that a pre-package file **gains** `dofs=0deg` on its first re-save, which is asserted rather than hidden (`ChainCutReachTest.assertRoundTrips`) |
 
 | `tool sweep signs=` again — **a closed run's seam counts among the crossings** (OP-26, session 66) | **v2 → v3, the format's second bump.** `Pierce3.crossings` could not see a change of side across a closed run's own start, so a ring whose seam lies exactly in the section's plane reported one crossing where it has two. Correcting the walk inserts that crossing at index **0** (its arc length is nothing), so every index a v2 file recorded on such a drawing now names the crossing one place further along | **the recorded index is shifted on load by exactly the crossing that was inserted in front of it** — one where the run crosses at its seam right now (`Pierce3.crossesAtSeam`), nothing otherwise (`Document.migratedPierce`). The migration is *exact*, which is the whole reason it is one: the new set is the old set with at most one crossing put in front, so what a v2 reader would have shown for this file at this load is `all[k]` of the seam-blind walk and the very same crossing is `all[k + δ]` of this one. A **negative** index is the origin reading and is never shifted; an index that had already outrun its set stays out of it, refusing in the words it always used. Where the run or the plane has **no value** the shift cannot be measured, so the number is kept exactly as written and the load **names the element** (`loadNotes`) |
+| `tool tube law=` / `tool sweep law=` — **a section that changes size along its run** (OP-26's item 3, session 77) | a new *optional* argument on two steps that already existed: one expression over the run parameter `t`, stored **verbatim** and quoted so it may breathe (`splitWords` reads a quoted argument already — the expression half's own doing). A tube reads it as `r(t)`, a length that supersedes the typed radius; a sweep reads it as `scale(t)`, a plain factor about the point the section rides on | none, and **no version bump**, by the `tool sweep signs=` row's own argument read once more. What matters is the **absence**: a step with no `law=` is a section of one size, which is what every file written before this reading existed carries and keeps for ever — and it is asserted character for character (`SweepLawToolTest`), not argued. A law that reads no `t` is additionally asserted to build the constant body **vertex for vertex**, so the frozen reading covers the degenerate case too. No migration is possible or needed, since nothing a file ever stored changes meaning. A `law=` on a step whose tool carries none (`ToolDef.carriesLaw`, declared by exactly those two) is refused **at load** rather than dropped, because a file that says *tapered* and builds *straight* is the one thing a load may not do |
 | `sketchspace el= piece=` on a **revolution** — a turned part's flat faces, and a partial turn's caps (OP-17's item 4 of the sphere queue, session 69) | **no new argument and no new spelling**: the same two arguments the face variant has always carried, over the same address space (`Geom3.boundaryPieces`), now answered for a feature kind that used to refuse them. A revolution's face indices `0 until n` are its profile's own boundary pieces and `n` / `n + 1` its low- and high-angle caps | none, and **no version bump**, and this one is airtight rather than argued: before this build `createFaceSpace` on a revolve **always** returned null (`Geom3.sideFace` → *"this solid is not a prism"*), and the loader threw `LoadError` on such a step — so no build could ever write one and no file can contain one. A `piece=` that names a face a *later* edit turned curved refuses in the words of the surface it became (a cylinder, a cone, a torus) and heals when it flattens again, which is OP-3 and not a format question |
 
 **Why a bump, and what was rejected** — the two rows above both argued their way *out* of one, so the argument
@@ -10500,12 +10501,148 @@ needs an arc *as an arc* yet, and a case with no producer is a case with no test
 fitted. What is still absent, by the same rule and named so it is not looked for, is an **ellipse in space**.
 **Trim, split and join in
 space** are not built (to-be-discussed item 4), so a composite path made of several runs is not a value and two
-runs that meet are two runs. There is **no station family** — one station at a time (item 1a) — no **3D offset
-curve** (item 2) and no **variable-section sweep** (item 3), each of which is a settling discussion rather than
-a queue line. **3D sketch constraints** are refused permanently and by design, not deferred. A curve is not
+runs that meet are two runs. There is **no station family** — one station at a time (item 1a) — and no **3D offset
+curve** (item 2), each of which is a settling discussion rather than a queue line. ~~and no
+**variable-section sweep** (item 3)~~ — **built in session 77**, see *A section that changes size along its
+run* below. **3D sketch constraints** are refused permanently and by design, not deferred. A curve is not
 **exportable** by any writer. And one defect stays queued rather than being papered over: a mitred sweep whose
 two corners are closer together than the sum of their trims folds back on itself and still passes every
 manifold test (*Queued in session 40*) — the queue entry says why it needs a decision before a patch.
+
+### As built: a section that changes size along its run (OP-26's item 3, session 77 — queue entry 7 retired)
+
+**What was parked, and what unparked it.** Session 42 recorded the variable-section sweep as *"the only thing
+that would relax the single derived reach"* and then stopped, for a reason that was not laziness: there was
+no way to **state** that a section changes size. A sweep's section was a region and a tube's radius was a
+number, and neither has a place to put *"half again as large at the end"*. The expression language (OP-7,
+sessions 71–76) is that missing vocabulary — a size as one `Expr` over a run parameter, with the same AST, the
+same dimension check and the same naming authority the function curves already carry — so what was unstatable
+became a sentence, and the ruling was taken in session 77 on that basis.
+
+**The three rulings, as built.**
+
+**(a) The parameter is `t`, dimensionless, 0 → 1 along the run.** The same letter and the same contract the
+function curves carry: a **binder**, context-local, outranking any drawing scalar of that name
+(`SizeLaw.at`, `SizeLaws`), and a rename that would capture it is refused by name with the cure — exactly the
+rule `Document.renameParameter` already had for a curve's own `t`, extended to a law in the same place and the
+same words. It rides the **sampled arc-length map**, stated once in `SizeLaws.scalesAlong` as `station.s /
+frame.length`, so the mesh, the plan hint and all three refusal terms read the identical number. One `t` over
+the **whole** run and never one per piece: a two-piece run of 30 mm and 270 mm reads its join at `t = 0.1`,
+which is asserted (`SweepLawTest.theParameterIsArcLengthOverTheWholeRunAndNotPerPiece`) because a per-piece
+parameter would have put it at 0.5 and does not survive a multi-piece run at all.
+
+**(b) What varies is rigid per-station scaling, and it is one mechanism.** `SweepProfile` gained a `law` and
+a `scaleAt(t)`; a **tube**'s law is `r(t)`, a length, and the circle is built at its value at the start of the
+run (`SweepProfile.of`) with every station scaling that; an **arbitrary section**'s law is `scale(t)`, a plain
+number, about the very point it rides the run on. `Geom3.sweptShells` multiplies the section's own (x, y)
+*before* the carry, which is what makes it rigid rather than a re-reading of the section's sketch — the ring
+keeps its shape and the mitre push then happens to that ring. The **general tier** — any named scalar the
+section's own sketch reads becoming station-dependent, a true function family of regions — is recorded as the
+future extension it is: it means evaluating a whole 2D DAG per station and wants its own design.
+
+**(c) The refusal criteria became functions of the station**, which is the load-bearing half. `Geom3.sweep`
+used to derive **one** reach for the whole run (`tess.outer.maxOf { it.length() }`) and hand it to all three
+terms. Now `SizeLaws.scalesAlong` produces one factor per station and each term reads its own:
+
+- the **local** term scales the reach it asks about at the station it asks at (`Embedding.check`), so the
+  answer is `κ · h(N) · k(t) ≥ 1`;
+- the **global** term adds the two stations' own supports (`Embedding.needed`) instead of `2·reach`, which is
+  the separating-axis argument with one factor per side; its grid **cell** is sized for the largest the
+  section ever is, because a cell smaller than the pair it must offer would lose the bottleneck — the cell is
+  bookkeeping, the criterion is per station;
+- the **corner** term writes each factor into that corner's own **bite vector** (`Embedding.cornerFold`)
+  rather than applying it to the support afterwards, because two corners of a serpentine turn opposite ways
+  and the cancellation the whole term rests on has to happen after each side has its own size; the bend term
+  (`cornerBend`, GitHub #20) scales the trim at the corner it is about.
+
+Passing `scales = null` for a constant section leaves **every** one of those arithmetics literally the one it
+always was, which is why no message this family ever produced has moved. The claim is asserted both ways in
+one test: a quarter arc of 60 mm radius followed by a straight tail **refuses** a constant 70 mm tube in the
+words it always did, and **builds** a tube whose law is 15 mm at the bend and 70 mm on the straight — and the
+converse, the same law reversed, refuses naming *"the bend the run starts with"*, its radius and the size
+*there* (`SweepLawTest.theLocalTermReadsTheSizeAtItsOwnStationAndNotTheRunsLargest` and its twin).
+
+**The session-65 law holds, and it is what decided two constants.** A refusal is a claim about the drawing, so
+nothing that changes when the same drawing is meshed more finely may change what refuses. So the law is
+checked on **its own fixed grid** (`SizeLaws.STEPS` = 256 — `FuncCurves.VALIDATE_STEPS`'s own number,
+deliberately, since it is the same question asked of the same expression language over the same kind of
+dimensionless span), and the largest the section ever is (`SizeLaws.maxScale`) is read there too rather than
+off the stations. `SweepLawTest.refiningTheMeshChangesNeitherTheVerdictNorTheWords` asserts the verdict *and*
+the sentence over two decades of tessellation tolerance. What the grid does not see is an excursion narrower
+than one of its steps; where such an excursion reaches a station the sweep refuses there rather than building
+a fold, and that is the honest side of the same line — a body whose radius really does go non-positive is not
+a body at any density.
+
+**A non-positive size refuses in the constant refusal's own words**, naming the station and the value there:
+*"a tube needs a positive radius — r(t) = 5mm * (1 - 2*t) is -5 mm at t = 0.5 along the run"*, and *"a swept
+section needs a positive scale — …"* for the other reading. It heals per OP-3: move the parameter the law
+reads and the body comes back. A law of the wrong **dimension** leaves through the ordinary `DimensionError`
+(an angle-valued radius, a length-valued scale), which is the panel's own formula field one feature on.
+
+**One thing the mesh had to gain, and it is not a criterion.** A straight piece is **one span** by nature (a
+chord of a line *is* the line), so a horn stated on a straight run would have come out as the cone its two end
+rings are joined into — a picture of something the drawing does not say. `SizeLaws.spans` refines the run for
+the **law**, by the sagitta rule everything else here uses: a section point `reach` mm off the axis rides
+`reach·k(t)`, so over a span of `1/n` of the run its chord falls short by `reach·|k″|/(8n²)`, and `n` is what
+makes that the tolerance. `k″` is read off the law's own fixed grid, so a **linear** law answers exactly zero
+and is drawn with the two rings it needs — which is why a tapered handle's volume is asserted *analytically*
+against the polygonal frustum formula and not to a band. It is a compute-time decision and a pure function of
+values (OP-21), so a reload rebuilds the identical mesh.
+
+**Storage: a new optional argument, and no version bump.** `tool tube` and `tool sweep` gained `law="…"`,
+stored **verbatim** and quoted so it may breathe (`splitWords` already reads a quoted argument, from the
+expression half). Absence is a section of one size, which is what every file written before this carries — so
+no stored literal changed meaning and nothing is owed, by the format table's own argument for the
+`tool sweep signs=` row. A constant tube's step is asserted **character for character** against the step an
+older build would have written (`SweepLawToolTest.aConstantTubeWritesNoLawAndAnOlderScriptBuildsTheIdentical‑
+Body`), and a law that reads no `t` is asserted to build the constant body **vertex for vertex**. The law is
+the ordinary expression machinery, so it reads drawing parameters and a named point's `P.x` alike, it
+**re-stamps** in place when one of those is renamed (`Document.restampSweepLaws` — extended there for the
+reason the function curves were: a rename that reached a parameter binding but not a law would leave the body
+live and its *file* unloadable), and the delete cascade reaches a reference living inside its text.
+
+**The binding is the one authority for the law's text**, which is what makes re-stating one an **edit** of the
+body rather than a second feature (`Document.sweepLawRestated`): the writer reads the text off the binding, so
+putting a different binding on the very same step is the whole of the change — the journal's shape, its order
+and every scored choice the step carries all stay exactly where they are, and a blank text takes the law away.
+One undo, and the body keeps its identity, its name and everything built on it (OP-23's re-stamp precedent,
+GitHub #7's own mechanism).
+
+**The UI is one field, and where it lives was decided by a layout invariant.** *Section law* rides the panel's
+own **formulas-over-`t`** collapsible, beside the function curve's texts — because they are formulas over the
+very same parameter, and because sharing one summary line adds **no idle height** to the panel, which
+`panelPolishInBrowser` requires of the lists below it. It has two readings and one field, the shape the
+formula field already has: with a swept body selected it *is* that body's law and Apply re-states it; with
+nothing selected Apply **arms** it for the next tube or sweep. The armed law is a **tool option** and not
+gesture state — forced rather than chosen, since the field is in the panel and the tool comes from the palette,
+so `resetPicks` runs between arming the law and arming the tool — and the one surprise stickiness could cause
+is refused rather than dropped: a law armed while a tool that carries none completes says so by name
+(`ToolDef.carriesLaw`, declared by the tube and the sweep and by nothing else), and a `law=` on such a step is
+refused **at load** for the same reason.
+
+**The swept cut's half is cut, and the cut is recorded here** (OP-22's extension, step 2). The session-42 note
+named a variable section as the one thing that would relax the swept cut's *single derived reach*, and it is
+the derivation that makes it not cheap: a cut's section is a **chain**, unbounded in general, and its reach is
+not stated at all — it is derived from the target's own extent, and the reach, the relevant span of the route
+and the clipped section box are solved for each other in one fixed-point loop (`Chains.sweptTools`,
+`REACH_PASSES`). A section that scaled would make each of those three a function of the station and the loop a
+different algorithm. So the half is **refused in the app**, by name and with the way round it:
+
+> Section law: `solid2` is cut by a chain carried along a route, and a swept cut states no size of its own —
+> how far its section reaches is derived from the solid it cuts, so a section that changed size along the run
+> would move that reach station by station. Sweep the tapering section as a solid with *Sweep* (its scale may
+> be a formula over the run) and subtract it with *Subtract*
+
+— which is a route that exists and is a tool the user already has. Asserted by its words
+(`SweepLawToolTest.aSweptCutRefusesASizeLawByNameAndNamesTheWayRound`), together with the generic sentence
+everything else gets. Re-opening it needs a design for the coupled derivation and nothing else; the vocabulary
+is now in place.
+
+**What it costs, stated.** The three tests the ruling asks for fall out and are each one: a tapered handle
+(`5mm * (1 - t/2)` along a run — the cone frustum, asserted analytically and against `π L (r₀² + r₀r₁ +
+r₁²)/3`), a horn (`2mm + 8mm*t*t` — refined for its own law, every ring on the law), and a section-swept taper
+via `scale(t)` about the point the section rides on. **2343 → 2383 green** (`SweepLawTest`, 20;
+`SweepLawToolTest`, 19; one browser E2E for the field).
 
 ## The sphere as a locus — distance carried in space (OP-28 — RESOLVED)
 
@@ -15740,7 +15877,14 @@ operands. It leaves **two things parked**, each stated with the work: cutting by
 (a different operand, which the record already names as a later consequence), and a **variable** section —
 one clipped per station rather than once for the run — which is the only thing that would relax the single
 derived reach, and which is OP-26's own variable-section question rather than this operator's. See *An
-unbounded tool is a legitimate operand*.
+unbounded tool is a legitimate operand*. **Session 77 built OP-26's half and left this one parked
+deliberately, with a reason and an in-app refusal**: a swept *solid*'s section has a size the drawing states,
+so a law over the station is a reading of it; a swept *cut*'s reach is **derived** from the target and is
+solved together with the relevant span of the route and the clipped section box in one fixed-point loop
+(`Chains.sweptTools`), so a station-dependent section makes those three functions of the station and that loop
+a different algorithm. The cut therefore refuses a size law by name and points at *Sweep* + *Subtract*, which
+is a route the user already has — see *A section that changes size along its run* under OP-26 for the wording
+and the test that asserts it.
 
 **Retired in session 54 — nothing, because GitHub #15 arrived as a demand rather than off this queue.** The
 sweep's anchored reading (see *the point of the section that rides the run* under OP-26) closes the issue and
@@ -17142,7 +17286,12 @@ After the bug batch and the pattern entry above, in this order:
    parking lived — *Retired in session 76: the chamfer-on-arc convention* under the generalized fillet, with
    the parked sentence quoted and the 3D inheritance taken in the same session (blend slice 2's curved-leg
    refusal is retired, not carried).
-7. **The variable-section sweep — OP-26's parked question, newly speakable.** Session 42 parked it as
+7. **The variable-section sweep — OP-26's parked question, newly speakable. — done, session 77; see *A
+   section that changes size along its run* under OP-26.** All three rulings are built, with **one recorded
+   cut**: the swept cut's own half, which refuses in the app by name and points at *Sweep* + *Subtract* (its
+   reach is *derived* from the target and is solved together with the relevant span and the clip box in one
+   fixed-point loop, so a station-dependent section makes that loop a different algorithm — the reason is in
+   the as-built note). Session 42 parked it as
    "the only thing that would relax the single derived reach", with no way to *state* a varying section.
    The expression language is that missing vocabulary: a section dimension as a function of the station
    parameter is one `Expr` over `t` — the same AST, symbolic derivative and dimension check the function
@@ -17169,7 +17318,8 @@ After the bug batch and the pattern entry above, in this order:
    expression machinery, it references parameters and `P.x` alike, re-stamps on rename, and stores
    verbatim as a new *optional* step argument — no version bump.
 
-**Beyond those seven, the numbered queue is empty** (the session-59 entry above is closed). What remains —
+**The numbered queue is now empty** — entry 7 was its last live line, and it closed in session 77 (the
+session-59 entry above closed before it). What remains —
 vertex blends, text as geometry, silhouette edges in the 3D view, the panel's scalar tiering,
 `transformArc`'s guard, the Apollonius and conic tangent families — is the parked list below, each item
 recorded at its source, none with a new enabler yet.

@@ -1528,6 +1528,14 @@ object Geom3 {
      * **reach** exceeding the path's local radius of curvature at some station, which is the sweep passing
      * through itself and is named by how far along the path it happens; and a **closed** path whose frame
      * does not come back to itself, which is named with the twist that would close it.
+     *
+     * **A section whose size varies with the station** ([SweepProfile.law], OP-26's session-77 ruling) is
+     * carried by the same code and judged by the same three criteria, each *generalized* to read the law at
+     * its own station rather than one derived reach for the whole run — which is the load-bearing half of
+     * that ruling and what session 42 parked the feature for. The machinery already worked per station, so
+     * nothing new is asked; what changes is which size is asked *about* where. A law that is non-positive
+     * anywhere on the run refuses in the constant refusal's own words, naming the station and the value
+     * there ([SizeLaws.invalidity]).
      */
     fun sweep(
         path: Path3,
@@ -1539,6 +1547,10 @@ object Geom3 {
         tolMm: Double = GeomMath.TESS_TOL_MM,
         seed: FrameSeed? = null,
     ): Pair<Solid3?, String?> {
+        // **The law first, on its own fixed grid** (OP-26, session 77): it is the statement that decides
+        // whether *any* station has a size, `t = 0` included, so it is asked before the constant reading of
+        // the radius below — which for a law-carrying tube is that same law read at the start.
+        profile.law?.let { law -> SizeLaws.invalidity(law)?.let { return null to it } }
         if (profile is SweepProfile.Round && profile.radius <= WELD_TOL) {
             return null to "a tube needs a positive radius — this one is ${Frames3.mm(profile.radius)} mm"
         }
@@ -1551,9 +1563,18 @@ object Geom3 {
         // and the radius the twist's own sampling refinement is measured at
         val reach = tess.outer.maxOf { it.length() }
         if (reach <= WELD_TOL) return null to "the profile has no size, so there is nothing to sweep"
+        // **The sampling is refined for the largest the section ever is** (OP-26, session 77), read off the
+        // law's own fixed grid and never off the stations — so a horn's wide end is resolved by exactly the
+        // rule a constant section of that size would get, and no criterion's resolution is the mesh's.
+        val grown = reach * SizeLaws.maxScale(profile)
 
-        val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, reach, tolMm, seed)
+        val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, grown, tolMm, seed, SizeLaws.spans(profile, reach, tolMm))
         if (frame == null) return null to (noFrame ?: "cannot build a moving frame along this curve")
+        // **The per-station reading of the size** — one `t` over the whole run by arc length, stated once
+        // here so the mesh, the plan hint and all three refusal terms read the identical number. Null for a
+        // constant section, which is what keeps every message and every triangle of one byte-identical.
+        val (scales, noScale) = SizeLaws.scalesAlong(profile, frame)
+        if (noScale != null) return null to noScale
 
         // **The self-intersection criterion: the spine's reach**, both terms of it ([Embedding]). Locally, a
         // profile reaching `reach` from the path folds through itself the moment the path's radius of
@@ -1572,10 +1593,17 @@ object Geom3 {
         // on ([Embedding.intoTheBend]). It is named separately in the refusal because it is a different
         // measurement from the reach the global term quotes, and a message that printed one while testing the
         // other would be a correct refusal nobody could act on.
+        // …and where the section's size is a **law**, the same two sentences read the size *at the station*:
+        // the local term's own directional figure is already the scaled one, and a round tube — which has no
+        // outline to speak through — gains the inward wording it never needed while its radius was one number.
         val sectionOutline = if (profile is SweepProfile.Round) null else tess.outer
         val intoTheBend: ((Double) -> String)? =
-            if (profile is SweepProfile.Round) null else { d -> "the profile's reach into the bend (${Frames3.mm(d)} mm)" }
-        Embedding.check(frame, reach, profileReach(profile, reach), section = sectionOutline, inward = intoTheBend)
+            when {
+                profile !is SweepProfile.Round -> { d -> "the profile's reach into the bend (${Frames3.mm(d)} mm)" }
+                profile.law != null -> { d -> "the tube's radius there (${Frames3.mm(d)} mm)" }
+                else -> null
+            }
+        Embedding.check(frame, reach, profileReach(profile, reach), section = sectionOutline, inward = intoTheBend, scales = scales)
             .defect?.let { return null to it }
         // **…and the third way a swept body folds: a corner that mitres away more run than there is**
         // ([Embedding.cornerFold]). Neither term above can see it — it is not a proximity (a triangle's legs
@@ -1584,7 +1612,7 @@ object Geom3 {
         // section, positively volumed: silent wrong output, which outranks everything. It is asked **last**,
         // so that where more than one term fires the one that was there first keeps its words — the same rule
         // the local term already has against the global one.
-        Embedding.cornerFold(frame, reach, sectionOutline)?.let { return null to it }
+        Embedding.cornerFold(frame, reach, sectionOutline, scales = scales)?.let { return null to it }
         // **A closed path whose frame does not close on itself** is reported rather than smeared over the
         // last band, and the report names the cure: the twist that makes the total come back to zero is an
         // ordinary parameter of this very feature, so the refusal heals by stating it (OP-3). A *planar*
@@ -1598,7 +1626,7 @@ object Geom3 {
         }
 
         val (shells, noMesh) =
-            sweptShells(listOf(tess), frame.stations, frame.closed, regions = listOf(region), tolMm = tolMm) { st, p ->
+            sweptShells(listOf(tess), frame.stations, frame.closed, regions = listOf(region), tolMm = tolMm, scales = scales) { st, p ->
                 st.place(p)
             }
         if (shells == null) return null to (noMesh ?: "cannot build this sweep")
@@ -1610,7 +1638,7 @@ object Geom3 {
             if (plan == null) {
                 emptyList()
             } else {
-                Silhouette.ofSwept(frame.stations, tess.outer, roundRadius(profile), frame.closed, plan)
+                Silhouette.ofSwept(frame.stations, tess.outer, roundRadius(profile), frame.closed, plan, scales)
             }
         // **The feature records the direction the frame actually started with**, not the one that was asked
         // for — [MovingFrame.startRef]. For a frame started at the run's beginning the two are the same
@@ -1643,9 +1671,14 @@ object Geom3 {
         if (tess == null || tess.outer.isEmpty()) return emptyList()
         val reach = tess.outer.maxOf { it.length() }
         if (reach <= WELD_TOL) return emptyList()
-        val (frame, _) = Frames3.along(feature.path, feature.up, feature.roll, feature.twist, reach, tolMm)
+        // the law travels with the feature (OP-9's self-contained feature), so a moved tapered body's hint is
+        // the tapered one — and a law that cannot be read yields no hint, exactly as an unbuildable frame does
+        val grown = reach * SizeLaws.maxScale(feature.profile)
+        val (frame, _) = Frames3.along(feature.path, feature.up, feature.roll, feature.twist, grown, tolMm, lawSpans = SizeLaws.spans(feature.profile, reach, tolMm))
         if (frame == null) return emptyList()
-        return Silhouette.ofSwept(frame.stations, tess.outer, roundRadius(feature.profile), frame.closed, plane)
+        val (scales, noScale) = SizeLaws.scalesAlong(feature.profile, frame)
+        if (noScale != null) return emptyList()
+        return Silhouette.ofSwept(frame.stations, tess.outer, roundRadius(feature.profile), frame.closed, plane, scales)
     }
 
     /** The **analytic** radius of a round section, and null for any other — see [Silhouette.ofSwept]. */
@@ -1682,6 +1715,12 @@ object Geom3 {
      * besides — so the coarse body is the same run with a cheaper ring, and the two levels stay the same
      * body. Without [regions] both levels are the fine mesh, which is what the swept **cut** takes: its
      * triangles feed a boolean and are never a picture at all.
+     *
+     * **[scales] is the section's size at each station** (OP-26, session 77) — one factor per entry of
+     * [stations], or null for a section of one size, in which case not a single coordinate is multiplied and
+     * the mesh is byte-identical to the one this always built. It is applied to the section's own (x, y)
+     * *before* [place], which is what makes it **rigid** scaling about the anchor rather than a re-reading
+     * of the section's sketch: the ring keeps its shape and the mitre push then happens to that ring.
      */
     internal fun sweptShells(
         sections: List<TessRegion>,
@@ -1690,6 +1729,7 @@ object Geom3 {
         reversed: Boolean = false,
         regions: List<Region>? = null,
         tolMm: Double = GeomMath.TESS_TOL_MM,
+        scales: List<Double>? = null,
         place: (Frame3, Vec2) -> Vec3,
     ): Pair<((MeshQuality) -> Mesh3)?, String?> {
         if (stations.size < 2) return null to "a sweep needs at least two stations along its run"
@@ -1721,9 +1761,19 @@ object Geom3 {
                 b: Vec3,
                 c: Vec3,
             ) = if (reversed) mb.triangle(a, c, b) else mb.triangle(a, b, c)
+
+            // **A station's own size, where the section has a law** (OP-26, session 77): the scaling is
+            // applied to the section's coordinates *before* the carry, which is exactly what "rigid
+            // per-station scaling about the anchor" means — the ring is the same shape, read larger or
+            // smaller, and the mitre push then happens to that ring. Null is a constant section and the
+            // arithmetic is then literally the one it always was.
+            fun sized(
+                k: Int,
+                p: Vec2,
+            ): Vec2 = if (scales == null) p else p * scales[k]
             for ((si, tess) in use.withIndex()) {
                 val polys = listOf(tess.outer) + tess.holes
-                val rings = stations.map { st -> polys.map { poly -> poly.map { place(st, it) } } }
+                val rings = stations.mapIndexed { k, st -> polys.map { poly -> poly.map { place(st, sized(k, it)) } } }
                 val bands = if (closed) stations.size else stations.size - 1
                 for (k in 0 until bands) {
                     val lo = rings[k]
@@ -1743,9 +1793,11 @@ object Geom3 {
                     // cap reversed — the extrude's own top/bottom rule, one dimension round.
                     val first = stations.first()
                     val last = stations.last()
+                    val k0 = 0
+                    val k1 = stations.lastIndex
                     for (t in useCaps[si]) {
-                        tri(place(first, t.a), place(first, t.c), place(first, t.b))
-                        tri(place(last, t.a), place(last, t.b), place(last, t.c))
+                        tri(place(first, sized(k0, t.a)), place(first, sized(k0, t.c)), place(first, sized(k0, t.b)))
+                        tri(place(last, sized(k1, t.a)), place(last, sized(k1, t.b)), place(last, sized(k1, t.c)))
                     }
                 }
             }
@@ -1772,9 +1824,14 @@ object Geom3 {
         profile: SweepProfile,
         reach: Double,
     ): String =
-        when (profile) {
-            is SweepProfile.Round -> "the tube's radius (${Frames3.mm(profile.radius)} mm)"
-            is SweepProfile.Section -> "the profile's reach from the path (${Frames3.mm(reach)} mm)"
+        // A **law** names itself instead of a number, because there is no one number to name — the global
+        // term's sentence is about the run as a whole, so it quotes the size the drawing *states* and the
+        // per-station figure it actually needed. That is the session-65 rule read at a varying section: the
+        // words are about the curve and the stated sizes, and nothing in them is the mesh's.
+        when {
+            profile.law != null -> "the section's stated size (${profile.law!!.what()})"
+            profile is SweepProfile.Round -> "the tube's radius (${Frames3.mm(profile.radius)} mm)"
+            else -> "the profile's reach from the path (${Frames3.mm(reach)} mm)"
         }
 
     // ---- the loft: an ordered run of sections, optionally shaped by guides (OP-17's third feature) ----

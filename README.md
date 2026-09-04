@@ -60,6 +60,14 @@ first-class goal and the current implementation focus.
   segments and arcs, and extrudes to a watertight solid. What stays honestly approximate is what is
   genuinely metric: its measured length, its offsets, and its intersections — numeric, but deterministic and
   ordered by parameter along the curve.
+- **A swept section whose size is a formula over the run.** The same expression language, over the same
+  parameter `t` — 0 at the start of a run, 1 at its end: a tube's **radius** may be `5mm * (1 - t/2)` (a
+  tapered handle) or `2mm + 8mm*t*t` (a horn), and a picked area takes a **scale** about the point it rides
+  on, so `1 + t/2` is half again as large at the end as at the start. It reads any named value in the drawing,
+  re-stamps when one is renamed, and stores verbatim; every one of the sweep's own refusals — the bend it must
+  fit round, the run it must not come back into, the corner it must not mitre away — is read at the size the
+  law states **at that station**, so a run that is thin where it bends and thick where it is straight builds
+  where a section of one size could not.
 - **Live previews — what the click will make, before you make it.** Every drawing, transform, rounding and
   dimension tool paints its result under the cursor as you move: the growing circle, the circumcircle through
   your two picks and the pointer, the rectangle's outline, ghost copies of what a mirror or an array would
@@ -332,9 +340,22 @@ other — both ordinary parameters, both zero unless you say otherwise. The area
 so a section drawn off to one side runs off to one side, and a section with a hole in it sweeps a **pipe**.
 Corners are **mitred**, ends are capped square to the run, and a closed route needs no caps at all.
 
+**And the section may change size along the run.** Type a formula into *Section law* in the panel — the same
+expression language a parameter's formula and a function curve's texts are written in, over a parameter `t`
+that runs from 0 at the start of the run to 1 at its end — and the section is scaled by it, station by station.
+A tube reads it as the **radius itself**: `5mm * (1 - t/2)` is a tapered handle, `2mm + 8mm*t*t` is a horn. A
+picked area reads it as a **scale** about the very point it rides the run on: `1 + t/2` is half again as large
+at the end as at the start. The formula reads any named value in the drawing (and a named point's coordinate),
+so a taper follows a dimension like everything else; select a swept body and the field shows its own law back
+for editing, and clearing the field makes it a section of one size again. What is carried is the section you
+drew, larger or smaller — never a re-drawing of it.
+
 What it refuses, it refuses by name and it heals. A section too big to go round a bend would fold through
 itself, so it is refused with the place said out loud — *"the tube's radius (12 mm) is larger than the bend at
 340 mm along the path (radius 8 mm)"* — and the moment the radius comes back down the solid is there again. A
+A size law that goes to nothing part-way along says which station and what value — *"a tube needs a positive
+radius — r(t) = 5mm * (1 - 2*t) is -5 mm at t = 0.5 along the run"* — and every one of those refusals is read
+at the station it is about, so a run that is thin where it bends and thick where it is straight builds. A
 closed route that leaves its plane will not generally bring the frame back to where it started; rather than
 hiding that twist in the last piece, the drawing says how far out it is and what twist would close it, and
 typing that number closes it. Everything else is what any solid gets: it shows in 3D, draws a footprint you can

@@ -1250,6 +1250,22 @@ class Editor(
     private var hoverWorld: Vec2? = null // last cursor position, so a typed length keeps its direction
 
     /**
+     * The **size law armed for the next variable-section sweep** (OP-26, session 77) — one expression over
+     * the run parameter `t`, verbatim as typed.
+     *
+     * A **tool option**, like the wall side or the picked scalar, and *not* gesture state — which is forced
+     * rather than chosen: the field is in the panel and the tool comes from the palette, so arming and then
+     * arming the tool are two separate acts and [resetPicks] runs between them. Held here it survives that,
+     * it is shown in the very field that states it ([sectionLawText]), and the one surprise stickiness could
+     * cause — a taper silently reaching a tool that has no section to size — is **refused by name** where
+     * that tool completes ([maybeCompleteTool]) instead of being dropped.
+     *
+     * Nothing about it enters the document until a body is built, and the *body* is then where it lives (the
+     * step's own `law=`), which is why re-stating one is an edit of that body rather than a re-arming.
+     */
+    private var armedLaw: String? = null
+
+    /**
      * What the armed tool would build if the next click happened where the cursor is (`ToolDef.preview`).
      *
      * Held here because it is *view* state of the gesture, exactly as the ortho band ([previewSeg]) is: it is
@@ -2501,6 +2517,76 @@ class Editor(
         return true
     }
 
+    // ---- the variable-section sweep: a size that is a formula over the run (OP-26, session 77) ----
+
+    /**
+     * What the panel's **Section law** field shows: the law of the selected swept body, or the one armed for
+     * the next gesture, or nothing.
+     *
+     * One field and two readings, which is the same shape the panel's *formula* field already has (it shows
+     * the selected parameter's expression and re-opens it for editing): select a tapered body and the field
+     * *is* that body's law, select nothing and it is what the next tube or sweep will carry.
+     */
+    val sectionLawText: String
+        get() = selectedElements.singleOrNull()?.let { doc.sweepLawOf(it)?.text } ?: armedLaw ?: ""
+
+    /**
+     * State a **size law over the run** (OP-26, session 77) — the whole of the variable-section sweep's entry
+     * path, and one field.
+     *
+     * Two readings, decided by what is selected and by nothing else:
+     * - a **selected swept body** is re-lawed in place, which re-stamps its own step and replays
+     *   ([Document.sweepLawRestated]) — so the body keeps its identity and its name, everything built on it
+     *   follows by recompute, and it is one undo step. A blank text takes the law away again.
+     * - with **nothing** selected the law is *armed* for the next tube or sweep, exactly as a typed length is
+     *   armed for the next click (OP-13): it is half of that gesture and is dropped with its picks.
+     *
+     * A selected solid whose feature carries no law refuses **by name**, in the document's own words — which
+     * is where the swept cut says why it is not one of them.
+     */
+    fun setSectionLaw(text: String): Boolean {
+        val wanted = text.trim()
+        val one = selectedElements.singleOrNull()
+        if (one != null && one.kind == ElementKind.SOLID) {
+            val name = doc.nameOf(one)
+            val script = doc.sweepLawRestated(one, wanted)
+            val said = doc.takeNote() // read before the adopt below replaces the document that said it
+            if (script == null) {
+                statusHint = said ?: "Can't state a size law on $name"
+                changed()
+                return false
+            }
+            val fresh =
+                try {
+                    DocumentFormat.load(script)
+                } catch (e: Exception) {
+                    statusHint = "Stating a size law on $name failed: ${e.message}"
+                    changed()
+                    return false
+                }
+            adopt(fresh)
+            checkpoint()
+            // a law whose *values* do not work out is legal and invalid, not refused (OP-3): it says so and heals
+            val el = doc.elements.firstOrNull { doc.nameOf(it) == name }
+            val why = el?.let { (Evaluator().eval(it.ref.node) as? EvalResult.Invalid)?.reason }
+            statusHint =
+                (if (wanted.isEmpty()) "$name is a section of one size again" else "$name: ${doc.sweepLawParam} -> $wanted") +
+                (why?.let { " — but $it" } ?: "")
+            changed()
+            return true
+        }
+        armedLaw = wanted.ifEmpty { null }
+        statusHint =
+            if (armedLaw == null) {
+                "No size law armed — the next tube or sweep carries a section of one size"
+            } else {
+                "Armed: the next tube or sweep scales its section by $wanted, with ${doc.sweepLawParam} from 0 at " +
+                    "the start of the run to 1 at its end (a tube reads it as the radius itself)"
+            }
+        changed()
+        return true
+    }
+
     /**
      * Draw a **function curve** from two texts and a domain (the session-71 entry, curve half).
      *
@@ -3406,6 +3492,11 @@ class Editor(
                 landings = pickedLandings.toList(),
                 // which view this gesture was made through — see [Picks.view]
                 view = proj(),
+                // …and the size law this gesture was armed with (OP-26, session 77), for the two tools that
+                // carry one. A law armed while some *other* tool completes is refused rather than dropped
+                // (see [maybeCompleteTool]'s check below), because a taper that silently vanished would be
+                // the one failure a status line cannot recover.
+                law = armedLaw.takeIf { tool.carriesLaw },
             )
         toolPreview = preview(PreviewContext(doc, ev, picks, previewScalars(tool, ev), world, tolWorld(), justification))
     }
@@ -4842,7 +4933,19 @@ class Editor(
                 landings = pickedLandings.toList(),
                 // which view this gesture was made through — see [Picks.view]
                 view = proj(),
+                // …and the size law this gesture was armed with (OP-26, session 77), for the two tools that
+                // carry one. A law armed while some *other* tool completes is refused rather than dropped
+                // (see [maybeCompleteTool]'s check below), because a taper that silently vanished would be
+                // the one failure a status line cannot recover.
+                law = armedLaw.takeIf { tool.carriesLaw },
             )
+        if (armedLaw != null && !tool.carriesLaw) {
+            statusHint =
+                "${tool.label} carries no size law over a run — the law you typed belongs to *Tube along a " +
+                "curve* or *Sweep (profile along a curve)*. Clear the *Section law* field, or arm one of those"
+            changed()
+            return true
+        }
         // read before [resetPicks] drops it: a group operand is worth reporting, because the one thing the
         // canvas cannot show is *how much* the tool just took (OP-16)
         val fedGroup = pickedGroup

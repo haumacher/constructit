@@ -36,6 +36,7 @@ import constructit.dsl.CircleRef
 import constructit.dsl.Construction
 import constructit.dsl.EllipseRef
 import constructit.dsl.EllipticArcRef
+import constructit.dsl.ExprLaw
 import constructit.dsl.FrameRef
 import constructit.dsl.FuncCurveRef
 import constructit.dsl.LineRef
@@ -1419,6 +1420,10 @@ class Document {
             // reason: the writer restates them under the current names, and nothing else may (session 71)
             pendingFuncCurve?.let { funcCurves[step] = it }
             pendingFuncCurve = null
+            // …and the size law this operation's sweep or tube states, owned by its step for the same reason
+            // (OP-26, session 77): the writer restates it under the current names, and nothing else may
+            pendingSweepLaw?.let { sweepLaws[step] = it }
+            pendingSweepLaw = null
             // which step *owns* each re-parameterization this operation performed (OP-4 case b), so the writer
             // restates an offset on the step that made it and nowhere else — a step that merely *uses* a
             // relative point (a circle through it) must not carry its distance and angle
@@ -1548,6 +1553,11 @@ class Document {
                 // the structural count (how many copies/vertices were built), so replay is exact and the
                 // loader's element-count check can vouch for it — never re-derived from anything
                 Arg.Keyed("count", Arg.Text(picks.count.toString())).takeIf { picks.count > 0 },
+                // a **variable section's size law** (OP-26, session 77), stored verbatim and quoted so it may
+                // breathe. A new *optional* argument on steps that already existed: absence is a section of
+                // one size, which is what every file written before this carries — so no stored literal
+                // changed meaning and no version bump is owed (OP-18, and the `tool sweep signs=` row).
+                picks.law?.let { Arg.Keyed("law", Arg.Label(it)) },
             ).toTypedArray(),
             skipIfEmpty = true,
             body = body,
@@ -3181,6 +3191,7 @@ class Document {
         val out = ArrayList<String>()
         for (b in exprBindings.values) if (b.refs.any { it.point === el }) out.add(b.entry.name)
         for (c in funcCurves.values) if (c.pointRefs().any { it === el }) out.add(nameOf(c.element))
+        for (l in sweepLaws.values) if (l.pointRefs().any { it === el }) out.add(nameOf(l.element))
         return out.distinct()
     }
 
@@ -3306,6 +3317,7 @@ class Document {
         // point would name a point on load and the file would not open (OP-18).
         exprBindings[step]?.let { b -> out.addAll(b.refs.mapNotNull { it.point }) }
         funcCurves[step]?.let { c -> out.addAll(c.pointRefs()) }
+        sweepLaws[step]?.let { l -> out.addAll(l.pointRefs()) }
         return out
     }
 
@@ -3329,6 +3341,8 @@ class Document {
         // the same for a function curve: its references live inside two texts (and, since session 76, in its
         // two domain ends) rather than in arguments of their own, so the step is asked what it read
         funcCurves[step]?.let { c -> out.addAll(c.scalarRefs()) }
+        // the same for a swept body's size law, whose references live inside one text (OP-26, session 77)
+        sweepLaws[step]?.let { l -> out.addAll(l.scalarRefs()) }
         return out
     }
 
@@ -3617,6 +3631,13 @@ class Document {
         if (funcCurves.values.any { c -> c.param == wanted && c.refs.any { r -> r.entry === e } }) {
             note = "Can't rename ${e.name} to '$wanted': inside a function curve '$wanted' is the curve's own " +
                 "parameter, so the curve would read its parameter where it now reads ${e.name} — pick another name"
+            return null
+        }
+        // …and the identical rule for a swept section's size law, whose `t` is the run parameter and outranks
+        // every drawing scalar of that name (OP-26, session 77): a re-stamp may not capture a binder
+        sweepLaws.values.firstOrNull { l -> l.param == wanted && l.refs.any { r -> r.entry === e } }?.let { l ->
+            note = "Can't rename ${e.name} to '$wanted': inside ${nameOf(l.element)}'s size law '$wanted' is the " +
+                "run's own parameter, so the law would read the station where it now reads ${e.name} — pick another name"
             return null
         }
         e.name = uniqueScalarName(wanted, except = e)
@@ -5353,6 +5374,18 @@ class Document {
             b.node.text = restamped(b.node.source, b.node.ast, b.node.names, b.refs)
         }
         restampFuncCurves()
+        restampSweepLaws()
+    }
+
+    /**
+     * The same re-stamp over a **variable section's size law** (OP-26, session 77) — extended here for the
+     * reason the function curves were: a rename that reached a parameter binding but not a law would leave
+     * the body live and its *file* unloadable, which is exactly the failure the scalar half's probe found.
+     */
+    private fun restampSweepLaws() {
+        for (b in sweepLaws.values) {
+            b.text = restamped(b.source, b.ast, b.names, b.refs)
+        }
     }
 
     /**
@@ -11197,6 +11230,168 @@ class Document {
     // ---- the sweep: a profile carried along a curve in space (OP-26, step 2) ----
 
     /**
+     * What a **variable section**'s `law=` stated on a tube or a sweep step (OP-26, session 77): the text as
+     * written, its AST, and what its names resolved to — **by identity**, which is what makes a rename a
+     * re-stamp rather than an orphaned reference.
+     *
+     * The exact twin of [FuncCurveBinding], and it exists for the same two reasons: the **text is the
+     * record**, so the writer restates this step's own text; and a rename is a re-stamp, so a mention of a
+     * scalar (or of a point's coordinate) living inside this string is rewritten in place
+     * ([restampExpressions]).
+     */
+    class SweepLawBinding internal constructor(
+        val element: Element,
+        val source: String,
+        internal val ast: Expr,
+        internal val names: List<String>,
+        internal val refs: List<ExprRef>,
+        val param: String,
+    ) {
+        /** The law under the **current** names of what it reads — what a save writes. */
+        var text: String = source
+
+        /** Every scalar row this law reads — what the delete cascade follows. */
+        internal fun scalarRefs(): List<ScalarEntry> = refs.mapNotNull { it.entry }
+
+        /** Every point whose coordinate this law reads (the session-76 rule, one feature on). */
+        internal fun pointRefs(): List<Element> = refs.mapNotNull { it.point }
+    }
+
+    private val sweepLaws = HashMap<Step, SweepLawBinding>()
+    private var pendingSweepLaw: SweepLawBinding? = null
+
+    /** The law [step] recorded, or null — how the writer restates that step's own text. */
+    internal fun sweepLawBinding(step: Step): SweepLawBinding? = sweepLaws[step]
+
+    /** The law [el]'s section is carried at, or null — what the panel shows and a refusal quotes. */
+    fun sweepLawOf(el: Element): SweepLawBinding? = sweepLaws.values.firstOrNull { it.element === el }
+
+    /** The station parameter every size law is read in — `t`, 0 to 1 along the whole run. */
+    val sweepLawParam: String get() = "t"
+
+    /** A parsed law plus what its names resolved to — [sizeLaw]'s two halves, kept together. */
+    private class LawParse(val input: ExprLaw, val refs: List<ExprRef>)
+
+    /**
+     * [text] read as a **size law over the station** (OP-26, session 77), or null with [note] set by name.
+     *
+     * Everything structural is refused here and before anything is built — a text that is not an expression
+     * (with the character position), a name nothing in the drawing carries (with the cure, through
+     * [unknownName]) — while everything about the *values* is the node's business and comes back as the named
+     * invalidity that heals (OP-3): a radius law that is not a length, a scale that is not a plain number, a
+     * size that goes non-positive part-way along the run.
+     */
+    private fun sizeLaw(
+        text: String,
+        what: String,
+    ): LawParse? {
+        val param = sweepLawParam
+        val ast =
+            try {
+                ExprParser.parse(text)
+            } catch (err: ExprError) {
+                note = "$what: can't read the section's size from '${text.trim()}': ${err.message}"
+                return null
+            }
+        val names = ArrayList<String>()
+        val refs = ArrayList<ExprRef>()
+        for (n in ast.refNames()) {
+            // the station parameter is a **binder** and wins over everything, which is what makes `1 - t/2`
+            // mean what it says even in a drawing that carries a scalar called `t` (the function curves' own
+            // rule — see [funcCurveParam] and DESIGN.md's note on a rename that would capture one)
+            if (n == param) continue
+            val target = resolveExprName(n)
+            if (target == null) {
+                if (n in EXPR_CONSTANTS) continue
+                note = "$what: ${unknownName(n)}"
+                return null
+            }
+            names.add(n)
+            refs.add(target)
+        }
+        return LawParse(ExprLaw(ast, names, refs.map { Ref(it.node) }, text, param), refs)
+    }
+
+    /**
+     * The whole journal with [el]'s **size law restated** as [text] — or null with [note] set, by name.
+     *
+     * A law change is an **edit**, not a new feature, and it re-stamps the step that already declares this
+     * body: the same reasoning OP-23 applied to a pattern's count and GitHub #7 to a wall's carrier set, and
+     * it buys the same three things — the solid keeps its identity (its own step still declares it, so its
+     * script name, its style and everything built on it follow the re-tapered body), nothing downstream is
+     * rewired, and the whole thing is one undo step because the substrate of undo is the saved script
+     * (OP-18). A blank [text] takes the law away, which is the section of one size again.
+     *
+     * **This document is left exactly as it was**: what comes back is text and the caller decides to adopt it
+     * ([constructit.editor.Editor.setSectionLaw]), which is also what makes a failure to re-load harmless.
+     */
+    fun sweepLawRestated(
+        el: Element,
+        text: String?,
+    ): String? {
+        val step = creatingStep(el)
+        val toolId = if (step?.kind == "tool") (step.args.firstOrNull() as? Arg.Text)?.s else null
+        val tool = toolId?.let { toolDef(it) }
+        if (step == null || tool == null || !tool.carriesLaw) {
+            note = lawRefusal(el, toolId)
+            return null
+        }
+        val wanted = text?.trim()?.ifEmpty { null }
+        // refused **before** anything is rewritten, in the words the gesture would have used
+        val parse = if (wanted == null) null else sizeLaw(wanted, "Section law") ?: return null
+        // **The binding is the one authority for the law's text** — the writer reads it there and nowhere
+        // else (see [DocumentFormat.restate]'s `tool` branch) — so restating the law is putting a different
+        // binding on the very same step, and taking it away is removing that binding. Nothing about the
+        // journal's shape, its order or what any step declares moves at all, which is what makes this the
+        // cheapest possible edit and what keeps every scored choice this step carries exactly where it is.
+        val before = sweepLaws[step]
+        if (parse == null || wanted == null) {
+            sweepLaws.remove(step)
+        } else {
+            sweepLaws[step] = SweepLawBinding(el, wanted, parse.input.ast, parse.input.names, parse.refs, parse.input.param)
+        }
+        return try {
+            DocumentFormat.save(this)
+        } finally {
+            sweepLaws.remove(step)
+            before?.let { sweepLaws[step] = it }
+        }
+    }
+
+    /** Why [el] carries no size law over its run, with the cure — see [sweepLawRestated]. */
+    private fun lawRefusal(
+        el: Element,
+        toolId: String?,
+    ): String =
+        when (toolId) {
+            // **The swept cut is the recorded cut of this package** (OP-22's extension, step 2 — see
+            // DESIGN.md): its section is a *chain*, unbounded in general, and the reach the whole operator is
+            // judged and clipped by is **derived from the solid's own extent** rather than stated. A section
+            // that scaled would make that derived reach a function of the station, and the reach, the
+            // relevant span of the route and the clip box are solved for each other in one fixed-point loop —
+            // so the honest answer today is to say so and name the way round it, not to carry half of it.
+            Tools.CUT_ALONG_CURVE, Tools.CUT_ALONG_CURVE_FLAT, Tools.SPLIT_ALONG_CURVE, Tools.SPLIT_ALONG_CURVE_FLAT ->
+                "Section law: ${nameOf(el)} is cut by a chain carried along a route, and a swept cut states no " +
+                    "size of its own — how far its section reaches is derived from the solid it cuts, so a " +
+                    "section that changed size along the run would move that reach station by station. Sweep the " +
+                    "tapering section as a solid with *Sweep* (its scale may be a formula over the run) and " +
+                    "subtract it with *Subtract*"
+            else ->
+                "Section law: ${nameOf(el)} is ${kindWord(el)}, and a size law over the run belongs to a swept " +
+                    "body — build one with *Tube along a curve* or *Sweep (profile along a curve)* and state the " +
+                    "law on that"
+        }
+
+    /** The binding [law] leaves on the solid it sizes, for the writer and the re-stamp to find. */
+    private fun rememberLaw(
+        solid: Element,
+        text: String,
+        parse: LawParse,
+    ) {
+        pendingSweepLaw = SweepLawBinding(solid, text, parse.input.ast, parse.input.names, parse.refs, parse.input.param)
+    }
+
+    /**
      * A **tube** of [radius] along the curve in space [el] (OP-26's step 2) — a cable, a conduit, a
      * handrail, a duct.
      *
@@ -11216,12 +11411,23 @@ class Document {
         radius: ScalarRef,
         roll: ScalarRef? = null,
         twist: ScalarRef? = null,
+        law: String? = null,
     ): Element? {
         val path = spaceCurveRef(el, "Tube") ?: return null
+        // **[law] is `r(t)`, a length over the station** (OP-26, session 77) — a tapered handle, a horn. It
+        // *supersedes* the typed radius rather than scaling it, because what it states is the radius itself;
+        // absent, this is the tube it always was, down to the node's inputs and the step's own words.
+        val parsed = if (law == null) null else sizeLaw(law, "Tube") ?: return null
         val solid =
-            add(cx.tube(path, planeOfSpace(el.space), radius, noTurn(roll), noTurn(twist)), ElementKind.SOLID, Styles.SOLID)
+            add(
+                cx.tube(path, planeOfSpace(el.space), radius, noTurn(roll), noTurn(twist), parsed?.input),
+                ElementKind.SOLID,
+                Styles.SOLID,
+            )
         solid.space = el.space
-        madeSolid(solid, "a ${lengthWord(radius)} tube along ${nameOf(el)}" + liftNote(el))
+        if (parsed != null && law != null) rememberLaw(solid, law, parsed)
+        val what = if (law == null) "a ${lengthWord(radius)} tube" else "a tube of r($sweepLawParam) = ${law.trim()}"
+        madeSolid(solid, "$what along ${nameOf(el)}" + liftNote(el))
         return solid
     }
 
@@ -11274,6 +11480,7 @@ class Document {
         twist: ScalarRef? = null,
         anchor: PointRef? = null,
         pierce: Int? = null,
+        law: String? = null,
     ): Element? {
         val path = spaceCurveRef(el, "Sweep") ?: return null
         val region =
@@ -11314,6 +11521,10 @@ class Document {
         // is why the reading is recorded even when there is nothing to choose: a step written before this
         // reading existed carries no index at all, and *that* is what keeps it meaning what it always meant
         // (OP-18 — a stored literal's semantics are frozen). Absence is the old file; a number is a choice.
+        // **[law] is `scale(t)`, a plain factor over the station** (OP-26, session 77): the section carried
+        // rigidly, read larger or smaller about the very point it rides the run on, and never a re-reading of
+        // its own sketch. Refused by name here for everything structural, before anything is built.
+        val parsed = if (law == null) null else sizeLaw(law, "Sweep") ?: return null
         val sectionPlane = if (anchor == null) planeOfSpace(profile.space) else null
         val hits = if (sectionPlane == null) emptyList() else crossingsOf(path, sectionPlane)
         val chosen =
@@ -11336,6 +11547,7 @@ class Document {
                     anchor,
                     if (chosen == null) null else sectionPlane,
                     chosen ?: 0,
+                    parsed?.input,
                 ),
                 ElementKind.SOLID,
                 Styles.SOLID,
@@ -11345,9 +11557,11 @@ class Document {
         // named by `pts=` instead, and a step replayed from a file that recorded none must write none back,
         // or a load followed by a save would put words in an older writer's mouth.
         if (anchor == null && (pierce != null || replayingVersion == null)) registerSigns(solid, listOf(chosen ?: -1))
+        if (parsed != null && law != null) rememberLaw(solid, law, parsed)
         madeSolid(
             solid,
-            "${nameOf(profile)} swept along ${nameOf(el)}" + liftNote(el) +
+            "${nameOf(profile)} swept along ${nameOf(el)}" +
+                (law?.let { ", scaled by $sweepLawParam -> ${it.trim()}" } ?: "") + liftNote(el) +
                 (anchorEl?.let { ", riding on ${nameOf(it)}" } ?: ridingNote(el, profile, sectionPlane, chosen, hits.size)),
         )
         return solid

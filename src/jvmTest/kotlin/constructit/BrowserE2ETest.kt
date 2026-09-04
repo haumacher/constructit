@@ -2211,4 +2211,83 @@ class BrowserE2ETest {
             browser.close()
         }
     }
+
+    /**
+     * **The variable-section sweep through the real shell** (OP-26, session 77 — queue entry 7): a taper typed
+     * into the panel's *Section law* field, a tube built along a curve in space, and the same field showing
+     * that body's own law back for editing.
+     *
+     * The claim is reachability, made where a user makes it: the field is in the panel the expression half
+     * already built, the gesture is the tube's ordinary radius-and-click, and what the shell says names the
+     * law it carried.
+     */
+    @Test
+    fun aVariableSectionSweepIsReachableInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            fun tree(): List<String> = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+            val box = page.querySelector("#canvas").boundingBox()
+            val a = Pair(box.x + box.width * 0.3, box.y + box.height * 0.5)
+            val b = Pair(box.x + box.width * 0.7, box.y + box.height * 0.5)
+
+            // a route: two plain points, then a curve in space through them (OP-26, step 1)
+            page.click("#tool-point")
+            page.mouse().click(a.first, a.second)
+            page.mouse().click(b.first, b.second)
+            page.click("#tool-curve3")
+            page.mouse().click(a.first, a.second)
+            page.mouse().click(b.first, b.second)
+            page.keyboard().press("Enter")
+            assertTrue(tree().any { it.startsWith("space_curve") }, "the route is in the tree: ${tree()}")
+
+            // …the taper, typed where a formula is typed — the very collapsible the function curve's texts
+            // ride, because both are formulas over the same `t` and sharing one summary line is what keeps
+            // the panel's idle height where it was (see panelPolishInBrowser's own invariant)
+            page.click("#fc-form > summary")
+            page.fill("#sl-text", "8mm * (1 - t/2)")
+            page.click("#sl-set")
+            assertTrue(status().contains("Armed"), "the shell says the law is armed: ${status()}")
+
+            // …and the tube's own gesture: a radius, then one click on the route
+            page.click("#tool-tube")
+            page.keyboard().press("8")
+            page.keyboard().press("Enter")
+            page.mouse().click(box.x + box.width * 0.5, box.y + box.height * 0.5)
+            assertTrue(status().contains("r(t) = 8mm * (1 - t/2)"), "the shell says what it built: ${status()}")
+            assertTrue(tree().any { it.startsWith("solid") }, "and a solid is in the tree: ${tree()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/38-section-law.png")))
+
+            // **the field re-opens the body's own law**: select it, and the text is what it was built with
+            page.click("#tool-select")
+            val row = page.querySelectorAll("#tree .item").first { it.textContent().startsWith("solid") }
+            row.click()
+            assertEquals("8mm * (1 - t/2)", page.querySelector("#sl-text").inputValue(), "the field shows the body's law")
+
+            // …and re-stating it is an edit of that very body, in one step
+            page.fill("#sl-text", "8mm * (1 - 0.8*t)")
+            page.click("#sl-set")
+            assertTrue(status().contains("8mm * (1 - 0.8*t)"), "the shell took the new law: ${status()}")
+            assertEquals(1, tree().count { it.startsWith("solid") }, "and made no second body: ${tree()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/39-section-law-edited.png")))
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

@@ -1,5 +1,11 @@
 package constructit.geom
 
+import constructit.expr.Expr
+import constructit.expr.ExprError
+import constructit.expr.ExprEval
+import constructit.units.Dimension
+import constructit.units.DimensionError
+import constructit.units.Quantity
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -11,6 +17,231 @@ import kotlin.math.min
 import kotlin.math.round
 import kotlin.math.sin
 import kotlin.math.sqrt
+
+/**
+ * **How a swept section's size varies with the station** (OP-26, the variable-section sweep — session 77):
+ * one [Expr] over the dimensionless run parameter [param], which is `t` running 0 → 1 along the whole run.
+ *
+ * The same AST, the same dimension check and the same evaluator the function curves already use
+ * ([constructit.geom.FuncCurve]), which is the whole reason this feature became statable at all: session 42
+ * parked the variable-section sweep as *"the only thing that would relax the single derived reach"* with no
+ * way to **say** that a section changes size, and the expression language is that missing vocabulary.
+ *
+ * **`t` is the same letter and the same contract the function curves carry** — a *binder*, context-local,
+ * outranking any drawing scalar of that name (see [at]) — and it rides the sampled **arc-length** map: one
+ * `t` over the whole run, by arc length, never one per piece (per-piece native parameters do not survive a
+ * multi-piece run). That is the metric tier, and it is consistent rather than a concession: a swept surface
+ * is already the approximated tier by nature (`SWEEP_ONLY`, no analytic faces).
+ *
+ * **What varies is rigid-per-station scaling and nothing else.** A tube's radius is a law of dimension
+ * [Dimension.LENGTH]; an arbitrary section's uniform scale about its anchor is a law of dimension
+ * [Dimension.NONE]. One mechanism serves both, and neither is ever a re-evaluation of the section's own
+ * sketch — a whole 2D DAG per station is a *function family of regions*, which is recorded as the future
+ * extension it is and wants its own design.
+ *
+ * [env] holds the named scalars the text reads, resolved to values by the node that built this — so a
+ * parameter a law reads is an ordinary DAG input and editing it re-tapers the body by the recompute every
+ * other edit uses. [text] is the law under the **current** names of what it reads (OP-18's naming
+ * authority), which is what a refusal quotes and what the step stores verbatim.
+ */
+data class SizeLaw(
+    val expr: Expr,
+    val env: Map<String, Quantity>,
+    /** [Dimension.LENGTH] for a tube's `r(t)`, [Dimension.NONE] for a section's `scale(t)`. */
+    val dim: Dimension,
+    val param: String = "t",
+    val text: String = "",
+) {
+    /**
+     * The law's value at station [t], in base units — mm for a radius law, a plain factor for a scale law.
+     *
+     * Throws [DimensionError] or [ExprError] exactly as the panel's own formula field does, which is what
+     * keeps an angle-valued radius the ordinary named invalidity that heals (OP-3) rather than a special case.
+     */
+    fun at(t: Double): Double {
+        val p = Quantity.number(t)
+        // the parameter **shadows** a drawing scalar of the same name: it is a binder, the way a lambda's
+        // argument is — the function curves' own rule ([constructit.geom.FuncCurves]), read one feature on
+        val q = ExprEval.eval(expr) { n -> if (n == param) p else env[n] }
+        if (q.dim != dim) throw DimensionError("a section's size must be ${word()}, and this is ${q.dim}")
+        return q.base
+    }
+
+    /** How a refusal names this law — `r(t) = 5mm * (1 - t/2)`. */
+    fun what(): String = "${if (dim == Dimension.LENGTH) "r" else "scale"}($param) = $text"
+
+    private fun word(): String = if (dim == Dimension.LENGTH) "a length" else "a plain number"
+
+    /** The word a refusal uses for the thing that has to stay positive. */
+    internal fun subject(): String = if (dim == Dimension.LENGTH) "a tube needs a positive radius" else "a swept section needs a positive scale"
+
+    /** How a value of this law prints in a refusal — with its unit where it has one. */
+    internal fun value(v: Double): String = if (dim == Dimension.LENGTH) "${Frames3.mm(v)} mm" else Frames3.mm(v)
+}
+
+/**
+ * The **law's own arithmetic**: is it positive over the whole run, and how large does the section ever get
+ * (OP-26, session 77).
+ *
+ * **The grid is the law's own and fixed** ([STEPS]), for the reason [Embedding]'s bend term's is: a refusal
+ * is a claim about the *drawing*, so nothing that changes when the same drawing is meshed more finely may
+ * change what refuses (the session-65 rule). It is the identical device
+ * [constructit.geom.FuncCurves.VALIDATE_STEPS] already uses to decide that a function curve's expressions
+ * stay on their own domain over a whole span, and it carries the same stated exposure: an excursion narrower
+ * than one grid step is not seen here. Where such an excursion reaches a **station** the sweep refuses there
+ * too rather than building a fold — a body whose radius really does go non-positive is not a body at any
+ * density, so that is the honest side of the same line.
+ */
+object SizeLaws {
+    /**
+     * How many parametric steps a law is checked on before the sweep is built — both ends included.
+     *
+     * [constructit.geom.FuncCurves.VALIDATE_STEPS]'s own number, deliberately: it is the same question asked
+     * of the same expression language over the same kind of dimensionless span, so there is one resolution
+     * for "does this formula stay sane over its domain" rather than two.
+     */
+    const val STEPS = 256
+
+    /**
+     * Why [law] is not a size over the whole run, naming the station and the value there — or null when it is.
+     *
+     * Worded on the constant refusal's own model (*"a tube needs a positive radius — this one is 0 mm"*),
+     * which heals per OP-3: move the parameter the law reads and the body comes back.
+     */
+    fun invalidity(law: SizeLaw): String? {
+        for (i in 0..STEPS) {
+            val t = i.toDouble() / STEPS
+            val v =
+                try {
+                    law.at(t)
+                } catch (e: DimensionError) {
+                    return "${law.what()} cannot be read at ${law.param} = ${Frames3.mm(t)}: ${e.message}"
+                } catch (e: ExprError) {
+                    return "${law.what()} cannot be read at ${law.param} = ${Frames3.mm(t)}: ${e.message}"
+                }
+            if (v <= Geom3.WELD_TOL) {
+                return "${law.subject()} — ${law.what()} is ${law.value(v)} at ${law.param} = ${Frames3.mm(t)} along the run"
+            }
+        }
+        return null
+    }
+
+    /**
+     * The largest the section ever is along the run, as a dimensionless factor — read on the same fixed grid
+     * [invalidity] is, and never on the stations.
+     *
+     * What it is *for* is the sampling refinement and the proximity grid's cell size, both of which need one
+     * number that no station outgrows. Reading it off the stations would make the mesh decide it, and a mesh
+     * that decided a criterion's own resolution is what the session-65 rule forbids.
+     */
+    fun maxScale(profile: SweepProfile): Double {
+        profile.law ?: return 1.0
+        var k = 0.0
+        for (i in 0..STEPS) {
+            // A sample the law cannot evaluate is skipped rather than thrown: every route that *builds*
+            // asks [invalidity] first, so nothing here is ever reached with a broken law — and the one route
+            // that does not (a plan hint rebuilt for a moved body, `Geom3.sweptPlan`) is a hint and must not
+            // throw out of a repaint.
+            val v =
+                try {
+                    profile.scaleAt(i.toDouble() / STEPS)
+                } catch (_: DimensionError) {
+                    continue
+                } catch (_: ExprError) {
+                    continue
+                }
+            if (v > k) k = v
+        }
+        return if (k > 0.0) k else 1.0
+    }
+
+    /**
+     * How many **spans the run needs** for the law itself to be drawn to [tolMm], or 0 where it needs none.
+     *
+     * The reason it is asked at all: a straight piece is one span (a chord of a line *is* the line), so a
+     * horn stated on a straight run would come out as a **cone** — the two rings at the ends joined by one
+     * band, with the law's own curve between them lost. That is not a picture of what the drawing says, so
+     * the station count is refined for the law exactly as it already is for the twist ([Frames3.along]).
+     *
+     * The rule is the sagitta rule everything else here uses: a section point [reach] mm off the axis rides
+     * `reach · k(t)`, so over a span of `1/n` of the run its chord falls short of the law by
+     * `reach · |k″| / (8 n²)`, and `n` is what makes that the tolerance. `k″` is read off the law's **own**
+     * fixed grid ([STEPS]) — a linear law answers exactly zero and is drawn with the two rings it needs, a
+     * quadratic answers its constant, and nothing about the answer is the mesh's.
+     *
+     * This is a *compute-time* decision and a pure function of values (OP-21's rule), so a reload rebuilds
+     * the identical mesh.
+     */
+    fun spans(
+        profile: SweepProfile,
+        reach: Double,
+        tolMm: Double,
+    ): Int {
+        profile.law ?: return 0
+        if (reach <= 0.0 || tolMm <= 0.0) return 0
+        val h = 1.0 / STEPS
+        var worst = 0.0
+        for (i in 1 until STEPS) {
+            val a = at(profile, (i - 1) * h) ?: continue
+            val b = at(profile, i * h) ?: continue
+            val c = at(profile, (i + 1) * h) ?: continue
+            val second = abs(c - 2.0 * b + a) / (h * h)
+            if (second > worst) worst = second
+        }
+        if (worst <= 0.0) return 0
+        return ceil(sqrt(reach * worst / (8.0 * tolMm))).toInt().coerceIn(0, MAX_SPANS)
+    }
+
+    /** How far the law's own refinement will ever go — a bound, so a wild formula cannot mesh for ever. */
+    private const val MAX_SPANS = 4096
+
+    /** [profile]'s scale at [t], or null where the law cannot be read there (see [maxScale]). */
+    private fun at(
+        profile: SweepProfile,
+        t: Double,
+    ): Double? =
+        try {
+            profile.scaleAt(t)
+        } catch (_: DimensionError) {
+            null
+        } catch (_: ExprError) {
+            null
+        }
+
+    /**
+     * The scale each station of [frame] carries, or the reason one of them has none — the per-station reading
+     * every refusal criterion below is generalized to (OP-26, session 77's ruling (c)).
+     *
+     * `t` is the station's own arc length over the run's, which is the arc-length map stated once here so
+     * that the mesh, the plan hint and all three refusal terms read the identical number.
+     */
+    fun scalesAlong(
+        profile: SweepProfile,
+        frame: MovingFrame,
+    ): Pair<List<Double>?, String?> {
+        val law = profile.law ?: return null to null
+        val span = if (frame.length > Geom3.WELD_TOL) frame.length else 1.0
+        val out = ArrayList<Double>(frame.stations.size)
+        for (st in frame.stations) {
+            val t = (st.s / span).coerceIn(0.0, 1.0)
+            val v =
+                try {
+                    profile.scaleAt(t)
+                } catch (e: DimensionError) {
+                    return null to "${law.what()} cannot be read at ${law.param} = ${Frames3.mm(t)}: ${e.message}"
+                } catch (e: ExprError) {
+                    return null to "${law.what()} cannot be read at ${law.param} = ${Frames3.mm(t)}: ${e.message}"
+                }
+            if (v <= 0.0) {
+                return null to
+                    "${law.subject()} — ${law.what()} is ${law.value(law.at(t))} at ${law.param} = " +
+                    "${Frames3.mm(t)} along the run"
+            }
+            out.add(v)
+        }
+        return out to null
+    }
+}
 
 /**
  * The **profile a sweep carries along a path** (OP-26, step 2), read in the moving frame's own (x, y).
@@ -26,19 +257,55 @@ import kotlin.math.sqrt
  * the section off the space's origin and it sweeps off the path by exactly that much — and it is the frame
  * the self-intersection criterion measures against, since what can fold through itself on a bend is the
  * profile's greatest **reach** from the path.
+ *
+ * [law] is how the section's **size varies with the station** (OP-26, session 77) and null is a section of
+ * one size — the reading every drawing written before this one keeps for ever, down to the node's inputs and
+ * the step's own words.
  */
 sealed interface SweepProfile {
     /** This profile as an ordinary 2D region, in the moving frame's own coordinates. */
     val region: Region
 
+    /** How this section's size varies along the run, or null for a section of one size. */
+    val law: SizeLaw?
+
+    /**
+     * The dimensionless factor the section is scaled by, about its anchor, at station [t] — exactly 1.0
+     * where there is no law, so a constant section is carried by the identical arithmetic it always was.
+     */
+    fun scaleAt(t: Double): Double
+
     /** A circle of [radius] centred on the path — the tube, and what proves the frame. */
-    data class Round(val radius: Double) : SweepProfile {
+    data class Round(val radius: Double, override val law: SizeLaw? = null) : SweepProfile {
         override val region: Region
             get() = Region(Loop(listOf(ProfileElement.CircleE(Circle(Vec2(0.0, 0.0), radius)))), emptyList())
+
+        /**
+         * A radius law is a **length**, so the factor is the law over the radius the region was built at —
+         * which is the law's own value at the start ([of]). The division is safe because a non-positive
+         * radius anywhere on the run, `t = 0` included, is refused before a station is asked (see
+         * [SizeLaws.invalidity] and [Geom3.sweep]).
+         */
+        override fun scaleAt(t: Double): Double = law?.let { it.at(t) / radius } ?: 1.0
     }
 
     /** An arbitrary closed area, drawn in a sketch space and read in the frame's coordinates. */
-    data class Section(override val region: Region) : SweepProfile
+    data class Section(override val region: Region, override val law: SizeLaw? = null) : SweepProfile {
+        override fun scaleAt(t: Double): Double = law?.at(t) ?: 1.0
+    }
+
+    companion object {
+        /**
+         * A tube whose radius is [law] — the circle is built at the law's value **at the start of the run**,
+         * and every station scales that ([Round.scaleAt]).
+         *
+         * The start rather than, say, the largest value, because *the tube's radius* is a number a fitter can
+         * order and the one he orders is the one the run begins with; and because it keeps
+         * `(path, profile, up, roll, twist)` enough to rebuild the identical body (OP-9) with the law as one
+         * more field of the profile rather than a second parameter beside it.
+         */
+        fun of(law: SizeLaw): Round = Round(law.at(0.0), law)
+    }
 }
 
 /**
@@ -305,6 +572,12 @@ object Frames3 {
      * **The twist is distributed linearly in arc length** — the only distribution that is stateable ("so
      * many degrees per metre") and the only one that does not need a second parameter to describe.
      *
+     * **[lawSpans] is the run's own refinement for a varying section** (OP-26, session 77): a section whose
+     * size is a law of the station has a *shape between the stations*, so a straight piece — one span by
+     * nature — has to be cut into as many as the law needs to be drawn to [tolMm] ([SizeLaws.spans]). Each
+     * piece takes its share of them, by arc length, since `t` is the arc-length map. Zero for every constant
+     * section, which is what keeps every station count and every mesh this ever produced identical.
+     *
      * **[seed] states the frame part-way along instead of at the start** (the in-place sweep). The transport
      * rule is unchanged and so is everything read off it — what changes is only *where* the one stated
      * direction is stated: the seeded span takes it, the spans after it are carried forward and the spans
@@ -325,9 +598,10 @@ object Frames3 {
         reach: Double = 0.0,
         tolMm: Double = GeomMath.TESS_TOL_MM,
         seed: FrameSeed? = null,
+        lawSpans: Int = 0,
     ): Pair<MovingFrame?, String?> {
         if (path.elements.isEmpty()) return null to "this curve has no pieces, so there is nothing to sweep along"
-        val sampled = spine(path, reach, twistRad, tolMm)
+        val sampled = spine(path, reach, twistRad, tolMm, lawSpans)
         val points = sampled.points
         val curvatures = sampled.curvatures
         val params = sampled.params
@@ -498,6 +772,7 @@ object Frames3 {
         reach: Double,
         twistRad: Double,
         tolMm: Double,
+        lawSpans: Int = 0,
     ): Spine {
         // pass one: how long each piece is, at its own base sampling — needed before the twist can say how
         // finely any of them has to be cut, since the twist is distributed in arc length
@@ -521,7 +796,9 @@ object Frames3 {
         val params = ArrayList<Pair<Int, Double>>()
         for ((i, el) in path.elements.withIndex()) {
             val share = if (total > Geom3.WELD_TOL) lengths[i] / total else 0.0
-            val steps = max(base[i], GeomMath.chordSteps(reach, abs(twistRad) * share, tolMm))
+            // …and the law's own share of the refinement (OP-26, session 77), which is what keeps a horn a
+            // horn on a straight piece instead of the cone its two end rings would otherwise be joined into
+            val steps = max(max(base[i], GeomMath.chordSteps(reach, abs(twistRad) * share, tolMm)), ceil(lawSpans * share).toInt())
             for (j in 0..steps) {
                 val t = j.toDouble() / steps
                 val p = pointAt(el, t)
@@ -938,6 +1215,13 @@ object Embedding {
      * already clipped to the stations whose sections can reach the target. Neatly, non-self-intersection over
      * that region is exactly the condition under which *"which side"* is well defined, so the refusal and the
      * operator's semantics are one statement. See `Chains.sweptTools`.
+     *
+     * **[scales] is the section's own size at each station** (OP-26, session 77's ruling (c)) — one factor per
+     * station of [frame], or null for a section of one size. Both terms then read the size *at their own
+     * station* instead of one number for the whole run: the local term scales the reach it asks about, and
+     * the global term scales each of the two supports it adds. That is the criteria **generalizing** rather
+     * than two new criteria — the machinery already worked per station — and with null not a single
+     * multiplication happens, so every message this ever produced stays byte-identical.
      */
     fun check(
         frame: MovingFrame,
@@ -947,10 +1231,12 @@ object Embedding {
         cure: String = "thin the section, or open the run out",
         section: List<Vec2>? = null,
         inward: ((Double) -> String)? = null,
+        scales: List<Double>? = null,
     ): EmbeddingReport {
         // ---- the first term: 1/κ_max, station by station, and in station order so the message is stable
         for ((i, st) in frame.stations.withIndex()) {
-            val into = intoTheBend(st, reach, section)
+            val bare = intoTheBend(st, reach, section)
+            val into = if (scales == null) bare else bare * (scales.getOrNull(i) ?: 1.0)
             if (st.curvature * into >= 1.0) {
                 return EmbeddingReport(
                     "${inward?.invoke(into) ?: what} is larger than the bend ${bendAt(frame, i)} " +
@@ -963,7 +1249,10 @@ object Embedding {
         }
 
         // ---- the second term: the closest bottleneck of the spine
-        val clearance = 2.0 * reach
+        // The grid's cell is sized for the **largest** the section ever is, because a cell smaller than the
+        // pair it has to offer would lose the bottleneck outright. What each pair then *needs* is still read
+        // at the two stations' own sizes ([needed]) — the cell is bookkeeping, the criterion is per station.
+        val clearance = if (scales == null) 2.0 * reach else 2.0 * reach * (scales.maxOrNull() ?: 1.0)
         val pieces = piecesOf(frame, clearance)
         if (pieces.size < 3) return EmbeddingReport(null, Double.MAX_VALUE, 0)
         val grid = HashMap<Long, MutableList<Int>>(pieces.size * 2)
@@ -999,7 +1288,7 @@ object Embedding {
                                     // other*, not what they reach at all** — the isotropic `2·reach` is the
                                     // same statement maximized over directions, and it is the one this falls
                                     // back to when the section is a disc or is not offered.
-                                    val need = needed(frame, pieces, i, j, hit, reach, section)
+                                    val need = needed(frame, pieces, i, j, hit, reach, section, scales)
                                     if (need - hit.d > worst) {
                                         worst = need - hit.d
                                         bestD = hit.d
@@ -1112,6 +1401,17 @@ object Embedding {
         section: List<Vec2>? = null,
         subject: String = "the sweep",
         cure: String = "thin the section, move it towards the outside of the turn, or open the corners out",
+        /**
+         * The section's own size at each station (OP-26, session 77), or null for a section of one size.
+         *
+         * Both terms below read it at the corner they are about, which is exactly right rather than
+         * conservative: the ring a corner mitres **is** the ring at that station, so what it bites off each
+         * leg is `k·(w·g)` for that station's own `k`, and a leg between two corners is judged by the two
+         * factors its two corners carry. Written into the bite vector rather than applied to the support
+         * afterwards, because the two corners of a serpentine turn opposite ways and the cancellation the
+         * whole term rests on has to happen *after* each side has its own size.
+         */
+        scales: List<Double>? = null,
     ): String? {
         val st = frame.stations
         if (st.size < 2) return null
@@ -1132,8 +1432,8 @@ object Embedding {
             if (corners.last() < st.lastIndex) legs.add(corners.last() to -1)
         }
         for ((a, b) in legs) {
-            val ga = if (a < 0) Vec2(0.0, 0.0) else biteOf(st[a])
-            val gb = if (b < 0) Vec2(0.0, 0.0) else biteOf(st[b])
+            val ga = if (a < 0) Vec2(0.0, 0.0) else biteOf(st[a]) * sizeAt(scales, a)
+            val gb = if (b < 0) Vec2(0.0, 0.0) else biteOf(st[b]) * sizeAt(scales, b)
             val v = ga + gb
             if (v.length() <= Vec2.EPS) continue
             val w = worstVertex(v, section, reach) ?: continue
@@ -1142,8 +1442,14 @@ object Embedding {
             if (need < len) continue
             return foldRefusal(st, a, b, need, len, subject, cure)
         }
-        return cornerBend(frame, reach, section, subject, cure)
+        return cornerBend(frame, reach, section, subject, cure, scales)
     }
+
+    /** Station [i]'s own size factor, and exactly 1.0 where the section has one size (OP-26, session 77). */
+    private fun sizeAt(
+        scales: List<Double>?,
+        i: Int,
+    ): Double = if (scales == null || i < 0) 1.0 else scales.getOrNull(i) ?: 1.0
 
     /**
      * **Does a corner mitre into run that bends?** — [cornerFold]'s second term (GitHub #20), and the one that
@@ -1174,6 +1480,7 @@ object Embedding {
         section: List<Vec2>?,
         subject: String,
         cure: String,
+        scales: List<Double>? = null,
     ): String? {
         val path = frame.path ?: return null
         val els = path.elements
@@ -1181,7 +1488,7 @@ object Embedding {
         for (c in st.indices) {
             if (!st[c].corner) continue
             val join = jointAt(frame, c) ?: continue
-            val trim = trimOf(st[c], els[join.first], els[join.second], section, reach)
+            val trim = trimOf(st[c], els[join.first], els[join.second], section, reach, sizeAt(scales, c))
             if (trim <= Vec3.EPS) continue
             val into = wanderOf(els[join.first], trim, fromEnd = true)
             val outOf = wanderOf(els[join.second], trim, fromEnd = false)
@@ -1209,12 +1516,16 @@ object Embedding {
         outOf: Curve3Element,
         section: List<Vec2>?,
         reach: Double,
+        /** The corner station's own size factor (OP-26, session 77) — 1.0 for a section of one size. */
+        scale: Double = 1.0,
     ): Double {
         val g = analyticBite(st, into, outOf) ?: return 0.0
         if (g.length() <= Vec2.EPS) return 0.0
+        // the trim is linear in the section's own (x, y), so a rigidly scaled ring reaches exactly `scale`
+        // times as far along the tangent — one multiplication, and the analytic turn is untouched by it
         val back = worstVertex(g, section, reach)?.dot(g) ?: 0.0
         val forward = worstVertex(g * -1.0, section, reach)?.dot(g * -1.0) ?: 0.0
-        return maxOf(back, forward)
+        return maxOf(back, forward) * scale
     }
 
     /**
@@ -1459,15 +1770,23 @@ object Embedding {
         hit: Approach,
         reach: Double,
         section: List<Vec2>?,
+        scales: List<Double>? = null,
     ): Double {
-        if (section == null || section.isEmpty()) return 2.0 * reach
         val p = pieces[i]
         val q = pieces[j]
+        // **the two sizes are the two stations' own** (OP-26, session 77): a run that comes back alongside
+        // itself thin where it left thick needs the sum of what it is *there*, which is the same separating-
+        // axis argument with one factor per side. Null scales leave both factors out of the arithmetic.
+        val kp = if (scales == null) 1.0 else scales.getOrNull(p.st) ?: 1.0
+        val kq = if (scales == null) 1.0 else scales.getOrNull(q.st) ?: 1.0
+        if (section == null || section.isEmpty()) return if (scales == null) 2.0 * reach else reach * (kp + kq)
         val v = q.at(hit.t - q.s0) - p.at(hit.s - p.s0)
         val d = v.length()
-        if (d <= Geom3.WELD_TOL) return 2.0 * reach
+        if (d <= Geom3.WELD_TOL) return if (scales == null) 2.0 * reach else reach * (kp + kq)
         val u = v * (1.0 / d)
-        return support(frame.stations[p.st], u, section) + support(frame.stations[q.st], u * -1.0, section)
+        val a = support(frame.stations[p.st], u, section)
+        val b = support(frame.stations[q.st], u * -1.0, section)
+        return if (scales == null) a + b else a * kp + b * kq
     }
 
     /** How far [section] reaches from the run along [u], read in the station's own axes — the 2D support. */
