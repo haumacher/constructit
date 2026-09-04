@@ -18550,3 +18550,19 @@ are three packages, **in this order**, each closing with its issues:
    ends land on the two faces, read in the corner's own frame (the two face directions, ends as setbacks along
    each face — the chamfer's convention) so a skewed corner is cut to the length a rasp would reach. It needs
    entry 1's corner geometry wherever two profiles meet, which is why it follows it.
+
+**Retired in session 79: entries 1 and 2 of the batch above (#25, #27, #28, #29).** Entry 1's ruling asked for a
+rolling-ball corner patch, and the delivery found the premise false where the upright between the two side faces
+stays sharp: the ball touches each side face at one point, so the two bands' end circles never close and there is
+no patch to name — the corner *is* the two bands' planar crossing, which was there all along and was being
+*discovered* by the mesh boolean against float32 triangles (a square cap refused, a triangle refused, a hexagon
+passed; the reporter's two-step body carried slivers a millionth of a square millimetre wide). It is now
+*constructed*: the removal is split on the surface equidistant from the two edges, both sides land on one shared
+ring, and the stitched tool leaves the body in one boolean, a band already off the body rebuilt into the same
+tool so a blend beside a blend is the one-gesture chain — see *the corner where two roundings meet* under the
+edge-blend notes, with the cuts named there (curved edges at a corner, non-congruent wedges, the inside corner,
+three blends at one vertex). Entry 2 shipped as ruled — the ortho corner's own radius, the trim bound onto the
+view a leg already publishes, tangency recorded and inherited, the single pick running along the recorded run —
+see *A fillet supersedes the corner* under OP-1; the format's version rose to 4 as a marker so old files are told
+once what they now mean. **Entry 3 (custom blend profiles, #30) stands**, and the parked twisted-facet warp
+(recorded under the family's as-built note) is the other open item.
