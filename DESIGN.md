@@ -17425,6 +17425,40 @@ their outline in both directions — a wing, a hull — and those are these two 
    will restate again. The one thing it must *not* inherit is the loft's own answer to differing counts: a
    law that varies a section's shape continuously has no *Break* to reach for, so the design pass owes an
    answer of its own for a family whose piece count would change.
+   **The design pass ran in session 78; forks pending the user's ruling.** The essentials, so a crashed
+   session keeps them: (F1/F2) the family node evaluates the section's subgraph per station with an
+   **override map** in a fresh `Evaluator` (the `InstanceNode.defNode` precedent; session 19's
+   identity-keyed memo makes it sound with no new invalidation), listing the section's transitive free
+   sources as ordinary inputs so the memo cannot serve a stale ring. (F3) **Law-able = free named scalars
+   the section transitively reads** — a *bound* parameter refuses and does not need a law (`thickness =
+   0.12 * chord` follows `chord`'s law by ordinary recompute: sharing-is-equality one level up, and no law
+   may name a scalar the same step drives); `P.x` refuses by session 76's recorded rule (a coordinate is
+   read, never written). (F4) A law is a **per-station substitution, not a binding** — the literal keeps
+   driving everything else and the 2D view. (F5) The gesture is the panel's formulas-over-`t` collapsible
+   grown to a row per law-able scalar. (F6) Family laws **compose** with the rigid `law=`; a tube refuses
+   family laws by name, pointing at `r(t)`. (F7, load-bearing) **The family owns its refinement grid**
+   (sagitta on its own second difference — a linear family costs two rings); the moving frame's stations
+   read rings by linear interpolation, so `Feature3.Sweep` stays self-contained on values (OP-9) and no
+   faired row is needed (recorded extension, not a cut). (F8) One fixed tessellation count per boundary
+   piece, chosen from the largest that piece ever is on the family's grid; rings are one shared point list.
+   (F9, the discovery) the queue's premise "structure fixed ⇒ count fixed" is **false for computed
+   regions** (a boolean's loop count is a value): the count is read at the first sample and required
+   everywhere — a station where it differs is **invalid naming both counts, both stations and the value
+   there, and pointing at the loft** (the two entries are each other's cure: *a family whose pieces must
+   change is a loft; a loft over computed sections is a family*). (F10) **No face list in slice 1** — the
+   piece count is a value and stored addresses may not ride one, and the family must not be
+   better-addressed than the sweep it generalizes. (F11) The anchor is read per station under the same
+   overrides (a quarter-chord anchor `qc.x = 0.25 * chord` gives a blade its pivot line by construction).
+   (F12) **`twist(t)` lands in this slice** as a law on the step's own twist. (F13) Validity is decided on
+   a fixed `FAMILY_STEPS = 64` grid plus the family's samples (session-65: constant grid, not mesh-driven).
+   (F15) In: family laws on `tool sweep`, `twist(t)`, composition with `law=`, holes (each hole a family of
+   its own). Out and recorded: a face list, a faired row, a family on a *skin*'s drawn sections (mixing
+   drawn stations with laws), the swept cut (its recorded reason, pluralized). Storage:
+   `laws="chord = 200mm * (1 - 0.6*t); twist = 15deg * t"` verbatim on `tool sweep` alone
+   (`carriesLaws`), no version bump by the `law=` row's argument; re-stamping is **two-sided** (left-hand
+   names and names inside texts); a deleted driven parameter cascades to the body, keeping the file
+   loadable. Wing fixture: rectangular stand-in, `chord(t) = 200mm·(1 − 0.6t)`, bound thickness, exact
+   volume 2 496 000 mm³, tip twist 15° exact, verdicts and words invariant over two decades of tolerance.
 
 What remains beyond those two —
 vertex blends, text as geometry, silhouette edges in the 3D view, the panel's scalar tiering,
