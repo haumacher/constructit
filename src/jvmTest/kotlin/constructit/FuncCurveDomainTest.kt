@@ -138,7 +138,7 @@ class FuncCurveDomainTest {
         val doc = DocumentFormat.load(script)
         val el = assertNotNull(doc.elements.firstOrNull { it.kind == ElementKind.FUNC_CURVE })
         assertClose(curveOf(el).t1, 1.6, 1e-12, "the domain is the number it always was")
-        assertEquals(script, DocumentFormat.save(doc), "and it is written back byte for byte")
+        assertEquals(atThisVersion(script), DocumentFormat.save(doc), "and it is written back byte for byte")
     }
 
     // ---- the values: dimensionless, and it says so ----

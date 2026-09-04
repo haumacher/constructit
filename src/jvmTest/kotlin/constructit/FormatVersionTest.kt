@@ -76,12 +76,13 @@ class FormatVersionTest {
     fun aSaveNamesTheVersionItWrites() {
         val doc = Document()
         doc.freePoint(0.0.mm, 0.0.mm)
-        assertEquals("constructit 3", DocumentFormat.save(doc).lineSequence().first(), "the file says what it is")
+        assertEquals(DocumentFormat.HEADER, DocumentFormat.save(doc).lineSequence().first(), "the file says what it is")
     }
 
     @Test
     fun aNewerFileSaysItIsNewerRatherThanBeingMisread() {
-        val newer = runCatching { DocumentFormat.load("constructit 4\npoint 0,0 -> e1\n") }.exceptionOrNull()
+        val ahead = DocumentFormat.VERSION + 1
+        val newer = runCatching { DocumentFormat.load("constructit $ahead\npoint 0,0 -> e1\n") }.exceptionOrNull()
         assertTrue(newer is DocumentFormat.LoadError, "got: $newer")
         assertTrue(newer.message!!.contains("newer version"), "got: ${newer.message}")
         val alien = runCatching { DocumentFormat.load("sketchup 1\n") }.exceptionOrNull()

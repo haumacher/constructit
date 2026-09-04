@@ -1,6 +1,9 @@
 package constructit
 
+import constructit.core.IndirectNode
+import constructit.core.Node
 import constructit.editor.DocumentFormat
+import constructit.editor.Element
 import constructit.geom.Frames3
 import constructit.geom.Geom3
 import constructit.geom.Mesh3
@@ -27,6 +30,18 @@ fun assertClose(
     msg: String = "",
 ) {
     assertTrue(abs(actual - expected) <= tol, "expected $expected but was $actual. $msg")
+}
+
+/**
+ * The node an element's geometry is **computed by** — behind the re-pointable view a trimmable curve
+ * publishes it through (`Document.publishedRef`, GitHub #25).
+ *
+ * For everything else it is the element's own node, so a test that asks about node sharing (which is
+ * equality, OP-5) asks it of the geometry rather than of the view in front of it.
+ */
+fun geometryNodeOf(el: Element): Node {
+    val view = el.ref.node as? IndirectNode ?: return el.ref.node
+    return view.boundTo ?: view.target
 }
 
 /**

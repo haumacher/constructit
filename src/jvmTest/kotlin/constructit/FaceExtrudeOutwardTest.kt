@@ -37,7 +37,11 @@ class FaceExtrudeOutwardTest {
     @Test
     fun theReportedWartStandsOutOfThePlateInsteadOfInsideIt() {
         val doc = DocumentFormat.load(ISSUE1)
-        assertTrue(doc.loadNotes.isEmpty(), "nothing about this file is ambiguous: ${doc.loadNotes}")
+        // the one thing this v3 file has to be told: its four filleted ortho corners are now the path's own
+        // corner radii (GitHub #25), so its loop comes back rounded — a deliberate reinterpretation, named
+        // corner by corner rather than made quietly
+        assertEquals(4, doc.loadNotes.size, "one note per rounded corner, and nothing else: ${doc.loadNotes}")
+        assertTrue(doc.loadNotes.all { it.contains("rounds the corner of") }, "got: ${doc.loadNotes}")
         val plate = doc.elements.first { it.kind == ElementKind.SOLID }
         val wart = doc.elements.last { it.kind == ElementKind.SOLID }
         assertEquals("face1", wart.space, "the wart was drawn on the plate's face")
@@ -85,7 +89,10 @@ class FaceExtrudeOutwardTest {
         val ed = Editor()
         ed.replaceDocument(DocumentFormat.load(ISSUE1))
         assertEquals("face1", ed.activeSpace.name, "a load leaves you in the space the script ends in (OP-17)")
-        assertEquals("", ed.statusHint, "and a file with nothing to report says nothing")
+        assertTrue(
+            ed.statusHint.contains("rounds the corner of"),
+            "and a v3 file whose ortho corners are now radii says so, once (GitHub #25): ${ed.statusHint}",
+        )
     }
 
     private companion object {

@@ -120,7 +120,8 @@ class BreakCurveTest {
         ed.breakAt(Vec2(40.0, 20.0))
         val script = DocumentFormat.save(ed.doc)
         assertEquals(
-            """
+            atThisVersion(
+                """
 constructit 3
 point 0,0 -> e1
 point 100,50 -> e2
@@ -128,6 +129,7 @@ point 40,20 -> e3
 tool segment pts=e1,e3 -> e4
 tool segment pts=e3,e2 -> e5
 """.trimStart(),
+            ),
             script,
             "the original's step is replaced, not annotated",
         )

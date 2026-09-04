@@ -85,9 +85,11 @@ import constructit.geom.Chains
 import constructit.geom.ChamferVariant
 import constructit.geom.Conics
 import constructit.geom.Continuity
+import constructit.geom.CornerCut
 import constructit.geom.Curve3Element
 import constructit.geom.CurveEnd
 import constructit.geom.Curves3
+import constructit.geom.EdgeGeom
 import constructit.geom.FaceName
 import constructit.geom.Feature3
 import constructit.geom.FilletLeg
@@ -115,6 +117,7 @@ import constructit.geom.Shell3
 import constructit.geom.SkinMatch
 import constructit.geom.SkinRow
 import constructit.geom.Solid3
+import constructit.geom.SolidEdge
 import constructit.geom.SolidFace
 import constructit.geom.Stations3
 import constructit.geom.ThickBody
@@ -549,7 +552,22 @@ class Element(
  * construction that made the joint, read by both the tracer and its boundary-follow — see
  * `Document.registerJoint`.
  */
-class Joint(val a: Element, val b: Element, val at: PointRef)
+class Joint(
+    val a: Element,
+    val b: Element,
+    val at: PointRef,
+    /**
+     * Whether the two pieces meet **tangentially** — a fillet's rounding runs on smoothly into its leg, a
+     * chamfer's bevel turns a corner (GitHub #29).
+     *
+     * Recorded rather than measured, and that is the whole point of it: whether two curves meet tangentially
+     * is a property of *values*, so a construction that read it off the geometry would be discovery (OP-14) —
+     * and one dimension up, a blend whose number of swept edges moved with the numbers would be structure
+     * decided at eval time (OP-21). The construction that made the joint knows which it built, so it says so
+     * here, and *Fillet edge* reads it to run one band along the whole tangent-continuous run.
+     */
+    val tangent: Boolean = false,
+)
 
 /**
  * A **stated incidence** (OP-14, GitHub #19): the construction says this point lies on that circle — because
@@ -840,7 +858,25 @@ class PlaceResult(
  * two are the same value; placed, [ref] is bound onto `frameApply(frame, local)`, so the coordinates
  * become the group's **local** ones and every consumer follows the frame untouched (OP-16, OP-5).
  */
-class OrthoVertex(val ref: PointRef, var corner: OrthoCornerHandle, val ownAxis: Int, val local: PointRef) {
+class OrthoVertex(
+    val ref: PointRef,
+    var corner: OrthoCornerHandle,
+    val ownAxis: Int,
+    val local: PointRef,
+    /**
+     * This corner's **own radius** — zero for a sharp corner, and *bound* to a fillet's own parameter once
+     * the corner is rounded (GitHub #25).
+     *
+     * A node from the moment the vertex exists, and that is the whole point of it: everything a path
+     * publishes takes it as an input from the start, so rounding a corner is a **binding** and never a
+     * rewiring (OP-5, CLAUDE.md's own sentence about how welding removes a degree of freedom). A wall built
+     * before the corner was rounded therefore follows the rounding, with no step re-stamped and no element
+     * replaced — and two corners sharing one parameter are equal by construction.
+     */
+    val round: SourceNode,
+    /** The same for a chamfer's **setback** — [round]'s twin, and only one of the two is ever bound. */
+    val bevel: SourceNode,
+) {
     /** Where a placement inserts the frame: the node [ref] names, bound in place (OP-16). */
     val indirect: IndirectNode? get() = ref.node as? IndirectNode
 }
@@ -928,6 +964,34 @@ class OrthoOffset(
 class OrthoPath {
     val vertices = ArrayList<OrthoVertex>()
     val legs = ArrayList<Element>()
+
+    /**
+     * The **corner piece** a fillet or chamfer put at a vertex of this path, by vertex index (GitHub #25).
+     *
+     * *"A fillet on two adjacent legs of one ortho path does not add an arc beside the corner: it makes that
+     * corner's own radius"* — and this is where the path holds it. Structurally the *which corner* (the two
+     * picked legs name one vertex) and as a value the radius, which is the fillet's own scalar parameter, so
+     * one parameter on two corners keeps them equal by construction (OP-21's rule, OP-5's sharing).
+     *
+     * Synthetic like the joint registry (OP-18): the fillet step re-runs on replay and records it again, so
+     * nothing about this is in the file — the step that already names the two legs *is* the record.
+     */
+    val corners = HashMap<Int, Element>()
+
+    /**
+     * The re-pointable view this path publishes its **closed loop** through, once something has asked for
+     * one — see `Document.orthoLoopOf`.
+     *
+     * A view for [OrthoVertex.ref]'s own reason (OP-16): rounding a corner changes how many pieces the loop
+     * has, and everything already built on the loop — an extrude, a revolve, an area measurement — must read
+     * the rounded one. Binding the view in place is what makes that true with nothing rewired (OP-5).
+     */
+    var loop: LoopRef? = null
+        internal set
+
+    /** Which pieces [loop] is bound onto right now — what tells a rebind from a no-op. */
+    var loopPieces: List<Element> = emptyList()
+        internal set
 
     /**
      * Axis per leg, kept beside [legs]. Held explicitly rather than derived from a vertex's introduced
@@ -1073,6 +1137,13 @@ sealed interface ThickCarrier {
         val justification: Justification,
         /** The carrier path this was built over, when it came from the ortho-path tool. */
         val path: OrthoPath?,
+        /**
+         * Each carrier point's own corner radius and bevel setback (GitHub #25) — the very nodes the path's
+         * vertices hold, so a corner rounded after this wall was built is followed with nothing rewired.
+         * Empty for a wall the *Wall* tool drew over clicked points, which has no path to round.
+         */
+        val rounds: List<ScalarRef> = emptyList(),
+        val bevels: List<ScalarRef> = emptyList(),
     ) : ThickCarrier
 
     /**
@@ -3619,7 +3690,7 @@ class Document {
         kind: ElementKind,
         style: Style,
     ): Element {
-        val el = Element(nextId("e"), ref, kind, style)
+        val el = Element(nextId("e"), publishedRef(ref, kind), kind, style)
         // the one place an element is born, hence the one place its sketch space is stamped (OP-17)
         el.space = activeSpace.name
         // ...and the one place its birth is stamped (GitHub #9): what a plane's ancestors are measured by
@@ -3628,8 +3699,62 @@ class Document {
         return el
     }
 
+    /**
+     * How a **trimmable** curve publishes its geometry: behind a re-pointable view ([IndirectNode]), so a
+     * fillet can supersede the leg with its trimmed self **in place** (GitHub #25, the user's design).
+     *
+     * The precedent is exact — OP-16's ortho vertex is `pointXY` behind a view so a placement can put a
+     * frame in front of it without rewiring one consumer — and the reason is the same one, read for a curve:
+     * *"the fillet tool only creates the fillet arc, but does not supersede [the corner] with its filleted
+     * version"*. Superseding means the leg the drawing shows, traces, extrudes and thickens ends at the
+     * tangency, while **everything already built on that leg keeps meaning that leg** (an outline, a
+     * dimension, a wall, a rider): the node consumers hold is the view, and the view is what the trim binds.
+     * Nothing is rewired, which is OP-5's rule and the whole reason a view exists rather than a new element.
+     *
+     * Only the two **bounded** kinds a fillet trims get one — a segment and an arc. A line, a ray and a
+     * circle are *carriers*: they have no ends to move, so a rounding against one leaves them exactly as
+     * they were (see [trimLegTo]), and giving them a view would be a node with nothing to say.
+     */
+    private fun publishedRef(
+        ref: Ref<*>,
+        kind: ElementKind,
+    ): Ref<*> = if (kind == ElementKind.SEGMENT || kind == ElementKind.ARC) cx.indirect(ref) else ref
+
+    /**
+     * [el] as it was **built** — behind the view [publishedRef] gave it, never the trim bound onto it.
+     *
+     * **Trimming moves the piece, never the carrier**, and that is the rule that makes a fillet's own
+     * construction acyclic: the rounding is tangent to the *carrier* of each leg, and the trim it then binds
+     * onto that leg is derived from the rounding. Read through the view instead and the leg's carrier would
+     * depend on the trim which depends on the carrier. It is also the honest reading — a segment's carrier
+     * line and an arc's carrier circle are the same line and the same circle before and after the trim
+     * (that is what a trim *is*), so nothing built on a carrier moves when a corner is rounded.
+     */
+    private fun builtRef(el: Element): Ref<*> = (el.ref.node as? IndirectNode)?.let { Ref<Value>(it.target) } ?: el.ref
+
+    /** [el]'s geometry **as it stands** — the trim already on it, or the curve it was built as. */
+    private fun pieceRef(el: Element): Ref<*> = (el.ref.node as? IndirectNode)?.let { Ref<Value>(it.boundTo ?: it.target) } ?: el.ref
+
+    /** Whether [el] has been trimmed by a rounding — its view is bound onto something other than the curve it was built as. */
+    fun isTrimmed(el: Element): Boolean = (el.ref.node as? IndirectNode)?.boundTo != null
+
+    /**
+     * Every node [el] publishes its geometry **by**: the view it is displayed through, the curve it was
+     * built as, and the trim currently bound onto it (GitHub #25).
+     *
+     * One element, one identity — which is what every question about *who reads this element* has to be
+     * asked over. A carrier is taken off the built curve ([builtRef]) while a consumer that took the element
+     * whole holds the view, so a lookup keyed on one of the three would miss the others and report a
+     * dependency the drawing does not have (or miss one it does).
+     */
+    fun publishedNodes(el: Element): List<Node> {
+        val view = el.ref.node as? IndirectNode ?: return listOf(el.ref.node)
+        return listOfNotNull(view, view.target, view.boundTo)
+    }
+
     /** The element displaying [ref], if any — the inverse of the adders below. */
-    fun elementFor(ref: Ref<*>): Element? = elements.lastOrNull { it.ref === ref }
+    fun elementFor(ref: Ref<*>): Element? =
+        elements.lastOrNull { it.ref === ref || it.ref.node === ref.node || (it.ref.node as? IndirectNode)?.target === ref.node }
 
     /**
      * Add [ref] as a **copy of [source]**: same kind, same style — and the same **sketch space** (OP-17).
@@ -3653,7 +3778,7 @@ class Document {
     @Suppress("UNCHECKED_CAST")
     private fun carrierLine(el: Element): LineRef =
         when (el.kind) {
-            ElementKind.SEGMENT -> cx.lineOfSegment(el.ref as SegmentRef)
+            ElementKind.SEGMENT -> cx.lineOfSegment(builtRef(el) as SegmentRef)
             ElementKind.RAY -> cx.lineOfRay(el.ref as RayRef)
             else -> el.ref as LineRef
         }
@@ -3669,7 +3794,7 @@ class Document {
      */
     @Suppress("UNCHECKED_CAST")
     private fun carrierCircle(el: Element): CircleRef =
-        if (el.kind == ElementKind.ARC) cx.circleOfArc(el.ref as ArcRef) else el.ref as CircleRef
+        if (el.kind == ElementKind.ARC) cx.circleOfArc(builtRef(el) as ArcRef) else el.ref as CircleRef
 
     /** Coerce an ellipse/elliptic-arc element to its whole **carrier ellipse** — [carrierCircle]'s twin (OP-24). */
     @Suppress("UNCHECKED_CAST")
@@ -4742,8 +4867,7 @@ class Document {
      * detached rider keeps ([detachRider]). One lookup, so a freed rider is as much the owner of its
      * coordinates as a point created free is.
      */
-    private fun elementOwning(node: Node): Element? =
-        elements.lastOrNull { it.ref.node === node || (it.ref.node as? IndirectNode)?.boundTo === node }
+    private fun elementOwning(node: Node): Element? = elements.lastOrNull { node in publishedNodes(it) }
 
     /**
      * Whether [node] is a **sketch space's origin anchor** (OP-17) — a free point at (0, 0) *in that plane's
@@ -8433,7 +8557,71 @@ class Document {
     fun segment(
         a: PointRef,
         b: PointRef,
-    ) = add(cx.segment(a, b), ElementKind.SEGMENT, Styles.CURVE)
+    ) = add(cx.segment(a, b), ElementKind.SEGMENT, Styles.CURVE).also { inheritTangency(it, a, b) }
+
+    /**
+     * Register the tangency a new segment **inherits** from a leg it lies along (GitHub #29).
+     *
+     * The reporter's own construction is the case: a fillet rounds the corner of `e3` and `e5`, they take its
+     * key points, and they draw two fresh segments from those tangencies to the legs' far points — so the
+     * drawing they extrude and blend is built from `e10` and `e11`, which nothing had ever said were tangent
+     * to the arc, although by construction they could not be anything else. One pick then took one edge
+     * where the run `e11 → arc → e10` is one ribbon.
+     *
+     * The rule, and it is structural throughout: **a segment whose two ends both lie on a tangent leg by
+     * construction is that leg, as far as the rounding is concerned**, so it inherits the leg's tangency.
+     * One end is the registered handover itself (identified by position, which is [sharedEndBetween]'s own
+     * rule — the tangency has no node this segment shares) and the other lies on the leg by a fact the
+     * construction stated ([liesOnLegByConstruction]). Two points on a line's carrier make the segment
+     * collinear with the leg, so the claim is exact and, being structural, is invariant under every later
+     * edit of the numbers.
+     *
+     * Nothing is inherited from a **chamfer**: its joints are not tangent, so there is no smoothness to pass
+     * on — the same one fact, read by the one registry.
+     */
+    private fun inheritTangency(
+        seg: Element,
+        a: PointRef,
+        b: PointRef,
+    ) {
+        val ev = Evaluator()
+        val pa = (ev.valueOf(a) as? PointValue)?.p ?: return
+        val pb = (ev.valueOf(b) as? PointValue)?.p ?: return
+        for (j in jointRegistry.toList()) {
+            if (!j.tangent) continue
+            val at = (ev.valueOf(j.at) as? PointValue)?.p ?: continue
+            // the joint is (rounding, leg); which is which is asked rather than assumed
+            for ((leg, rounding) in listOf(j.a to j.b, j.b to j.a)) {
+                if (!leg.isLinear || rounding === seg || leg === seg) continue
+                val far =
+                    when {
+                        (pa - at).length() <= GeomMath.JOIN_TOL -> b
+                        (pb - at).length() <= GeomMath.JOIN_TOL -> a
+                        else -> continue
+                    }
+                if (!liesOnLegByConstruction(far.node, leg)) continue
+                if (jointRegistry.any { it.a === seg && it.b === rounding || it.a === rounding && it.b === seg }) continue
+                registerJoint(seg, rounding, j.at, tangent = true)
+            }
+        }
+    }
+
+    /**
+     * Whether [point] lies on [leg] **because the construction says so** — never because it looks as if it
+     * does (OP-14's rule, the [OnCircle] registry's own argument one curve kind over).
+     *
+     * Three statements count, and they are the three a drawing can make: the point is one of the two [leg]
+     * was built from (a segment's own end), it is a handover some construction registered on [leg] (a
+     * tangency, a bevel end), or it is a rider attached to [leg] (a gesture, recorded as a rider).
+     */
+    private fun liesOnLegByConstruction(
+        point: Node,
+        leg: Element,
+    ): Boolean {
+        if (builtRef(leg).node.inputs.any { it === point }) return true
+        if (jointRegistry.any { (it.a === leg || it.b === leg) && it.at.node === point }) return true
+        return elementOwning(point)?.let { riderOf(it)?.host === leg } == true
+    }
 
     // ---- architectural: ortho path (shared-coordinate rectilinear polyline) ----
 
@@ -8483,7 +8671,7 @@ class Document {
         val local = cx.pointXY(Ref<ScalarValue>(x), Ref<ScalarValue>(y))
         val ref = cx.indirect(local)
         addConstrained(ref, corner)
-        return OrthoVertex(ref, corner, ownAxis, local)
+        return OrthoVertex(ref, corner, ownAxis, local, scalarSource(0.0), scalarSource(0.0))
     }
 
     val orthoPaths = ArrayList<OrthoPath>()
@@ -8575,6 +8763,7 @@ class Document {
         path.vertices.add(0, v)
         path.legs.add(0, dragLeg(path, segment(v.ref, first.ref)))
         path.legAxes.add(0, axis)
+        refreshOrthoLoop(path)
         return v
     }
 
@@ -8623,6 +8812,7 @@ class Document {
         path.vertices.add(v)
         path.legs.add(dragLeg(path, lastSegment()))
         path.legAxes.add(v.ownAxis) // a leg drawn forward runs along the coordinate its far vertex introduced
+        refreshOrthoLoop(path)
         return v
     }
 
@@ -8775,6 +8965,7 @@ class Document {
         path.legAxes[legIndex] = axis
         path.legAxes.add(legIndex + 1, 1 - axis) // the inserted jog runs across the leg it splits
         path.legAxes.add(legIndex + 2, axis)
+        refreshOrthoLoop(path)
         return true
     }
 
@@ -8883,6 +9074,7 @@ class Document {
         val merged = dragLeg(path, segment(a.ref, b.ref))
         path.legs.add(legIndex - 1, merged)
         path.legAxes.add(legIndex - 1, axis)
+        refreshOrthoLoop(path)
         return merged
     }
 
@@ -8898,6 +9090,124 @@ class Document {
         val node = if (path.legAxis(i) == 0) corner.yNode else corner.xNode
         return ((Evaluator().eval(node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
     }
+
+    // ---- the loop an ortho path publishes: its legs, rounded at the corners a fillet gave a radius ----
+
+    /**
+     * The closed boundary of [path] **as the path now reads**: every leg in draw order, each followed by the
+     * corner piece at the vertex it ends at where a fillet or chamfer gave that corner one (GitHub #25).
+     *
+     * One authority, read by everything: the region an extrude/revolve/loft takes, the wall's own reading,
+     * the area's key points, the boundary follow, the area pick filter and the picture (a leg *is* its
+     * trimmed self, so the canvas and hit-testing need no case at all). The order is the path's own — a
+     * retained ordered chain that knows it is closed — so nothing here is discovered (OP-14).
+     */
+    fun roundedPiecesOf(path: OrthoPath): List<Element> {
+        if (path.corners.isEmpty()) return path.legs.toList()
+        val out = ArrayList<Element>(path.legs.size + path.corners.size)
+        for (i in 0 until path.legCount) {
+            out.add(path.legs[i])
+            val at = (i + 1) % path.vertices.size
+            path.corners[at]?.let { piece -> if (elements.any { it === piece }) out.add(piece) }
+        }
+        return out
+    }
+
+    /**
+     * The loop [path] publishes — created on first ask, and **rebound** whenever the pieces it is made of
+     * change: a corner rounded ([recordOrthoCorner]), a leg broken or joined (OP-19), a vertex appended.
+     *
+     * One view rather than a fresh node per ask, so that everything already built on the loop follows the
+     * path's own edits; the piece list it is bound to is compared with the path's current one here, which is
+     * the one place that can be asked without a mutator having to remember to say so.
+     */
+    fun orthoLoopOf(path: OrthoPath): LoopRef {
+        val view = path.loop
+        if (view == null) {
+            val pieces = roundedPiecesOf(path)
+            return cx.indirect(cx.loop(*pieces.map { it.ref }.toTypedArray())).also {
+                path.loop = it
+                path.loopPieces = pieces
+            }
+        }
+        return view
+    }
+
+    /** Rebind [path]'s published loop when its pieces have changed — see [orthoLoopOf]. */
+    private fun refreshOrthoLoop(path: OrthoPath) {
+        val view = path.loop?.node as? IndirectNode ?: return
+        val pieces = roundedPiecesOf(path)
+        if (pieces.size == path.loopPieces.size && pieces.indices.all { pieces[it] === path.loopPieces[it] }) return
+        view.boundTo = cx.loop(*pieces.map { it.ref }.toTypedArray()).node
+        path.loopPieces = pieces
+    }
+
+    /**
+     * Record a rounding as **this corner's own radius** when [leg1] and [leg2] are two adjacent legs of one
+     * ortho path and the corner between them was actually superseded ([trimmed] both legs).
+     *
+     * Both conditions are structural and both matter. Two legs of *one* path naming *one* vertex is what
+     * makes this that corner's radius rather than an arc beside it; and a rounding that trimmed only one leg
+     * (or neither) is a rounding against the legs' carriers somewhere else — its arc is not in this corner,
+     * so the loop must not be told it is (see [supersedeWithTrim]).
+     */
+    private fun recordOrthoCorner(
+        leg1: Element,
+        leg2: Element,
+        by: Element,
+        trimmed: Int,
+        size: ScalarRef,
+        rounded: Boolean,
+    ) {
+        if (trimmed < 2) return
+        val (path, at) = orthoCornerBetween(leg1, leg2) ?: return
+        path.corners[at] = by
+        // **the corner's own number, bound in place** (OP-5): every reader that took this path's corners as
+        // inputs when it was built — a wall's footprint, above all — now sees the radius without one node
+        // being rewired, which is why the number is a node from the vertex's first moment ([OrthoVertex.round])
+        val cut = path.vertices[at]
+        if (rounded) cut.round.boundTo = size.node else cut.bevel.boundTo = size.node
+        // **A deliberate semantic change, said out loud on load** (GitHub #25, OP-18's versioning doctrine).
+        // No stored literal changed shape and none is re-read: the same `tool fillet els=eA,eB` step creates
+        // the same one element, and whether its two legs are adjacent legs of one path is a fact of the
+        // *drawing*. What is different is what such a file **means** — the corner is now the path's own
+        // radius rather than an arc drawn beside it — which is exactly the fix the report asked for. The
+        // version is what lets the load say so **once**, corner by corner, instead of a note that would go
+        // on firing for ever on drawings that always meant this (`DocumentFormat.SUPERSEDING_FILLET_VERSION`).
+        if (replayingVersion == null) {
+            // ...and a live gesture says what it did, for the reason every solid tool does (GitHub #9's
+            // silent-success sweep): the arc looks the same either way, and what changed is the *loop*
+            val cutWord = if (rounded) "radius" else "setback"
+            note =
+                "${nameOf(by)} is the corner $cutWord of ${nameOf(leg1)} and ${nameOf(leg2)} — the path's own " +
+                "loop is cut there, so an extrude, a wall and an outline over it follow this corner; " +
+                "the $cutWord stays an ordinary parameter"
+        } else if (replayingVersion!! < DocumentFormat.SUPERSEDING_FILLET_VERSION) {
+            noteLoad(
+                "${nameOf(by)} ${if (rounded) "rounds" else "bevels"} the corner of ${nameOf(leg1)} and " +
+                    "${nameOf(leg2)} — it is now that corner's own ${if (rounded) "radius" else "setback"}, so " +
+                    "the path's loop and everything built on it (an extrude, a wall, an outline) follow it",
+            )
+        }
+        // everything that already holds this path's loop follows the rounded one, with nothing rewired
+        refreshOrthoLoop(path)
+    }
+
+    /** The path and vertex index two picked legs share, or null when they are not two adjacent legs of one path. */
+    private fun orthoCornerBetween(
+        leg1: Element,
+        leg2: Element,
+    ): Pair<OrthoPath, Int>? {
+        val (p1, i) = legOf(leg1) ?: return null
+        val (p2, j) = legOf(leg2) ?: return null
+        if (p1 !== p2 || i == j) return null
+        val n = p1.vertices.size
+        val shared = (setOf(i, (i + 1) % n) intersect setOf(j, (j + 1) % n)).singleOrNull() ?: return null
+        return p1 to shared
+    }
+
+    /** The closed ortho path [el] is a **corner piece** of — a fillet's arc, a chamfer's bevel — or null. */
+    private fun orthoCornerOf(el: Element): OrthoPath? = orthoPaths.firstOrNull { p -> p.corners.values.any { it === el } }
 
     /** The ortho path [el] belongs to — as one of its legs or as one of its vertices. */
     fun pathOf(el: Element): OrthoPath? =
@@ -8970,11 +9280,13 @@ class Document {
      * The last counts because dropping the creating step would change what that step says.
      */
     fun consumersOf(el: Element): List<String> {
-        val node = el.ref.node
+        // all three of them (GitHub #25): a rider took the leg's carrier, an outline took the leg itself
+        val nodes = publishedNodes(el)
         val own = creatingStep(el)
         val out = ArrayList<String>()
-        elements.filter { it !== el && dependsOn(it.ref.node, node, HashSet()) }.forEach { out.add(it.id) }
-        scalars.filter { dependsOn(it.ref.node, node, HashSet()) }.forEach { out.add(it.name) }
+        val reads = { n: Node -> nodes.any { dependsOn(n, it, HashSet()) } }
+        elements.filter { it !== el && publishedNodes(it).none { n -> n in nodes } && reads(it.ref.node) }.forEach { out.add(it.id) }
+        scalars.filter { reads(it.ref.node) }.forEach { out.add(it.name) }
         if (journal.any { s -> s !== own && referencedElements(s).any { it === el } }) out.add("a later step")
         return out.distinct()
     }
@@ -9415,6 +9727,7 @@ class Document {
         closeOrthoPath(path.vertices.first(), path.vertices.last())
         path.closed = true // before the leg handle resolves its index, which depends on closure
         path.legs.add(dragLeg(path, segment(path.vertices.last().ref, path.vertices.first().ref)))
+        refreshOrthoLoop(path)
         path.legAxes.add(1 - path.vertices.last().ownAxis) // the closing leg runs across the last one
         return true
     }
@@ -9615,9 +9928,13 @@ class Document {
         a: Element,
         b: Element,
         at: PointRef,
+        tangent: Boolean = false,
     ) {
-        jointRegistry.add(Joint(a, b, at))
+        jointRegistry.add(Joint(a, b, at, tangent))
     }
+
+    /** Every joint this document's constructions stated — read by the blend's tangent run (GitHub #29). */
+    val joints: List<Joint> get() = jointRegistry
 
     private fun supersedeCorner(
         a: Element,
@@ -9715,20 +10032,31 @@ class Document {
         for (s in supersededCorners) {
             if (!((s.a === a && s.b === b) || (s.a === b && s.b === a))) continue
             if (elements.none { it === s.by }) continue
-            val m = supersessionCentre(s, ev) ?: continue
-            left.minByOrNull { (it - m).length() }?.let { left.remove(it) }
+            val corner = supersededCorner(s, ev) ?: continue
+            // **the corner it replaced, and only that one.** Position by position, because two curves can
+            // meet twice — a chord and its arc — and since a rounding now *trims* its legs (GitHub #25) the
+            // pair may still meet at their **other** corner while meeting nowhere near this one. Dropping
+            // "the nearest" unconditionally took that surviving corner away and left an outline that could
+            // not close.
+            left.firstOrNull { (it - corner).length() <= GeomMath.JOIN_TOL }?.let { left.remove(it) }
         }
         return left
     }
 
-    /** Where a superseding fillet/chamfer sits: the midpoint of the two joints it registered. */
-    private fun supersessionCentre(
+    /**
+     * The corner a superseding fillet/chamfer **replaced**: the crossing of the two legs' carriers nearest
+     * the rounding, which is where they used to hand over.
+     *
+     * Read off the carriers rather than remembered as a coordinate, for [Joint]'s own reason: the corner
+     * moves with the legs, so the fact has to keep following them.
+     */
+    private fun supersededCorner(
         s: Supersession,
         ev: Evaluator,
     ): Vec2? {
         val t1 = registeredJoint(s.by, s.a)?.let { (ev.valueOf(it) as? PointValue)?.p } ?: return null
         val t2 = registeredJoint(s.by, s.b)?.let { (ev.valueOf(it) as? PointValue)?.p } ?: return null
-        return (t1 + t2) * 0.5
+        return cornerBetween(s.a, s.b, (t1 + t2) * 0.5, ev)
     }
 
     /**
@@ -10169,9 +10497,12 @@ class Document {
     ): ThickNetwork? {
         if (vertices.size < 2) return null
         val ring = closed && vertices.size >= 3
-        val ref = cx.thickFootprint(vertices, thickness, ring, justification)
+        // the path's own corner numbers, as nodes (GitHub #25): zero today, bound when a fillet rounds one
+        val rounds = carrier?.vertices?.map { Ref<ScalarValue>(it.round) } ?: emptyList()
+        val bevels = carrier?.vertices?.map { Ref<ScalarValue>(it.bevel) } ?: emptyList()
+        val ref = cx.thickFootprint(vertices, thickness, ring, justification, rounds, bevels)
         val el = add(ref, ElementKind.AREA, Styles.FOOTPRINT)
-        val tp = ThickNetwork(ThickCarrier.Ortho(vertices.toList(), ring, justification, carrier), thickness, el)
+        val tp = ThickNetwork(ThickCarrier.Ortho(vertices.toList(), ring, justification, carrier, rounds, bevels), thickness, el)
         thickNetworks.add(tp)
         return tp
     }
@@ -10406,7 +10737,11 @@ class Document {
         when (el.kind) {
             ElementKind.AREA -> el.ref as RegionRef
             ElementKind.OUTLINE -> cx.region(el.ref as LoopRef)
-            else -> boundaryPiecesOf(el)?.let { pieces -> cx.region(cx.loop(*pieces.map { it.ref }.toTypedArray())) }
+            // a closed ortho path publishes **one** loop, through a view, so an extrude made before a corner
+            // was rounded reads the rounded loop afterwards (GitHub #25 — see [orthoLoopOf])
+            else ->
+                (legOf(el)?.first ?: orthoCornerOf(el))?.takeIf { it.closed }?.let { cx.region(orthoLoopOf(it)) }
+                    ?: boundaryPiecesOf(el)?.let { pieces -> cx.region(cx.loop(*pieces.map { it.ref }.toTypedArray())) }
         }
 
     /**
@@ -10435,7 +10770,10 @@ class Document {
         // a whole ellipse closes by itself, exactly as a circle does (OP-24)
         if (el.kind == ElementKind.CIRCLE || el.kind == ElementKind.ELLIPSE) return listOf(el)
         if (!el.isCurve) return null
-        legOf(el)?.let { (path, _) -> if (path.closed) return path.legs.toList() }
+        legOf(el)?.let { (path, _) -> if (path.closed) return roundedPiecesOf(path) }
+        // ...and so does a click on the corner piece itself: a rounded corner is part of the boundary, so
+        // the arc is as good a place to pick the area by as any leg (GitHub #25)
+        orthoCornerOf(el)?.let { path -> if (path.closed) return roundedPiecesOf(path) }
         val step = creatingStep(el) ?: return null
         val pieces = step.creates.filter { c -> c.isCurve && elements.any { it === c } }
         if (pieces.size < 2 || pieces.none { it === el }) return null
@@ -13489,7 +13827,7 @@ class Document {
                     return null
                 }
             }
-        val (targets, whyTargets) = Blend3.targets(body.feature, whole, address)
+        val (targets, whyTargets) = Blend3.targets(body.feature, whole, address, tangentRun(baseEl, ev))
         if (targets == null) {
             note = "$what: ${nameOf(solid)} — $whyTargets"
             return null
@@ -13505,9 +13843,27 @@ class Document {
                     return null
                 }
                 val (scored, why) = Blend3.choicesFor(body, targets, r, kind)
-                scored ?: run {
-                    note = "$what: ${nameOf(solid)} — $why"
-                    return null
+                val fresh =
+                    scored ?: run {
+                        note = "$what: ${nameOf(solid)} — $why"
+                        return null
+                    }
+                // **A recorded choice is never re-decided** (OP-18). A file written before one pick ran along
+                // the tangent run (GitHub #29) carries exactly one choice, and it belongs to the edge the
+                // click named — the run's *other* edges have none, so they are scored here, once, and the
+                // next save records all of them. The load says so by name rather than quietly.
+                if (stored.size == 1 && targets.size > 1) {
+                    if ((replayingVersion ?: 0) in 1 until DocumentFormat.SUPERSEDING_FILLET_VERSION) {
+                        noteLoad(
+                            "${nameOf(solid)}'s ${kind.word} now runs along all ${targets.size} edges of the " +
+                                "tangent-continuous run through the edge it named — they are one smooth band, " +
+                                "which is what the drawing says they are; the added edges' choices are scored " +
+                                "once here and written on the next save",
+                        )
+                    }
+                    targets.indices.map { i -> if (targets[i] == address) stored[0] else fresh[i] }
+                } else {
+                    fresh
                 }
             }
         val el =
@@ -13521,6 +13877,8 @@ class Document {
                     whole,
                     address,
                     choices,
+                    // the run the pick stands for, resolved from the registry here and never stored (#29)
+                    run = if (whole) emptyList() else targets,
                 ),
                 ElementKind.SOLID,
                 Styles.SOLID,
@@ -13545,6 +13903,57 @@ class Document {
                 " — the ${kind.sizeWord} is an ordinary parameter, so retyping it re-rounds the body",
         )
         return el
+    }
+
+    /**
+     * Whether two edges that meet are **one tangent-continuous run** — the 2D joint registry, read one level
+     * up (GitHub #29).
+     *
+     * *"The extruded version of segment e11 is 3D-filleted. However, this results in an awkward result, since
+     * segment e11 is linked to a fillet in the 2D base construction (arc e6) … I would expect that the
+     * fillets are 'smoothly' joined together — as if I rounded all the edges with a rasp."* This is what
+     * makes one pick take the rasped run: where the drawing **states** that two of its pieces hand over
+     * tangentially, the two rims over them are one ribbon.
+     *
+     * Three conditions, and each is there for a reason:
+     * - both edges lie **on one known plane, the same one** ([EdgeGeom.OnPlane]). That is where a drawing's
+     *   own tangency lives — a cap's rim is its footprint's boundary — and it is what keeps the *upright* at
+     *   a tangency out of the run: an upright is a straight edge across the two planes, not a piece of
+     *   either. (Runs among edges that lie on no plane — a loft's rails — are a future extension, and
+     *   nothing about them is claimed here.)
+     * - they **share a face**, so the run walks along a boundary rather than jumping across the body;
+     * - and the vertex they meet at is a **recorded tangent handover** of the drawing.
+     *
+     * The relation is on record; the *position* is only how the vertex is looked up, which is
+     * [sharedEndBetween]'s own rule and for its own reason — a shared node is not available here at all,
+     * since one side of the comparison is a corner of a mesh's own feature. Hidden pieces are skipped
+     * exactly as the boundary follow skips them ([handoverPlaces]): a piece the drawing does not show is not
+     * part of its boundary, so a superseded leg cannot lend its tangency to the rim over the segment that
+     * replaced it — the replacement has to have **inherited** it (see [inheritTangency]).
+     */
+    private fun tangentRun(
+        baseEl: Element,
+        ev: Evaluator,
+    ): ((SolidEdge, SolidEdge) -> Boolean)? {
+        val plane = (ev.valueOf(planeOfSpace(baseEl.space)) as? PlaneValue)?.plane ?: return null
+        val handovers =
+            jointRegistry
+                .filter { j ->
+                    // ...of **this** drawing: a 2D position only means something in the space it was drawn
+                    // in (OP-17), so a joint of another sketch space is not a handover of this body's rim
+                    j.tangent && j.a.visible && j.b.visible && j.a.space == baseEl.space &&
+                        elements.any { it === j.a } && elements.any { it === j.b }
+                }
+                .mapNotNull { (ev.valueOf(it.at) as? PointValue)?.p }
+        if (handovers.isEmpty()) return null
+        return { a, b ->
+            val pa = (a.geom as? EdgeGeom.OnPlane)?.plane
+            val pb = (b.geom as? EdgeGeom.OnPlane)?.plane
+            pa != null && pa == pb && (b.between.has(a.between.a) || b.between.has(a.between.b)) &&
+                Blend3.sharedEnd(a, b)?.let { w ->
+                    handovers.any { (plane.toLocal(w) - it).length() <= GeomMath.JOIN_TOL }
+                } == true
+        }
     }
 
     /**
@@ -14579,7 +14988,21 @@ class Document {
         when (val c = tp.carrier) {
             is ThickCarrier.Ortho -> {
                 val pts = c.vertices.map { ((ev.eval(it.node) as? EvalResult.Ok)?.value as? PointValue)?.p ?: return null }
-                GeomMath.thickFaces(pts, c.closed, c.justification.offsets(scalarMm(tp.thickness, ev))).first?.let { thickBodyOf(it).first }
+                // the corner cuts the carrier holds, read the same way the footprint node reads them (#25)
+                val cuts =
+                    c.vertices.indices.map { i ->
+                        val r = c.rounds.getOrNull(i)?.let { scalarMm(it, ev) } ?: 0.0
+                        val d = c.bevels.getOrNull(i)?.let { scalarMm(it, ev) } ?: 0.0
+                        when {
+                            r > Vec2.EPS -> CornerCut.Round(r)
+                            d > Vec2.EPS -> CornerCut.Bevel(d)
+                            else -> null
+                        }
+                    }
+                GeomMath
+                    .thickFaces(pts, c.closed, c.justification.offsets(scalarMm(tp.thickness, ev)), cuts)
+                    .first
+                    ?.let { thickBodyOf(it).first }
             }
             is ThickCarrier.Network -> {
                 val pieces =
@@ -15389,6 +15812,147 @@ class Document {
         p: PointRef,
     ) = add(cx.parallelThrough(carrierLine(line), p), ElementKind.LINE, Styles.CONSTRUCT)
 
+    // ---- a rounding supersedes its corner: the legs, trimmed in place (GitHub #25, the user's design) ----
+
+    /**
+     * Supersede the corner of [leg1] and [leg2] with **its rounded self**: each leg trimmed back to the
+     * handover the rounding just registered on it ([t1]/[t2]), the corner point left standing as
+     * construction. Returns how many of the two legs were trimmed.
+     *
+     * This is the fix the reporter named: *"the fillet tool only creates the fillet arc, but does not
+     * supersede [the corner] with its filleted version"* (GitHub #25). What they built by hand — key points
+     * of the arc, two fresh segments onto them, three `hide` steps — is what one gesture now records, and it
+     * records it **without a new element**: the leg is trimmed *in place*, behind the re-pointable view it
+     * publishes ([publishedRef]), so `e3` goes on being `e3` and everything built on it — an outline, a
+     * dimension, a wall, a rider — follows the trimmed leg with nothing rewired (OP-5, OP-16's precedent).
+     *
+     * **A leg is trimmed exactly when the handover lies on it.** That is not a shortcut, it is the rule: a
+     * rounding is tangent to each leg's *carrier* (see [carrierLine]), and a carrier reaches beyond the drawn
+     * piece — a line–circle fillet whose tangency falls outside an arc's sweep is a construction this drawing
+     * has always allowed and still means (`ArcCarrierTest`). Where the handover *is* on the piece, the corner
+     * is the one the user is rounding and the piece owes it the material; where it is not, there is no corner
+     * of that piece there and nothing of it is taken. So every drawing written before this reading keeps
+     * exactly the geometry it had, and the ones the report is about gain the trim.
+     *
+     * A later edit that pulls the handover off the leg is then ordinary invalidity with the reason and the
+     * number that would fit ([Construction.trimmedLeg]), healing when it comes back (OP-3) — which is the
+     * right answer and not a re-decision: re-scoring *whether* to trim on every recompute would make the
+     * drawing's structure a function of its values (OP-21).
+     */
+    private fun supersedeWithTrim(
+        leg1: Element,
+        leg2: Element,
+        t1: PointRef,
+        t2: PointRef,
+    ): Int {
+        val ev = Evaluator()
+        val a = (ev.valueOf(t1) as? PointValue)?.p ?: return 0
+        val b = (ev.valueOf(t2) as? PointValue)?.p ?: return 0
+        val corner = cornerBetween(leg1, leg2, (a + b) * 0.5, ev) ?: return 0
+        // **a path's leg is the path's own to round.** A retained path publishes its boundary as an ordered
+        // chain, and the corner piece can only be *in* that chain if the path records it — so a rounding
+        // that is not two adjacent legs of one path takes nothing off a leg that belongs to one, or the
+        // path's loop would be left with a gap no piece fills. Two legs of different paths meeting at a
+        // junction, two legs of one path that are not neighbours, a leg against a plain segment: each stays
+        // the rounding against the carriers it has always been.
+        if (orthoCornerBetween(leg1, leg2) == null && (legOf(leg1) != null || legOf(leg2) != null)) return 0
+        var n = 0
+        if (trimLegTo(leg1, t1, a, corner, ev)) n++
+        if (trimLegTo(leg2, t2, b, corner, ev)) n++
+        if (n == 2) dimCornerPoint(corner, ev)
+        return n
+    }
+
+    /**
+     * Where [leg1] and [leg2] **meet** — the crossing of their two carriers nearest [near], which is where
+     * the rounding sits.
+     *
+     * Nearest rather than first, for [sharedMeetings]' own reason: two curves can cross twice (a chord and
+     * its arc), and the corner this rounding is in is the one it stands in.
+     */
+    private fun cornerBetween(
+        leg1: Element,
+        leg2: Element,
+        near: Vec2,
+        ev: Evaluator,
+    ): Vec2? {
+        val v1 = filletLegOf(leg1, ev) ?: return null
+        val v2 = filletLegOf(leg2, ev) ?: return null
+        return FilletMath.chamferCorners(v1, v2).minByOrNull { (it - near).length() }
+    }
+
+    /**
+     * Trim [leg] back to [cut] — keeping the end away from [corner] — when [at] (where [cut] is now) lies on
+     * the leg as it stands. False when it does not, or when the leg is a carrier with no ends to move.
+     */
+    private fun trimLegTo(
+        leg: Element,
+        cut: PointRef,
+        at: Vec2,
+        corner: Vec2,
+        ev: Evaluator,
+    ): Boolean {
+        val view = leg.ref.node as? IndirectNode ?: return false
+        val piece = pieceRef(leg)
+        val v = ev.valueOf(piece) ?: return false
+        if (!onPieceNow(v, at)) return false
+        val trimmed: Ref<*> =
+            when (v) {
+                is SegmentValue -> {
+                    val keepAtA = (v.seg.a - corner).length() >= (v.seg.b - corner).length()
+
+                    @Suppress("UNCHECKED_CAST")
+                    val ref = piece as SegmentRef
+                    cx.trimmedLeg(ref, if (keepAtA) cx.segmentStart(ref) else cx.segmentEnd(ref), cut)
+                }
+                is ArcValue -> {
+                    val keepAtStart = (GeomMath.arcStart(v.arc) - corner).length() >= (GeomMath.arcEnd(v.arc) - corner).length()
+
+                    @Suppress("UNCHECKED_CAST")
+                    val ref = piece as ArcRef
+                    cx.trimmedArcLeg(ref, if (keepAtStart) cx.arcStart(ref) else cx.arcEnd(ref), cut)
+                }
+                else -> return false
+            }
+        view.boundTo = trimmed.node
+        return true
+    }
+
+    /** Whether [at] lies on the bounded piece [v] as it stands — the question [trimLegTo] turns on. */
+    private fun onPieceNow(
+        v: Value,
+        at: Vec2,
+    ): Boolean =
+        when (v) {
+            is SegmentValue -> {
+                val d = v.seg.b - v.seg.a
+                val len = d.length()
+                len > Vec2.EPS && (at - v.seg.a).dot(d * (1.0 / len)).let { it > GeomMath.JOIN_TOL && it < len - GeomMath.JOIN_TOL }
+            }
+            is ArcValue -> GeomMath.arcContains(v.arc, (at - v.arc.center).angle())
+            else -> false
+        }
+
+    /**
+     * Dim the corner point a rounding replaced: it stays in the drawing, draggable, and reads as the
+     * construction it now is (OP-14's third column).
+     *
+     * Not hidden, which is what the reporter's hand-built version had to do: the point is the corner's own
+     * degree of freedom, so dragging it moves both trimmed legs *and* the rounding between them. An ortho
+     * path's vertex keeps its own look — there it is the handle the whole path is edited by, not scaffolding.
+     */
+    private fun dimCornerPoint(
+        corner: Vec2,
+        ev: Evaluator,
+    ) {
+        val el =
+            elements.lastOrNull { e ->
+                e.isPoint && e.style !== Styles.CONSTRUCT && pathOf(e) == null &&
+                    ((ev.valueOf(e.ref) as? PointValue)?.p?.let { (it - corner).length() <= GeomMath.JOIN_TOL } == true)
+            } ?: return
+        el.style = Styles.CONSTRUCT
+    }
+
     /**
      * A fillet of [radius] between two **carrier curves** — a line/segment/ray, a circle or an arc, in any
      * of the three combinations.
@@ -15465,10 +16029,13 @@ class Document {
         val arc = cx.filletBetweenLines(l1, l2, radius, sign1, sign2)
         val el = add(arc, ElementKind.ARC, Styles.CURVE)
         registerSigns(el, listOf(sign1, sign2))
-        // the op builds the arc from leg1's tangency to leg2's, so its own ends *are* the two joints
-        registerJoint(el, leg1, cx.arcStart(arc))
-        registerJoint(el, leg2, cx.arcEnd(arc))
+        // the op builds the arc from leg1's tangency to leg2's, so its own ends *are* the two joints — and a
+        // rounding meets its legs *tangentially*, which is the fact a blend's run reads (GitHub #29)
+        registerJoint(el, leg1, cx.arcStart(arc), tangent = true)
+        registerJoint(el, leg2, cx.arcEnd(arc), tangent = true)
         supersedeCorner(leg1, leg2, el)
+        val trimmed = supersedeWithTrim(leg1, leg2, cx.arcStart(arc), cx.arcEnd(arc))
+        recordOrthoCorner(leg1, leg2, el, trimmed, radius, rounded = true)
         return el
     }
 
@@ -15517,9 +16084,11 @@ class Document {
         val t2 = tangencyOn(leg2, centre)
         val el = add(cx.filletArc(centre, t1, t2), ElementKind.ARC, Styles.CURVE)
         registerSigns(el, listOf(v.side1, v.side2, v.branch))
-        registerJoint(el, leg1, t1)
-        registerJoint(el, leg2, t2)
+        registerJoint(el, leg1, t1, tangent = true)
+        registerJoint(el, leg2, t2, tangent = true)
         supersedeCorner(leg1, leg2, el)
+        val trimmed = supersedeWithTrim(leg1, leg2, t1, t2)
+        recordOrthoCorner(leg1, leg2, el, trimmed, radius, rounded = true)
         return el
     }
 
@@ -15644,9 +16213,13 @@ class Document {
         val b = addDerived(setbackOn(leg2, corner, distance, v.side2))
         val bevel = segment(a, b)
         registerSigns(bevel, listOf(v.side1, v.side2, v.branch))
+        // a bevel *turns* a corner where a rounding runs on smoothly, so these joints are not tangent —
+        // which is what keeps a chamfered edge one band and a filleted run one ribbon (GitHub #29)
         registerJoint(bevel, leg1, a)
         registerJoint(bevel, leg2, b)
         supersedeCorner(leg1, leg2, bevel)
+        val trimmed = supersedeWithTrim(leg1, leg2, a, b)
+        recordOrthoCorner(leg1, leg2, bevel, trimmed, distance, rounded = false)
         return bevel
     }
 
@@ -15720,6 +16293,8 @@ class Document {
         registerJoint(bevel, leg1, a)
         registerJoint(bevel, leg2, b)
         supersedeCorner(leg1, leg2, bevel)
+        val trimmed = supersedeWithTrim(leg1, leg2, a, b)
+        recordOrthoCorner(leg1, leg2, bevel, trimmed, distance, rounded = false)
         return bevel
     }
 

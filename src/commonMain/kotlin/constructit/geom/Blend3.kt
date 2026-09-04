@@ -130,6 +130,7 @@ object Blend3 {
         feature: Feature3,
         whole: Boolean,
         address: Int,
+        sameRun: ((SolidEdge, SolidEdge) -> Boolean)? = null,
     ): Pair<List<Int>?, String?> {
         val (edges, whyEdges) = Section3.edges(feature)
         if (edges == null) return null to whyEdges
@@ -137,7 +138,7 @@ object Blend3 {
             if (address < 0 || address >= edges.size) {
                 return null to "this solid has no edge #${address + 1} (it has ${edges.size})"
             }
-            return listOf(address) to null
+            return runThrough(edges, address, sameRun) to null
         }
         val (faces, whyFaces) = Section3.faces(feature)
         if (faces == null) return null to whyFaces
@@ -148,6 +149,61 @@ object Blend3 {
         val hits = edges.indices.filter { edges[it].between.has(face) }
         if (hits.isEmpty()) return null to "${face.label} has no edges to blend"
         return hits to null
+    }
+
+    /**
+     * The whole **tangent-continuous run** through edge [address] — one pick, one ribbon (GitHub #29).
+     *
+     * *"I would expect that the fillets are 'smoothly' joined together — as if I rounded all the edges with
+     * a rasp."* A single pick therefore names not one edge but the run of edges that carry on smoothly
+     * through it, and it is an addressing change and nothing else: the stored address stays the picked edge
+     * index, so a file whose edge has no tangent neighbour replays to exactly the band it always built.
+     *
+     * [sameRun] is the caller's — the **2D joint registry, one level up** (`Document.tangentRun`): whether
+     * two pieces meet tangentially is a fact the construction *stated*, never one measured off the geometry,
+     * which is what keeps the number of swept edges structural (OP-21) and a replay exact. Absent it, one
+     * pick is one edge, as before.
+     *
+     * The walk is a closure rather than a two-way march: an edge joins the run when it shares a vertex with
+     * something already in it and [sameRun] says that vertex is a smooth handover. So a rim that is tangent
+     * all the way round comes back whole (which is what the chain over a face already builds), and a run
+     * that meets a **sharp** corner ends there exactly as a single-edge band ends today.
+     */
+    private fun runThrough(
+        edges: List<SolidEdge>,
+        address: Int,
+        sameRun: ((SolidEdge, SolidEdge) -> Boolean)?,
+    ): List<Int> {
+        if (sameRun == null) return listOf(address)
+        val run = linkedSetOf(address)
+        var growing = true
+        while (growing) {
+            growing = false
+            for (i in edges.indices) {
+                if (i in run) continue
+                // an entry that is **not a crease of the body as it stands** — an edge an earlier blend
+                // consumed — keeps its index and its carrier and is no part of any run (see [SolidEdge.reason])
+                if (edges[i].reason != null) continue
+                if (run.any { j -> sharedEnd(edges[j], edges[i]) != null && sameRun(edges[j], edges[i]) }) {
+                    run.add(i)
+                    growing = true
+                }
+            }
+        }
+        return run.sorted()
+    }
+
+    /** Where two edges meet end to end, or null when they do not — the vertex a run may carry on through. */
+    fun sharedEnd(
+        a: SolidEdge,
+        b: SolidEdge,
+    ): Vec3? {
+        val pa = pathOf(a).first ?: return null
+        val pb = pathOf(b).first ?: return null
+        val endsA = listOfNotNull(pa.start, pa.end)
+        val endsB = listOfNotNull(pb.start, pb.end)
+        for (x in endsA) for (y in endsB) if ((x - y).length() <= Geom3.WELD_TOL) return x
+        return null
     }
 
     // ---- the crease: the edge as a path, and the two traces of its normal section ----

@@ -136,9 +136,13 @@ class GroupCreationWordsTest {
     fun theRefusedFrameLeadsWithWhatSucceededAndNamesTheDrawing() {
         val ed = pillarSectionAndMolding()
 
-        // the fixture really is the reported one: these are the ids the old message printed
+        // the fixture really is the reported one: these are the ids the old message printed. (Four of them
+        // moved along when a fillet gained the machinery to supersede a corner — GitHub #25: a segment
+        // spends one more id on the re-pointable view it is trimmed behind, and an ortho vertex two more on
+        // its corner's own radius and setback. Which raw ids a drawing happens to hold is exactly the
+        // incidental vocabulary this test exists to keep *out* of the message.)
         val raw = rawIds(ed)
-        assertTrue(raw.containsAll(listOf("n2", "oc1", "oc2", "n4", "oc4", "n7", "oc9", "n10")), "got: $raw")
+        assertTrue(raw.containsAll(listOf("n2", "oc1", "oc2", "n4", "oc6", "n8", "oc13", "n12")), "got: $raw")
 
         val d = ed.groupTheBase()
         assertTrue(d.framed, "the frame is the default (OP-16, session 13) — that decision is not what changed")

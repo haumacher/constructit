@@ -165,8 +165,39 @@ data class ThickFaces(
     val legLengths: List<Double>,
     val offsets: List<Double>,
     val closed: Boolean,
+    /**
+     * What the carrier does at each of its own points — a radius, a setback, or nothing (GitHub #25).
+     *
+     * One entry per carrier point, in the carrier's own order, so a rounded corner of an ortho path is read
+     * by the wall over it exactly as it is read by the loop: *"both faces of a wall follow the rounded
+     * corner"*. Empty (or all-null) is the sharp, mitred wall every stored `wall` step has always meant, and
+     * it goes through the very same arithmetic it always did ([GeomMath.thickRegion]).
+     */
+    val cuts: List<CornerCut?> = emptyList(),
 ) {
     val legCount: Int get() = legs.size
+
+    /** The cut at carrier point [i], or null for a mitred corner. */
+    fun cutAt(i: Int): CornerCut? = cuts.getOrNull(i)
+
+    /** Whether any corner is cut at all — false is the mitred wall, and it keeps its own code path. */
+    val anyCut: Boolean get() = cuts.any { it != null }
+}
+
+/**
+ * What a carrier does at one of its own points: a **rounding** of that radius, or a **bevel** of that
+ * setback — the two things *Fillet* and *Chamfer* make of a corner (GitHub #25).
+ *
+ * A value, not a construction: which corner is cut is structural (the two picked legs name one point) and
+ * how much is a number that moves (OP-21), so this is what the number looks like when it reaches the
+ * geometry.
+ */
+sealed interface CornerCut {
+    /** A corner rounded to this radius: the arc tangent to both legs, and its own offsets on each face. */
+    data class Round(val radius: Double) : CornerCut
+
+    /** A corner bevelled by this setback along each leg: the straight piece between the two setback points. */
+    data class Bevel(val setback: Double) : CornerCut
 }
 
 /** Geometry math: intersections emit ordered [PointSet]s (OP-1). */
@@ -630,6 +661,7 @@ object GeomMath {
         points: List<Vec2>,
         closed: Boolean,
         offsets: List<Double>,
+        cuts: List<CornerCut?> = emptyList(),
     ): Pair<ThickFaces?, String?> {
         if (points.size < 2) return null to "a thick path needs at least two carrier points"
         if (closed && points.size < 3) return null to "a closed carrier needs at least three points"
@@ -670,7 +702,7 @@ object GeomMath {
             }
             faces.add(corners)
         }
-        return ThickFaces(faces, legs, lengths, offsets, closed) to null
+        return ThickFaces(faces, legs, lengths, offsets, closed, cuts) to null
     }
 
     /**
@@ -695,6 +727,10 @@ object GeomMath {
      * have to keep true as the carrier is edited.
      */
     fun thickRegion(f: ThickFaces): Pair<Region?, String?> {
+        // **the cut corners take their own route, and only they do** (GitHub #25): a wall whose carrier is
+        // mitred everywhere goes through the very arithmetic it always did, so every stored `wall` step
+        // replays to the identical region — which is the guarantee the ortho carrier exists to keep
+        if (f.anyCut) return cutThickRegion(f)
         if (f.closed) {
             val a = polygonLoop(f.faces[0]) ?: return null to "a face of the ring is degenerate"
             val b = polygonLoop(f.faces[1]) ?: return null to "a face of the ring is degenerate"
@@ -707,6 +743,167 @@ object GeomMath {
         val loop = polygonLoop(ring) ?: return null to "the footprint is degenerate"
         return Region(orient(loop, ccw = true), emptyList()) to null
     }
+
+    /**
+     * The footprint of a carrier with **cut corners** — a rounded or bevelled ortho path (GitHub #25).
+     *
+     * *"Both faces of a wall follow the rounded corner"*, and they follow it **exactly**: the offset of a
+     * circular arc is a circular arc about the same centre, with radius `|r − d|` on the side the turn goes
+     * and `r + d` on the other, so nothing here is approximated and the wall is its stated thickness
+     * everywhere. A bevel's offset is the bevel's own offset line, mitred against the two leg faces — the
+     * same sentence with a straight piece.
+     *
+     * The one thing that cannot be built is named rather than fudged: on the inside of a turn the face lies
+     * `d` *toward* the centre, so a radius smaller than that offset would fold the face inside out. That
+     * refuses with the thickest wall the corner can host (OP-3, and it heals when either number moves).
+     */
+    private fun cutThickRegion(f: ThickFaces): Pair<Region?, String?> {
+        val sides = f.offsets.indices.map { side -> cutFacePieces(f, side).let { (p, why) -> p ?: return null to why } }
+        if (f.closed) {
+            val a = chainLoop(sides[0]).first ?: return null to "a face of the ring is degenerate"
+            val b = chainLoop(sides[1]).first ?: return null to "a face of the ring is degenerate"
+            val outer = if (abs(signedArea(a)) >= abs(signedArea(b))) a else b
+            val inner = if (outer === a) b else a
+            return Region(orient(outer, ccw = true), listOf(orient(inner, ccw = false))) to null
+        }
+        // one loop, exactly as the mitred case builds it: out along one face, across the end cap, back along
+        // the other, across the start cap — the chaining flips whatever needs flipping
+        val ring = sides[1] + capBetween(sides[1], sides[0], atEnd = true) + sides[0].reversed() + capBetween(sides[0], sides[1], atEnd = false)
+        val loop = chainLoop(ring).first ?: return null to "the footprint is degenerate"
+        return Region(orient(loop, ccw = true), emptyList()) to null
+    }
+
+    /** The straight cap between the far ends of two faces of an open carrier. */
+    private fun capBetween(
+        from: List<ProfileElement>,
+        to: List<ProfileElement>,
+        atEnd: Boolean,
+    ): List<ProfileElement> {
+        val a = if (atEnd) endOf(from.last()) else startOf(from.first())
+        val b = if (atEnd) endOf(to.last()) else startOf(to.first())
+        return if ((b - a).length() <= EPS) emptyList() else listOf(ProfileElement.Seg(Segment(a, b)))
+    }
+
+    /** One face of a cut carrier, as pieces in the carrier's own order: the leg faces and the corner pieces. */
+    private fun cutFacePieces(
+        f: ThickFaces,
+        side: Int,
+    ): Pair<List<ProfileElement>?, String?> {
+        val off = f.offsets[side]
+        val n = f.legCount
+        // where each leg's face piece begins and ends, and what sits between it and the next
+        val starts = arrayOfNulls<Vec2>(n)
+        val ends = arrayOfNulls<Vec2>(n)
+        val between = arrayOfNulls<ProfileElement>(n)
+        if (!f.closed) {
+            starts[0] = faceEnd(f, 0, 0.0, off)
+            ends[n - 1] = faceEnd(f, n - 1, f.legLengths[n - 1], off)
+        }
+        val corners = if (f.closed) 0 until n else 1 until n
+        for (k in corners) {
+            val a = (k - 1 + n) % n
+            val (endA, startB, piece) = cutCorner(f, a, k, off) ?: return null to cutRefusal(f, k, off)
+            ends[a] = endA
+            starts[k % n] = startB
+            between[a] = piece
+        }
+        val out = ArrayList<ProfileElement>(n * 2)
+        for (i in 0 until n) {
+            val s = starts[i] ?: return null to "corner ${i + 1} has collinear legs, so no mitre"
+            val e = ends[i] ?: return null to "corner ${i + 1} has collinear legs, so no mitre"
+            if ((e - s).length() > EPS) out.add(ProfileElement.Seg(Segment(s, e)))
+            between[i]?.let { out.add(it) }
+        }
+        return out to null
+    }
+
+    /** The face point at [dist] along leg [i], offset by [off] — a leg face's own end. */
+    private fun faceEnd(
+        f: ThickFaces,
+        i: Int,
+        dist: Double,
+        off: Double,
+    ): Vec2 = f.legs[i].origin + f.legs[i].dir * dist + f.legs[i].dir.perp() * off
+
+    /** Why a corner could not be cut on this face, in the wall's own words. */
+    private fun cutRefusal(
+        f: ThickFaces,
+        k: Int,
+        off: Double,
+    ): String {
+        val cut = f.cutAt(k)
+        val thickness = abs(f.offsets[1] - f.offsets[0])
+        return if (cut is CornerCut.Round && abs(off) > cut.radius) {
+            "the inner face of a ${fmt(thickness)} mm wall cannot follow a corner radius of ${fmt(cut.radius)} mm — " +
+                "it would fold inside out; the largest thickness that fits there is ${fmt(cut.radius * 2)} mm"
+        } else {
+            "corner ${k + 1} has collinear legs, so no mitre"
+        }
+    }
+
+    /** A number in a refusal's own words: at most two decimals, and never a trailing zero. */
+    private fun fmt(v: Double): String {
+        val r = kotlin.math.round(v * 100.0) / 100.0
+        return if (r == kotlin.math.floor(r)) r.toLong().toString() else r.toString()
+    }
+
+    /**
+     * One cut corner on one face: where the previous leg's face ends, where the next one's begins, and the
+     * piece between them (null for a mitre, which is the same point twice).
+     */
+    private fun cutCorner(
+        f: ThickFaces,
+        a: Int,
+        k: Int,
+        off: Double,
+    ): Triple<Vec2, Vec2, ProfileElement?>? {
+        val b = k % f.legCount
+        val la = f.legs[a]
+        val lb = f.legs[b]
+
+        fun faceLine(l: Line) = Line(l.origin + l.dir.perp() * off, l.dir)
+        val mitre = { intersectLL(faceLine(la), faceLine(lb)).points.firstOrNull() }
+        when (val cut = f.cutAt(k)) {
+            null -> mitre()?.let { return Triple(it, it, null) }
+            is CornerCut.Round -> {
+                val cross = la.dir.cross(lb.dir)
+                if (abs(cross) <= EPS) return null
+                val turn = if (cross > 0) 1.0 else -1.0
+                if (turn * off > cut.radius + EPS) return null
+                // the rounding's own centre: where the two legs offset inward by r meet
+                val centre =
+                    intersectLL(
+                        Line(la.origin + la.dir.perp() * (turn * cut.radius), la.dir),
+                        Line(lb.origin + lb.dir.perp() * (turn * cut.radius), lb.dir),
+                    ).points.firstOrNull() ?: return null
+                val fa = project(centre, faceLine(la))
+                val fb = project(centre, faceLine(lb))
+                val radius = (fa - centre).length()
+                if (radius <= EPS) return Triple(centre, centre, null)
+                val arc = Arc(centre, radius, (fa - centre).angle(), (fb - centre).angle(), cross > 0)
+                return Triple(fa, fb, ProfileElement.ArcE(arc))
+            }
+            is CornerCut.Bevel -> {
+                val corner = intersectLL(la, lb).points.firstOrNull() ?: return null
+                val pa = corner - la.dir * cut.setback
+                val pb = corner + lb.dir * cut.setback
+                val d = pb - pa
+                if (d.length() <= EPS) return null
+                val bevel = Line(pa, d * (1.0 / d.length()))
+                val bevelFace = faceLine(bevel)
+                val fa = intersectLL(faceLine(la), bevelFace).points.firstOrNull() ?: return null
+                val fb = intersectLL(bevelFace, faceLine(lb)).points.firstOrNull() ?: return null
+                return Triple(fa, fb, if ((fb - fa).length() <= EPS) null else ProfileElement.Seg(Segment(fa, fb)))
+            }
+        }
+        return null
+    }
+
+    /** The foot of the perpendicular from [p] to [l]. */
+    private fun project(
+        p: Vec2,
+        l: Line,
+    ): Vec2 = l.origin + l.dir * (p - l.origin).dot(l.dir)
 
     /** A closed loop of segments through [pts], skipping repeated points; null if fewer than 3 remain. */
     private fun polygonLoop(pts: List<Vec2>): Loop? {

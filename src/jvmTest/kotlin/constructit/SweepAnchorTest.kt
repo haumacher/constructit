@@ -138,7 +138,9 @@ class SweepAnchorTest {
     @Test
     fun theUsersScriptLoadsWithNothingAmbiguous() {
         val doc = DocumentFormat.load(WORM_CIT)
-        assertTrue(doc.loadNotes.isEmpty(), "nothing about this file is ambiguous: ${doc.loadNotes}")
+        // its two filleted ortho corners are now the path's own corner radii (GitHub #25) and the load says
+        // so; nothing else about this file is ambiguous
+        assertTrue(doc.loadNotes.all { it.contains("rounds the corner of") }, "got: ${doc.loadNotes}")
         assertEquals("worm", doc.userNameOf(named(doc, "worm")), "the section is there under its name")
         assertEquals(ElementKind.OUTLINE, named(doc, "worm").kind, "as the closed outline it is")
         assertEquals(ElementKind.SPACE_CURVE, named(doc, "thread").kind, "and the coil is a curve in space")

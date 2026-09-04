@@ -488,7 +488,8 @@ group "g1" els=e6,e3
         assertEquals(
             // the free point's restated position carries the last bit of the polar round trip Make absolute
             // performed (x = 50 mm at 53.13°), which is arithmetic and not a leak
-            """
+            atThisVersion(
+                """
 constructit 3
 point 0,0 -> e1
 point 30.000000000000004,40 -> e2
@@ -496,6 +497,7 @@ tool makerel els=e2,e1 clicks=30,40;0,0
 tool makeabs els=e2 clicks=30,40
 tool makerel els=e2,e1 clicks=30,40;0,0 dofs=50mm;53.13010235415598deg
 """.trimStart(),
+            ),
             DocumentFormat.save(ed.doc),
             "three operations, three steps, and only the live one restates its offset",
         )

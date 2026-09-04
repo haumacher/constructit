@@ -91,12 +91,14 @@ class RatioPointTest {
         assertEquals(Vec2(50.0, 25.0), pos(mid))
         assertTrue(ed.doc.scalars.isEmpty(), "no parameter appears out of nowhere")
         assertEquals(
-            """
+            atThisVersion(
+                """
 constructit 3
 point 0,0 -> e1
 point 100,50 -> e2
 tool midpoint pts=e1,e2 clicks=0,0;100,50 -> e3
 """.trimStart(),
+            ),
             DocumentFormat.save(ed.doc),
             "the step is unchanged: a slot nobody used records nothing",
         )

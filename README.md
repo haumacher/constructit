@@ -31,7 +31,10 @@ first-class goal and the current implementation focus.
   Volume); base units mm and rad.
 - **Rich 2D tool set** — points, midpoints (or any ratio along a span), intersections, projections, perpendiculars, parallels,
   bisectors, tangents (from a point / common), fillets and chamfers (between lines, circles and arcs alike —
-  a chamfer's setback is measured *along* each leg, so on a round one it is an arc distance), circles
+  a chamfer's setback is measured *along* each leg, so on a round one it is an arc distance, and both
+  **supersede the corner**: each leg is trimmed back to where the rounding touches it, keeping its own name,
+  so what you draw, trace, extrude and thicken is the filleted corner and not an arc drawn into a sharp one),
+  circles
   (centre+point / centre+radius / 3-point / **3 tangents** — the incircle and the three
   excircles of three lines), arcs, **ellipses and elliptic arcs**, rectangles (rounded or not) and regular
   polygons, transforms (mirror / rotate / scale / translate), linear and circular **arrays**, and
@@ -157,6 +160,11 @@ first-class goal and the current implementation focus.
   editing, axis-aligned by construction, closeable loops) and parametric **walls**: a *thick path*,
   i.e. one offset region around the path (mitred corners, end caps, a ring where the path closes),
   with **openings** (doors/windows) as parametric intervals carrying position, width, sill and head.
+  A path's corner can carry a **radius** of its own: *Fillet* on two adjacent legs rounds that corner
+  rather than drawing an arc into it, and everything that reads the path reads the rounded loop — the
+  extrude, the walls (both faces, exactly), the key points, the traced boundary and the picture. The same
+  parameter on two corners keeps them equal; *Chamfer* is the same with a setback; a radius the corner
+  cannot host, or a wall too thick to follow one, says so and names what fits.
   A wall's carrier need not be rectilinear: *Thicken* takes **any connected network of curves** —
   segments, arcs, Béziers — with the side (left/right/centred) chosen per curve, and where three or
   more walls meet the footprint resolves by the cyclic order of the curves there, so a T-junction is
@@ -389,7 +397,10 @@ click in plan, unions and subtracts with the parts around it, exports to every f
 whole gesture back.
 
 **Breaking an edge of a solid — the 2D fillet, one dimension up.** *Fillet edge* and *Chamfer edge* take a
-radius (or a setback) and one click on a body near the edge you want broken; *Fillet the edges of a face* and
+radius (or a setback) and one click on a body near the edge you want broken — and that one click takes the
+whole run that carries on **smoothly** through it, so where the drawing says two of its pieces meet
+tangentially the rims over them are one band, as if you had rounded them with a rasp (the status line says how
+many edges that was; where the run meets a sharp corner it ends there). *Fillet the edges of a face* and
 *Chamfer the edges of a face* take one click **on** a face and break its whole boundary in one gesture — the
 two flat ends of an outline revolved less than a full turn, the rim of a plate, the eight pieces of a rounded
 rectangle's rim, with no crack where the boundary runs on smoothly from one piece to the next. It is the same

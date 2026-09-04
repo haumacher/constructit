@@ -52,7 +52,7 @@ class SeamMigrationProbeTest {
 
         // the migration is a fixed point from its first save, and it saves at the new version
         val v3 = DocumentFormat.save(doc)
-        assertTrue(v3.startsWith("constructit 3\n"), "…and re-saves at the version that can say what it means")
+        assertTrue(v3.startsWith("${DocumentFormat.HEADER}\n"), "…and re-saves at the version that can say what it means")
         assertEquals(v3, DocumentFormat.save(DocumentFormat.load(v3)), "a migrated file is a fixed point")
 
         // work on it, then walk the history both ways — every stop rides the same crossing

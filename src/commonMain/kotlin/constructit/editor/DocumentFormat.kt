@@ -119,7 +119,7 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 3
+    const val VERSION = 4
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
@@ -134,6 +134,22 @@ object DocumentFormat {
      * *Versioning & migration* in DESIGN.md, and `Document.migratedPierce` for the migration itself.
      */
     const val SEAM_ORDERED_VERSION = 3
+
+    /**
+     * The first version in which a **fillet or chamfer supersedes its corner** (GitHub #25, the user's own
+     * design): the legs are trimmed to the handover, and on two adjacent legs of an ortho path the rounding
+     * *is* that corner's radius, read by everything that reads the path's loop.
+     *
+     * No stored literal changed shape and none is re-read: the step is the same `tool fillet els=eA,eB`, it
+     * creates the same one element, and whether the two legs are adjacent legs of one path is a fact of the
+     * drawing rather than of the file — so the bytes are read the new way unambiguously and there is nothing
+     * to migrate. What *did* change is what such a file **means**, deliberately, because the old reading was
+     * the bug the report is about; so the version is the marker that lets a load say so once, corner by
+     * corner ([Document.loadNotes]), instead of a note that would go on firing for ever on drawings that
+     * always meant this. The one file change is a `filletedge` step's own `signs=`, which grows by the
+     * choices of the edges its run gained (GitHub #29) — scored once on that load and written down.
+     */
+    const val SUPERSEDING_FILLET_VERSION = 4
 
     const val HEADER = "constructit $VERSION"
 

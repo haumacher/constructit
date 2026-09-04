@@ -57,6 +57,7 @@ import constructit.geom.Combine3
 import constructit.geom.Conics
 import constructit.geom.Connect3
 import constructit.geom.Continuity
+import constructit.geom.CornerCut
 import constructit.geom.Curve3Element
 import constructit.geom.CurveEnd
 import constructit.geom.Curves3
@@ -1837,6 +1838,111 @@ class Construction {
         }
 
     /**
+     * The piece of the **segment** [piece] that survives a rounding: from its own end nearest [keep] to the
+     * tangency [cut] (GitHub #25, the user's design — *"the fillet tool … does not supersede [the corner]
+     * with its filleted version"*).
+     *
+     * The twin of [segmentBetween], and it exists for the one thing that trim cannot say: a trim of a
+     * boundary is stated by two cut points anywhere on the carrier, while a **leg** is trimmed *back from its
+     * own corner* and therefore has an amount of itself to give. So the cut point is required to lie on the
+     * piece, between the end that is kept and the end the corner was at, and a rounding that overruns is
+     * **invalid with the reason and the number that would fit** (OP-3) rather than a leg quietly turned round
+     * the other way. The two corners of one leg compose: trim the far end first and this one is trimmed off
+     * what is left, so *"longer than either adjacent leg allows, counting the neighbouring corner's own
+     * radius"* needs no arithmetic about the neighbour — the neighbour has already taken its share.
+     *
+     * [keep] and [cut] are **projected** onto the carrier, for [segmentBetween]'s own reason: a cut point is
+     * constructed *from* the leg (a tangency is a projection of the rounding's centre), so exact incidence is
+     * unattainable in floating point and projecting keeps the trim well defined as the parameters move.
+     */
+    fun trimmedLeg(
+        piece: SegmentRef,
+        keep: PointRef,
+        cut: PointRef,
+    ): SegmentRef =
+        op(piece, keep, cut) {
+            val seg = (it[0] as SegmentValue).seg
+            val d = seg.b - seg.a
+            val len = d.length()
+            if (len < Vec2.EPS) return@op EvalResult.Invalid("this leg has no length to round")
+            val dir = d * (1.0 / len)
+            val keepAtA = (pt(it[1]) - seg.a).length() <= (pt(it[1]) - seg.b).length()
+            val from = if (keepAtA) seg.a else seg.b
+            val along = if (keepAtA) dir else dir * -1.0
+            val t = (pt(it[2]) - from).dot(along)
+            if (t < Vec2.EPS) {
+                // the handover has passed the end that is kept: the rounding wants more of the leg than the
+                // leg has, and how much it has *is* the largest rounding it can host
+                EvalResult.Invalid(
+                    "the rounding overruns this leg: it reaches ${fmtMm(len - t)} back from the corner and the leg " +
+                        "is only ${fmtMm(len)} long, so the largest that fits here is ${fmtMm(len)} from the corner",
+                )
+            } else if (t > len + Vec2.EPS) {
+                EvalResult.Invalid(
+                    "the rounding's handover lies ${fmtMm(t - len)} past this leg's far end, so none of the leg is " +
+                        "left between them",
+                )
+            } else {
+                EvalResult.Ok(SegmentValue(Segment(from, from + along * t)))
+            }
+        }
+
+    /**
+     * [trimmedLeg]'s round twin: the piece of the **arc** [piece] from its own end nearest [keep] to the
+     * tangency [cut], measured as the arc's own sweep so a rounding that overruns says so in the same words.
+     *
+     * The cut point is projected radially onto the carrier circle, exactly as [arcBetween] projects its own.
+     */
+    fun trimmedArcLeg(
+        piece: ArcRef,
+        keep: PointRef,
+        cut: PointRef,
+    ): ArcRef =
+        op(piece, keep, cut) {
+            val arc = (it[0] as ArcValue).arc
+            val sweep = GeomMath.sweep(arc)
+            if (abs(sweep) < Vec2.EPS) return@op EvalResult.Invalid("this leg has no length to round")
+            val start = GeomMath.arcStart(arc)
+            val keepAtStart = (pt(it[1]) - start).length() <= (pt(it[1]) - GeomMath.arcEnd(arc)).length()
+            val from = if (keepAtStart) arc.startAngle else arc.endAngle
+            val ccw = if (keepAtStart) arc.ccw else !arc.ccw
+            val d = pt(it[2]) - arc.center
+            if (d.length() < Vec2.EPS) return@op EvalResult.Invalid("the rounding's tangency is at this leg's own centre")
+            val turn = if (ccw) norm2pi(d.angle() - from) else norm2pi(from - d.angle())
+            val room = abs(sweep)
+            val reach = turn * arc.radius
+            val left = room * arc.radius
+            if (turn < Vec2.EPS) {
+                EvalResult.Invalid(
+                    "the rounding overruns this leg: it reaches ${fmtMm(left - reach)} back from the corner and the " +
+                        "leg is only ${fmtMm(left)} long, so the largest that fits here is ${fmtMm(left)} from the corner",
+                )
+            } else if (turn > room + Vec2.EPS) {
+                EvalResult.Invalid(
+                    "the rounding's handover lies ${fmtMm(reach - left)} past this leg's far end, so none of the leg " +
+                        "is left between them",
+                )
+            } else {
+                EvalResult.Ok(ArcValue(Arc(arc.center, arc.radius, from, if (ccw) from + turn else from - turn, ccw)))
+            }
+        }
+
+    /** An angle in `[0, 2π)` — the turn from one bearing to another, one way round. */
+    private fun norm2pi(a: Double): Double {
+        val twoPi = 2.0 * kotlin.math.PI
+        var r = a % twoPi
+        if (r < 0) r += twoPi
+        return r
+    }
+
+    /** A length in a refusal's own words: millimetres, at most two decimals and never a trailing zero. */
+    private fun fmtMm(v: Double): String {
+        val r = kotlin.math.round(v * 100.0) / 100.0
+        val text = if (r == kotlin.math.floor(r)) r.toLong().toString() else r.toString()
+        return "$text mm"
+    }
+
+    /**
      * Chain [parts] (segments, arcs, or a single whole circle) into a closed loop, normalised to
      * counter-clockwise (OP-14).
      *
@@ -1933,15 +2039,54 @@ class Construction {
         thickness: ScalarRef,
         closed: Boolean,
         justification: Justification,
+        /**
+         * Each carrier point's **corner radius** and **bevel setback**, one entry per vertex (GitHub #25) —
+         * an ortho path's own corner cuts, so *"both faces of a wall follow the rounded corner"*.
+         *
+         * Inputs from the moment the wall is built, and zero until a *Fillet* or a *Chamfer* binds one
+         * (`OrthoVertex.round`): that is what lets a corner rounded **after** the wall was thickened be
+         * followed with nothing rewired (OP-5), while a wall over a carrier with no cuts is the mitred wall
+         * it always was, down to the arithmetic ([GeomMath.thickRegion]).
+         */
+        rounds: List<ScalarRef> = emptyList(),
+        bevels: List<ScalarRef> = emptyList(),
     ): RegionRef =
-        op(*(vertices + thickness).toTypedArray()) { args ->
-            val pts = args.dropLast(1).map { (it as PointValue).p }
+        op(*(vertices + rounds + bevels + thickness).toTypedArray()) { args ->
+            val n = vertices.size
+            val pts = args.take(n).map { (it as PointValue).p }
             val t = (args.last() as ScalarValue).q.mm
-            val (faces, why) = GeomMath.thickFaces(pts, closed, justification.offsets(t))
+            val cuts = cornerCuts(args, n, rounds.size, bevels.size)
+            val (faces, why) = GeomMath.thickFaces(pts, closed, justification.offsets(t), cuts)
             if (faces == null) return@op EvalResult.Invalid(why ?: "no footprint")
             val (region, reason) = GeomMath.thickRegion(faces)
             if (region == null) EvalResult.Invalid(reason ?: "no footprint") else EvalResult.Ok(RegionValue(region))
         }
+
+    /**
+     * The corner cuts a thick footprint's arguments carry: a positive radius rounds, a positive setback
+     * bevels, and zero is the mitred corner every wall had before there were any (GitHub #25).
+     *
+     * A rounding wins over a bevel where both are somehow set, because only one of the two is ever bound and
+     * a file that carried both would be one that had been hand-edited — the drawing's own answer then is the
+     * corner piece the path holds, which is the rounding.
+     */
+    private fun cornerCuts(
+        args: List<Value>,
+        vertices: Int,
+        rounds: Int,
+        bevels: Int,
+    ): List<CornerCut?> {
+        if (rounds == 0 && bevels == 0) return emptyList()
+        return (0 until vertices).map { i ->
+            val r = (args.getOrNull(vertices + i) as? ScalarValue)?.q?.mm ?: 0.0
+            val d = (args.getOrNull(vertices + rounds + i) as? ScalarValue)?.q?.mm ?: 0.0
+            when {
+                r > Vec2.EPS -> CornerCut.Round(r)
+                d > Vec2.EPS -> CornerCut.Bevel(d)
+                else -> null
+            }
+        }
+    }
 
     /**
      * The footprint of a **thick network** (the OP-21 extension): the offset region of [thickness] around a
@@ -3294,6 +3439,17 @@ class Construction {
         whole: Boolean,
         address: Int,
         choices: List<BlendChoice>,
+        /**
+         * The **tangent-continuous run** the picked address stands for, resolved by the editor from the 2D
+         * joint registry (GitHub #29) — empty for the plain reading, one edge per address.
+         *
+         * Structure at build time (OP-21), and that is the whole reason it is an argument rather than a
+         * lookup inside `compute`: *which* edges a pick names is decided when the step runs — by the
+         * registry, which a replay rebuilds exactly — so the number of wedges swept can never move with the
+         * numbers. Nothing about it is stored: the step still records the picked edge index in `signs=`, and
+         * a replay resolves the run again from the drawing it just rebuilt.
+         */
+        run: List<Int> = emptyList(),
     ): SolidRef {
         // structure at build time (OP-21): whether this blend chains onto an earlier one is a fact about the
         // *graph*, so it decides the arity here rather than being read off a value inside compute
@@ -3304,7 +3460,9 @@ class Construction {
             openShellOf(tip)?.let { why -> return@op EvalResult.Invalid(why) }
             val plane = (it[if (chained) 2 else 1] as PlaneValue).plane
             val r = sc(it[if (chained) 3 else 2]).requireDim(Dimension.LENGTH, "${kind.word} ${kind.sizeWord}").mm
-            val (targets, whyTargets) = Blend3.targets(body.feature, whole, address)
+            val (resolved, whyTargets) =
+                if (!whole && run.isNotEmpty()) run to null else Blend3.targets(body.feature, whole, address)
+            val targets = resolved
             if (targets == null) return@op EvalResult.Invalid(whyTargets ?: "this solid has no edge to blend there")
             val (out, why) = Blend3.blended(body, tip, targets, r, kind, choices)
             if (out == null) return@op EvalResult.Invalid(why ?: "cannot blend that edge")

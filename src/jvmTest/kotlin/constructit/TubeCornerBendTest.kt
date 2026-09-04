@@ -203,7 +203,7 @@ attach e9 e19
         val again = DocumentFormat.load(once)
         assertEquals(refusalOf(doc), refusalOf(again), "the reloaded drawing refuses in the same words")
         assertEquals(once, DocumentFormat.save(again), "…and writes itself back byte for byte, attachment and all")
-        val moved = script.lines().zip(once.lines()).filter { it.first != it.second }
+        val moved = atThisVersion(script).lines().zip(once.lines()).filter { it.first != it.second }
         assertEquals(
             listOf("attach e9 e19", "point 12.442618571818494,22.357698716930418 -> e9"),
             moved.map { it.first }.sortedBy { it.first() },

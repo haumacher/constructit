@@ -150,7 +150,8 @@ tool segment pts=e10,e11 clicks=-38.25,-16.5;19.5,-13.75 -> e12
         }
         // and the segment between them is still a segment between two points *on* the host
         assertTrue(withinExtent(pos(r1), pos(a), pos(b)))
-        assertEquals(2, inner.ref.node.inputs.size)
+        // through the view a trimmable curve publishes (GitHub #25): two points, still
+        assertEquals(2, geometryNodeOf(inner).inputs.size)
     }
 
     /** Dragging back to where the gesture started restores every rider exactly — the reference is the grab. */

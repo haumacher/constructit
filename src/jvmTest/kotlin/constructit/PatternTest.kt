@@ -164,8 +164,10 @@ class PatternTest {
         val sides = segments(ed.doc)
         for (j in 0 until 6) {
             val shared = p.ring.members[(j + 1) % 6].ref.node
-            assertTrue(sides[j].ref.node.inputs.any { it === shared }, "side $j must end on the shared member node")
-            assertTrue(sides[(j + 1) % 6].ref.node.inputs.any { it === shared }, "side ${j + 1} must start on it")
+            // a segment publishes its geometry through the re-pointable view a fillet trims it behind
+            // (GitHub #25), so the node its endpoints feed is the one that view names
+            assertTrue(geometryNodeOf(sides[j]).inputs.any { it === shared }, "side $j must end on the shared member node")
+            assertTrue(geometryNodeOf(sides[(j + 1) % 6]).inputs.any { it === shared }, "side ${j + 1} must start on it")
         }
         // and moving the reference member moves both sides that meet there, with nothing recomputed twice
         ed.setTool(Tools.SELECT)

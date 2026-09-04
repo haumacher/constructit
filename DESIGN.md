@@ -1002,6 +1002,142 @@ line–line chamfer storing exactly what it always did, the function-curve leg a
 by name, the preview equal to the build, and the bevel's ends registered as joints on both legs. Plus
 `EdgeBlendTest.aChamferAcrossACurvedLegTakesTheBevel` for the inheritance.
 
+#### A fillet supersedes the corner (GitHub #25 and #29, session 79 — the user's design)
+
+**The report, and the diagnosis in the reporter's own words.** *"Extruding a filleted ortho-path creates an
+un-filleted 3D object … The problem is most likely that the fillet tool only creates the fillet arc, but does
+not supersede it with its filleted version."* Their base case is the same thing without the path: two segments
+over a shared corner, filleted, *"since only this one results in a 'filleted' corner — instead of a fillet
+drawn into the corner"* — where "this one" is the six extra steps they had to make by hand (the arc's key
+points, two fresh segments onto them, three `hide`s).
+
+**The fix, in one sentence: the rounding takes the corner off its legs, in the step that makes it.** Three
+things carry it, and none of them is new machinery:
+
+- **The leg is trimmed *in place*, behind a re-pointable view.** Every trimmable curve — a segment, an arc —
+  publishes its geometry through an `IndirectNode` (`Document.publishedRef`), and the trim is *bound onto*
+  that view (`Construction.trimmedLeg` / `trimmedArcLeg`). This is OP-16's ortho vertex read one dimension
+  over: `e3` goes on being `e3`, now ending at the tangency, so **everything built on it follows the trimmed
+  leg** — an outline, a dimension, a wall, a rider — with nothing rewired, which is OP-5's rule and the whole
+  reason a view exists rather than a new element. The corner point stays, drawn as construction (OP-14's
+  third column) and still draggable: dragging it moves both legs and the rounding follows by construction.
+- **Trimming moves the piece, never the carrier.** `Document.carrierLine` / `carrierCircle` read the curve as
+  it was *built* (`builtRef`), which is what makes the fillet's own construction acyclic — the rounding is
+  tangent to the carriers, and the trim it then binds is derived from the rounding — and is also the honest
+  reading: a segment's line and an arc's circle are the same before and after a trim. So a rider on a leg, an
+  intersection with it, a parallel at a distance from it and a second fillet against it are all untouched;
+  what follows the trim is what took the *piece*. A leg between two rounded corners is trimmed at **both**
+  ends, by composition (`trimmedLeg` over the previous trim), so *"longer than either adjacent leg allows,
+  counting the neighbouring corner's own radius"* needs no arithmetic about the neighbour: the neighbour has
+  already taken its share.
+- **A leg is trimmed exactly when the handover lands on it.** That is the rule and not a shortcut. A rounding
+  is tangent to each leg's *carrier*, and a carrier reaches beyond the drawn piece — a line–circle fillet
+  whose tangency falls outside an arc's sweep is a construction this drawing has always allowed
+  (`ArcCarrierTest`), and the reporter's own wheel (the `FormatVersionTest` fixture) has four fillets whose
+  tangencies fall *past* their legs' ends, which is exactly why they then rebuilt the boundary from key
+  points. Trimming those would have deleted geometry from a stored drawing. Where the handover *is* on the
+  piece, the corner is the one being rounded and the piece owes it that material; where it is not, nothing is
+  taken and the drawing is what it always was. A radius grown past the leg **afterwards** is then ordinary
+  invalidity with the number that fits — *"the rounding overruns this leg: it reaches 70 mm back from the
+  corner and the leg is only 40 mm long, so the largest that fits here is 40 mm from the corner"* — and it
+  heals (OP-3). Re-deciding *whether* to trim on every recompute was rejected outright: it would make the
+  drawing's structure a function of its values (OP-21).
+
+**A path's leg is the path's own to round.** A retained path publishes its boundary as an *ordered chain*, so
+a corner piece can only be **in** that chain if the path records it — which means a rounding that is not two
+adjacent legs of one path may take nothing off a leg that belongs to one, or the loop would be left with a gap
+no piece fills. Two legs of *different* paths meeting at a junction, two legs of one path that are not
+neighbours, a path's leg against a plain segment: each stays the rounding against the carriers it has always
+been, and both loops stay closed. That is the same rule as the one above read on the *path* rather than on the
+piece, and it is asserted (`aRoundingAcrossTwoPathsLeavesBothLoopsWhole`).
+
+**On an ortho path the same rounding *is* that corner's radius.** A fillet on two adjacent legs of one path
+names one of its vertices (`Document.orthoCornerBetween`), and the path records the corner piece there
+(`OrthoPath.corners`) — so the loop the path publishes is the rounded one (`Document.roundedPiecesOf`: every
+leg in draw order, each followed by the corner piece at the vertex it ends at). One authority, read by
+everything: the region an extrude/revolve/loft takes, the area's key points, the boundary follow, the area
+pick filter, and the picture and its hit-testing — the last two for free, because a leg *is* its trimmed self.
+The loop is published through a **view** as well (`Document.orthoLoopOf`), so an extrude made *before* a
+corner was rounded reads the rounded loop afterwards. What `eN` names is unchanged: the corner arc, a real
+element — pickable, dimensionable, key-pointable, and a piece of the boundary a click can take the area by.
+
+**Walls follow it, and follow it after the fact.** Each ortho vertex carries its corner's radius and setback
+as **nodes** from the moment it exists (`OrthoVertex.round` / `bevel`, zero until a rounding binds one), and
+the thick footprint takes them as inputs from the start — so a corner rounded after the wall was thickened is
+followed by a *binding* and never a rewiring (OP-5, CLAUDE.md's own sentence about how welding removes a
+degree of freedom). Both faces are exact: the offset of a circular arc is a circular arc about the same
+centre, radius `r − d` on the side the turn goes and `r + d` on the other, so a ring encloses
+`perimeter × thickness` whatever its carrier is made of (asserted to 1e-9 on a rounded rectangle). A wall
+whose carrier is mitred everywhere goes through the very arithmetic it always did — `GeomMath.thickRegion`
+branches on `ThickFaces.anyCut` — which is the guarantee the ortho carrier exists to keep. The one thing that
+cannot be built is named: *"the inner face of a 14 mm wall cannot follow a corner radius of 6 mm — it would
+fold inside out; the largest thickness that fits there is 12 mm"* (OP-3, heals).
+
+**Chamfer is the same sentence throughout**: the bevel is the corner piece, the legs are trimmed to its two
+ends, and on an ortho path it is that corner's own setback (exact, with no arc to chord — a bevelled prism's
+volume is a closed form). Its joints are registered as **not** tangent, which is the one fact #29 turns on.
+
+**#29: a single-edge 3D pick runs along the tangent-continuous run.** *"The extruded version of segment e11
+is 3D-filleted. However, this results in an awkward result, since segment e11 is linked to a fillet in the 2D
+base construction (arc e6) … I would expect that the fillets are 'smoothly' joined together — as if I rounded
+all the edges with a rasp."* Two structural answers, and both are recorded rather than measured:
+
+- **`Joint` gained `tangent`.** A rounding meets its legs tangentially; a bevel turns a corner. The
+  construction that made the joint knows which it built, so it says so — whether two curves meet tangentially
+  is a property of *values*, so reading it off the geometry would be discovery (OP-14) and, one dimension up,
+  a construction whose number of swept edges moved with the numbers would be structure decided at eval time
+  (OP-21).
+- **A segment whose two ends both lie on a tangent leg by construction inherits that leg's tangency**
+  (`Document.inheritTangency`). This is what makes the reporter's *existing* drawing tangent-continuous on
+  record: `e10` and `e11` are fresh segments from the arc's key points to the legs' far points, and two points
+  on a leg's carrier make a segment collinear with the leg, so the rounding is as tangent to the replacement
+  as it was to the leg. What counts as *lying on* a leg is a fact the drawing states
+  (`liesOnLegByConstruction`): an end the leg was built from, a handover registered on it, or a rider
+  attached to it — the `OnCircle` registry's own argument, one curve kind over.
+
+The addressing change is one function: `Blend3.targets` with `whole = false` returns the whole run through the
+picked index (`runThrough`), given a `sameRun` predicate the editor supplies (`Document.tangentRun`). Three
+conditions decide it, each for a reason: the two edges lie **on one known plane, the same one** — that is
+where a drawing's tangency lives, and it is what keeps the *upright* at a tangency out of the run — they
+**share a face**, so the run walks a boundary rather than jumping across the body, and the vertex they meet at
+is a **recorded tangent handover** of the drawing. Hidden pieces are skipped exactly as the boundary follow
+skips them, so a superseded leg cannot lend its tangency to the rim over the segment that replaced it; the
+replacement has to have inherited it. The relation is on record and the *position* is only how the vertex is
+looked up, which is `sharedEndBetween`'s own rule and for its own reason (one side of the comparison is a
+corner of a feature's own edge list, so there is no node to share). The resolved run is passed to
+`Construction.blend` as `run =` — structure at build time (OP-21), never a lookup inside `compute` — and
+**nothing is stored**: the step still records the picked edge index in `signs=`, and a replay resolves the run
+again from the drawing it has just rebuilt. The status line names the count, as the chain's already does
+(*"(3 edges)"*).
+
+**The format: the fourth version, and no migration.** Nothing a file stores changed shape and nothing is
+re-read — the same `tool fillet els=eA,eB` step creates the same one element, and whether its two legs are
+adjacent legs of one path is a fact of the *drawing* rather than of the file, so the bytes are read the new
+way unambiguously. What changed is what such a file **means**, deliberately, because the old reading was the
+bug the report is about. The version (`DocumentFormat.SUPERSEDING_FILLET_VERSION`) is therefore a marker
+rather than a migration: it lets a load say what it did **once**, corner by corner (`loadNotes`), instead of a
+note that would go on firing for ever on drawings that always meant this. A migration was rejected on its own
+terms — its job is to reproduce the geometry the old writer meant, and the geometry the old writer meant is
+the defect. The one file change is a `filletedge` step's own `signs=`, which grows by four integers per edge
+its run gained: those edges have no recorded choice, so they are scored once on that load, the load says so,
+and the picked edge's own choice is taken **verbatim** rather than re-decided (OP-18).
+
+Regressions: `FilletSupersedesCornerTest` (16) — both of the reporter's #25 scripts verbatim, the extruded
+loop with no vertex left standing on either filleted corner and the signed closed form for its volume (the L's
+notch corner is *reflex*, so its sliver is gained where the convex one's is lost and this shape's rounded
+volume is its polygon's — which is why the strict number is asserted on a rounded rectangle, all four corners
+convex, exact on the loop to 1e-9 and to the tessellation's own band on the mesh); the trimmed legs equal to
+the hand-built segments the reporter had to draw; the corner point still draggable with the tangency exact to
+1e-9 after the drag; the tangencies as key points; the radius retyped on two corners at once; a radius that
+does not fit, by its words, and healing; a shallow corner's legs left whole; a leg trimmed at both ends; the
+traced outline closing in two clicks with the corner's own sliver off its area, exactly; the wall's two faces
+rounded at `r ± t/2` with the ring's area exact, the too-thick wall refused by name, and both healing; and the
+chamfer twins for the ortho corner (an exact volume, no chords) and for plain legs. `BlendRunTangencyTest` (5)
+— the reporter's #29 script verbatim taking three edges in one pick, the three edges shown to be one run of
+one face, the inherited tangency on record for both fresh segments, the band watertight and its joints shared
+rather than seamed, the load's own note and the file a fixed point from its first save, and an edge with no
+tangent neighbour still taking exactly one.
+
 #### On a circle *by construction* — the tangent's own slot (GitHub #19, session 72)
 
 **The report.** Draw a circle from two points, then *Tangent at point* on the point that gives it its radius:
@@ -1834,7 +1970,7 @@ members are all gone leaves no step at all.
 
 #### Versioning & migration — a stored literal's meaning is frozen (as built, on a data-loss report)
 
-The header is `constructit <version>`; this build writes **3** and reads **1, 2 and 3**. A file that claims a
+The header is `constructit <version>`; this build writes **4** and reads **1, 2, 3 and 4**. A file that claims a
 higher version is refused as *written by a newer version*, which is a fact the user can act on, where the old
 whole-line comparison could only say "unsupported format".
 
@@ -1893,6 +2029,7 @@ it:
 | `tool sweep signs=` again — **a closed run's seam counts among the crossings** (OP-26, session 66) | **v2 → v3, the format's second bump.** `Pierce3.crossings` could not see a change of side across a closed run's own start, so a ring whose seam lies exactly in the section's plane reported one crossing where it has two. Correcting the walk inserts that crossing at index **0** (its arc length is nothing), so every index a v2 file recorded on such a drawing now names the crossing one place further along | **the recorded index is shifted on load by exactly the crossing that was inserted in front of it** — one where the run crosses at its seam right now (`Pierce3.crossesAtSeam`), nothing otherwise (`Document.migratedPierce`). The migration is *exact*, which is the whole reason it is one: the new set is the old set with at most one crossing put in front, so what a v2 reader would have shown for this file at this load is `all[k]` of the seam-blind walk and the very same crossing is `all[k + δ]` of this one. A **negative** index is the origin reading and is never shifted; an index that had already outrun its set stays out of it, refusing in the words it always used. Where the run or the plane has **no value** the shift cannot be measured, so the number is kept exactly as written and the load **names the element** (`loadNotes`) |
 | `tool tube law=` / `tool sweep law=` — **a section that changes size along its run** (OP-26's item 3, session 77) | a new *optional* argument on two steps that already existed: one expression over the run parameter `t`, stored **verbatim** and quoted so it may breathe (`splitWords` reads a quoted argument already — the expression half's own doing). A tube reads it as `r(t)`, a length that supersedes the typed radius; a sweep reads it as `scale(t)`, a plain factor about the point the section rides on | none, and **no version bump**, by the `tool sweep signs=` row's own argument read once more. What matters is the **absence**: a step with no `law=` is a section of one size, which is what every file written before this reading existed carries and keeps for ever — and it is asserted character for character (`SweepLawToolTest`), not argued. A law that reads no `t` is additionally asserted to build the constant body **vertex for vertex**, so the frozen reading covers the degenerate case too. No migration is possible or needed, since nothing a file ever stored changes meaning. A `law=` on a step whose tool carries none (`ToolDef.carriesLaw`, declared by exactly those two) is refused **at load** rather than dropped, because a file that says *tapered* and builds *straight* is the one thing a load may not do |
 | `tool loftruled` / `tool loftfair`, and `match=` on either — **the loft over drawn sections** (OP-26's hull route, session 78) | **two new tool ids** plus one new *optional* argument on those two steps and on nothing else: the matched curves in pairs, by the script names the naming authority already gives every element (`match=e6,e17`). The row a gesture used is what says ruled from faired, so the geometry between the sections needs no argument at all | none, and **no version bump**, by the `tool lift` row's own argument: a new tool id is the format's ordinary extension point, and `match=` is an argument that never existed before, so it cannot have meant something else. What matters is the **absence** — a step with no `match=` pairs its sections by traversal order, which is what every file written from now on without a Match means and will go on meaning. A `match=` on a step whose tool carries none (`ToolDef.carriesMatches`, declared by exactly these two rows) is refused **at load** rather than dropped, for the `law=` row's reason: a file that says *matched* and builds *unmatched* is the one thing a load may not do. The pairs are **element references**, so they travel through the name map and the delete cascade like every other reference — a renamed curve keeps its pair and a deleted one takes the skin with it |
+| `tool fillet` / `tool chamfer` on **two adjacent legs of one ortho path**, and `tool filletedge` / `tool chamferedge` `signs=` — **a fillet supersedes the corner** (GitHub #25, #29, session 79) | **v3 → v4, the format's third bump — a marker, not a migration.** No argument changed, no literal is re-read, and no step creates a different number of elements: the fillet still names its two legs and still declares its one arc. What changed is what the same bytes **mean** — the arc is now that corner's own radius, the legs are trimmed to the handover, and everything that reads the path's loop reads the rounded one — which is precisely the defect the report is about, so the old geometry is the one thing a migration may not reproduce | **none, deliberately.** The bump exists so that a load can name each corner it now rounds **once** (`Document.loadNotes`) rather than for ever: the reading is unambiguous, so a v4 file needs no note and gets none. A v1–v3 file changes meaning on load and says so, corner by corner. The **one** file change is a `filletedge` step's own `signs=`: a pick that used to name one edge now names the tangent-continuous run through it, and the run's other edges carry no recorded choice — so they are scored once on that load and written down, while the picked edge's own four integers are taken **verbatim** rather than re-decided (OP-18's own rule). Everything else about such a file is byte-identical, header apart |
 | `tool sweep laws=` — **a section that is a family of sections** (OP-26's wing route, session 79) | one further *optional* argument on the sweep step and on **nothing** else: semicolon-separated `name = expression` pairs over the run parameter `t`, quoted (the comma is taken by two-argument functions, so it cannot be the separator) — `laws="chord = 200mm * (1 - 0.6*t); twist = 15deg * t"`. Each pair drives one **free named scalar the section's own drawing reads**, or the reserved name `twist`, which is the run's own turn. The **expression** is verbatim as the user typed it and the pair structure is normalized (`name = expr`, joined by `; `), because the entry medium is one row per driven name and the joining punctuation is never the user's text | none, and **no version bump**, by the `law=` row's own argument: `laws=` is an argument that never existed, so no stored literal can change meaning, and what matters is the **absence** — a step with no `laws=` reads its section once, as it is drawn, which is what every file written before this carries and keeps for ever (asserted character for character, and a law that reads no `t` additionally asserted to build the constant body vertex for vertex). A `laws=` on a step whose tool declares no `ToolDef.carriesLaws` (the sweep alone; a *tube* declares `carriesLaw` and not this) is refused **at load**, for the `law=` row's reason. Re-stamping is **two-sided**: the driven name on the left of each `=` and the names inside each text are both references to scalar rows, so a rename rewrites both and the delete cascade follows both — a deleted driven parameter takes the body and leaves a loadable file. A driven name the drawing carries **nothing** for (a hand-edited file) is neither a load error nor a silent drop: the law is kept verbatim, the body is **invalid** with a reason naming the name, and the load names the element in its notes |
 | `sketchspace el= piece=` on a **revolution** — a turned part's flat faces, and a partial turn's caps (OP-17's item 4 of the sphere queue, session 69) | **no new argument and no new spelling**: the same two arguments the face variant has always carried, over the same address space (`Geom3.boundaryPieces`), now answered for a feature kind that used to refuse them. A revolution's face indices `0 until n` are its profile's own boundary pieces and `n` / `n + 1` its low- and high-angle caps | none, and **no version bump**, and this one is airtight rather than argued: before this build `createFaceSpace` on a revolve **always** returned null (`Geom3.sideFace` → *"this solid is not a prism"*), and the loader threw `LoadError` on such a step — so no build could ever write one and no file can contain one. A `piece=` that names a face a *later* edit turned curved refuses in the words of the surface it became (a cylinder, a cone, a torus) and heals when it flattens again, which is OP-3 and not a format question |
 
@@ -14962,6 +15099,17 @@ Then 3D walls = extrude + boolean.
   proof of concept — the first 3D slices are mechanical parts, because a wall exercises only the
   degenerate half of the seam.
 
+> **A rounded corner reaches the ortho wall too (GitHub #25, session 79).** A *Fillet* on two adjacent legs
+> of an ortho path is that corner's own radius, and **both faces of a wall over that path follow it** —
+> exactly, since the offset of a circular arc is a circular arc about the same centre. Each vertex carries
+> its corner's radius and setback as nodes from the moment it exists (`OrthoVertex.round` / `bevel`, zero
+> until a rounding binds one) and the thick footprint takes them as inputs from the start, so a corner
+> rounded *after* the wall was thickened is followed by a binding rather than a rewiring (OP-5). A carrier
+> with no cut corners goes through the very arithmetic it always did (`ThickFaces.anyCut`), which is the
+> guarantee this section's ortho case exists to keep; a thickness the corner cannot host refuses by name
+> with the thickest wall that fits, and heals. The whole package is under OP-1, *A fillet supersedes the
+> corner*.
+
 ### Walls over arbitrary curve networks (the OP-21 extension — RESOLVED)
 
 The user's sentence is the whole specification, and it is a better one than the queue line it replaced:
@@ -16815,6 +16963,16 @@ checked rather than assumed: `EdgeBlendToolTest.aTangentContinuousRimBlendsAsOne
 all eight pieces of an extruded rounded rectangle's rim in one click and checks the **volume** against the
 closed form — the wedge's area times each straight run, plus Pappus' `A·2π·(R − ū)` over the four corner
 quarters — because watertightness alone would notice neither a gap nor a double count at the eight joins.
+
+> **Amended in session 79 (GitHub #29): the rule stands, and the *address* changed.** A chain is still one
+> sweep per edge — that is what the paragraph above argues and it is untouched — but a **single pick** no
+> longer means a single edge: it names the whole run of edges that are tangent-continuous *on record*
+> through the one it hit, so the rim over a trimmed leg, the rim over the fillet arc between it and its
+> neighbour, and the rim over that neighbour are one ribbon ("as if I rounded all the edges with a rasp").
+> On record is the load-bearing word: `Joint.tangent` says which handovers a construction *stated* to be
+> smooth, so the number of wedges is still structure decided at build time (OP-21) and a replay resolves the
+> same run from the drawing it has just rebuilt. `Blend3.targets` grew one optional predicate for it and the
+> stored address is unchanged. See *A fillet supersedes the corner* under OP-1 for the whole package.
 
 **Blends chain rather than fork — two walks, two questions, and they are not the same question.** A blend's
 result is a mesh boolean and names no edges of its own, so `Construction.blend(applyTo, base, …)` takes two

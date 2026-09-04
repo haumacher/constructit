@@ -67,16 +67,20 @@ object Dependencies {
         el: Element,
     ): List<Element> {
         val owner = HashMap<String, Element>()
-        for (e in doc.elements) owner.getOrPut(e.ref.node.id) { e }
+        // an element publishes its geometry through **three** nodes at most — the re-pointable view, the
+        // curve it was built as, the trim bound onto it (GitHub #25) — and all three are that element, so a
+        // walk that reached the built curve of a trimmed leg would otherwise carry on past it to its points
+        for (e in doc.elements) for (n in doc.publishedNodes(e)) owner.getOrPut(n.id) { e }
         val out = ArrayList<Element>()
         val seen = HashSet<String>()
         val self = el.ref.node
+        val own = doc.publishedNodes(el).mapTo(HashSet()) { it.id }
 
         fun walk(n: Node) {
             for (input in n.inputs) {
                 if (!seen.add(input.id)) continue
                 val e = owner[input.id]
-                if (e != null && e !== el && input !== self) {
+                if (e != null && e !== el && input !== self && input.id !in own) {
                     if (out.none { it === e }) out.add(e)
                 } else {
                     walk(input)
