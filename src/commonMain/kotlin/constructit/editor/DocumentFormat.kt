@@ -457,12 +457,26 @@ object DocumentFormat {
                 // the gesture would have.
                 val lawNow = doc.sweepLawBinding(step)?.text
                 val stated = step.args.any { it is Arg.Keyed && it.key == "law" }
-                val args =
+                val args0 =
                     when {
                         lawNow == null && !stated -> step.args
                         lawNow == null -> step.args.filterNot { it is Arg.Keyed && it.key == "law" }
                         stated -> step.args.map { if (it is Arg.Keyed && it.key == "law") Arg.Keyed("law", Arg.Label(lawNow)) else it }
                         else -> step.args + Arg.Keyed("law", Arg.Label(lawNow))
+                    }
+                // …and a **function-family section's own laws** (OP-26, session 79), by the identical rule one
+                // tier up: the binding is the sole authority for the texts, so a rename re-stamps **both**
+                // sides of every `=` here, a re-stated row is an edit of this very step, and a binding that
+                // has gone takes the argument with it. Semicolon-separated, quoted — the comma is taken by
+                // two-argument functions, so it cannot be the separator.
+                val lawsNow = doc.sweepFamilyBinding(step)?.stated
+                val hadLaws = step.args.any { it is Arg.Keyed && it.key == "laws" }
+                val args =
+                    when {
+                        lawsNow == null && !hadLaws -> args0
+                        lawsNow == null -> args0.filterNot { it is Arg.Keyed && it.key == "laws" }
+                        hadLaws -> args0.map { if (it is Arg.Keyed && it.key == "laws") Arg.Keyed("laws", Arg.Label(lawsNow)) else it }
+                        else -> args0 + Arg.Keyed("laws", Arg.Label(lawsNow))
                     }
                 // …and a **skin's stated correspondence**, written as the matched curves' own script names
                 // and read from the same kind of registry for the same two reasons (session 78): a *Match* is
@@ -1466,6 +1480,7 @@ object DocumentFormat {
         var scalars = emptyList<ScalarEntry>()
         var count = 0
         var law: String? = null
+        var laws: String? = null
         var matches = emptyList<Element>()
         // **A traced boundary is re-followed when a re-stamp changes how many pieces it has** (OP-23).
         // The tracer's follow is edit-time bookkeeping (OP-14/OP-18): the file keeps the whole ordered
@@ -1512,6 +1527,9 @@ object DocumentFormat {
                 "count" -> count = v.toIntOrNull() ?: throw LoadError("malformed count '$v'")
                 // a **variable section's size law**, verbatim — the text is the record (OP-26, session 77)
                 "law" -> law = unquote(v)
+                // …and a **function-family section's laws**, verbatim: `name = formula` pairs separated by
+                // semicolons, since the comma is taken by two-argument functions (OP-26, session 79)
+                "laws" -> laws = unquote(v)
                 // a **skin's stated correspondence** (session 78): the matched curves in pairs, by name, so a
                 // replay re-discovers nothing at all — the pairing is the file's and never the geometry's
                 "match" ->
@@ -1527,11 +1545,16 @@ object DocumentFormat {
         if (law != null && !tool.carriesLaw) {
             throw LoadError("${tool.id} carries no size law over the run, and this step states law=\"$law\"")
         }
+        // …and family laws by the same rule, for the same reason: a step that says its section varies and
+        // builds a constant one is the one thing a load may not do (OP-26, session 79).
+        if (laws != null && !tool.carriesLaws) {
+            throw LoadError("${tool.id} reads no section per station, and this step states laws=\"$laws\"")
+        }
         val at = clicks.lastOrNull() ?: Vec2(0.0, 0.0)
         if (matches.isNotEmpty() && !tool.carriesMatches) {
             throw LoadError("${tool.id} states no correspondence between sections, and this step carries match=")
         }
-        val picks = Picks(points, elements, at, clicks, dofs, count, signs, law = law, matches = matches)
+        val picks = Picks(points, elements, at, clicks, dofs, count, signs, law = law, laws = laws, matches = matches)
         // replay through the same recorder the click used, so the reloaded document can be saved again
         doc.runTool(tool, picks, scalars)
     }

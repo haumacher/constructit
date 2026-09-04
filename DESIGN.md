@@ -1893,6 +1893,7 @@ it:
 | `tool sweep signs=` again — **a closed run's seam counts among the crossings** (OP-26, session 66) | **v2 → v3, the format's second bump.** `Pierce3.crossings` could not see a change of side across a closed run's own start, so a ring whose seam lies exactly in the section's plane reported one crossing where it has two. Correcting the walk inserts that crossing at index **0** (its arc length is nothing), so every index a v2 file recorded on such a drawing now names the crossing one place further along | **the recorded index is shifted on load by exactly the crossing that was inserted in front of it** — one where the run crosses at its seam right now (`Pierce3.crossesAtSeam`), nothing otherwise (`Document.migratedPierce`). The migration is *exact*, which is the whole reason it is one: the new set is the old set with at most one crossing put in front, so what a v2 reader would have shown for this file at this load is `all[k]` of the seam-blind walk and the very same crossing is `all[k + δ]` of this one. A **negative** index is the origin reading and is never shifted; an index that had already outrun its set stays out of it, refusing in the words it always used. Where the run or the plane has **no value** the shift cannot be measured, so the number is kept exactly as written and the load **names the element** (`loadNotes`) |
 | `tool tube law=` / `tool sweep law=` — **a section that changes size along its run** (OP-26's item 3, session 77) | a new *optional* argument on two steps that already existed: one expression over the run parameter `t`, stored **verbatim** and quoted so it may breathe (`splitWords` reads a quoted argument already — the expression half's own doing). A tube reads it as `r(t)`, a length that supersedes the typed radius; a sweep reads it as `scale(t)`, a plain factor about the point the section rides on | none, and **no version bump**, by the `tool sweep signs=` row's own argument read once more. What matters is the **absence**: a step with no `law=` is a section of one size, which is what every file written before this reading existed carries and keeps for ever — and it is asserted character for character (`SweepLawToolTest`), not argued. A law that reads no `t` is additionally asserted to build the constant body **vertex for vertex**, so the frozen reading covers the degenerate case too. No migration is possible or needed, since nothing a file ever stored changes meaning. A `law=` on a step whose tool carries none (`ToolDef.carriesLaw`, declared by exactly those two) is refused **at load** rather than dropped, because a file that says *tapered* and builds *straight* is the one thing a load may not do |
 | `tool loftruled` / `tool loftfair`, and `match=` on either — **the loft over drawn sections** (OP-26's hull route, session 78) | **two new tool ids** plus one new *optional* argument on those two steps and on nothing else: the matched curves in pairs, by the script names the naming authority already gives every element (`match=e6,e17`). The row a gesture used is what says ruled from faired, so the geometry between the sections needs no argument at all | none, and **no version bump**, by the `tool lift` row's own argument: a new tool id is the format's ordinary extension point, and `match=` is an argument that never existed before, so it cannot have meant something else. What matters is the **absence** — a step with no `match=` pairs its sections by traversal order, which is what every file written from now on without a Match means and will go on meaning. A `match=` on a step whose tool carries none (`ToolDef.carriesMatches`, declared by exactly these two rows) is refused **at load** rather than dropped, for the `law=` row's reason: a file that says *matched* and builds *unmatched* is the one thing a load may not do. The pairs are **element references**, so they travel through the name map and the delete cascade like every other reference — a renamed curve keeps its pair and a deleted one takes the skin with it |
+| `tool sweep laws=` — **a section that is a family of sections** (OP-26's wing route, session 79) | one further *optional* argument on the sweep step and on **nothing** else: semicolon-separated `name = expression` pairs over the run parameter `t`, quoted (the comma is taken by two-argument functions, so it cannot be the separator) — `laws="chord = 200mm * (1 - 0.6*t); twist = 15deg * t"`. Each pair drives one **free named scalar the section's own drawing reads**, or the reserved name `twist`, which is the run's own turn. The **expression** is verbatim as the user typed it and the pair structure is normalized (`name = expr`, joined by `; `), because the entry medium is one row per driven name and the joining punctuation is never the user's text | none, and **no version bump**, by the `law=` row's own argument: `laws=` is an argument that never existed, so no stored literal can change meaning, and what matters is the **absence** — a step with no `laws=` reads its section once, as it is drawn, which is what every file written before this carries and keeps for ever (asserted character for character, and a law that reads no `t` additionally asserted to build the constant body vertex for vertex). A `laws=` on a step whose tool declares no `ToolDef.carriesLaws` (the sweep alone; a *tube* declares `carriesLaw` and not this) is refused **at load**, for the `law=` row's reason. Re-stamping is **two-sided**: the driven name on the left of each `=` and the names inside each text are both references to scalar rows, so a rename rewrites both and the delete cascade follows both — a deleted driven parameter takes the body and leaves a loadable file. A driven name the drawing carries **nothing** for (a hand-edited file) is neither a load error nor a silent drop: the law is kept verbatim, the body is **invalid** with a reason naming the name, and the load names the element in its notes |
 | `sketchspace el= piece=` on a **revolution** — a turned part's flat faces, and a partial turn's caps (OP-17's item 4 of the sphere queue, session 69) | **no new argument and no new spelling**: the same two arguments the face variant has always carried, over the same address space (`Geom3.boundaryPieces`), now answered for a feature kind that used to refuse them. A revolution's face indices `0 until n` are its profile's own boundary pieces and `n` / `n + 1` its low- and high-angle caps | none, and **no version bump**, and this one is airtight rather than argued: before this build `createFaceSpace` on a revolve **always** returned null (`Geom3.sideFace` → *"this solid is not a prism"*), and the loader threw `LoadError` on such a step — so no build could ever write one and no file can contain one. A `piece=` that names a face a *later* edit turned curved refuses in the words of the surface it became (a cylinder, a cone, a torus) and heals when it flattens again, which is OP-3 and not a format question |
 
 **Why a bump, and what was rejected** — the two rows above both argued their way *out* of one, so the argument
@@ -10711,6 +10712,18 @@ own space) and is recorded at the queue's tail with the other as-built notes; wh
 one line: a body may now change its **outline** along a run and not only its size, and the correspondence that
 makes that statable is the user's own design.
 
+### The function-family section — OP-26's general tier (session 79)
+
+The tier above the rigid `law=` recorded just above is answered in full by the package at the end of this
+document: **The function-family section, as built (session 79 — queue entry 2 closed)**. It belongs to OP-26
+by its inputs (one sweep step, one drawn section, one run) and is recorded at the queue's tail with the other
+as-built notes; what it adds to OP-26 proper is two lines. A swept section's **named scalars** may each be a
+formula over the run — so its *outline* varies continuously and is stated once, which is what a wing is — and
+the run's own `twist` is one of those formulas, which is what a blade's wash is. The mechanism is an
+**override map in one `Evaluator` pass** (`Node.computeSubstituted`), so the 2D drawing is re-read per station
+with no node created and no literal written: OP-5's mutation points stay the only mutation points, and
+`Feature3.Sweep` still carries values alone.
+
 ## The sphere as a locus — distance carried in space (OP-28 — RESOLVED)
 
 In the plane, **distance is carried by the circle**. `circle ∩ circle` is an ordered solution set whose branch
@@ -17411,7 +17424,10 @@ their outline in both directions — a wing, a hull — and those are these two 
    blend runs along a skin's own crease) and the *Match sections* row's ability to name a body that does not
    exist yet — see the note's *what it cost* paragraph.
 
-2. **The function-family section (the wing's route)** — the general tier the session-77 sweep ruling
+2. ~~**The function-family section (the wing's route)**~~ — **Built in session 79 — see *The function-family
+   section, as built* at this queue's tail. With it the numbered queue is empty: every entry ever put on it
+   has been built, and what is left below is the parked list, each item recorded at its source.** The entry is
+   kept in full because the as-built note answers it line by line — the general tier the session-77 sweep ruling
    recorded: named scalars of one section sketch become laws over `t` (chord, thickness, twist), one 2D
    DAG evaluated per station. Wants its own design pass, and it is now **next**, the loft being out of the
    tree. What it inherits from the loft, stated so the design pass starts from it rather than re-deriving
@@ -17460,12 +17476,25 @@ their outline in both directions — a wing, a hull — and those are these two 
    loadable. Wing fixture: rectangular stand-in, `chord(t) = 200mm·(1 − 0.6t)`, bound thickness, exact
    volume 2 496 000 mm³, tip twist 15° exact, verdicts and words invariant over two decades of tolerance.
 
-What remains beyond those two —
+**Both of those two are built, and with them the numbered queue is empty** (session 78 and session 79 — see
+the two *as built* notes at this queue's tail). What remains —
 vertex blends, text as geometry, silhouette edges in the 3D view, the panel's scalar tiering,
-`transformArc`'s guard, the Apollonius and conic tangent families — is the parked list below, each item
-recorded at its source, none with a new enabler yet.
+`transformArc`'s guard, the Apollonius and conic tangent families, and the twisted-facet warp recorded below —
+is the parked list, each item recorded at its source, none with a new enabler yet.
 
-Smaller parked items, each already recorded at its source: **`GeomMath.transformArc` assumes a similarity**
+Smaller parked items, each already recorded at its source: **a twisted sweep's facets lose volume far beyond
+the tessellation tolerance** (found in session 79, and pre-existing since the twist did). The twist's own
+sampling refinement measures the **rail chords** (`GeomMath.chordSteps`: a point `reach` off the axis turning
+by `Δ` deviates from its arc by `reach·(1−cos(Δ/2))`), which is the right measure for the *surface*'s rails
+and the wrong one for what actually deviates — the **warp of each lateral quad**, whose diagonal split cuts
+inward across the whole face and does so worst where the section is long and stands off the axis. Measured: a
+constant 200 × 24 mm section swept 1000 mm with a stated 15° twist meshes to 4 204 506 mm³ against an exact
+4 800 000 — **12.4% low**, on the ordinary constant route. The mesh is still watertight and every dimension
+of it is right; what is wrong is only the volume a measurement reads off it, which is why it went unnoticed.
+The cure is a refinement term for the quad's warp (or a diagonal chosen per quad), and it is a package of its
+own because it changes every twisted sweep's mesh and therefore every golden that carries one. Recorded with
+its numbers so the next session starts from the measurement rather than from the surprise. Also:
+**`GeomMath.transformArc` assumes a similarity**
 (it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and
 would be silently wrong under any affine map that is not one; session 47's projection routes conics through
 `Conics` instead and says so at the call site, but the assumption is unguarded and the next non-similarity
@@ -17895,3 +17924,201 @@ Match with no loft to name, a cap picked in the 3D view and drilled, the faired 
 carries the three rows through the real shell — picks spanning two station planes, and a Match that re-stamps
 and reloads without disturbing the tree. **2383 → 2407 green**, `assertManifold` on every solid in every one
 of them.
+
+### The function-family section, as built (session 79 — queue entry 2 closed; the numbered queue is empty)
+
+**What was missing, in the two tiers' own words.** Session 77 gave a swept section a **size** over its run:
+one expression, one outline, carried rigidly. Session 78 gave a body **drawn sections** on stations of one
+run: outlines that genuinely differ, each one drawn by hand. What neither could do is the thing a wing is: an
+outline that differs **continuously** and is stated **once**. No factor turns a 200 mm chord with a 12%
+thickness into an 80 mm chord with a 12% thickness *of that*, and nobody wants to draw sixty-five aerofoils.
+What does it is re-reading the section's own 2D drawing once per station with `chord` substituted, which is
+what a family states: one graph, `n` readings, values out.
+
+**The mechanism, and the one thing it needed from the engine.** `Evaluator` gained an **override map** —
+`{node → value}`, keyed by identity, for one pass only — and `Node.computeSubstituted`, which is `compute`
+run **outside** the persistent memo and counted. The family node evaluates the section's subgraph once per
+station with the driven parameters replaced by their laws' values there; every node **downstream of a
+substitution** (decided bottom-up, so it is exactly the affected cone and nothing outside it pays) computes
+substituted and writes nothing, while every node outside that cone keeps its ordinary memo and its ordinary
+cost. That is the memo's one deliberate bypass and the reason it is sound is that it leaves **no trace at
+all**: a substituted answer is a function of the substituted environment rather than of the node's own inputs,
+so storing one would hand the next ordinary pass a value the drawing does not have — and dropping the memo
+instead would make the 2D view recompute after every family build.
+
+It is `InstanceNode.defNode`'s precedent read the other way round. A macro instance evaluates another node's
+`compute` under substituted inputs by **wrapping** it, which needs one node per definition node; a family
+needs the same substitution over a whole cone `n` times and would need `n · |cone|` wrappers to say it that
+way. So the substitution lives in the **pass** instead of in the graph: no node is created, nothing is
+invalidated, and OP-5's mutation points stay the only mutation points — *no literal is ever written during a
+compute*, which is what keeps recompute, undo and reload deterministic.
+
+**The memo's soundness, stated as it is implemented.** The family node lists the section's transitive **free**
+sources and parameters as ordinary inputs (`SectionFamily.watched`), so any change to any freedom the family
+reads changes this node's own arguments. That is belt and braces and the record should say so: the memo is
+keyed on value **identity**, and every node in this engine hands on a fresh value object when anything
+upstream moves, so the region input alone would in fact be enough today. But that is an argument about the
+engine rather than about this feature, and a family reads nodes that are not its inputs — so the freedoms are
+listed and the soundness is **by construction**. They cost one pointer compare each per pass; a free source is
+never invalid, so nothing new can cascade in through them either. Asserted structurally (every free source of
+the section is an input of the sweep) and behaviourally (the **weld test**: welding a section corner onto
+another point moves the body, through a `boundTo` mutation that rewires no input list at all).
+
+**Law-able is *free named scalars the section transitively reads*, and every other case refuses by name.**
+The rows the panel offers are exactly that set, read off the selected element's own node cone — a *bound*
+parameter is not offered and points at its binding when named (`thickness` follows `0.12 * chord`, so state
+the law on `chord` and thickness reads it at every station: sharing-is-equality one level up); a law may not
+name a scalar the **same step** drives (a station's values come from the drawing, and reading one law's output
+in another would make the family a little solver of its own); `P.x` refuses by session 76's rule (a coordinate
+is read, never driven); a name the section does not read refuses **naming what the section is built from**;
+`twist` and `roll` are reserved for the run's own turn, `twist` being law-able and `roll` not (roll is where
+the section *starts*, one angle for the whole body) — and a drawing scalar of either name collides and refuses
+with the cure. A **tube** refuses family laws pointing at `r(t)`: its section is a circle the run itself
+states, so there is no drawing to read per station. The **swept cut** refuses in session 77's own sentence,
+pluralized.
+
+**A law is a per-station substitution, not a binding**, which is F4 and is what makes the whole thing cheap
+to reason about: the literal keeps driving everything else, the 2D view draws the section at the literal, and
+nothing in the drawing moves when a body is swept.
+
+**The family owns its grids, and there are two of them.** This is the load-bearing half.
+
+- The **verdict grid is fixed** at `SectionFamilies.FAMILY_STEPS = 64` (+ the family's own samples): every
+  per-station verdict — the piece count, a vanished piece, a winding turned over, an outline that crosses
+  itself, an area that has gone, an invalid 2D DAG — is decided on `t = i/64`, so refining the picture can
+  change neither a verdict nor the words it is spoken in (session 65's law, asserted character for character
+  over two decades of tolerance). Sixty-four rather than the size laws' 256 because each step here
+  re-evaluates a **drawing** rather than one expression, and the cost of the feature is stated in exactly
+  that number.
+- The **refinement grid is the family's own**: the sagitta of its *rings'* second difference, read on that
+  same grid through `SizeLaws.worstSecond`/`sagittaSpans` (shared rather than restated), and rounded up to a
+  divisor or a multiple of 64 so that the two grids are **one** grid and no station is ever evaluated twice.
+  A linear family answers zero and is carried by the two rings it needs, having been checked on sixty-five.
+- The moving frame's stations read rings by **vertex-wise linear interpolation** between the two nearest
+  samples, which is honest precisely because the grid was chosen to make it so. So `Feature3.Sweep` stores the
+  family as **values** (`SweepProfile.Family`: samples and rings) — a placement turns it, an export reads it,
+  a plan hint reads it, a reload rebuilds the identical body, and there is no subgraph to re-enter (OP-9's
+  self-contained feature). Which is also why **no faired row is needed**: the family already interpolates
+  smoothly by being sampled finely enough.
+
+**One fixed tessellation count per boundary piece**, taken from the largest that piece ever is on the grid
+(the per-piece route, `GeomMath.tessellatePiece` as `Skin3.prepOf` — never `tessellateRegion`), and the ring
+is **one shared point list** (`ring2`'s rule) so the corner where two pieces meet is one vertex rather than
+two that agree. A station's ring is computed once and shared by both adjacent bands. That is where
+watertightness comes from and it is not a repair pass. Each **hole** is a family of its own by the same rule,
+so a tube whose bore tapers differently from its wall is one body — the pairing a drawn skin needs never
+arises, because the correspondence is the *vertex index* and that is a fact of the count.
+
+**The discovery: the queue's premise was false.** The entry above says *structure fixed, therefore count
+fixed* — OP-21 read one level up. That is **wrong for a computed region**: a boolean's loop count is a value,
+so a law can genuinely change how many pieces a section has. So the count is read at the first sample and
+**required at every one**, and a station where it differs is invalid naming both counts, both stations by
+distance, the law values there, and pointing at the loft. The two entries are each other's cure, and the
+refusal says it: *a family whose pieces must change is a loft; a loft over computed sections is a family*
+(with *Break* named as the other way to make the counts agree). The **winding flip** is deliberately *not*
+normalized the way `Skin3` normalizes its drawn sections': a skin's sections are separate drawings and each
+one's orientation is a fact about it, while a family is one drawing read many times, so a station whose area
+has changed sign has been pulled through itself and is a fold rather than a convention. The
+**self-intersection** check is the one criterion genuinely new here — a segment-pair sweep over the station's
+own ring, the 2D twin of `Geom3.crossingRails`, `O(n²)` on a few dozen corners, decided once per station of
+the fixed grid and never during a repaint.
+
+**The anchor is read per station under the same overrides** (F11), which is what gives a blade its pivot line
+by *construction*: `qc.x = 0.25 * chord` and every station's ring is measured from its own quarter chord, so
+the run passes through the quarter chord of the section that is actually there rather than of the one that was
+drawn. The in-place `pierce` reading is untouched and is taken once, because where a run crosses a plane is a
+fact about the two of them and not about the section's size there.
+
+**`twist(t)` is a law on the step's own twist** (F12), and it replaces exactly one expression:
+`Frames3.along`'s `twistRad · (s / length)` becomes the law's value at `s / length`. Everything else about the
+frame is untouched — the transport, the mitre, the closed-run seam check (which reads `law(1) − law(0)`, the
+total turn round the loop) and the sampling refinement (which reads the law's own curvature through
+`SizeLaws.turnSpans`, exactly as a size law's is read, and its *total variation* through
+`SizeLaws.totalTurn`, because a twist that turns one way and comes back turns the section twice). A twist law
+is asked only that it can be **read** (`SizeLaws.unreadable`): a turn may be zero and may run either way.
+
+**The criteria enter through session 77's own door.** The per-station reach ratios are `scales`, unchanged;
+what is genuinely new is that the *outline itself* differs per station, so `Embedding.check`'s local term,
+`cornerFold`'s bite vectors, `cornerBend`'s `trimOf`, `needed`'s separating axis and `Silhouette.ofSwept`'s
+rails all take an optional `sectionAt: (Int) -> List<Vec2>` beside the existing `section`. `cornerFold`'s
+generalization is exact rather than conservative and is worth stating: a **rail** `j` is bitten at corner A by
+`w_A[j]·g_A` and at corner B by `w_B[j]·g_B` with each corner's own ring, so what a leg needs is the maximum
+over the *rails* of the sum — which is why the two rings of one family have the same length. With `scales =
+null` and no `sectionAt` not one line below behaves differently, so the constant and rigidly scaled routes
+stay **bit-identical** and no existing message moved. The plan hint reads the family's values for free.
+
+**A family has one mesh level** (`Solid3.derivedFine`), quoting `Skin3`'s reason: the ring's point count is
+the family's own, so coarsening the picture would mean re-deciding the family to save the cheap half of the
+work. A constant or rigidly scaled section coarsens exactly as it always did.
+
+**Two defects found while building it, both fixed here.** (a) **Composition needed a grid neither tier had.**
+A family composes with the rigid `law=` — `sized()` multiplies after the ring is read — but a *linear* ring
+path times a *linear* factor is a **quadratic** vertex path, and both refinements answer zero for it: the
+family measures its rings and `SizeLaws.spans` measures the factor. A wing that tapers and is then scaled was
+therefore drawn on its two end rings and was 16% wrong in volume. `SweepProfile.Family.composedSpans` measures
+the second difference of `ring(t)·scale(t)`, vertex by vertex, on the size laws' own fixed grid — never fewer
+than the family's own samples, and exactly the family's own samples where there is no factor, so a
+family-only body is unchanged. (b) **A piece was measured by the distance between its ends**, which is zero
+for every *closed* piece there is: a circle-sectioned family refused at `t = 0` with a sentence about a piece
+that had not vanished. A piece is as long as its own polyline. Both carry regression tests.
+
+**One pre-existing property discovered and recorded rather than fixed** (see the parked list): a **twisted**
+sweep's facets lose volume far beyond the tessellation tolerance, because the twist refinement measures the
+*rail chords* (`GeomMath.chordSteps`) while what actually deviates is the **warp of each lateral quad**, whose
+diagonal split cuts inward across the whole face. Measured: a constant 200 × 24 section swept 1000 mm with a
+stated 15° twist meshes to 4 204 506 mm³ against an exact 4 800 000 — 12.4% low, on the ordinary constant
+route that has always existed. The washed wing loses the same fraction, which is what says a family adds
+nothing of its own to it, and is how the wing fixture is asserted: the **untwisted** wing's volume is exact
+(2 496 000 mm³, to the bit), its tip ring is exact (80 mm of chord, 9.6 mm of thickness — 12% of *that* chord
+— turned by exactly 15° about its own quarter chord), and the washed body's deficit is asserted equal to the
+constant control's. Fixing the warp is its own package: it changes every twisted sweep's mesh, hence every
+golden.
+
+**Storage.** `laws="chord = 200mm * (1 - 0.6*t); twist = 15deg * t"` on `tool sweep` alone
+(`ToolDef.carriesLaws`), semicolon-separated because the comma is taken by two-argument functions, quoted,
+with each expression verbatim and the pair structure normalized — the rows are the entry medium, so there is
+no user text in the joining punctuation and a normalized join is what makes `save → load → save` byte-equal
+after a re-stated row as well as after a load. **No version bump**, by the `law=` row's argument. The binding
+(`Document.SweepFamilyBinding` — `SweepLawBinding` keyed by the name it drives) is the **sole authority** for
+the texts, so re-stating a law is a new binding on the very same step: one undo, same identity, scored choices
+untouched. Re-stamping is **two-sided** and the file is where a half-done re-stamp shows, so that is where it
+is asserted.
+
+**The gesture is the panel's formulas-over-`t` collapsible grown from one field to a keyed list** (F5): one
+row per law-able scalar of the selected swept body — where the rows **are** its laws and Apply re-states one —
+or of the selected section, where Apply arms the next sweep. `Editor.setSectionLaw`'s mechanism generalized,
+with the same two readings and the same one-undo edit. A law armed while a tool with no drawing to read
+completes is **refused by name**, never dropped.
+
+**Deliberate cuts, each whole and each recorded as a future extension.** (1) **No face list** (F10): a
+family's piece count is a *value*, and stored addresses may not ride one — and the family must not be
+better-addressed than the sweep it generalizes, so sketch-on-face refuses in the sweep's own words. When a
+sweep gains faces, a family gains them by the same mechanism. (2) **No faired row** — recorded as unnecessary
+rather than as a cut: the family's own refinement already interpolates as finely as the tolerance asks. (3)
+**No laws on a *skin*'s drawn sections** (the mixing feature): a skin pairs *pieces* it was given, and a
+station whose section is itself a family would have to be read per sub-station, which is a second spine
+inside one feature. (4) **The swept cut**, in its own recorded words. (5) The **twisted-facet warp** above.
+
+Tests: `SectionFamilyTest` (18, geometry) — the rigid tier reproduced corner for corner and its volume exact,
+a width that tapers alone (15 000 mm³ exact, and an end ring no factor of the drawn one can reach), the wing
+(exact volume untwisted, exact tip ring washed, and the same body at two tolerances), the drafted rib's flank
+at 3° to 1e-9, the blade's three laws on a straight run and on a helix with its tip ring exact, a coil too
+tight refusing in the family's own words, one mesh level, a hole on a law of its own (77 500 mm³ exact),
+composition with the rigid factor, the circle-section regression, and one fixture per verdict — a vanished
+piece asserted character for character over three tolerances, a self-crossing outline, a piece count that
+changes pointing at *Loft (ruled)* and *Break*, a winding turned over, an unreadable twist, an invalid 2D
+drawing quoting what failed, and a driven name the drawing has not got. `SectionFamilyToolTest` (25, the
+gesture, the panel and the file) — the constant sweep writing nothing new, the byte-equal round trip, laws
+with no `t` building the constant body vertex for vertex, the two-sided re-stamp through the file, the delete
+cascade, `laws=` refused at load on a non-carrying tool, a missing name invalid and named by the load,
+composition on one step, the rows for a section and for a body, one Apply as one undo, the wing by gestures,
+every refusal by its words, and the memo: one family build costs one reading of the section's cone per
+station, a repaint that changes nothing costs nothing, a drag outside the section costs nothing, the weld
+test, and the free sources as ordinary inputs.
+`SectionFamilyProbeTest` (3, the compositions the values-only claim is about) — a **placed** family keeping
+its volume and re-deriving its own plan hint on the far side of the motion, a family as an ordinary **boolean
+operand** (a block losing exactly the family's volume, and the whole thing round-tripping), and a family
+reaching the **export** seam with its own triangle count.
+`BrowserE2ETest.aFunctionFamilySectionIsReachableInBrowser` carries it through the real shell — two laws typed
+into the panel's rows, the sweep's two clicks, and one law re-stated on the body it built, leaving the tree
+undisturbed. **2414 → 2461 green**, `assertManifold` on every solid in every one of them.

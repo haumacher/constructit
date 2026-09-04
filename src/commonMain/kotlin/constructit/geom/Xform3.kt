@@ -199,7 +199,9 @@ fun Feature3.movedBy(x: Xform3): Feature3 =
         // only the path and the direction the start reference is derived from move. Its **plan is dropped**
         // for [Feature3.Imported]'s reason — that outline is stated in the coordinates of a plane this move
         // invalidates — and whoever moved the body re-projects (`Construction.placeSolid`).
-        is Feature3.Sweep -> Feature3.Sweep(path.movedBy(x), profile, x.linear(up), roll, twist, carry = carry)
+        // (the **twist law** rides along unchanged, exactly as the profile's own size law does: it is a
+        // statement about how the section turns along the run, which a rigid motion of the run cannot alter)
+        is Feature3.Sweep -> Feature3.Sweep(path.movedBy(x), profile, x.linear(up), roll, twist, carry = carry, twistLaw = twistLaw)
         // A skin is "2D data plus a frame" exactly as a loft is: every section keeps its own coordinates and
         // its own stated distance, and only the planes those coordinates are read on move. The correspondence
         // is piece indices, which no motion touches — so a placed skin is still sketchable and still names

@@ -98,6 +98,11 @@
            are formulas over the very same parameter `t`, and sharing one summary line is what keeps the
            panel's idle height exactly where it was (the lists below it may not move — panelPolishInBrowser) */
         #fc-form #sl-text { flex: 1 1 100%; }
+        /* the family-law rows (OP-26, session 79): one per law-able scalar of the selected section */
+        #fl-rows { flex: 1 1 100%; display: flex; flex-direction: column; gap: 2px; }
+        .flrow { display: flex; gap: 3px; align-items: center; }
+        .flrow .flname { flex: 0 0 5.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
+        .flrow input { flex: 1 1 auto; min-width: 0; }
         .prow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
         .prow:hover { background: #eef4fb; }
         .prow.active { background: #e2eefb; outline: 1px solid #1f77b4; }
@@ -305,6 +310,7 @@
                 <button id="fc-add">Draw</button>
                 <input id="sl-text" placeholder="section law r(t) / scale(t) — e.g. 5mm * (1 - t/2)" title="A swept section's size along its run: one formula over t, which is 0 at the start of the run and 1 at its end. A tube reads it as the radius itself (5mm * (1 - t/2) is a tapered handle, 2mm + 8mm*t*t a horn); a swept profile reads it as a scale about the point it rides on (1 + t/2 is half again as large at the end). Select a swept body to see and change its own law; select nothing to arm the next Tube or Sweep.">
                 <button id="sl-set" title="State the size law: on the selected swept body, or armed for the next Tube or Sweep. Blank takes it away.">Apply</button>
+                <div id="fl-rows" title="A row per named parameter the selected section is built from, plus the run's own twist: give any of them a formula over t and the section is read once per station, so root and tip are genuinely different outlines. Select a swept body to see and change its own laws; select the section to arm the next Sweep."></div>
             </details>
             <h3>Measurements</h3>
             <div id="measure-list"></div>

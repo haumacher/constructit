@@ -1897,7 +1897,16 @@ class Construction {
             val h = args.drop(1).map { GeomMath.orient((it as LoopValue).loop, ccw = false) }
             val net = GeomMath.signedArea(o) + h.sumOf { GeomMath.signedArea(it) }
             if (net <= 0.0) {
-                EvalResult.Invalid("the holes remove more area than the outer boundary encloses")
+                // …and where there is no hole at all, the outer boundary is simply flat: saying that a hole
+                // removed the area would be a refusal about something the drawing has not got, which is the
+                // one thing a refusal may not do (session 65)
+                EvalResult.Invalid(
+                    if (h.isEmpty()) {
+                        "this boundary encloses no area, so it bounds nothing"
+                    } else {
+                        "the holes remove more area than the outer boundary encloses"
+                    },
+                )
             } else {
                 EvalResult.Ok(RegionValue(Region(o, h)))
             }
@@ -2952,16 +2961,33 @@ class Construction {
         section: PlaneRef? = null,
         pierce: Int = 0,
         law: ExprLaw? = null,
+        /**
+         * **The section as a family of sections** (OP-26, session 79): its own named scalars driven by laws
+         * over the run, one 2D drawing read once per station.
+         *
+         * It **composes** with [law] rather than competing with it (the design pass's F6): the family
+         * supplies the ring and the rigid law multiplies it afterwards, so a wing whose chord is a law and
+         * whose whole section is then scaled is one body. Absent, this node is the node it always was —
+         * arity, arithmetic and mesh alike.
+         */
+        family: SectionFamily? = null,
     ): SolidRef {
         require(anchor == null || section == null) { "a section rides a stated point or the run's own crossing, never both" }
         val rides = anchor ?: section
         // where the law's own inputs start, which is after the optional riding slot — held as a number
         // because that slot's presence is what decides it, and it is decided here once
         val lawFrom = if (rides == null) 5 else 6
+        // …and the family's own inputs come after the law's, which is the order [SectionFamily.refs] states
+        val familyFrom = lawFrom + (law?.refs?.size ?: 0)
         // What the section rides on is **one** input, in one slot, because it is one statement: a point the
         // user picked, the plane the run pierces, or — with neither — the profile's own origin, which is the
         // node this always was, arity and value alike (OP-18's rule one level down: nothing changes meaning).
-        return op(*(listOfNotNull<Ref<*>>(path, space, profile, roll, twist, rides) + (law?.refs ?: emptyList())).toTypedArray()) {
+        return op(
+            *(
+                listOfNotNull<Ref<*>>(path, space, profile, roll, twist, rides) +
+                    (law?.refs ?: emptyList()) + (family?.refs ?: emptyList())
+            ).toTypedArray(),
+        ) {
             val region = (it[2] as RegionValue).region
             // **The section's uniform scale as a law of the station** (OP-26, session 77): dimensionless,
             // about the anchor, never a re-evaluation of the section's own sketch.
@@ -2977,12 +3003,60 @@ class Construction {
                         return@op EvalResult.Invalid("${law.what(Dimension.NONE)}: ${e.message}")
                     }
                 }
-            when (val at = if (rides == null) null else it[5]) {
+            val at = if (rides == null) null else it[5]
+            if (family != null) {
+                return@op familySolid(it, family, familyFrom, sizing, at, pierce)
+            }
+            when (at) {
                 is PointValue -> sweptSolid(it, SweepProfile.Section(movedBy(region, -at.p), sizing))
                 is PlaneValue -> inPlace(it, region, at.plane, pierce, sizing)
                 else -> sweptSolid(it, SweepProfile.Section(region, sizing))
             }
         }
+    }
+
+    /**
+     * The **family** half of [sweep]: the section re-read per station, and the body those rings carry
+     * (OP-26, session 79).
+     *
+     * The three readings of *what rides the run* are exactly [sweep]'s own, one level in — a stated point
+     * (read **per station** under the same substitutions, which is what gives a blade its pivot line by
+     * construction: `qc.x = 0.25 * chord` and every station's ring is measured from its own quarter chord),
+     * the in-place crossing (whose reading is a fact about the *run* and the plane, so it is taken once and
+     * applied to every station, exactly as it is for a rigid law), and the section's own origin.
+     */
+    private fun familySolid(
+        args: List<Value>,
+        family: SectionFamily,
+        from: Int,
+        sizing: SizeLaw?,
+        at: Value?,
+        pierce: Int,
+    ): EvalResult {
+        val path = (args[0] as Path3Value).path
+        val runLength = path.elements.sumOf { Curves3.arcLength(it) }
+        // the in-place reading, where that is what rides the run: solved once, since where a run crosses a
+        // plane is a fact about the two of them and not about the section's size there
+        var seed: FrameSeed? = null
+        var inPlaceAnchor: Vec2? = null
+        var fromBehind = false
+        if (at is PlaneValue) {
+            val (reading, why) = Pierce3.readingAt(path, at.plane, pierce)
+            if (reading == null) return EvalResult.Invalid(why ?: "this section does not cross the run's own plane")
+            seed = reading.seed
+            inPlaceAnchor = reading.anchor
+            fromBehind = reading.fromBehind
+        }
+        val (built, noFamily) =
+            SectionFamilies.build(family, args, from, runLength, GeomMath.TESS_TOL_MM) { region, anchorAt ->
+                when {
+                    inPlaceAnchor != null -> readFrom(region, inPlaceAnchor, fromBehind)
+                    anchorAt != null -> movedBy(region, -anchorAt)
+                    else -> region
+                }
+            }
+        if (built == null) return EvalResult.Invalid(noFamily ?: "cannot read this section along the run")
+        return sweptSolid(args, built.profile.copy(law = sizing), seed, built.twist)
     }
 
     /**
@@ -3048,6 +3122,8 @@ class Construction {
         args: List<Value>,
         profile: SweepProfile,
         seed: FrameSeed? = null,
+        /** The run's own twist as a law of the station, where one is stated (OP-26, session 79). */
+        twistLaw: SizeLaw? = null,
     ): EvalResult {
         val plane = (args[1] as PlaneValue).plane
         val roll = sc(args[3]).requireDim(Dimension.ANGLE, "sweep roll").base
@@ -3061,6 +3137,7 @@ class Construction {
                 twist,
                 plane,
                 seed = seed,
+                twistLaw = twistLaw,
             )
         return if (solid == null) EvalResult.Invalid(why ?: "cannot sweep along this curve") else EvalResult.Ok(SolidValue(solid))
     }

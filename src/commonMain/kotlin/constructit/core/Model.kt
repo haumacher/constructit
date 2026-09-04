@@ -320,6 +320,7 @@ abstract class Node(val id: String) {
      * the moment that changes. Recomputing an invalid node every pass is what keeps that promise; it also
      * costs little, since an invalid node's inputs are already known good and the failure is usually fast.
      */
+
     fun computeMemoized(args: List<Value>): EvalResult {
         if (cacheable) {
             val prev = memoResult
@@ -339,6 +340,26 @@ abstract class Node(val id: String) {
             invalidate()
         }
         return result
+    }
+
+    /**
+     * [compute] run **outside** the persistent memo, and counted — what a re-evaluation under *substituted*
+     * values takes (OP-26, session 79: the function-family section).
+     *
+     * The family evaluates one section's subgraph once per station with a driven parameter replaced by its
+     * law's value there ([Evaluator]'s overrides). Those answers are functions of the substituted
+     * environment and **not** of this node's own inputs, so storing one would hand the next ordinary pass a
+     * value the drawing does not have — and dropping the memo instead would make the 2D view recompute after
+     * every family build. So the substituted pass writes nothing and reads nothing: it is the memo's one
+     * deliberate bypass, and the reason it is sound is that it leaves no trace at all.
+     *
+     * Counted, because the cost is real and is exactly what the family's acceptance is stated in
+     * ([computeCount]): one family build costs one evaluation of the affected cone per station and not one
+     * more.
+     */
+    internal fun computeSubstituted(args: List<Value>): EvalResult {
+        computeCount++
+        return compute(args)
     }
 }
 
@@ -484,19 +505,55 @@ class InstanceNode(id: String, val defNode: Node, override val inputs: List<Node
  *
  * Parametric recompute is still: mutate a source + a new pass.
  */
-class Evaluator {
+class Evaluator(
+    /**
+     * **Values substituted for nodes, for this pass only** (OP-26, session 79 — the function-family section).
+     *
+     * The one mechanism the family needed, and it is deliberately the smallest one that could work: a node
+     * in this map yields the given value instead of computing, and everything downstream of it is computed
+     * **outside the persistent memo** ([Node.computeSubstituted]) so the substituted answers cannot be served
+     * to an ordinary pass and the ordinary pass's answers are not thrown away to make room for them.
+     *
+     * It is [InstanceNode]'s precedent read the other way round: a macro instance evaluates *another* node's
+     * `compute` under substituted inputs by wrapping it, which needs a node per definition node; a family
+     * needs the same substitution over a whole cone *n* times and would need `n · |cone|` wrappers to say it
+     * that way. So the substitution lives in the pass instead of in the graph — no node is created, nothing
+     * is invalidated, and the drawing the user is looking at is untouched (OP-5's mutation points stay the
+     * only mutation points).
+     *
+     * Keyed by node **identity**, which is what a substitution is about: *this* parameter, not one that
+     * compares equal to it.
+     */
+    private val overrides: Map<Node, Value> = emptyMap(),
+) {
     private val cache = HashMap<String, EvalResult>()
+
+    /** The ids of the nodes this pass computed **under** a substitution — see [overrides]. */
+    private val substituted = HashSet<String>()
 
     fun eval(node: Node): EvalResult {
         cache[node.id]?.let { return it }
+        if (overrides.isNotEmpty()) {
+            overrides[node]?.let {
+                val given = EvalResult.Ok(it)
+                cache[node.id] = given
+                substituted.add(node.id)
+                return given
+            }
+        }
         val argResults = node.inputs.map { eval(it) }
+        // downstream of a substitution — decided bottom-up, so it is exactly the affected cone and nothing
+        // outside it pays: a node whose inputs are all ordinary keeps its memo and its cost
+        val under = overrides.isNotEmpty() && node.inputs.any { it.id in substituted }
+        if (under) substituted.add(node.id)
         val invalid = argResults.firstOrNull { it is EvalResult.Invalid } as EvalResult.Invalid?
         val result: EvalResult =
             if (invalid != null) {
                 EvalResult.Invalid("$CASCADE_PREFIX (${invalid.reason})")
             } else {
                 try {
-                    node.computeMemoized(argResults.map { (it as EvalResult.Ok).value })
+                    val args = argResults.map { (it as EvalResult.Ok).value }
+                    if (under) node.computeSubstituted(args) else node.computeMemoized(args)
                 } catch (e: Exception) {
                     EvalResult.Invalid(e.message ?: e.toString())
                 }

@@ -108,6 +108,15 @@ object Silhouette {
          * the outline is bit-identical to the one this always produced.
          */
         scales: List<Double>? = null,
+        /**
+         * **The ring at each station**, where the section is a *function family* (OP-26, session 79) — one
+         * outline per entry of [stations], superseding [section] there.
+         *
+         * The plan hint reads the family's own values, so it comes for free: the rails are the support points
+         * of *that station's* ring, and a wing's plan is its actual taper rather than a scaled root section.
+         * Null is one outline for the whole run and the outline is bit-identical to the one this always drew.
+         */
+        sectionAt: ((Int) -> List<Vec2>)? = null,
     ): List<Region> {
         if (stations.size < 2 || section.isEmpty()) return emptyList()
         val n = stations.size
@@ -133,7 +142,15 @@ object Silhouette {
             val flat = centres[next] - centres[prev]
             val span = (stations[next].at - stations[prev].at).length()
             if (span <= 0.0 || flat.length() <= END_ON * span) continue
-            rails[k] = support(stations[k], section, radius, flat.perp() * (1.0 / flat.length()), plane, scales?.get(k) ?: 1.0)
+            rails[k] =
+                support(
+                    stations[k],
+                    sectionAt?.invoke(k) ?: section,
+                    radius,
+                    flat.perp() * (1.0 / flat.length()),
+                    plane,
+                    scales?.get(k) ?: 1.0,
+                )
         }
 
         val loops = ArrayList<Region>()
@@ -168,7 +185,7 @@ object Silhouette {
         for (k in 0 until n) {
             if (rails[k] != null) continue
             if (k == 0 || k == n - 1 || rails[k - 1] != null || rails[k + 1] != null) {
-                loops.add(sectionLoop(stations[k], section, radius, plane, scales?.get(k) ?: 1.0))
+                loops.add(sectionLoop(stations[k], sectionAt?.invoke(k) ?: section, radius, plane, scales?.get(k) ?: 1.0))
             }
         }
         return loops

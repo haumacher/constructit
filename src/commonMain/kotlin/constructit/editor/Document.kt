@@ -37,6 +37,7 @@ import constructit.dsl.Construction
 import constructit.dsl.EllipseRef
 import constructit.dsl.EllipticArcRef
 import constructit.dsl.ExprLaw
+import constructit.dsl.FamilyLaw
 import constructit.dsl.FrameRef
 import constructit.dsl.FuncCurveRef
 import constructit.dsl.LineRef
@@ -52,6 +53,7 @@ import constructit.dsl.Ref
 import constructit.dsl.RegionRef
 import constructit.dsl.RoundedRectArgs
 import constructit.dsl.ScalarRef
+import constructit.dsl.SectionFamily
 import constructit.dsl.SectionRef
 import constructit.dsl.SegmentRef
 import constructit.dsl.SkinPart
@@ -576,6 +578,22 @@ class Continuation(val piece: Element, val at: Vec2)
  * still crossing at a point are no longer *joined* there.
  */
 class Supersession(val a: Element, val b: Element, val by: Element)
+
+/**
+ * The name a family law drives the **run's own turn** by (OP-26, session 79 — the design pass's F12).
+ *
+ * Reserved on the left of a law rather than resolved against the drawing, because a stored literal may not
+ * change meaning when a parameter is added (OP-18): were a drawing scalar of this name allowed to win,
+ * creating one would silently re-read every file that states a twist law. A section that genuinely reads a
+ * parameter called `twist` is refused by name, with the cure (rename the row).
+ */
+internal const val FAMILY_TWIST_NAME = "twist"
+
+/**
+ * The other name a sweep's run carries, reserved for [FAMILY_TWIST_NAME]'s reason and **not** law-able: roll
+ * is where the section starts, which is one angle for the whole body rather than a function of the station.
+ */
+internal const val FAMILY_ROLL_NAME = "roll"
 
 /** A named scalar: an editable parameter (OP-7) or a read-only measurement (OP-4). */
 class ScalarEntry(val id: String, var name: String, val ref: ScalarRef, val editable: Boolean)
@@ -1427,6 +1445,11 @@ class Document {
             // (OP-26, session 77): the writer restates it under the current names, and nothing else may
             pendingSweepLaw?.let { sweepLaws[step] = it }
             pendingSweepLaw = null
+            // …and the **family laws** this operation's sweep states (OP-26, session 79), by the identical
+            // rule one tier up: the binding is the sole authority for the texts, so the writer restates the
+            // step's own `laws=` from it and re-stating a row is an edit of this very step
+            pendingSweepFamily?.let { sweepFamilies[step] = it }
+            pendingSweepFamily = null
             // …and the correspondence this operation's skin states, owned by its step for the same reason
             // (session 78): the writer restates the pairs under the current names, and nothing else may —
             // which is what makes a rename re-stamp them and a *Match* an edit of this very step
@@ -3327,6 +3350,7 @@ class Document {
         exprBindings[step]?.let { b -> out.addAll(b.refs.mapNotNull { it.point }) }
         funcCurves[step]?.let { c -> out.addAll(c.pointRefs()) }
         sweepLaws[step]?.let { l -> out.addAll(l.pointRefs()) }
+        sweepFamilies[step]?.let { l -> out.addAll(l.pointRefs()) }
         // …and the curves a skin's stated correspondence names (session 78), which live in the writer's own
         // registry rather than in the step's original arguments once a *Match* has re-stamped them: a step
         // left behind by a deleted curve would name it on load and the file would not open (OP-18).
@@ -3356,6 +3380,11 @@ class Document {
         funcCurves[step]?.let { c -> out.addAll(c.scalarRefs()) }
         // the same for a swept body's size law, whose references live inside one text (OP-26, session 77)
         sweepLaws[step]?.let { l -> out.addAll(l.scalarRefs()) }
+        // …and a **family's** laws, which reference scalars on both sides of their `=` (OP-26, session 79):
+        // the names inside each text *and* the parameter each law drives. Both, because a deleted parameter
+        // must take the body with it either way — a `laws=` naming a row that has gone would name it on load,
+        // and the file would not open (OP-18).
+        sweepFamilies[step]?.let { l -> out.addAll(l.scalarRefs()) }
         return out
     }
 
@@ -5398,6 +5427,17 @@ class Document {
     private fun restampSweepLaws() {
         for (b in sweepLaws.values) {
             b.text = restamped(b.source, b.ast, b.names, b.refs)
+        }
+        // …and a **family's** laws on **both** sides (OP-26, session 79): the names inside each text, exactly
+        // as above, *and* the driven name on the left of each `=`, which is a reference to a scalar row like
+        // any other. One-sided would leave the body live and its file unloadable — the failure the scalar
+        // half's own probe found, and the reason this pass exists at all.
+        for (b in sweepFamilies.values) {
+            for (e in b.entries) {
+                e.target?.let { e.driven = it.name }
+                val ast = e.ast ?: continue
+                e.text = restamped(e.source, ast, e.names, e.refs)
+            }
         }
     }
 
@@ -11555,6 +11595,458 @@ class Document {
     private val sweepLaws = HashMap<Step, SweepLawBinding>()
     private var pendingSweepLaw: SweepLawBinding? = null
 
+    /**
+     * What a **function-family section**'s `laws=` stated on a sweep step (OP-26, session 79): one entry per
+     * driven name, each with its law text and what that text's names resolved to — **by identity**, which is
+     * what makes a rename a re-stamp rather than an orphaned reference.
+     *
+     * [SweepLawBinding] **keyed by the name it drives**, and it exists for that class's own two reasons plus
+     * one that only a keyed list has: the **text is the record** and this is its sole authority (the writer
+     * restates this step's whole `laws=` from here, so re-stating a law is an edit of the step rather than a
+     * second feature); a rename is a re-stamp; and the driven name on the **left** of each `=` is a reference
+     * like any other, so a rename rewrites *that* too — the two-sided re-stamp ([restampSweepLaws]).
+     *
+     * The pairs are written `name = expr`, semicolon-separated, with the **expression verbatim** as the user
+     * typed it and the pair structure this class's own ([stated]). The alternative — keeping the whole
+     * argument character for character, whitespace and all — was rejected because the *rows* are the entry
+     * medium ([sectionFamilyRows]): the user types one formula per driven name and never the joining
+     * punctuation, so there is no user text there to preserve, and a normalized join is what makes
+     * `save → load → save` byte-equal after a re-stated row as well as after a load.
+     */
+    class SweepFamilyBinding internal constructor(
+        val element: Element,
+        val entries: List<Entry>,
+    ) {
+        /** One `name = expr` pair — the driven name, the law, and what the law reads. */
+        class Entry internal constructor(
+            /** The driven name as the step stated it. */
+            val stated: String,
+            val source: String,
+            /**
+             * The scalar row this law drives, or null for the run's own [FAMILY_TWIST_NAME] and for a name the
+             * drawing carries nothing for (the hand-edited file — see [SectionFamily.unresolved]).
+             */
+            internal val target: ScalarEntry?,
+            /** The law's parsed form, or null where one of the names it reads resolves to nothing. */
+            internal val ast: Expr?,
+            internal val names: List<String>,
+            internal val refs: List<ExprRef>,
+            val param: String,
+        ) {
+            /** The driven name **now** — re-stamped when the scalar it drives is renamed (the left side). */
+            var driven: String = stated
+
+            /** The law under the **current** names of what it reads — what a save writes (the right side). */
+            var text: String = source
+
+            /** Whether this entry is the run's own turn rather than a scalar of the drawing. */
+            val isTwist: Boolean get() = target == null && driven == FAMILY_TWIST_NAME
+
+            /** Whether the drawing carries nothing of this name at all — the load's soft failure. */
+            val unresolved: Boolean get() = target == null && !isTwist
+        }
+
+        /** The whole `laws=` argument as it stands — what the writer puts back on the step. */
+        val stated: String get() = entries.joinToString("; ") { "${it.driven} = ${it.text}" }
+
+        /** The law stated for [name] under its current spelling, or null. */
+        fun textOf(name: String): String? = entries.firstOrNull { it.driven == name }?.text
+
+        /** Every scalar row this family reads **or drives** — what the delete cascade follows. */
+        internal fun scalarRefs(): List<ScalarEntry> =
+            entries.flatMap { e -> e.refs.mapNotNull { it.entry } + listOfNotNull(e.target) }
+
+        /** Every point whose coordinate one of these laws reads (the session-76 rule, one feature on). */
+        internal fun pointRefs(): List<Element> = entries.flatMap { e -> e.refs.mapNotNull { it.point } }
+    }
+
+    private val sweepFamilies = HashMap<Step, SweepFamilyBinding>()
+    private var pendingSweepFamily: SweepFamilyBinding? = null
+
+    /** The family [step] recorded, or null — how the writer restates that step's own `laws=`. */
+    internal fun sweepFamilyBinding(step: Step): SweepFamilyBinding? = sweepFamilies[step]
+
+    /** The family laws [el]'s section is read under, or null — what the panel rows show. */
+    fun sweepFamilyOf(el: Element): SweepFamilyBinding? = sweepFamilies.values.firstOrNull { it.element === el }
+
+    /**
+     * The **free named scalars [profile]'s own drawing transitively reads** — what a family law may drive,
+     * and what the panel offers a row for (the design pass's F3).
+     *
+     * *Free*, because a law is a substitution and a bound parameter has no value of its own to substitute:
+     * `thickness = 0.12 * chord` follows `chord`'s law by ordinary recompute, which is sharing-is-equality
+     * one level up. *Named*, because a law is written and a nameless freedom cannot be. *Transitively read*,
+     * because that is what "the section is built from this" means, and it is asked of the region's own cone
+     * so a scalar the drawing merely happens to carry is not offered.
+     *
+     * In the panel's own order, which is the drawing's order, so the rows do not shuffle.
+     */
+    fun sectionLawables(
+        profile: Element,
+        /**
+         * Where the cone is read from — [profile]'s own node by default, and the **region** node where the
+         * caller has one (`sweepAlongCurve`, which has already traced the boundary).
+         *
+         * The two differ only where the pick is one *piece* of a traced boundary: the piece's own cone is
+         * then a subset of the whole outline's, so the panel offers a little less than the sweep would take
+         * and never a name the sweep would refuse. Which is the safe direction, and the reason the panel does
+         * not ask for the region: building one mints a node, and this is read on every repaint.
+         */
+        from: Node = profile.ref.node,
+    ): List<ScalarEntry> {
+        val cone = HashSet<String>()
+        // the **element's own** node, not the region built from it: a region node adds no scalar the
+        // boundary has not got, and asking for one here would mint a node on every repaint (the panel reads
+        // this on every frame — see [constructit.editor.Editor.sectionFamilyRows])
+        coneOf(from, cone)
+        return scalars.filter { it.editable && !isBound(it) && it.ref.node.id in cone }
+    }
+
+    /** Every node id at or upstream of [n] — the cone a family reads, gathered once. */
+    private fun coneOf(
+        n: Node,
+        into: MutableSet<String>,
+    ) {
+        if (!into.add(n.id)) return
+        for (i in n.inputs) coneOf(i, into)
+    }
+
+    /**
+     * The section's transitive **free** sources and parameters, as refs — [SectionFamily.watched].
+     *
+     * Every [SourceNode] and every unbound [ParameterNode] in the cone of the section (and of the point it
+     * rides on, which is read under the same substitutions), which is the set whose motion can change what
+     * a station's ring is. They become ordinary inputs of the sweep node, so the memo is sound by
+     * construction rather than by an argument about what intermediate nodes do with their value objects.
+     */
+    private fun watchedFreedoms(vararg roots: Node?): List<Ref<*>> {
+        val seen = HashSet<String>()
+        val out = ArrayList<Node>()
+
+        fun walk(n: Node) {
+            if (!seen.add(n.id)) return
+            val free = (n is SourceNode && n.boundTo == null) || (n is ParameterNode && n.boundTo == null)
+            if (free) out.add(n)
+            for (i in n.inputs) walk(i)
+        }
+        for (r in roots) r?.let { walk(it) }
+        return out.map { Ref<Value>(it) }
+    }
+
+    /** The name the **run's own turn** goes by on the left of a family law (the design pass's F12). */
+    val familyTwistName: String get() = FAMILY_TWIST_NAME
+
+    /**
+     * [text] read as a semicolon-separated list of **family laws** (OP-26, session 79), or null with [note]
+     * set by name.
+     *
+     * Every structural refusal lives here and fires before anything is built — the design pass's F3 list,
+     * one sentence each and each naming its cure. What is *not* refused here is anything about the values:
+     * a law whose section turns inside out, whose piece count changes or whose area vanishes part-way along
+     * the run is the node's own business and comes back as the named invalidity that heals (OP-3).
+     */
+    private fun familyLaws(
+        text: String,
+        what: String,
+        profile: Element,
+        from: Node = profile.ref.node,
+    ): List<SweepFamilyBinding.Entry>? {
+        val lawables = sectionLawables(profile, from)
+        val stated = ArrayList<String>()
+        val out = ArrayList<SweepFamilyBinding.Entry>()
+        for (piece in text.split(';')) {
+            if (piece.isBlank()) continue
+            val eq = piece.indexOf('=')
+            if (eq < 0) {
+                note =
+                    "$what: '${piece.trim()}' is no law — write the name of what varies, an '=', and a formula " +
+                    "over $sweepLawParam ('chord = 200mm * (1 - 0.6*$sweepLawParam)'), and separate several with ';'"
+                return null
+            }
+            val name = piece.substring(0, eq).trim()
+            val body = piece.substring(eq + 1).trim()
+            if (name.isEmpty()) {
+                note = "$what: '${piece.trim()}' names nothing to vary — write 'name = formula'"
+                return null
+            }
+            if (body.isEmpty()) {
+                note = "$what: '$name' has no formula — write '$name = ' and one formula over $sweepLawParam, or leave the row empty"
+                return null
+            }
+            if (name in stated) {
+                note =
+                    "$what: '$name' is given two laws in one step, and a station reads one value for it — " +
+                    "keep the law you mean and delete the other"
+                return null
+            }
+            stated.add(name)
+            val entry = familyLaw(name, body, what, profile, lawables, stated) ?: return null
+            out.add(entry)
+        }
+        return out
+    }
+
+    /** One `name = expr` pair resolved, or null with [note] set — see [familyLaws] for what is refused here. */
+    private fun familyLaw(
+        name: String,
+        body: String,
+        what: String,
+        profile: Element,
+        lawables: List<ScalarEntry>,
+        stated: List<String>,
+    ): SweepFamilyBinding.Entry? {
+        // **`roll` and `twist` are the run's own names** and are reserved on the left of a law: the step
+        // already carries both as parameters, so a drawing scalar of that name cannot be told from them here.
+        if (name == FAMILY_ROLL_NAME) {
+            note =
+                "$what: '$FAMILY_ROLL_NAME' is where the section starts, not how it turns along the run — it is one " +
+                "angle for the whole body, so state the variation as '$FAMILY_TWIST_NAME = …' and leave roll a parameter"
+            return null
+        }
+        val collides = scalars.firstOrNull { it.name == name && it in lawables }
+        if (name == FAMILY_TWIST_NAME && collides != null) {
+            note =
+                "$what: the section reads a parameter called '$FAMILY_TWIST_NAME', and '$FAMILY_TWIST_NAME' is also the run's " +
+                "own turn — rename the parameter (the panel's rows rename in place) so the law says which one it drives"
+            return null
+        }
+        // …a **coordinate** is read and never written (the session-76 rule, one feature on)
+        if (name != FAMILY_TWIST_NAME && name.contains('.')) {
+            note =
+                "$what: '$name' is a point's coordinate, and a coordinate is read rather than driven — a family " +
+                "law drives a **parameter** the section is built from, so state the law on the parameter that " +
+                "coordinate is placed by"
+            return null
+        }
+        val target =
+            if (name == FAMILY_TWIST_NAME) {
+                null
+            } else {
+                val row = scalars.firstOrNull { it.name == name }
+                if (row != null && isBound(row)) {
+                    val master = boundEntry(row)?.name ?: expressionOf(row) ?: "another value"
+                    note =
+                        "$what: '$name' follows $master, so it has no value of its own for a station to read — " +
+                        "state the law on $master and '$name' reads it at every station"
+                    return null
+                }
+                if (row != null && row !in lawables) {
+                    note =
+                        "$what: ${nameOf(profile)} is not built from '$name' — a family law drives a parameter " +
+                        "the section reads, and this one reads ${lawableWord(lawables)}"
+                    return null
+                }
+                row
+            }
+        // …a law may not read a name **this same step drives**: a station's values come from the drawing, and
+        // reading one law's output in another would make the family a little solver of its own (F3)
+        val ast =
+            try {
+                ExprParser.parse(body)
+            } catch (err: ExprError) {
+                note = "$what: can't read '$name' from '$body': ${err.message}"
+                return null
+            }
+        val names = ArrayList<String>()
+        val refs = ArrayList<ExprRef>()
+        var unresolved = false
+        for (n in ast.refNames()) {
+            if (n == sweepLawParam) continue
+            if (n in stated || n == FAMILY_TWIST_NAME) {
+                note =
+                    "$what: the law for '$name' reads '$n', which this same step drives — a station's values " +
+                    "come from the drawing, so bind '$n' in the drawing (wire it, or give it a formula) and it " +
+                    "follows '$name' at every station"
+                return null
+            }
+            val resolved = resolveExprName(n)
+            if (resolved == null) {
+                if (n in EXPR_CONSTANTS) continue
+                note = "$what: ${unknownName(n)}"
+                return null
+            }
+            names.add(n)
+            refs.add(resolved)
+        }
+        if (target == null && name != FAMILY_TWIST_NAME) unresolved = true
+        return SweepFamilyBinding.Entry(
+            name,
+            body,
+            target,
+            if (unresolved) null else ast,
+            names,
+            refs,
+            sweepLawParam,
+        )
+    }
+
+    /** How a refusal lists what a section *is* built from — the cure half of the unread-name sentence. */
+    private fun lawableWord(lawables: List<ScalarEntry>): String =
+        if (lawables.isEmpty()) {
+            "no named parameter at all (give the dimension that is to vary a parameter in the panel first)"
+        } else {
+            lawables.joinToString(", ") { "'${it.name}'" }
+        }
+
+    /**
+     * The **family** [laws] state on the section [profile], as the DSL takes it — or null with [note] set.
+     *
+     * A name the drawing carries **nothing** for is kept rather than refused (the hand-edited file's case,
+     * [SectionFamily.unresolved]): the law travels, the body is invalid with a reason naming the name, and
+     * the load says which element it was ([noteLoad]).
+     */
+    private fun familyOf(
+        entries: List<SweepFamilyBinding.Entry>,
+        region: RegionRef,
+        anchor: PointRef?,
+    ): SectionFamily {
+        val driven =
+            entries.filter { !it.isTwist && !it.unresolved }.map { e ->
+                FamilyLaw(
+                    e.driven,
+                    e.target!!.ref.node,
+                    ExprLaw(e.ast!!, e.names, e.refs.map { ScalarRef(it.node) }, e.text, e.param),
+                )
+            }
+        val twist =
+            entries.firstOrNull { it.isTwist }?.let { e ->
+                ExprLaw(e.ast!!, e.names, e.refs.map { ScalarRef(it.node) }, e.text, e.param)
+            }
+        return SectionFamily(
+            region.node,
+            anchor?.node,
+            driven,
+            twist,
+            watchedFreedoms(region.node, anchor?.node),
+            entries.filter { it.unresolved }.map { it.driven },
+        )
+    }
+
+    /** The binding [entries] leave on the body they shape, for the writer and the re-stamp to find. */
+    private fun rememberFamily(
+        solid: Element,
+        entries: List<SweepFamilyBinding.Entry>,
+    ) {
+        pendingSweepFamily = SweepFamilyBinding(solid, entries)
+    }
+
+    /**
+     * The whole journal with [el]'s **family laws restated** as [text] — or null with [note] set, by name.
+     *
+     * [sweepLawRestated] one tier up, and every word of its reasoning applies unchanged: a law change is an
+     * **edit** of the step that already declares this body, so the solid keeps its identity and its name,
+     * nothing downstream is rewired, every scored choice stays where it is, and the whole thing is one undo
+     * step. An empty [text] takes every law away, which is the section as it is drawn again.
+     */
+    fun sweepFamilyRestated(
+        el: Element,
+        text: String?,
+    ): String? {
+        val step = creatingStep(el)
+        val toolId = if (step?.kind == "tool") (step.args.firstOrNull() as? Arg.Text)?.s else null
+        val tool = toolId?.let { toolDef(it) }
+        if (step == null || tool == null || !tool.carriesLaws) {
+            note = familyRefusal(el, toolId)
+            return null
+        }
+        val profile = sweptSectionOf(step)
+        if (profile == null) {
+            note =
+                "Section laws: ${nameOf(el)} carries no drawn section to read per station — a family reads one " +
+                "2D drawing once for every station of the run, so sweep an area with *Sweep (profile along a curve)*"
+            return null
+        }
+        val wanted = text?.trim()?.ifEmpty { null }
+        val entries = if (wanted == null) null else familyLaws(wanted, "Section laws", profile) ?: return null
+        val before = sweepFamilies[step]
+        if (entries == null || entries.isEmpty()) {
+            sweepFamilies.remove(step)
+        } else {
+            sweepFamilies[step] = SweepFamilyBinding(el, entries)
+        }
+        return try {
+            DocumentFormat.save(this)
+        } finally {
+            sweepFamilies.remove(step)
+            before?.let { sweepFamilies[step] = it }
+        }
+    }
+
+    /**
+     * The **drawing a family reads** for [el]: the area itself where [el] *is* a section, or the section the
+     * swept body [el] was built from — and null for anything that is neither.
+     *
+     * One question with two answers because the panel's rows have two readings, exactly as the single
+     * *Section law* field has: with a swept body selected the rows **are** its laws, and with a section
+     * selected they are what the next sweep of it will carry.
+     */
+    fun familySectionOf(el: Element): Element? {
+        if (el.kind == ElementKind.SOLID) {
+            val step = creatingStep(el) ?: return null
+            val toolId = if (step.kind == "tool") (step.args.firstOrNull() as? Arg.Text)?.s else null
+            val tool = toolId?.let { toolDef(it) } ?: return null
+            if (!tool.carriesLaws) return null
+            return sweptSectionOf(step)
+        }
+        return if (couldBeSection(el)) el else null
+    }
+
+    /**
+     * Whether [el] could be **the section a sweep carries** — anything drawn that is not a point and not a
+     * curve in space, which is exactly what the tool's own area slot coerces (see [regionOf]).
+     *
+     * One rule for both readings of the panel's rows, and deliberately generous: a *piece* of a traced
+     * boundary offers the free scalars that piece is built from, which is a subset of the whole outline's and
+     * therefore never a name a law may not drive.
+     */
+    private fun couldBeSection(el: Element): Boolean = !el.isPoint && el.kind != ElementKind.SPACE_CURVE
+
+    /**
+     * The names a family law may drive on [el] — the law-able scalars of the drawing it reads
+     * ([sectionLawables]), with the run's own [FAMILY_TWIST_NAME] last.
+     *
+     * Last because it is the run's and not the drawing's: every other row is a dimension of the section, and
+     * the twist is how that section turns while it travels.
+     */
+    fun familyLawNames(el: Element): List<String> {
+        val section = familySectionOf(el) ?: return emptyList()
+        // `distinct`, because a drawing may carry a scalar of the reserved name itself: one row then stands
+        // for both readings and applying it refuses by name with the cure (rename the row), which is better
+        // than two rows nobody can tell apart
+        return (sectionLawables(section).map { it.name } + FAMILY_TWIST_NAME).distinct()
+    }
+
+    /** The area [step] swept, or null — the drawing a family reads, found from the step's own picks. */
+    internal fun sweptSectionOf(step: Step): Element? =
+        referencedElements(step).lastOrNull { couldBeSection(it) }
+
+    /** Why [el] carries no family laws over its run, with the cure — see [sweepFamilyRestated]. */
+    private fun familyRefusal(
+        el: Element,
+        toolId: String?,
+    ): String =
+        when (toolId) {
+            // **The tube's section is the run's own statement**, not a drawing: there is no 2D DAG to read
+            // per station, and the one dimension it has is exactly what `r(t)` already states (F6).
+            Tools.TUBE ->
+                "Section laws: ${nameOf(el)} is a tube, whose section is a circle the run itself states — " +
+                    "there is no drawing to read per station, and the one size it has is *Section law* " +
+                    "(`r($sweepLawParam) = 5mm * (1 - $sweepLawParam/2)`). To vary an outline, draw the section " +
+                    "and sweep it with *Sweep (profile along a curve)*"
+            // …the swept cut, in session 77's own sentence pluralized: its reach is derived from the solid it
+            // cuts, and sections that differ per station would move that reach station by station.
+            Tools.CUT_ALONG_CURVE, Tools.CUT_ALONG_CURVE_FLAT, Tools.SPLIT_ALONG_CURVE, Tools.SPLIT_ALONG_CURVE_FLAT ->
+                "Section laws: ${nameOf(el)} is cut by a chain carried along a route, and a swept cut states no " +
+                    "sizes of its own — how far its sections reach is derived from the solid it cuts, so sections " +
+                    "that differed along the run would move that reach station by station. Sweep the varying " +
+                    "section as a solid with *Sweep* (its own scalars may be formulas over the run) and subtract " +
+                    "it with *Subtract*"
+            else ->
+                "Section laws: ${nameOf(el)} is ${kindWord(el)}, and laws over the run belong to a swept body " +
+                    "whose section is a drawing — build one with *Sweep (profile along a curve)* and state the " +
+                    "laws on that"
+        }
+
     /** The law [step] recorded, or null — how the writer restates that step's own text. */
     internal fun sweepLawBinding(step: Step): SweepLawBinding? = sweepLaws[step]
 
@@ -11776,6 +12268,16 @@ class Document {
         anchor: PointRef? = null,
         pierce: Int? = null,
         law: String? = null,
+        /**
+         * **The section read as a family of sections** (OP-26, session 79): semicolon-separated
+         * `name = formula` pairs over the run parameter, each driving one named scalar the drawing is built
+         * from — `chord = 200mm * (1 - 0.6*t); twist = 15deg * t`.
+         *
+         * The general tier above [law], and it **composes** with it: a family supplies the outline at each
+         * station and the rigid law scales what it supplied. Absent, this is the sweep it always was, down to
+         * the node's inputs and the step's own words (OP-18).
+         */
+        laws: String? = null,
     ): Element? {
         val path = spaceCurveRef(el, "Sweep") ?: return null
         val region =
@@ -11820,6 +12322,10 @@ class Document {
         // rigidly, read larger or smaller about the very point it rides the run on, and never a re-reading of
         // its own sketch. Refused by name here for everything structural, before anything is built.
         val parsed = if (law == null) null else sizeLaw(law, "Sweep") ?: return null
+        // **[laws] is the family** (OP-26, session 79) — the section's own named scalars driven per station,
+        // refused by name here for everything structural, before anything is built.
+        val familyEntries =
+            if (laws == null) null else familyLaws(laws, "Section laws", profile, region.node) ?: return null
         val sectionPlane = if (anchor == null) planeOfSpace(profile.space) else null
         val hits = if (sectionPlane == null) emptyList() else crossingsOf(path, sectionPlane)
         val chosen =
@@ -11843,6 +12349,7 @@ class Document {
                     if (chosen == null) null else sectionPlane,
                     chosen ?: 0,
                     parsed?.input,
+                    familyEntries?.takeIf { it.isNotEmpty() }?.let { familyOf(it, region, anchor) },
                 ),
                 ElementKind.SOLID,
                 Styles.SOLID,
@@ -11853,9 +12360,22 @@ class Document {
         // or a load followed by a save would put words in an older writer's mouth.
         if (anchor == null && (pierce != null || replayingVersion == null)) registerSigns(solid, listOf(chosen ?: -1))
         if (parsed != null && law != null) rememberLaw(solid, law, parsed)
+        if (familyEntries != null && familyEntries.isNotEmpty()) {
+            rememberFamily(solid, familyEntries)
+            // …and a driven name the drawing carries nothing for is **named by the load** rather than dropped
+            // (the hand-edited file's case): the body says why it is invalid, and the notes say which body
+            val missing = familyEntries.filter { it.unresolved }
+            if (missing.isNotEmpty() && replayingVersion != null) {
+                noteLoad(
+                    "${nameOf(solid)} states a law for ${missing.joinToString(", ") { "'${it.driven}'" }}, " +
+                        "and this drawing carries no value of that name — the body is invalid until one exists",
+                )
+            }
+        }
         madeSolid(
             solid,
             "${nameOf(profile)} swept along ${nameOf(el)}" +
+                (familyEntries?.takeIf { it.isNotEmpty() }?.let { es -> ", with ${es.joinToString("; ") { "${it.driven}($sweepLawParam) = ${it.text}" }}" } ?: "") +
                 (law?.let { ", scaled by $sweepLawParam -> ${it.trim()}" } ?: "") + liftNote(el) +
                 (anchorEl?.let { ", riding on ${nameOf(it)}" } ?: ridingNote(el, profile, sectionPlane, chosen, hits.size)),
         )

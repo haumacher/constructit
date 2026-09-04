@@ -1266,6 +1266,17 @@ class Editor(
     private var armedLaw: String? = null
 
     /**
+     * The **family laws armed for the next function-family sweep** (OP-26, session 79) — one formula per
+     * driven name, in the order they were applied.
+     *
+     * [armedLaw] keyed by the name it drives, and it is a tool option for that field's own reasons: the rows
+     * are in the panel and the tool comes from the palette, so arming a law and arming the tool are two acts
+     * with [resetPicks] between them. The one surprise stickiness could cause — laws silently reaching a
+     * tool with no drawing to read — is **refused by name** where that tool completes, never dropped.
+     */
+    private val armedFamilyLaws = LinkedHashMap<String, String>()
+
+    /**
      * What the armed tool would build if the next click happened where the cursor is (`ToolDef.preview`).
      *
      * Held here because it is *view* state of the gesture, exactly as the ortho band ([previewSeg]) is: it is
@@ -2587,6 +2598,129 @@ class Editor(
         return true
     }
 
+    // ---- the function-family section: one drawing read per station (OP-26, session 79) ----
+
+    /**
+     * One row of the panel's family-law list: the name it drives, the formula stated for it, and whether it
+     * is the run's own turn rather than a dimension of the drawing.
+     */
+    class FamilyLawRow(
+        val name: String,
+        val text: String,
+        val isTwist: Boolean,
+    )
+
+    /**
+     * What the panel's **family-law rows** show — the design pass's F5, and [sectionLawText]'s single field
+     * grown to a keyed list.
+     *
+     * Two readings and one list, exactly as that field has: with a **swept body** selected the rows are the
+     * law-able scalars of the drawing it carries and their texts **are** that body's laws (Apply re-states
+     * one); with a **section** selected they are that drawing's law-able scalars and their texts are what the
+     * next sweep of it will carry. With neither, whatever is armed — so a law can always be read back and
+     * cleared where it was typed.
+     *
+     * The rows are what the drawing offers rather than what has been stated, which is the whole gesture:
+     * *these are the dimensions of this section, give any of them a formula over the run.*
+     */
+    val sectionFamilyRows: List<FamilyLawRow>
+        get() {
+            val one = selectedElements.singleOrNull()
+            val names = one?.let { doc.familyLawNames(it) } ?: emptyList()
+            if (names.isEmpty()) {
+                return armedFamilyLaws.map { (n, t) -> FamilyLawRow(n, t, n == doc.familyTwistName) }
+            }
+            val bound = one?.let { doc.sweepFamilyOf(it) }
+            val body = one!!.kind == ElementKind.SOLID
+            return names.map { n ->
+                val text = if (body) bound?.textOf(n) ?: "" else armedFamilyLaws[n] ?: ""
+                FamilyLawRow(n, text, n == doc.familyTwistName)
+            }
+        }
+
+    /**
+     * State one **family law** — the whole of the function-family section's entry path, one row at a time.
+     *
+     * Two readings, decided by what is selected and by nothing else, and both of them [setSectionLaw]'s:
+     * - a **selected swept body** is re-read in place, which re-stamps its own step and replays
+     *   ([Document.sweepFamilyRestated]) — the body keeps its identity and its name, everything built on it
+     *   follows by recompute, and it is one undo step. A blank text takes that one law away.
+     * - anything else **arms** the law for the next sweep, exactly as a typed length is armed for the next
+     *   click (OP-13): it is half of that gesture, and it survives [resetPicks] because the field and the
+     *   palette are two separate acts.
+     *
+     * The body's **other** laws are untouched: a row is one law, and re-stating one is a new binding on the
+     * same step carrying every other law it had — which is what makes the rows independent and the undo one
+     * step per Apply.
+     */
+    fun setFamilyLaw(
+        name: String,
+        text: String,
+    ): Boolean {
+        val wanted = text.trim()
+        val one = selectedElements.singleOrNull()
+        if (one != null && one.kind == ElementKind.SOLID) {
+            val label = doc.nameOf(one)
+            // the step's laws as they stand, with this one row replaced — the order the file has, so a
+            // re-state of one row leaves every other byte of `laws=` exactly where it was
+            val now = LinkedHashMap<String, String>()
+            doc.sweepFamilyOf(one)?.entries?.forEach { now[it.driven] = it.text }
+            if (wanted.isEmpty()) now.remove(name) else now[name] = wanted
+            val composed = now.entries.joinToString("; ") { "${it.key} = ${it.value}" }
+            val script = doc.sweepFamilyRestated(one, composed)
+            val said = doc.takeNote()
+            if (script == null) {
+                statusHint = said ?: "Can't state a law on $label"
+                changed()
+                return false
+            }
+            val fresh =
+                try {
+                    DocumentFormat.load(script)
+                } catch (e: Exception) {
+                    statusHint = "Stating a law on $label failed: ${e.message}"
+                    changed()
+                    return false
+                }
+            adopt(fresh)
+            checkpoint()
+            // a law whose *values* do not work out is legal and invalid, not refused (OP-3): it says so and heals
+            val el = doc.elements.firstOrNull { doc.nameOf(it) == label }
+            val why = el?.let { (Evaluator().eval(it.ref.node) as? EvalResult.Invalid)?.reason }
+            statusHint =
+                (
+                    if (composed.isEmpty()) {
+                        "$label reads its section as it is drawn again"
+                    } else if (wanted.isEmpty()) {
+                        "$label: '$name' is constant again — $composed"
+                    } else {
+                        "$label: $name(${doc.sweepLawParam}) = $wanted"
+                    }
+                ) + (why?.let { " — but $it" } ?: "")
+            changed()
+            return true
+        }
+        if (wanted.isEmpty()) armedFamilyLaws.remove(name) else armedFamilyLaws[name] = wanted
+        statusHint =
+            if (armedFamilyLaws.isEmpty()) {
+                "No family laws armed — the next sweep reads its section once, as it is drawn"
+            } else {
+                "Armed for the next *Sweep*: " +
+                    armedFamilyLaws.entries.joinToString("; ") { "${it.key}(${doc.sweepLawParam}) = ${it.value}" } +
+                    ", with ${doc.sweepLawParam} from 0 at the start of the run to 1 at its end"
+            }
+        changed()
+        return true
+    }
+
+    /** The laws armed for the next sweep as one `laws=` argument, or null — see [armedFamilyLaws]. */
+    private fun armedLawsText(): String? =
+        if (armedFamilyLaws.isEmpty()) {
+            null
+        } else {
+            armedFamilyLaws.entries.joinToString("; ") { "${it.key} = ${it.value}" }
+        }
+
     /**
      * Draw a **function curve** from two texts and a domain (the session-71 entry, curve half).
      *
@@ -3497,6 +3631,7 @@ class Editor(
                 // (see [maybeCompleteTool]'s check below), because a taper that silently vanished would be
                 // the one failure a status line cannot recover.
                 law = armedLaw.takeIf { tool.carriesLaw },
+                laws = armedLawsText().takeIf { tool.carriesLaws },
             )
         toolPreview = preview(PreviewContext(doc, ev, picks, previewScalars(tool, ev), world, tolWorld(), justification))
     }
@@ -4938,7 +5073,17 @@ class Editor(
                 // (see [maybeCompleteTool]'s check below), because a taper that silently vanished would be
                 // the one failure a status line cannot recover.
                 law = armedLaw.takeIf { tool.carriesLaw },
+                laws = armedLawsText().takeIf { tool.carriesLaws },
             )
+        // …and family laws armed while a tool with no drawing to read completes: refused by name, never
+        // dropped, for [armedFamilyLaws]' own reason (OP-26, session 79)
+        if (armedFamilyLaws.isNotEmpty() && !tool.carriesLaws) {
+            statusHint =
+                "${tool.label} reads no section per station — the laws you typed belong to *Sweep (profile " +
+                "along a curve)*, whose section is a drawing. Clear the rows under *Formulas over t*, or arm that"
+            changed()
+            return true
+        }
         if (armedLaw != null && !tool.carriesLaw) {
             statusHint =
                 "${tool.label} carries no size law over a run — the law you typed belongs to *Tube along a " +

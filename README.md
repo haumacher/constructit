@@ -358,12 +358,30 @@ so a taper follows a dimension like everything else; select a swept body and the
 for editing, and clearing the field makes it a section of one size again. What is carried is the section you
 drew, larger or smaller — never a re-drawing of it.
 
+**And the section may change *shape* along the run, not merely size — which is what a wing is.** Every named
+parameter the section's own drawing is built from gets a **row of its own** under *Formulas over t*, and a
+formula there is read once per station: the 2D drawing is re-read with that value substituted, so root and tip
+are genuinely different outlines rather than one outline scaled. Draw an aerofoil whose `chord` is a parameter
+and whose `thickness` is `0.12 * chord`, state `chord = 200mm * (1 - 0.6*t)`, and the tip is 80 mm of chord
+with 12% thickness *of that* — which no factor could ever have given you. There is a row for the run's own
+**twist** as well, so `twist = 15deg * t` is a blade's wash; put the point the section rides on a quarter of
+the chord back (`0.25 * chord`) and the whole blade pivots about its quarter-chord line by construction. The
+rows read any named value in the drawing, they compose with the rigid *Section law* above, a section with holes
+carries each hole on laws of its own, and a rib whose width grows by `100mm * tan(3deg) * t` has flanks at
+exactly three degrees. Select a swept body and the rows show its own laws back for editing — changing one is
+an edit of that body, in one undo — and a parameter that follows another (a bound one) needs no law at all: it
+follows at every station by itself.
+
 What it refuses, it refuses by name and it heals. A section too big to go round a bend would fold through
 itself, so it is refused with the place said out loud — *"the tube's radius (12 mm) is larger than the bend at
 340 mm along the path (radius 8 mm)"* — and the moment the radius comes back down the solid is there again. A
 A size law that goes to nothing part-way along says which station and what value — *"a tube needs a positive
 radius — r(t) = 5mm * (1 - 2*t) is -5 mm at t = 0.5 along the run"* — and every one of those refusals is read
 at the station it is about, so a run that is thin where it bends and thick where it is straight builds. A
+family's section that would lose a piece, turn itself inside out or cross its own outline part-way along says
+which station and what its laws said there, and points at *Loft (ruled)* where what you meant really is two
+different sections — a family carries **one** section through the whole run, so how many pieces it has is the
+same everywhere. A
 closed route that leaves its plane will not generally bring the frame back to where it started; rather than
 hiding that twist in the last piece, the drawing says how far out it is and what twist would close it, and
 typing that number closes it. Everything else is what any solid gets: it shows in 3D, draws a footprint you can

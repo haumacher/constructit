@@ -392,6 +392,16 @@ sealed interface Feature3 {
         val twist: Double,
         val plan: List<Region> = emptyList(),
         val carry: CarryMode = CarryMode.ROTATING,
+        /**
+         * **The twist as a law of the station**, where the run states one (OP-26, session 79) — the field
+         * that keeps `(path, profile, up, roll, twist, twistLaw)` enough to rebuild the identical frame.
+         *
+         * A [SizeLaw] is a *value* (an expression plus the numbers its names resolved to), so this is no
+         * more of a subgraph than [SweepProfile.law] already is: a placement turns it unchanged, a plan hint
+         * reads it, and a reload rebuilds the identical body. Null is the linear distribution [twist] has
+         * always meant, and then nothing about this feature has changed at all (OP-18).
+         */
+        val twistLaw: SizeLaw? = null,
     ) : Feature3 {
         override val footprint: List<Region> get() = plan
     }
@@ -1577,35 +1587,54 @@ object Geom3 {
         plan: Plane3? = null,
         tolMm: Double = GeomMath.TESS_TOL_MM,
         seed: FrameSeed? = null,
+        /** How the run's own twist varies with the station, or null for the linear distribution (session 79). */
+        twistLaw: SizeLaw? = null,
     ): Pair<Solid3?, String?> {
         // **The law first, on its own fixed grid** (OP-26, session 77): it is the statement that decides
         // whether *any* station has a size, `t = 0` included, so it is asked before the constant reading of
         // the radius below — which for a law-carrying tube is that same law read at the start.
         profile.law?.let { law -> SizeLaws.invalidity(law)?.let { return null to it } }
+        // …and the twist law by the same rule, minus the sign: a turn may be zero and may run either way
+        // round, so what is asked of it is only that it can be read (OP-26, session 79).
+        twistLaw?.let { law -> SizeLaws.unreadable(law)?.let { return null to it } }
         if (profile is SweepProfile.Round && profile.radius <= WELD_TOL) {
             return null to "a tube needs a positive radius — this one is ${Frames3.mm(profile.radius)} mm"
         }
+        val family = profile as? SweepProfile.Family
         val region = profile.region
         for (loop in listOf(region.outer) + region.holes) openBoundary(loop)?.let { return null to it }
         val (tess, why) = tessellateRegion(region, tolMm)
         if (tess == null) return null to (why ?: "cannot tessellate the profile")
         if (tessArea(tess) <= AREA_EPS) return null to "the profile encloses no area, so there is nothing to sweep"
         // how far the profile reaches from the path — the number the self-intersection criterion is about,
-        // and the radius the twist's own sampling refinement is measured at
-        val reach = tess.outer.maxOf { it.length() }
+        // and the radius the twist's own sampling refinement is measured at. For a **family** it is the
+        // largest any of its stations ever reaches (OP-26, session 79), read off the family's own grid.
+        val reach = family?.reach ?: tess.outer.maxOf { it.length() }
         if (reach <= WELD_TOL) return null to "the profile has no size, so there is nothing to sweep"
         // **The sampling is refined for the largest the section ever is** (OP-26, session 77), read off the
         // law's own fixed grid and never off the stations — so a horn's wide end is resolved by exactly the
         // rule a constant section of that size would get, and no criterion's resolution is the mesh's.
         val grown = reach * SizeLaws.maxScale(profile)
+        // …**and a family owns its own refinement** (OP-26, session 79, F7): its grid was decided before a
+        // triangle existed, by the sagitta of its rings' own motion, so the run is cut into at least as many
+        // spans as the family has samples and every sample is drawn rather than interpolated over.
+        // …and where a family carries a rigid factor as well, the **product's** own curvature, which neither
+        // grid sees on its own ([SweepProfile.Family.composedSpans]).
+        val lawSpans = max(SizeLaws.spans(profile, reach, tolMm), family?.composedSpans(tolMm) ?: 0)
 
-        val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, grown, tolMm, seed, SizeLaws.spans(profile, reach, tolMm))
+        val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, grown, tolMm, seed, lawSpans, twistLaw)
         if (frame == null) return null to (noFrame ?: "cannot build a moving frame along this curve")
         // **The per-station reading of the size** — one `t` over the whole run by arc length, stated once
         // here so the mesh, the plan hint and all three refusal terms read the identical number. Null for a
         // constant section, which is what keeps every message and every triangle of one byte-identical.
         val (scales, noScale) = SizeLaws.scalesAlong(profile, frame)
         if (noScale != null) return null to noScale
+        // **The family's ring at each station** (OP-26, session 79): the stations read the family's grid by
+        // vertex-wise linear interpolation, which is the whole of how a value-only family reaches a frame
+        // whose station count is the run's business. One list, computed once here, read by all three
+        // criteria, by the mesh and by the plan hint — the discipline `scales` already follows.
+        val rings = family?.let { f -> frame.stations.map { f.at(stationParam(it, frame)) } }
+        val sectionAt: ((Int) -> List<Vec2>)? = rings?.let { rs -> { k: Int -> rs[k].outer } }
 
         // **The self-intersection criterion: the spine's reach**, both terms of it ([Embedding]). Locally, a
         // profile reaching `reach` from the path folds through itself the moment the path's radius of
@@ -1630,12 +1659,24 @@ object Geom3 {
         val sectionOutline = if (profile is SweepProfile.Round) null else tess.outer
         val intoTheBend: ((Double) -> String)? =
             when {
+                // …and a **family** names the section the drawing states *at that station*, since there is no
+                // one formula to quote and the whole point is that the outline differs along the run
+                // (OP-26, session 79). First, because every other branch below is about a section that has
+                // one size for the whole run.
+                family != null -> { d -> "the section the family states there (${Frames3.mm(d)} mm into the bend)" }
                 profile !is SweepProfile.Round -> { d -> "the profile's reach into the bend (${Frames3.mm(d)} mm)" }
                 profile.law != null -> { d -> "the tube's radius there (${Frames3.mm(d)} mm)" }
                 else -> null
             }
-        Embedding.check(frame, reach, profileReach(profile, reach), section = sectionOutline, inward = intoTheBend, scales = scales)
-            .defect?.let { return null to it }
+        Embedding.check(
+            frame,
+            reach,
+            profileReach(profile, reach),
+            section = sectionOutline,
+            inward = intoTheBend,
+            scales = scales,
+            sectionAt = sectionAt,
+        ).defect?.let { return null to it }
         // **…and the third way a swept body folds: a corner that mitres away more run than there is**
         // ([Embedding.cornerFold]). Neither term above can see it — it is not a proximity (a triangle's legs
         // all touch, so there is no non-neighbouring pair to be a bottleneck at) and it is not a curvature (a
@@ -1643,7 +1684,7 @@ object Geom3 {
         // section, positively volumed: silent wrong output, which outranks everything. It is asked **last**,
         // so that where more than one term fires the one that was there first keeps its words — the same rule
         // the local term already has against the global one.
-        Embedding.cornerFold(frame, reach, sectionOutline, scales = scales)?.let { return null to it }
+        Embedding.cornerFold(frame, reach, sectionOutline, scales = scales, sectionAt = sectionAt)?.let { return null to it }
         // **A closed path whose frame does not close on itself** is reported rather than smeared over the
         // last band, and the report names the cure: the twist that makes the total come back to zero is an
         // ordinary parameter of this very feature, so the refusal heals by stating it (OP-3). A *planar*
@@ -1657,7 +1698,15 @@ object Geom3 {
         }
 
         val (shells, noMesh) =
-            sweptShells(listOf(tess), frame.stations, frame.closed, regions = listOf(region), tolMm = tolMm, scales = scales) { st, p ->
+            sweptShells(
+                listOf(tess),
+                frame.stations,
+                frame.closed,
+                regions = listOf(region),
+                tolMm = tolMm,
+                scales = scales,
+                family = rings?.let { rs -> { k: Int -> rs[k].tess() } },
+            ) { st, p ->
                 st.place(p)
             }
         if (shells == null) return null to (noMesh ?: "cannot build this sweep")
@@ -1669,7 +1718,7 @@ object Geom3 {
             if (plan == null) {
                 emptyList()
             } else {
-                Silhouette.ofSwept(frame.stations, tess.outer, roundRadius(profile), frame.closed, plan, scales)
+                Silhouette.ofSwept(frame.stations, tess.outer, roundRadius(profile), frame.closed, plan, scales, sectionAt)
             }
         // **The feature records the direction the frame actually started with**, not the one that was asked
         // for — [MovingFrame.startRef]. For a frame started at the run's beginning the two are the same
@@ -1677,7 +1726,26 @@ object Geom3 {
         // **seeded** one this is what keeps `(path, profile, up, roll, twist)` enough to rebuild the identical
         // body: where the section was stated is a fact about the *gesture*, and the frame it produced is a
         // direction like any other (OP-9's self-contained feature, OP-26's stated start frame).
-        return Solid3.derived(Feature3.Sweep(path, profile, frame.startRef, rollRad, twistRad, outline), shells) to null
+        val feature = Feature3.Sweep(path, profile, frame.startRef, rollRad, twistRad, outline, twistLaw = twistLaw)
+        // **A family has one mesh level** ([Solid3.derivedFine]), and it is [Skin3]'s own reason: the ring's
+        // point count comes from the *family's* grid — one fixed count per boundary piece, taken from the
+        // largest that piece ever is — so coarsening the picture would mean re-deciding the family to save the
+        // cheap half of the work. A constant or rigidly scaled section coarsens exactly as it always did.
+        if (family != null) return Solid3.derivedFine(feature) { shells(MeshQuality.FINE) } to null
+        return Solid3.derived(feature, shells) to null
+    }
+
+    /**
+     * Station [st]'s own place along the run as the dimensionless `t` every law is read in — its arc length
+     * over the run's, which is the arc-length map [SizeLaws.scalesAlong] states and the one number the mesh,
+     * the criteria and the plan hint all read (OP-26, sessions 77 and 79).
+     */
+    private fun stationParam(
+        st: Frame3,
+        frame: MovingFrame,
+    ): Double {
+        val span = if (frame.length > WELD_TOL) frame.length else 1.0
+        return (st.s / span).coerceIn(0.0, 1.0)
     }
 
     /**
@@ -1700,16 +1768,40 @@ object Geom3 {
         if (feature.carry != CarryMode.ROTATING) return emptyList()
         val (tess, _) = tessellateRegion(feature.profile.region, tolMm)
         if (tess == null || tess.outer.isEmpty()) return emptyList()
-        val reach = tess.outer.maxOf { it.length() }
+        // the **family** travels with the feature as values (OP-9's self-contained feature, OP-26 session
+        // 79's F7), which is what makes this rebuild possible at all: a moved wing's hint is the wing's own
+        // taper, with no 2D subgraph to re-enter and nothing to re-evaluate
+        val family = feature.profile as? SweepProfile.Family
+        val reach = family?.reach ?: tess.outer.maxOf { it.length() }
         if (reach <= WELD_TOL) return emptyList()
         // the law travels with the feature (OP-9's self-contained feature), so a moved tapered body's hint is
         // the tapered one — and a law that cannot be read yields no hint, exactly as an unbuildable frame does
         val grown = reach * SizeLaws.maxScale(feature.profile)
-        val (frame, _) = Frames3.along(feature.path, feature.up, feature.roll, feature.twist, grown, tolMm, lawSpans = SizeLaws.spans(feature.profile, reach, tolMm))
+        val lawSpans = max(SizeLaws.spans(feature.profile, reach, tolMm), family?.composedSpans(tolMm) ?: 0)
+        val (frame, _) =
+            Frames3.along(
+                feature.path,
+                feature.up,
+                feature.roll,
+                feature.twist,
+                grown,
+                tolMm,
+                lawSpans = lawSpans,
+                twistLaw = feature.twistLaw,
+            )
         if (frame == null) return emptyList()
         val (scales, noScale) = SizeLaws.scalesAlong(feature.profile, frame)
         if (noScale != null) return emptyList()
-        return Silhouette.ofSwept(frame.stations, tess.outer, roundRadius(feature.profile), frame.closed, plane, scales)
+        val rings = family?.let { f -> frame.stations.map { f.at(stationParam(it, frame)) } }
+        return Silhouette.ofSwept(
+            frame.stations,
+            tess.outer,
+            roundRadius(feature.profile),
+            frame.closed,
+            plane,
+            scales,
+            rings?.let { rs -> { k: Int -> rs[k].outer } },
+        )
     }
 
     /** The **analytic** radius of a round section, and null for any other — see [Silhouette.ofSwept]. */
@@ -1761,21 +1853,46 @@ object Geom3 {
         regions: List<Region>? = null,
         tolMm: Double = GeomMath.TESS_TOL_MM,
         scales: List<Double>? = null,
+        /**
+         * **The section at each station**, where the section is a *function family* (OP-26, session 79) — one
+         * ring per entry of [stations], superseding [sections] entirely.
+         *
+         * The band emission below is unchanged and that is the point: every station's ring has the same
+         * point count (the family's own rule), so a band still runs vertex to vertex and consecutive bands
+         * still share **one** ring — which is where watertightness comes from. The two caps are the two end
+         * stations' own rings, triangulated, so a wing's root and tip are its own sections rather than one
+         * section scaled. Null is the constant route and not one line of it behaves differently.
+         */
+        family: ((Int) -> TessRegion)? = null,
         place: (Frame3, Vec2) -> Vec3,
     ): Pair<((MeshQuality) -> Mesh3)?, String?> {
         if (stations.size < 2) return null to "a sweep needs at least two stations along its run"
         val caps = ArrayList<List<Tri3>>(if (closed) 0 else sections.size)
         if (!closed) {
             for (tess in sections) {
-                val (tris, noTris) = triangulate(tess)
+                // a family's first cap is its **start station's** own ring, and a family is one section
+                val (tris, noTris) = triangulate(if (family == null) tess else family(0))
                 if (tris == null) return null to (noTris ?: "cannot cap this sweep")
                 caps.add(tris)
             }
         }
+        // …the *other* end's cap, which a family needs as a second triangulation because its two ends are two
+        // different outlines (a constant section caps both ends with one set of triangles, which is what the
+        // single list above is; here the first entry is the start and this one is the end)
+        val endCap =
+            if (closed || family == null) {
+                null
+            } else {
+                val (tris, noTris) = triangulate(family(stations.lastIndex))
+                if (tris == null) return null to (noTris ?: "cannot cap this sweep")
+                tris
+            }
         return { quality: MeshQuality ->
             var use = sections
             var useCaps = caps as List<List<Tri3>>
-            if (quality != MeshQuality.FINE && regions != null) {
+            // …and a **family** has one level (see [sweep]), so nothing here ever re-tessellates its rings:
+            // the count is the family's own and a coarse ask gets the fine mesh, the same object
+            if (quality != MeshQuality.FINE && regions != null && family == null) {
                 if (closed) {
                     tessAt(regions, tolMm, quality)?.let { use = it }
                 } else {
@@ -1803,8 +1920,15 @@ object Geom3 {
                 p: Vec2,
             ): Vec2 = if (scales == null) p else p * scales[k]
             for ((si, tess) in use.withIndex()) {
-                val polys = listOf(tess.outer) + tess.holes
-                val rings = stations.mapIndexed { k, st -> polys.map { poly -> poly.map { place(st, sized(k, it)) } } }
+                // **which section each station carries**: the one section, or — for a family — that
+                // station's own ring. One expression, so the band loop below is the loop it always was.
+                fun polysAt(k: Int): List<List<Vec2>> {
+                    val at = if (family == null) tess else family(k)
+                    return listOf(at.outer) + at.holes
+                }
+
+                val polys = polysAt(0)
+                val rings = stations.mapIndexed { k, st -> polysAt(k).map { poly -> poly.map { place(st, sized(k, it)) } } }
                 val bands = if (closed) stations.size else stations.size - 1
                 for (k in 0 until bands) {
                     val lo = rings[k]
@@ -1828,7 +1952,11 @@ object Geom3 {
                     val k1 = stations.lastIndex
                     for (t in useCaps[si]) {
                         tri(place(first, sized(k0, t.a)), place(first, sized(k0, t.c)), place(first, sized(k0, t.b)))
-                        tri(place(last, sized(k1, t.a)), place(last, sized(k1, t.b)), place(last, sized(k1, t.c)))
+                        if (endCap == null) tri(place(last, sized(k1, t.a)), place(last, sized(k1, t.b)), place(last, sized(k1, t.c)))
+                    }
+                    // …and a family's far cap is its own outline's triangulation, not the near one's
+                    endCap?.let { far ->
+                        for (t in far) tri(place(last, sized(k1, t.a)), place(last, sized(k1, t.b)), place(last, sized(k1, t.c)))
                     }
                 }
             }
@@ -1862,6 +1990,10 @@ object Geom3 {
         when {
             profile.law != null -> "the section's stated size (${profile.law!!.what()})"
             profile is SweepProfile.Round -> "the tube's radius (${Frames3.mm(profile.radius)} mm)"
+            // A **family** names the widest it ever is, because there is no formula to quote: what the run
+            // has to hold is the largest section the drawing states anywhere along it, and the stations the
+            // refusal names are where it did not fit (OP-26, session 79).
+            profile is SweepProfile.Family -> "the widest section the family states (${Frames3.mm(reach)} mm from the path)"
             else -> "the profile's reach from the path (${Frames3.mm(reach)} mm)"
         }
 

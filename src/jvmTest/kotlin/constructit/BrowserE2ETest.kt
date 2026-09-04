@@ -2400,6 +2400,120 @@ class BrowserE2ETest {
     }
 
     /**
+     * **The function-family section through the real shell** (OP-26, session 79 — queue entry 2, the wing's
+     * route): two laws typed into the panel's own rows, a sweep along a curve in space, and one of those laws
+     * re-stated on the body it built.
+     *
+     * The claim is reachability, made where a user makes it: the rows are in the collapsible the formulas
+     * already ride, the gesture is the sweep's ordinary two clicks, and the one thing only a browser can
+     * answer — that a gesture which **re-stamps a step and reloads the document** leaves the shell's tree,
+     * canvas and rows exactly where they should be.
+     */
+    @Test
+    fun aFunctionFamilySectionIsReachableInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            fun tree(): List<String> = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+            fun rows(): List<String> =
+                page.querySelectorAll("#fl-rows .flrow").map {
+                    it.querySelector(".flname").textContent() + "=" + it.querySelector("input").inputValue()
+                }
+
+            val box = page.querySelector("#canvas").boundingBox()
+            val a = Pair(box.x + box.width * 0.25, box.y + box.height * 0.35)
+            val b = Pair(box.x + box.width * 0.75, box.y + box.height * 0.35)
+
+            // the route: two plain points and a curve in space through them
+            page.click("#tool-point")
+            page.mouse().click(a.first, a.second)
+            page.mouse().click(b.first, b.second)
+            page.click("#tool-curve3")
+            page.mouse().click(a.first, a.second)
+            page.mouse().click(b.first, b.second)
+            page.keyboard().press("Enter")
+            assertTrue(tree().any { it.startsWith("space_curve") }, "the route is in the tree: ${tree()}")
+
+            // the section: a circle whose radius is a **named parameter**, which is what makes it law-able
+            page.fill("#p-name", "chord")
+            page.fill("#p-value", "24")
+            page.click("#p-add")
+            page.click("#tool-circleR")
+            val centre = Pair(box.x + box.width * 0.5, box.y + box.height * 0.75)
+            page.mouse().click(centre.first, centre.second)
+            assertTrue(tree().any { it.startsWith("circle") }, "the section is in the tree: ${tree()}")
+
+            // …the rows: one per free named scalar the section is built from, and the run's own twist last
+            page.click("#tool-select")
+            page.querySelectorAll("#tree .item").first { it.textContent().startsWith("circle") }.click()
+            page.click("#fc-form > summary")
+            assertEquals(
+                listOf("chord(t)=", "twist(t)="),
+                rows(),
+                "the panel offers a row per law-able scalar, and the run's turn last",
+            )
+
+            // …two laws, typed and applied one row at a time
+            page.fill("#fl-rows input[data-fl='chord']", "24mm * (1 - 0.5*t)")
+            page.click("#fl-rows button[data-fl='chord']")
+            assertTrue(status().contains("Armed for the next *Sweep*"), "the shell armed the first law: ${status()}")
+            page.fill("#fl-rows input[data-fl='twist']", "15deg * t")
+            page.click("#fl-rows button[data-fl='twist']")
+            assertTrue(status().contains("twist(t) = 15deg * t"), "and the second beside it: ${status()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/44-family-laws-armed.png")))
+
+            // …and the sweep's own gesture: the route, then the section
+            page.click("#tool-sweep")
+            page.mouse().click(box.x + box.width * 0.5, box.y + box.height * 0.35)
+            // the circle's own rim, which is what an area slot picks: 24 mm at the canvas's 4 px/mm
+            page.mouse().click(centre.first + 24.0 * 4.0, centre.second)
+            assertTrue(tree().any { it.startsWith("solid") }, "a solid is in the tree: ${tree()} — ${status()}")
+            assertTrue(status().contains("chord(t) = 24mm * (1 - 0.5*t)"), "and the shell says what it carried: ${status()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/45-family-swept.png")))
+
+            // **the rows re-open the body's own laws**: select it and they are what it was built with
+            page.click("#tool-select")
+            page.querySelectorAll("#tree .item").first { it.textContent().startsWith("solid") }.click()
+            assertEquals(
+                listOf("chord(t)=24mm * (1 - 0.5*t)", "twist(t)=15deg * t"),
+                rows(),
+                "the rows are the body's own laws",
+            )
+
+            // …and re-stating one is an edit of that very body: one step, one solid, the tree undisturbed
+            val treeBefore = tree()
+            page.fill("#fl-rows input[data-fl='twist']", "30deg * t")
+            page.click("#fl-rows button[data-fl='twist']")
+            assertTrue(status().contains("twist(t) = 30deg * t"), "the shell took the new law: ${status()}")
+            assertEquals(treeBefore, tree(), "and the reload left the tree exactly as it was: ${tree()}")
+            assertEquals(
+                listOf("chord(t)=24mm * (1 - 0.5*t)", "twist(t)=30deg * t"),
+                rows(),
+                "with the other law untouched",
+            )
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/46-family-restated.png")))
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
+
+    /**
      * **The loft over drawn sections through the real shell** (OP-26's hull route, session 78 — queue entry
      * 1): the three rows are in the palette, two sections drawn on two stations of one run are skinned by
      * clicking them across a change of sketch space, and *Match sections* re-stamps the body it names.

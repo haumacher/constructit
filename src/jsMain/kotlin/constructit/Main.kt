@@ -762,6 +762,22 @@ private fun setupApp() {
         repaint()
     })
 
+    // ---- the family-law rows (OP-26, session 79: the function-family section) ----
+    //
+    // The same field, keyed: one row per named parameter the selected section is built from, plus the run's
+    // own twist. A formula in a row is read **once per station**, so the whole outline varies rather than
+    // merely its size — and the two readings are the single field's own (a swept body's rows *are* its laws
+    // and Apply re-states one; a section's rows arm the next Sweep). See [Editor.setFamilyLaw].
+    //
+    // By delegation, because how many rows there are is the drawing's answer and changes with the selection.
+    (document.getElementById("fl-rows") as HTMLElement).addEventListener("click", {
+        val btn = (it.target as? org.w3c.dom.Element)?.closest("button") ?: return@addEventListener
+        val name = btn.getAttribute("data-fl") ?: return@addEventListener
+        val field = document.querySelector("#fl-rows input[data-fl=\"$name\"]") as? HTMLInputElement ?: return@addEventListener
+        editor.setFamilyLaw(name, field.value)
+        repaint()
+    })
+
     val paramsList = document.getElementById("params-list") as HTMLElement
     // select active parameter by clicking a row — but NOT when clicking the value field
     // (that would repaint and destroy the input, stealing focus)
@@ -1516,6 +1532,28 @@ private fun renderPanel(
     // rewriting a field under a half-typed formula would destroy the caret.
     val lawField = document.getElementById("sl-text") as HTMLInputElement
     if (document.activeElement !== lawField) lawField.value = editor.sectionLawText
+
+    // …**and the family-law rows follow the selection** the same way (OP-26, session 79): a row per named
+    // parameter the selected section is built from, plus the run's own twist. Left exactly as it is while one
+    // of its fields has the keyboard, for the parameter rows' own reason — rewriting a half-typed formula
+    // under the caret would destroy it.
+    val lawRows = document.getElementById("fl-rows") as HTMLElement
+    if ((document.activeElement as? HTMLElement)?.closest("#fl-rows") == null) {
+        lawRows.innerHTML =
+            editor.sectionFamilyRows.joinToString("") { r ->
+                val hint =
+                    if (r.isTwist) {
+                        "The run&#39;s own turn as a formula over t — 15deg * t is a blade&#39;s wash. Blank leaves the typed twist spread evenly along the run."
+                    } else {
+                        "A formula over t for ${r.name}: the section is re-read with this value at every station, so the outline itself varies. Blank leaves ${r.name} constant."
+                    }
+                "<div class=\"flrow\" title=\"$hint\">" +
+                    "<span class=\"flname\">${r.name}(t)</span>" +
+                    "<input data-fl=\"${r.name}\" value=\"${r.text}\" placeholder=\"${if (r.isTwist) "15deg * t" else "constant"}\">" +
+                    "<button data-fl=\"${r.name}\" title=\"State this law: on the selected swept body, or armed for the next Sweep. Blank takes it away.\">Apply</button>" +
+                    "</div>"
+            }
+    }
 
     // parameters (editable). While a row of this list has the keyboard the DOM is left exactly as it is:
     // replacing it under a live spinner or a half-typed name would destroy the focus — and with it the

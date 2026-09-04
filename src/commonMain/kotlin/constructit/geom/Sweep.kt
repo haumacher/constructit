@@ -63,20 +63,44 @@ data class SizeLaw(
         // the parameter **shadows** a drawing scalar of the same name: it is a binder, the way a lambda's
         // argument is — the function curves' own rule ([constructit.geom.FuncCurves]), read one feature on
         val q = ExprEval.eval(expr) { n -> if (n == param) p else env[n] }
-        if (q.dim != dim) throw DimensionError("a section's size must be ${word()}, and this is ${q.dim}")
+        if (q.dim != dim) throw DimensionError("${subjectWord()} must be ${word()}, and this is ${q.dim}")
         return q.base
     }
 
-    /** How a refusal names this law — `r(t) = 5mm * (1 - t/2)`. */
-    fun what(): String = "${if (dim == Dimension.LENGTH) "r" else "scale"}($param) = $text"
+    /** How a refusal names this law — `r(t) = 5mm * (1 - t/2)`, `twist(t) = 15deg * t`. */
+    fun what(): String = "${nameOfKind()}($param) = $text"
 
-    private fun word(): String = if (dim == Dimension.LENGTH) "a length" else "a plain number"
+    /**
+     * The word this kind of law goes by — `r` for a tube's radius, `scale` for a rigid section factor,
+     * `twist` for the run's own turn (OP-26, session 79: the family's twist law).
+     */
+    private fun nameOfKind(): String =
+        when (dim) {
+            Dimension.LENGTH -> "r"
+            Dimension.ANGLE -> "twist"
+            else -> "scale"
+        }
+
+    private fun word(): String =
+        when (dim) {
+            Dimension.LENGTH -> "a length"
+            Dimension.ANGLE -> "an angle"
+            else -> "a plain number"
+        }
+
+    /** What the dimension refusal is *about* — a size for the two size laws, a turn for the twist. */
+    private fun subjectWord(): String = if (dim == Dimension.ANGLE) "the run's own twist" else "a section's size"
 
     /** The word a refusal uses for the thing that has to stay positive. */
     internal fun subject(): String = if (dim == Dimension.LENGTH) "a tube needs a positive radius" else "a swept section needs a positive scale"
 
     /** How a value of this law prints in a refusal — with its unit where it has one. */
-    internal fun value(v: Double): String = if (dim == Dimension.LENGTH) "${Frames3.mm(v)} mm" else Frames3.mm(v)
+    internal fun value(v: Double): String =
+        when (dim) {
+            Dimension.LENGTH -> "${Frames3.mm(v)} mm"
+            Dimension.ANGLE -> "${Frames3.deg(v)}°"
+            else -> Frames3.mm(v)
+        }
 }
 
 /**
@@ -108,7 +132,15 @@ object SizeLaws {
      * Worded on the constant refusal's own model (*"a tube needs a positive radius — this one is 0 mm"*),
      * which heals per OP-3: move the parameter the law reads and the body comes back.
      */
-    fun invalidity(law: SizeLaw): String? {
+    fun invalidity(
+        law: SizeLaw,
+        /**
+         * Whether the law's value has to stay **positive** — true for every *size*, and false for the one law
+         * that is a turn rather than a size (OP-26, session 79: `twist(t)`, which may be zero and may run
+         * either way round). What is asked of both is that they can be *read*, which is [unreadable].
+         */
+        positive: Boolean = true,
+    ): String? {
         for (i in 0..STEPS) {
             val t = i.toDouble() / STEPS
             val v =
@@ -119,12 +151,74 @@ object SizeLaws {
                 } catch (e: ExprError) {
                     return "${law.what()} cannot be read at ${law.param} = ${Frames3.mm(t)}: ${e.message}"
                 }
-            if (v <= Geom3.WELD_TOL) {
+            if (positive && v <= Geom3.WELD_TOL) {
                 return "${law.subject()} — ${law.what()} is ${law.value(v)} at ${law.param} = ${Frames3.mm(t)} along the run"
             }
         }
         return null
     }
+
+    /**
+     * Why [law] cannot be **read** over the whole run — the dimension and the arithmetic and nothing about
+     * the sign, for the law that is a turn rather than a size (OP-26, session 79).
+     */
+    fun unreadable(law: SizeLaw): String? = invalidity(law, positive = false)
+
+    /**
+     * The total **turn** a twist law asks for, in radians — the sum of its own steps' absolute changes on the
+     * fixed grid, which is the number the sampling refinement needs (see [Frames3.along]).
+     *
+     * The *total variation* rather than the difference between the ends, because a twist law that turns one
+     * way and comes back turns the section twice and has to be resolved both times; for the linear law every
+     * constant twist is, this is exactly `|twist|` and the sampling is the one it always was.
+     */
+    fun totalTurn(law: SizeLaw): Double {
+        var sum = 0.0
+        var prev: Double? = null
+        for (i in 0..STEPS) {
+            val v =
+                try {
+                    law.at(i.toDouble() / STEPS)
+                } catch (_: DimensionError) {
+                    continue
+                } catch (_: ExprError) {
+                    continue
+                }
+            prev?.let { sum += abs(v - it) }
+            prev = v
+        }
+        return sum
+    }
+
+    /**
+     * How many spans a **twist law** asks the run to be cut into for its own curve to be drawn to [tolMm] —
+     * [spans]' arithmetic applied to a turn instead of to a size (OP-26, session 79).
+     *
+     * A point [reach] mm off the axis at angle `θ(t)` travels `reach · θ` along its arc, so the sagitta of
+     * its path over a span of `1/n` is `reach · |θ″| / (8 n²)` — the identical rule, with the identical
+     * fixed grid, and exactly zero for the linear distribution a constant twist has always been.
+     */
+    fun turnSpans(
+        law: SizeLaw,
+        reach: Double,
+        tolMm: Double,
+    ): Int {
+        if (reach <= 0.0 || tolMm <= 0.0) return 0
+        return sagittaSpans(worstSecond { t -> readOrNull(law, t) }, reach, tolMm)
+    }
+
+    /** [law] at [t], or null where it cannot be read there — see [maxScale]'s note. */
+    private fun readOrNull(
+        law: SizeLaw,
+        t: Double,
+    ): Double? =
+        try {
+            law.at(t)
+        } catch (_: DimensionError) {
+            null
+        } catch (_: ExprError) {
+            null
+        }
 
     /**
      * The largest the section ever is along the run, as a dimensionless factor — read on the same fixed grid
@@ -179,21 +273,46 @@ object SizeLaws {
     ): Int {
         profile.law ?: return 0
         if (reach <= 0.0 || tolMm <= 0.0) return 0
+        return sagittaSpans(worstSecond { t -> at(profile, t) }, reach, tolMm)
+    }
+
+    /**
+     * The worst second difference of [value] over the fixed grid, per unit of the parameter squared — the one
+     * measurement the sagitta rule needs, and the one place the grid it is read on is stated.
+     *
+     * `internal` because the **function family** asks the identical question of its own rings (OP-26, session
+     * 79): a family's refinement is the sagitta of its *vertices'* own paths, so the rule is shared rather
+     * than restated (see `constructit.dsl.SectionFamilies`).
+     */
+    internal inline fun worstSecond(value: (Double) -> Double?): Double {
         val h = 1.0 / STEPS
         var worst = 0.0
         for (i in 1 until STEPS) {
-            val a = at(profile, (i - 1) * h) ?: continue
-            val b = at(profile, i * h) ?: continue
-            val c = at(profile, (i + 1) * h) ?: continue
+            val a = value((i - 1) * h) ?: continue
+            val b = value(i * h) ?: continue
+            val c = value((i + 1) * h) ?: continue
             val second = abs(c - 2.0 * b + a) / (h * h)
             if (second > worst) worst = second
         }
-        if (worst <= 0.0) return 0
-        return ceil(sqrt(reach * worst / (8.0 * tolMm))).toInt().coerceIn(0, MAX_SPANS)
+        return worst
+    }
+
+    /**
+     * How many spans a curve whose second derivative is at most [second] (per unit of `t`, at a lever arm of
+     * [reach] mm) needs for its chords to stay within [tolMm] — the sagitta rule this whole file runs on,
+     * written once.
+     */
+    internal fun sagittaSpans(
+        second: Double,
+        reach: Double,
+        tolMm: Double,
+    ): Int {
+        if (second <= 0.0 || reach <= 0.0 || tolMm <= 0.0) return 0
+        return ceil(sqrt(reach * second / (8.0 * tolMm))).toInt().coerceIn(0, MAX_SPANS)
     }
 
     /** How far the law's own refinement will ever go — a bound, so a wild formula cannot mesh for ever. */
-    private const val MAX_SPANS = 4096
+    internal const val MAX_SPANS = 4096
 
     /** [profile]'s scale at [t], or null where the law cannot be read there (see [maxScale]). */
     private fun at(
@@ -241,6 +360,46 @@ object SizeLaws {
         }
         return out to null
     }
+}
+
+/**
+ * **One station of a function-family section**: the outline and its holes, as points, in the moving frame's
+ * own coordinates (OP-26, session 79).
+ *
+ * The rings of every station of one family have the **same length** — one fixed tessellation count per
+ * boundary piece, chosen from the largest that piece ever is (the design pass's F8) — which is what makes a
+ * vertex a *rail* running the length of the body and what lets two adjacent bands share a ring rather than
+ * merely agree about one.
+ *
+ * Each hole is a family of its own, by exactly the same rule, so a tube whose bore tapers differently from
+ * its wall is one body ([Skin3]'s own sections refuse holes; a family does not, because nothing here has to
+ * pair one loop with another — the pairing is the *vertex index*, and it is a fact of the count).
+ */
+data class FamilyRings(val outer: List<Vec2>, val holes: List<List<Vec2>> = emptyList()) {
+    /** This station as an ordinary region of straight pieces — what a cap and a plan hint read. */
+    fun region(): Region = Region(loopOf(outer), holes.map { loopOf(it) })
+
+    /** This station's rings [f] of the way towards [other]'s, vertex by vertex — see [SweepProfile.Family.at]. */
+    fun towards(
+        other: FamilyRings,
+        f: Double,
+    ): FamilyRings =
+        FamilyRings(
+            lerp(outer, other.outer, f),
+            holes.mapIndexed { i, h -> lerp(h, other.holes.getOrElse(i) { h }, f) },
+        )
+
+    /** This station's tessellated form — the value the mesh and every criterion read. */
+    fun tess(): Geom3.TessRegion = Geom3.TessRegion(outer, holes)
+
+    private fun lerp(
+        a: List<Vec2>,
+        b: List<Vec2>,
+        f: Double,
+    ): List<Vec2> = a.mapIndexed { i, p -> p + (b.getOrElse(i) { p } - p) * f }
+
+    private fun loopOf(pts: List<Vec2>): Loop =
+        Loop(pts.indices.map { ProfileElement.Seg(Segment(pts[it], pts[(it + 1) % pts.size])) })
 }
 
 /**
@@ -292,6 +451,131 @@ sealed interface SweepProfile {
     /** An arbitrary closed area, drawn in a sketch space and read in the frame's coordinates. */
     data class Section(override val region: Region, override val law: SizeLaw? = null) : SweepProfile {
         override fun scaleAt(t: Double): Double = law?.at(t) ?: 1.0
+    }
+
+    /**
+     * **A family of sections: one 2D drawing evaluated per station** (OP-26, session 79 — the function-family
+     * section, the wing's route). The general tier the rigid [law] above is the special case of: a rectangle
+     * whose width and height obey two different laws is not any scaling of one rectangle.
+     *
+     * **It is values and nothing else**, which is the load-bearing decision of the feature (F7 of the design
+     * pass; OP-9's self-contained feature): the 2D DAG is evaluated by the *node* that builds this, on the
+     * family's own grid, and what travels from there is a list of rings. So a placement, an export, a plan
+     * hint and a reload all work with no subgraph to re-enter, and `Feature3.Sweep` stays a value the way
+     * every other feature is.
+     *
+     * - [samples] are the stations the drawing was evaluated at, ascending, `0.0` and `1.0` always included.
+     *   How many there are is the family's **own** refinement — the sagitta of its rings' own motion, decided
+     *   before a triangle exists (`constructit.dsl.SectionFamilies`) — and never the mesh's business.
+     * - [rings] is one ring per sample, all of them the **same length**, so a station between two samples is
+     *   read by vertex-wise linear interpolation ([at]) and a mapped vertex is one rail from end to end. The
+     *   count is fixed per boundary piece, taken from the largest that piece ever is (F8), and the ring is
+     *   **one shared point list** so the corner where two pieces meet is one vertex rather than two that
+     *   agree — [Skin3]'s own rule, which is where watertightness comes from.
+     * - [law] is the rigid `scale(t)` **composed** on top (F6): the ring is read from the family first and
+     *   multiplied afterwards, so a family and a rigid taper on one step are one body and not a conflict.
+     */
+    data class Family(
+        val samples: List<Double>,
+        val rings: List<FamilyRings>,
+        override val law: SizeLaw? = null,
+    ) : SweepProfile {
+        /**
+         * The family at the **start** of the run as an ordinary region of straight pieces — what a consumer
+         * that wants *the* section reads (a cap's outline, a footprint hint, the reach of the whole body).
+         *
+         * The start rather than the largest, for [SweepProfile.of]'s own reason: it is the section the run
+         * begins with, and it is the one a drawing states first.
+         */
+        override val region: Region get() = rings.first().region()
+
+        override fun scaleAt(t: Double): Double = law?.at(t) ?: 1.0
+
+        /**
+         * The ring at station [t] — a sample's own list where [t] *is* a sample (identity, so a body whose
+         * stations land on the grid is vertex-exact), and the vertex-wise straight line between the two
+         * nearest samples anywhere else.
+         *
+         * Linear because that is what the grid was chosen to make honest: [samples] is refined until the
+         * chord of every vertex's own path is within the tessellation tolerance of it, so interpolating is
+         * within the accuracy the mesh is built to and nothing here decides a shape (OP-15).
+         */
+        fun at(t: Double): FamilyRings {
+            val u = t.coerceIn(0.0, 1.0)
+            var hi = samples.indexOfFirst { it >= u }
+            if (hi < 0) return rings.last()
+            if (hi == 0) return rings.first()
+            val lo = hi - 1
+            val span = samples[hi] - samples[lo]
+            if (span <= 0.0) return rings[lo]
+            val f = (u - samples[lo]) / span
+            if (f <= 0.0) return rings[lo]
+            if (f >= 1.0) return rings[hi]
+            return rings[lo].towards(rings[hi], f)
+        }
+
+        /**
+         * How many spans the family **composed with its rigid factor** asks the run to be cut into (F6's own
+         * arithmetic, and the one thing composition genuinely adds).
+         *
+         * Neither grid on its own sees this. The family's refinement measures its *rings'* second difference
+         * and the rigid law's measures the *factor's*, and a linear ring path times a linear factor is a
+         * **quadratic** vertex path that both of them answer zero for — so a wing that tapers and is then
+         * scaled would be drawn as the straight loft between its two ends and be visibly wrong in the middle.
+         * What the run has to resolve is the product, so the product is what is measured: the second
+         * difference of `ring(t)·scale(t)`, vertex by vertex, on [SizeLaws.STEPS]' own fixed grid and never
+         * on the stations (session 65).
+         *
+         * Never fewer than the family's own samples, so every ring the family decided on is still *drawn*
+         * rather than interpolated over; and exactly the family's own samples where there is no factor, which
+         * is what keeps a family-only body bit-identical to the one it was before composition existed.
+         */
+        fun composedSpans(tolMm: Double): Int {
+            val base = samples.size - 1
+            val f = law ?: return base
+            if (tolMm <= 0.0) return base
+            val h = 1.0 / SizeLaws.STEPS
+            var worst = 0.0
+            var prev: List<Vec2>? = null
+            var cur: List<Vec2>? = null
+            for (i in 0..SizeLaws.STEPS) {
+                val t = i * h
+                val k =
+                    try {
+                        f.at(t)
+                    } catch (_: DimensionError) {
+                        null
+                    } catch (_: ExprError) {
+                        null
+                    }
+                val next = k?.let { s -> at(t).outer.map { it * s } }
+                if (prev != null && cur != null && next != null) {
+                    for (j in cur.indices) {
+                        val a = prev.getOrNull(j) ?: continue
+                        val c = next.getOrNull(j) ?: continue
+                        val second = (c - cur[j] * 2.0 + a).length() / (h * h)
+                        if (second > worst) worst = second
+                    }
+                }
+                prev = cur
+                cur = next
+            }
+            // the vertices' own paths are in millimetres already, so the lever arm of the sagitta rule is 1
+            return max(base, SizeLaws.sagittaSpans(worst, 1.0, tolMm))
+        }
+
+        /** The greatest distance any vertex of any sample stands from the run — the family's own reach. */
+        val reach: Double
+            get() {
+                var k = 0.0
+                for (r in rings) {
+                    for (p in r.outer) {
+                        val d = p.length()
+                        if (d > k) k = d
+                    }
+                }
+                return k
+            }
     }
 
     companion object {
@@ -599,9 +883,24 @@ object Frames3 {
         tolMm: Double = GeomMath.TESS_TOL_MM,
         seed: FrameSeed? = null,
         lawSpans: Int = 0,
+        /**
+         * **The twist as a law of the station** (OP-26, session 79 — the family's F12), or null for the
+         * linear distribution a stated angle has always been.
+         *
+         * It replaces exactly one expression: `twistRad · (s / length)` becomes the law's own value at
+         * `s / length`. Everything else about the frame is untouched — the transport, the mitre, the seam
+         * check (which reads `law(1) − law(0)`, the total turn round the loop) and the refinement (which
+         * reads the law's own curvature, [SizeLaws.turnSpans], exactly as `lawSpans` reads a size law's).
+         * So a twist that varies is the same frame with a different reading of one number, which is what
+         * makes a blade's wash an ordinary parameter of the run rather than a feature of its own.
+         */
+        twistLaw: SizeLaw? = null,
     ): Pair<MovingFrame?, String?> {
         if (path.elements.isEmpty()) return null to "this curve has no pieces, so there is nothing to sweep along"
-        val sampled = spine(path, reach, twistRad, tolMm, lawSpans)
+        // the sampling reads how much the section **turns** over the run: the stated angle, or — for a law —
+        // its own total variation, which is that number for every linear law and more for one that turns back
+        val turn = if (twistLaw == null) twistRad else SizeLaws.totalTurn(twistLaw)
+        val sampled = spine(path, reach, turn, tolMm, max(lawSpans, if (twistLaw == null) 0 else SizeLaws.turnSpans(twistLaw, reach, tolMm)))
         val points = sampled.points
         val curvatures = sampled.curvatures
         val params = sampled.params
@@ -638,6 +937,15 @@ object Frames3 {
             refs[k] = transport(refs[k + 1], dirs[k + 1], dirs[k]) ?: return null to reversalRefusal(cum[k + 1])
         }
 
+        // **How much the run is twisted by, at arc length [s]** — the stated angle spread linearly, or the
+        // law's own value there (OP-26, session 79). A law that cannot be read at a station is the named
+        // invalidity that heals, exactly as an unreadable size law is (OP-3).
+        val twistAt: (Double) -> Double =
+            if (twistLaw == null) {
+                { s -> twistRad * (s / length) }
+            } else {
+                { s -> twistLaw.at((s / length).coerceIn(0.0, 1.0)) }
+            }
         // the seam: for a closed path, how far the frame is from coming back to itself after the loop
         var seam = 0.0
         if (path.closed) {
@@ -645,7 +953,17 @@ object Frames3 {
                 transport(refs[spans - 1], dirs[spans - 1], dirs[0])
                     ?: return null to reversalRefusal(0.0)
             val r0 = refs[0]
-            seam = wrapAngle(atan2(r0.cross(back).dot(dirs[0]), r0.dot(back)) + twistRad)
+            // the total turn round the loop: the stated angle, or what the law says between the two ends —
+            // which is the same question ("how far from itself does the frame come back") read off the law
+            val round =
+                try {
+                    if (twistLaw == null) twistRad else twistLaw.at(1.0) - twistLaw.at(0.0)
+                } catch (e: DimensionError) {
+                    return null to "${twistLaw!!.what()} cannot be read: ${e.message}"
+                } catch (e: ExprError) {
+                    return null to "${twistLaw!!.what()} cannot be read: ${e.message}"
+                }
+            seam = wrapAngle(atan2(r0.cross(back).dot(dirs[0]), r0.dot(back)) + round)
         }
 
         val stations = ArrayList<Frame3>(n)
@@ -665,7 +983,19 @@ object Frames3 {
             // one ring agree exactly when the seam closes, which is checked above and refused when it does
             // not — so this is not a compensation, it is the same statement read from the side it is built on.
             val sTwist = if (path.closed && k == 0) length else cum[k]
-            val turned = rotate(refs[inIdx], a, rollRad + twistRad * (sTwist / length))
+            val turned =
+                rotate(
+                    refs[inIdx],
+                    a,
+                    rollRad +
+                        try {
+                            twistAt(sTwist)
+                        } catch (e: DimensionError) {
+                            return null to "${twistLaw!!.what()} cannot be read: ${e.message}"
+                        } catch (e: ExprError) {
+                            return null to "${twistLaw!!.what()} cannot be read: ${e.message}"
+                        },
+                )
             stations.add(
                 Frame3(
                     cum[k],
@@ -1232,10 +1562,21 @@ object Embedding {
         section: List<Vec2>? = null,
         inward: ((Double) -> String)? = null,
         scales: List<Double>? = null,
+        /**
+         * **The section at each station**, where the section is a *family* rather than one outline (OP-26,
+         * session 79) — the criteria's last generalization, and the same one [scales] was.
+         *
+         * Both terms already read the section per station; what was constant was *which* section they read.
+         * Given this, the local term asks what the ring **at that station** reaches into the bend and the
+         * global term asks what the two rings reach towards each other. Null is one outline for the whole
+         * run — every constant and every rigidly scaled route — and then not one line below behaves
+         * differently, so no message this ever produced moves.
+         */
+        sectionAt: ((Int) -> List<Vec2>)? = null,
     ): EmbeddingReport {
         // ---- the first term: 1/κ_max, station by station, and in station order so the message is stable
         for ((i, st) in frame.stations.withIndex()) {
-            val bare = intoTheBend(st, reach, section)
+            val bare = intoTheBend(st, reach, sectionAt?.invoke(i) ?: section)
             val into = if (scales == null) bare else bare * (scales.getOrNull(i) ?: 1.0)
             if (st.curvature * into >= 1.0) {
                 return EmbeddingReport(
@@ -1288,7 +1629,7 @@ object Embedding {
                                     // other*, not what they reach at all** — the isotropic `2·reach` is the
                                     // same statement maximized over directions, and it is the one this falls
                                     // back to when the section is a disc or is not offered.
-                                    val need = needed(frame, pieces, i, j, hit, reach, section, scales)
+                                    val need = needed(frame, pieces, i, j, hit, reach, section, scales, sectionAt)
                                     if (need - hit.d > worst) {
                                         worst = need - hit.d
                                         bestD = hit.d
@@ -1412,6 +1753,16 @@ object Embedding {
          * whole term rests on has to happen *after* each side has its own size.
          */
         scales: List<Double>? = null,
+        /**
+         * **The ring at each station**, where the section is a family (OP-26, session 79) — see [check].
+         *
+         * The generalization is exact rather than conservative and it is worth stating: a rail `j` is bitten
+         * at corner A by `w_A[j]·g_A` and at corner B by `w_B[j]·g_B`, with `w_A` and `w_B` *that corner's own*
+         * ring. So what a leg needs is the maximum over the **rails** of the sum, which is why the two rings
+         * of one family have the same length — the rail index is the correspondence, and the constant case is
+         * this same maximum over one outline.
+         */
+        sectionAt: ((Int) -> List<Vec2>)? = null,
     ): String? {
         val st = frame.stations
         if (st.size < 2) return null
@@ -1436,13 +1787,45 @@ object Embedding {
             val gb = if (b < 0) Vec2(0.0, 0.0) else biteOf(st[b]) * sizeAt(scales, b)
             val v = ga + gb
             if (v.length() <= Vec2.EPS) continue
-            val w = worstVertex(v, section, reach) ?: continue
-            val need = w.dot(v)
+            val need =
+                if (sectionAt == null) {
+                    val w = worstVertex(v, section, reach) ?: continue
+                    w.dot(v)
+                } else {
+                    railBite(sectionAt, a, b, ga, gb) ?: continue
+                }
             val len = legLength(frame, a, b)
             if (need < len) continue
             return foldRefusal(st, a, b, need, len, subject, cure)
         }
-        return cornerBend(frame, reach, section, subject, cure, scales)
+        return cornerBend(frame, reach, section, subject, cure, scales, sectionAt)
+    }
+
+    /**
+     * What the two corners of a leg bite off it when each of them carries its **own** ring — the maximum over
+     * the rails of `w_A·g_A + w_B·g_B` (OP-26, session 79, see [cornerFold]'s `sectionAt`).
+     *
+     * A corner at an *end* of an open run bites nothing and contributes no ring, which is what the zero bite
+     * vector already says; null where neither corner has a ring to measure.
+     */
+    private fun railBite(
+        sectionAt: (Int) -> List<Vec2>,
+        a: Int,
+        b: Int,
+        ga: Vec2,
+        gb: Vec2,
+    ): Double? {
+        val wa = if (a < 0) null else sectionAt(a)
+        val wb = if (b < 0) null else sectionAt(b)
+        val n = maxOf(wa?.size ?: 0, wb?.size ?: 0)
+        if (n == 0) return null
+        var worst = -Double.MAX_VALUE
+        for (j in 0 until n) {
+            val e =
+                (wa?.getOrNull(j)?.dot(ga) ?: 0.0) + (wb?.getOrNull(j)?.dot(gb) ?: 0.0)
+            if (e > worst) worst = e
+        }
+        return worst
     }
 
     /** Station [i]'s own size factor, and exactly 1.0 where the section has one size (OP-26, session 77). */
@@ -1481,6 +1864,8 @@ object Embedding {
         subject: String,
         cure: String,
         scales: List<Double>? = null,
+        /** The ring at each station, for a family section (OP-26, session 79) — see [cornerFold]. */
+        sectionAt: ((Int) -> List<Vec2>)? = null,
     ): String? {
         val path = frame.path ?: return null
         val els = path.elements
@@ -1488,7 +1873,8 @@ object Embedding {
         for (c in st.indices) {
             if (!st[c].corner) continue
             val join = jointAt(frame, c) ?: continue
-            val trim = trimOf(st[c], els[join.first], els[join.second], section, reach, sizeAt(scales, c))
+            val here = sectionAt?.invoke(c) ?: section
+            val trim = trimOf(st[c], els[join.first], els[join.second], here, reach, sizeAt(scales, c))
             if (trim <= Vec3.EPS) continue
             val into = wanderOf(els[join.first], trim, fromEnd = true)
             val outOf = wanderOf(els[join.second], trim, fromEnd = false)
@@ -1771,6 +2157,8 @@ object Embedding {
         reach: Double,
         section: List<Vec2>?,
         scales: List<Double>? = null,
+        /** The ring at each station, for a family section (OP-26, session 79) — see [check]. */
+        sectionAt: ((Int) -> List<Vec2>)? = null,
     ): Double {
         val p = pieces[i]
         val q = pieces[j]
@@ -1779,13 +2167,19 @@ object Embedding {
         // axis argument with one factor per side. Null scales leave both factors out of the arithmetic.
         val kp = if (scales == null) 1.0 else scales.getOrNull(p.st) ?: 1.0
         val kq = if (scales == null) 1.0 else scales.getOrNull(q.st) ?: 1.0
-        if (section == null || section.isEmpty()) return if (scales == null) 2.0 * reach else reach * (kp + kq)
+        // **each leg's own ring**, where the section is a family: the separating-axis argument is unchanged
+        // and one side of it is simply a different outline from the other's
+        val sp = sectionAt?.invoke(p.st) ?: section
+        val sq = sectionAt?.invoke(q.st) ?: section
+        if (sp == null || sp.isEmpty() || sq == null || sq.isEmpty()) {
+            return if (scales == null) 2.0 * reach else reach * (kp + kq)
+        }
         val v = q.at(hit.t - q.s0) - p.at(hit.s - p.s0)
         val d = v.length()
         if (d <= Geom3.WELD_TOL) return if (scales == null) 2.0 * reach else reach * (kp + kq)
         val u = v * (1.0 / d)
-        val a = support(frame.stations[p.st], u, section)
-        val b = support(frame.stations[q.st], u * -1.0, section)
+        val a = support(frame.stations[p.st], u, sp)
+        val b = support(frame.stations[q.st], u * -1.0, sq)
         return if (scales == null) a + b else a * kp + b * kq
     }
 
