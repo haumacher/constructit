@@ -17146,8 +17146,28 @@ After the bug batch and the pattern entry above, in this order:
    "the only thing that would relax the single derived reach", with no way to *state* a varying section.
    The expression language is that missing vocabulary: a section dimension as a function of the station
    parameter is one `Expr` over `t` — the same AST, symbolic derivative and dimension check the function
-   curves already use — so what was unstatable is now a sentence. Wants its own design pass against
-   OP-26's refusal criteria (the reach becomes a function of the station too) before dispatch.
+   curves already use — so what was unstatable is now a sentence. **Design decided in session 77**
+   (proposed at the close of session 76, confirmed by the user), three rulings:
+   (a) **The parameter is `t`, dimensionless, 0 → 1 along the run** — the same letter and the same
+   contract the function curves already carry (context-local, outranking any drawing scalar of that
+   name). `t` rides the sampled arc-length map, which is the metric tier — consistent, since a swept
+   surface is already the approximated tier by nature (`SWEEP_ONLY`, no analytic faces). Per-piece
+   native parameters were rejected: they do not survive a multi-piece run.
+   (b) **What varies is rigid-per-station scaling**: a `Tube`'s radius becomes an expression `r(t)`,
+   and an arbitrary section takes a uniform `scale(t)` about its anchor — one mechanism serving both,
+   never a re-evaluation of the section's own sketch. The general tier (any named scalar the section's
+   sketch reads becoming station-dependent — a true function-family of regions) is recorded as the
+   future extension it is; it means evaluating a whole 2D DAG per station and wants its own design.
+   (c) **The refusal criteria become functions of the station** — the load-bearing part. The reach,
+   the embedding clearance, the mitre bite and the corner-bend term today read one derived reach for
+   the whole run (`Geom3.sweep`'s `tess.outer.maxOf { it.length() }`); each evaluates the expression
+   at its own station instead. The machinery already works per station, so this is the criteria
+   *generalizing*, not new criteria — and the session-65 law holds: refusals speak about the curve
+   and the stated sizes, never about sampling density. The **swept cut** inherits the same reading
+   where cheap (the OP-22 note names a variable section as the one thing that would relax its single
+   derived reach); otherwise that half is recorded and follows. Since `r(t)` is the ordinary
+   expression machinery, it references parameters and `P.x` alike, re-stamps on rename, and stores
+   verbatim as a new *optional* step argument — no version bump.
 
 **Beyond those seven, the numbered queue is empty** (the session-59 entry above is closed). What remains —
 vertex blends, text as geometry, silhouette edges in the 3D view, the panel's scalar tiering,
