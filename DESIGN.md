@@ -1493,6 +1493,18 @@ The inspector is therefore a fixed-height box that scrolls internally. Nothing b
 selected, and the assertion is exactly that: the browser E2E reads `#tree`'s viewport position with nothing
 selected, with an element selected, and after deselecting, and requires all three to be the *same number*.
 
+**The frame had one shared coordinate left, and a browser update found it** (issue #21). The panel itself was
+a single scroll box, so its *scroll offset* was a coordinate every list shared: the moment the chrome grew a
+hair taller than the viewport — which is all a Chrome update had to change, no app code moved — bringing a row
+of the Elements list into view slid the whole panel by that offset, and the invariant read 647 → 637. A fixed
+inspector is not enough if the frame around it can slide. So the panel is now **two laid-out regions**, each
+scrolling inside itself: the chrome (content-sized while it fits, shrinking rather than pushing when it does
+not) and the **Elements census docked under it**, as tall as the list up to 45% of the panel. A click can only
+ever scroll the region it landed in, and the other region's box is laid out, never derived from its content.
+The same sweep closed the one selection-dependent block still outside the inspector — the sentence naming the
+rule a pattern member rides (OP-23) — by reserving it two lines that scroll. The guard now watches both region
+tops, over *every* row in the tree, and asserts the panel has no scroll offset of its own to shift.
+
 #### A corner scale bar (as built)
 
 The 2D view had no statement of its own scale. The grid implies one, but reading it means counting cells and
@@ -17318,8 +17330,38 @@ After the bug batch and the pattern entry above, in this order:
    expression machinery, it references parameters and `P.x` alike, re-stamps on rename, and stores
    verbatim as a new *optional* step argument — no version bump.
 
-**The numbered queue is now empty** — entry 7 was its last live line, and it closed in session 77 (the
-session-59 entry above closed before it). What remains —
+**The numbered queue emptied in session 77** — entry 7 was its last live line — **and refilled the same
+session** with the two general readings the sweep's own record foreshadowed (*"sections drawn in stations,
+lofted along the path as spine"*, written when OP-26 was resolved). The user asked for bodies that vary
+their outline in both directions — a wing, a hull — and those are these two entries:
+
+1. **The loft: a skin over drawn sections (the hull's route).** Design proposed in session 77, **forks
+   pending the user's ruling** before dispatch. An ordered run of ≥2 closed sections, each an ordinary
+   sketch on a **station of one common run** (order = the stations' own stated distances, a recorded fact —
+   two sections at one distance refuse by name). The load-bearing design is **correspondence, stated and
+   never discovered**: outer loop to outer loop (sections with holes refuse in the first slice, cut whole);
+   equal piece counts pair **in drawn order** — the seam is the sketch's own first piece, a fact of the
+   drawing, so nothing is scored and nothing can flip under drift; unequal counts refuse naming both counts
+   and the fix (break a piece); loop orientation is normalized by area sign (a fact, not a guess); within a
+   piece pair, points correspond arc-length-proportionally at the finer tessellation's count. Geometry:
+   **ruled** skin (linear between corresponding points) as the first row, a **faired** row through all
+   stations riding `Path3.smoothThrough` per correspondence family as the second — two tool rows, one
+   mechanism, exactly the sweep/tube pattern. Ends cap with the end sections' own exact planar regions;
+   a closed spine (ring loft) refuses in the first slice. Tier honesty: mesh tier (`LOFT_ONLY` beside
+   `SWEEP_ONLY`), watertight by construction, assertManifold everywhere; the skin's criteria speak per
+   interval — corresponding rings that cross refuse naming the two stations by their distances, never the
+   sampling. Faces are **constructed, not emergent**: one strip per (interval × piece) plus two caps, an
+   ordered face list with stored addresses exactly like the shell's arithmetic twins — so click-a-face,
+   per-face appearance and sketch-on-cap arrive with the feature. Storage: `tool loft els=<sections in
+   station order>` per row id — a new tool id (the format's ordinary extension point, no version bump),
+   no signs (no scored choice exists). Editing: stations slide on their stated distance and the skin
+   follows; every section stays a live sketch.
+2. **The function-family section (the wing's route)** — the general tier the session-77 sweep ruling
+   recorded: named scalars of one section sketch become laws over `t` (chord, thickness, twist), one 2D
+   DAG evaluated per station. Wants its own design pass **after** the loft, whose correspondence rules it
+   will reuse; not designed yet.
+
+What remains beyond those two —
 vertex blends, text as geometry, silhouette edges in the 3D view, the panel's scalar tiering,
 `transformArc`'s guard, the Apollonius and conic tangent families — is the parked list below, each item
 recorded at its source, none with a new enabler yet.

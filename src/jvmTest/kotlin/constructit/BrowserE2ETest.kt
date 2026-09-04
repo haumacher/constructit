@@ -820,14 +820,39 @@ class BrowserE2ETest {
             assertTrue(tree().size == 3, "two points and a circle; got ${tree()}")
 
             // ---- (3) the inspector never moves the lists below it ----
-            fun treeTop(): Double =
-                (page.evaluate("() => document.querySelector('#tree').getBoundingClientRect().top") as Number).toDouble()
-            val idle = treeTop()
-            page.querySelectorAll("#tree .item").first { it.textContent().startsWith("circle") }.click()
-            val selected = treeTop()
-            assertTrue(idle == selected, "selecting must not reflow the panel ($idle -> $selected)")
+            // The panel is a *frame*: the chrome and the Elements dock are two regions that scroll inside
+            // themselves, so neither what a selection puts in the inspector nor the act of reaching a row can
+            // move the other region's geometry (issue #21 — the panel used to be one scroll box, and bringing a
+            // row into view slid every list in it by that offset). Both region tops are watched, and every row
+            // is tried, because the contract is about *any* selection, not the one kind this test clicks.
+            fun regionTops(): List<Double> =
+                (
+                    page.evaluate(
+                        "() => ['#inspector', '#tree'].map(s => document.querySelector(s).getBoundingClientRect().top)",
+                    ) as List<*>
+                ).map { (it as Number).toDouble() }
+            val idle = regionTops()
+            assertTrue(
+                page.evaluate(
+                    "() => { const p = document.getElementById('panel'); return p.scrollHeight <= p.clientHeight; }",
+                ) as Boolean,
+                "the panel is a frame, not one long scroll box: its regions fit it, so it has no offset to shift",
+            )
+            // re-queried each round: selecting rebuilds the list, so a handle taken before the click is stale
+            for (i in 0 until page.querySelectorAll("#tree .item").size) {
+                val row = page.querySelectorAll("#tree .item")[i]
+                val what = row.textContent()
+                row.click()
+                val selected = regionTops()
+                assertTrue(idle == selected, "selecting $what must not reflow the panel ($idle -> $selected)")
+            }
             page.mouse().click(box.x + box.width * 0.9, box.y + box.height * 0.9) // deselect on empty space
-            assertTrue(treeTop() == idle, "and neither must deselecting (${treeTop()} vs $idle)")
+            assertTrue(regionTops() == idle, "and neither must deselecting (${regionTops()} vs $idle)")
+            // …and the one sentence *about* the selection that lives outside the inspector — the rule a pattern
+            // member names (OP-23) — is reserved space too, however long that sentence turns out to be
+            page.evaluate("() => { document.getElementById('t-pattern').textContent = 'pattern ring: '.repeat(20); }")
+            assertTrue(regionTops() == idle, "a sentence about the selection must not lay the panel out (${regionTops()})")
+            page.evaluate("() => { document.getElementById('t-pattern').textContent = ''; }")
 
             // ---- (1) built from / used by, and the hover spotlight ----
             page.querySelectorAll("#tree .item").first { it.textContent().startsWith("circle") }.click()
@@ -921,6 +946,81 @@ class BrowserE2ETest {
         page.mouse().move(x, y)
         page.waitForFunction("n => (window.__citMoves || 0) > n", before)
         page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))")
+    }
+
+    /**
+     * Probe review of issue #21's fix, composing stressors the guard does not try: a **tighter
+     * viewport** than the guard's, selection through the **canvas** rather than the tree (a different
+     * route into the same inspector), and an **undo/redo round-trip** that rebuilds the whole panel.
+     * The frame contract must hold through all of them: the two region tops never move, and the panel
+     * itself never becomes a scroll box.
+     */
+    @Test
+    fun panelStaysAFrameUnderChurnInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            page.setViewportSize(800, 560)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            val box = page.querySelector("#canvas").boundingBox()
+            val ax = box.x + box.width * 0.35
+            val bx = box.x + box.width * 0.55
+            val y = box.y + box.height * 0.55
+            page.click("#tool-point")
+            page.keyboard().down("Alt")
+            page.mouse().click(ax, y)
+            page.mouse().click(bx, y)
+            page.keyboard().up("Alt")
+            page.click("#tool-circle")
+            page.mouse().click(ax, y)
+            page.mouse().click(bx, y)
+            page.click("#tool-select")
+
+            fun regionTops(): List<Double> =
+                (
+                    page.evaluate(
+                        "() => ['#inspector', '#tree'].map(s => document.querySelector(s).getBoundingClientRect().top)",
+                    ) as List<*>
+                ).map { (it as Number).toDouble() }
+
+            fun frameHolds(doing: String) {
+                assertTrue(
+                    page.evaluate(
+                        "() => { const p = document.getElementById('panel'); return p.scrollTop === 0 && p.scrollHeight <= p.clientHeight; }",
+                    ) as Boolean,
+                    "the panel is a frame with no offset of its own — $doing broke that",
+                )
+            }
+
+            val idle = regionTops()
+            frameHolds("arriving at 800×560")
+
+            // select through the *canvas* — the circle's outline, above the centre so no point wins the pick
+            page.mouse().click(ax, y - (bx - ax))
+            assertTrue(
+                page.querySelector("#inspector .selname").textContent().isNotEmpty(),
+                "the canvas click selected something",
+            )
+            assertTrue(regionTops() == idle, "a canvas selection must not reflow the panel ($idle -> ${regionTops()})")
+            frameHolds("a canvas selection")
+
+            // an undo/redo round-trip rebuilds the panel; same content back means same geometry back
+            page.click("#e-undo")
+            page.click("#e-redo")
+            assertTrue(regionTops() == idle, "an undo/redo round-trip must land the panel where it stood ($idle -> ${regionTops()})")
+            frameHolds("an undo/redo round-trip")
+
+            page.mouse().click(box.x + box.width * 0.92, box.y + box.height * 0.92)
+            assertTrue(regionTops() == idle, "and deselecting on empty space leaves it there too")
+            browser.close()
+        }
     }
 
     /**
