@@ -17335,8 +17335,10 @@ session** with the two general readings the sweep's own record foreshadowed (*"s
 lofted along the path as spine"*, written when OP-26 was resolved). The user asked for bodies that vary
 their outline in both directions — a wing, a hull — and those are these two entries:
 
-1. **The loft: a skin over drawn sections (the hull's route).** Design proposed in session 77, **forks
-   pending the user's ruling** before dispatch. An ordered run of ≥2 closed sections, each an ordinary
+1. **The loft: a skin over drawn sections (the hull's route).** Design proposed in session 77 and
+   **ruled by the user the same session — all three forks as recommended** (ruled + faired as two rows
+   in one package; sections on stations of one spine; correspondence per the refined design below).
+   **Dispatch next**, as soon as the icons package (issue #22) is out of the tree. An ordered run of ≥2 closed sections, each an ordinary
    sketch on a **station of one common run** (order = the stations' own stated distances, a recorded fact —
    two sections at one distance refuse by name). The load-bearing design is **correspondence, stated and
    never discovered** — refined in session 77 by the user's own two mechanisms, adopted verbatim: outer
