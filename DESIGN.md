@@ -17339,11 +17339,24 @@ their outline in both directions — a wing, a hull — and those are these two 
    pending the user's ruling** before dispatch. An ordered run of ≥2 closed sections, each an ordinary
    sketch on a **station of one common run** (order = the stations' own stated distances, a recorded fact —
    two sections at one distance refuse by name). The load-bearing design is **correspondence, stated and
-   never discovered**: outer loop to outer loop (sections with holes refuse in the first slice, cut whole);
-   equal piece counts pair **in drawn order** — the seam is the sketch's own first piece, a fact of the
-   drawing, so nothing is scored and nothing can flip under drift; unequal counts refuse naming both counts
-   and the fix (break a piece); loop orientation is normalized by area sign (a fact, not a guess); within a
-   piece pair, points correspond arc-length-proportionally at the finer tessellation's count. Geometry:
+   never discovered** — refined in session 77 by the user's own two mechanisms, adopted verbatim: outer
+   loop to outer loop (sections with holes refuse in the first slice, cut whole); loop orientation is
+   normalized by area sign (a fact, not a guess); **equal piece counts pair by the outline's cyclic
+   traversal order** with nothing stored. Where counts differ, the user's design takes over: (1) a curve
+   that must become two is **split with Break** — a recorded step, so the equalized counts are facts of
+   the drawing (one-to-many mapping could later subsume the split, noted, not built); (2) a curve with no
+   counterpart is handled by an explicit **Match tool** — a click is a choice: each stated pair (curve in
+   section i, curve in section i+1) is recorded verbatim on the loft's step by script name, re-stamping on
+   rename, and **every unmapped curve collapses to the point between its mapped neighbours' images** — a
+   triangle fan to one shared vertex, which is how a rectangle honestly becomes a triangle and stays
+   watertight. Rules that keep it safe: mappings must be cyclically order-preserving (a crossing pair
+   refuses naming both pairs — a crossed mapping is a self-intersecting skin, not a body), and differing
+   counts with no stated pair refuse asking for one (with zero anchors the cyclic offset is a guess). The
+   first stated pair **is also the seam** — a stated match outranks the drawn-order inference (explicit
+   anchors beat compensation), so the same tool deliberately twists an equal-count loft's alignment. One
+   mechanism, three jobs: seam, offset, degeneracy. Acceptance fixtures from the discussion: circle →
+   (half-circle, segment, half-circle, segment) for the split; rectangle → triangle for the collapse.
+   Within a piece pair, points correspond arc-length-proportionally at the finer tessellation's count. Geometry:
    **ruled** skin (linear between corresponding points) as the first row, a **faired** row through all
    stations riding `Path3.smoothThrough` per correspondence family as the second — two tool rows, one
    mechanism, exactly the sweep/tube pattern. Ends cap with the end sections' own exact planar regions;
