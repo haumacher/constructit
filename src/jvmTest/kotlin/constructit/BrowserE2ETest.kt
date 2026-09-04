@@ -811,6 +811,21 @@ class BrowserE2ETest {
             )
             page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/18-icon-palette.png")))
 
+            // ---- a parameter row keeps its name readable (GitHub issue #26) ----
+            // The row carries a value, a unit, a formula field and a wiring select; when those were sized
+            // rigidly the name — the row's identity — was squeezed to a few pixels. The name is the one field
+            // a person must always be able to read, so it is asserted by its rendered width, in the panel's
+            // own layout, which no headless test can see.
+            page.fill("#p-name", "reach")
+            page.fill("#p-value", "12")
+            page.click("#p-add")
+            page.waitForSelector("#params-list .prow input.pname")
+            val nameBox = page.querySelector("#params-list .prow input.pname").boundingBox()
+            assertTrue(nameBox.width >= 40.0, "a parameter row's name field is readable, not ${nameBox.width}px wide")
+            val exprBox = page.querySelector("#params-list .prow input.pexpr").boundingBox()
+            assertTrue(exprBox.width >= 40.0, "and the formula field still has room: ${exprBox.width}px")
+            assertEquals("reach", page.querySelector("#params-list .prow input.pname").inputValue(), "the name shown is the one typed")
+
             // ---- a circle over two points, so there is something with inputs ----
             val box = page.querySelector("#canvas").boundingBox()
             val ax = box.x + box.width * 0.35

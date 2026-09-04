@@ -106,15 +106,16 @@
         .prow { display: flex; align-items: center; gap: 4px; padding: 3px 4px; border-radius: 4px; cursor: pointer; font-size: 12px; }
         .prow:hover { background: #eef4fb; }
         .prow.active { background: #e2eefb; outline: 1px solid #1f77b4; }
-        .prow .pname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+        /* the name is the row's identity: it keeps a readable width whatever else the row carries (#26) */
+        .prow .pname { flex: 1 1 44px; min-width: 44px; overflow: hidden; text-overflow: ellipsis; }
         /* the name is an editable field (OP-7); it reads as text until it is hovered or focused */
         .prow input.pname { font: inherit; border: 1px solid transparent; background: transparent; padding: 1px 2px; border-radius: 3px; }
         .prow input.pname:hover, .prow input.pname:focus { border-color: #bcd; background: #fff; }
         /* wide enough for the browser's own up/down arrows on top of the digits */
-        .prow .pval { width: 58px; }
+        .prow .pval { width: 52px; }
         .prow .pval:disabled { background: #eee; color: #888; }
         .prow .punit { width: 18px; color: #999; }
-        .prow .pexpr { width: 76px; font-size: 11px; font-family: ui-monospace, Consolas, monospace; }
+        .prow .pexpr { flex: 1 1 56px; min-width: 40px; width: auto; font-size: 11px; font-family: ui-monospace, Consolas, monospace; }
         .prow .pexpr:disabled { background: #eee; color: #888; }
         .prow .pbind { width: 44px; font-size: 11px; }
         .mrow { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 4px; color: #333; border-radius: 4px; cursor: pointer; }

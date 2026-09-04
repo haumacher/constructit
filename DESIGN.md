@@ -18254,3 +18254,35 @@ reaching the **export** seam with its own triangle count.
 `BrowserE2ETest.aFunctionFamilySectionIsReachableInBrowser` carries it through the real shell — two laws typed
 into the panel's rows, the sweep's two clicks, and one law re-stated on the body it built, leaving the tree
 undisturbed. **2414 → 2461 green**, `assertManifold` on every solid in every one of them.
+
+**Queued in session 79, from the issue tracker — six issues filed while the family was being built.** One was
+fixed on the spot: **#26**, a parameter row whose name field had been squeezed to a few pixels by the formula
+and wiring fields beside it — the name is the row's identity and now keeps a readable minimum width, asserted by
+its rendered width in `BrowserE2ETest.panelPolishInBrowser` (the one place a layout can be seen). The other five
+are three packages, **in this order**, each closing with its issues:
+
+1. **Adjacent blends need corner geometry (GitHub #27, #28).** Every blend builds its own band along its own
+   edge; where two bands meet at a shared vertex there is no corner patch. A blend made next to an existing
+   blend cuts straight through the first's band (#27 — both bodies watertight, the corner wrong), and the
+   whole-face chain, which has corner geometry for the right angle only, refuses on a triangle with 47°/64°/69°
+   corners as *"the general boolean's result is not a closed shell … a tangent or self-touching contact"* (#28).
+   The package: a proper corner where two blends meet, for any corner angle — the rolling-ball corner between
+   the two bands — used both by the chain and by a blend of a blend on an adjacent edge, exact where the bands
+   are exact, `assertManifold` throughout, the reporter's two scripts as regressions plus obtuse and
+   near-straight corners. Nothing recorded changes: the addresses stay edge indices.
+2. **A fillet supersedes the corner (GitHub #25, #29; the user's design).** The 2D *Fillet* is a construction
+   and never a trim, so an extruded ortho path ignores arcs drawn into its corners (#25), and a hand-trimmed
+   corner built from the arc's key points is not on record as tangent, so a 3D edge blend takes one edge where
+   the run e11 → arc → e10 should be one ribbon (#29). The package, in the user's own words — *"the fillet tool
+   only creates the fillet arc, but does not supersede [the corner] with its filleted version"*: on an **ortho
+   path**, a fillet on two adjacent legs becomes that corner's own radius, read by everything that reads the
+   loop (extrude, walls, key points); on **plain legs**, the tool records what the user built by hand in one
+   step — the legs trimmed to the tangent points, the arc joining them, the tangent joints registered — and a
+   segment whose both ends lie on a tangent leg by construction inherits that leg's tangency. Chamfer the same
+   way. Exact volumes for the rounded prism; the reporter's scripts as regressions.
+3. **Custom blend profiles (GitHub #30; design entry).** *Fillet edge* is already "a 2D profile in the plane
+   square to the edge, swept along it and taken out of the corner" with a circular arc for the profile, and
+   *Chamfer edge* the same with a segment. The general tier is any drawn curve in that section plane whose two
+   ends land on the two faces, read in the corner's own frame (the two face directions, ends as setbacks along
+   each face — the chamfer's convention) so a skewed corner is cut to the length a rasp would reach. It needs
+   entry 1's corner geometry wherever two profiles meet, which is why it follows it.
