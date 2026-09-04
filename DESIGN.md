@@ -17425,7 +17425,7 @@ their outline in both directions — a wing, a hull — and those are these two 
    will restate again. The one thing it must *not* inherit is the loft's own answer to differing counts: a
    law that varies a section's shape continuously has no *Break* to reach for, so the design pass owes an
    answer of its own for a family whose piece count would change.
-   **The design pass ran in session 78; forks pending the user's ruling.** The essentials, so a crashed
+   **The design pass ran in session 78 and the user ruled all forks as recommended the same session — dispatched.** The essentials, so a crashed
    session keeps them: (F1/F2) the family node evaluates the section's subgraph per station with an
    **override map** in a fresh `Evaluator` (the `InstanceNode.defNode` precedent; session 19's
    identity-keyed memo makes it sound with no new invalidation), listing the section's transitive free
