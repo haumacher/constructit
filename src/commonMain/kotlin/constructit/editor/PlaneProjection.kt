@@ -127,6 +127,23 @@ interface PlaneProjection {
     fun eyeRay(p: Vec2): Ray3? = null
 
     /**
+     * Where the **world** point [p] lands on screen (pixels, y down), or **null** where this projection has
+     * no answer — [eyeRay]'s twin, and null for the same reason rather than as a stub.
+     *
+     * [toScreen] answers for a point *of the working plane*; this answers for a point of the world, which is
+     * what a **3D pick against something the plane does not contain** needs: an edge of a body standing 20 mm
+     * above the drawing has no plane coordinates at all, so "which edge did I click?" can only be asked in
+     * the picture that actually shows it (GitHub issue #24, and see `Document.edgeInView`).
+     *
+     * **Null is the 2D canvas's honest answer.** A [Camera] has no plane of its own and no eye: what it maps
+     * is one plane's (u, v), so it cannot say where an arbitrary world point draws, and the flat routes
+     * already have their own reading (the space's own orthographic projection, `Curves3.projectedOnto`). So
+     * the plan keeps exactly the picking it had and this is precisely what the 3D view adds — the same
+     * division of labour [eyeRay] states one paragraph up.
+     */
+    fun worldToScreen(p: Vec3): Vec2? = null
+
+    /**
      * Whether this projection is a **similarity**: uniform scale and no perspective, so a length in
      * pixels means the same thing everywhere on the plane.
      *
@@ -251,6 +268,12 @@ class PlanePerspective(
      * out through the meeting point retraces the same line.
      */
     override fun eyeRay(p: Vec2): Ray3? = Ray3(camera.eye, (plane.toWorld(p) - camera.eye).normalized())
+
+    /**
+     * The very projection [toScreen] performs, without the plane step — the same cached matrix, so an edge of
+     * a body and the click that named it are measured in one picture (see the interface note).
+     */
+    override fun worldToScreen(p: Vec3): Vec2? = camera.projectWith(vp(), p, widthPx, heightPx)
 
     /**
      * The perspective scale at [p], in closed form (checked against finite differences of [toScreen] in

@@ -236,6 +236,34 @@ fun writableMaster(node: SourceNode): SourceNode? {
     return null
 }
 
+/**
+ * Put the coordinate [node] names at [value] — through the master of its binding chain, or through the
+ * **offset** that master now follows once the coordinate has been re-anchored to another point (OP-4
+ * case b, GitHub issue #23: see [OrthoOffset]).
+ *
+ * One helper rather than a case in each of the four places that write an ortho coordinate — a corner's
+ * drag, its x/y field, a leg's drag, a leg's length field — because typing and dragging are one operation
+ * (OP-13), and a write that reaches further in one of them than in the other is precisely the bug that
+ * rule names. Returns false when the coordinate is determined by construction and no write exists at all.
+ */
+fun placeCoord(
+    node: SourceNode,
+    value: Double,
+    doc: Document?,
+): Boolean {
+    writableMaster(node)?.let {
+        it.value = ScalarValue(Quantity.mm(value))
+        return true
+    }
+    return doc?.orthoOffsetOf(node)?.place(value) == true
+}
+
+/** Whether [placeCoord] can write the coordinate [node] names at all — the question a field's `writable` asks. */
+fun coordPlaceable(
+    node: SourceNode,
+    doc: Document?,
+): Boolean = writableMaster(node) != null || doc?.orthoOffsetOf(node)?.writable == true
+
 /** The effective point value of [node] — its literal, or whatever drives it. */
 private fun pointOf(
     node: SourceNode,
@@ -450,14 +478,14 @@ fun orthoCoordField(
     Dimension.LENGTH,
     { ev -> baseOf(node, ev)?.let { Quantity.mm(it) } },
     { q ->
-        val master = writableMaster(node)
-        // typing must reach exactly as far as dragging does, or the two stop being one operation (OP-13)
-        if (master != null) master.value = ScalarValue(Quantity.mm(q.mm)) else doc?.junctionOf(node)?.place?.invoke(axis, q.mm)
+        // typing must reach exactly as far as dragging does, or the two stop being one operation (OP-13) —
+        // which is why the master and the re-anchored offset are one question ([placeCoord])
+        if (!placeCoord(node, q.mm, doc)) doc?.junctionOf(node)?.place?.invoke(axis, q.mm)
     },
     // …and it must **refuse** exactly as far: a junction riding a host that is axis-aligned by construction
     // has no say over the other coordinate, so offering that coordinate as writable produced a field whose
     // write did nothing at all (OP-20, GitHub issue #4). [Junction.placeable] is that question.
-    writableWhen = { writableMaster(node) != null || doc?.junctionOf(node)?.placeable?.invoke(axis) == true },
+    writableWhen = { coordPlaceable(node, doc) || doc?.junctionOf(node)?.placeable?.invoke(axis) == true },
 )
 
 /** A field over one component of a point-valued source node: [axis] 0 = x, 1 = y. */
@@ -497,6 +525,8 @@ fun lengthField(
     label: String,
     node: SourceNode,
     anchor: SourceNode,
+    /** The document, to reach the offset a re-anchored coordinate is written through (GitHub issue #23). */
+    doc: Document? = null,
 ) = HandleField(
     label,
     node,
@@ -511,9 +541,9 @@ fun lengthField(
         val a = baseOf(anchor, ev) ?: 0.0
         val n = baseOf(node, ev) ?: a
         val dir = if (n < a) -1.0 else 1.0 // keep the direction the leg already runs in
-        writableMaster(node)?.value = ScalarValue(Quantity.mm(a + dir * q.mm))
+        placeCoord(node, a + dir * q.mm, doc)
     },
-    writableWhen = { writableMaster(node) != null },
+    writableWhen = { coordPlaceable(node, doc) },
 )
 
 /**
@@ -615,7 +645,20 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode, private va
     /** Some junction this corner meets — for the questions that only ask whether *any* freedom is reachable. */
     private val junction: Junction? get() = junctionAt(0) ?: junctionAt(1)
 
-    override val dragNodes: List<SourceNode> get() = listOfNotNull(writableMaster(xNode), writableMaster(yNode))
+    /**
+     * The offset owning this corner's [axis] coordinate once that coordinate has been re-anchored to
+     * another point (OP-4 case b, GitHub issue #23) — asked per coordinate for [junctionAt]'s reason:
+     * the two axes of one corner are two independent chains and may be stated in two different ways.
+     *
+     * Null once the offset is itself **driven** (wired, or given a formula), because then it is not a
+     * freedom this handle has: reporting it would make [dragMovable] promise a motion that cannot happen,
+     * and a drag that does nothing without saying why is the refusal law's own bug (session 65).
+     */
+    private fun offsetAt(axis: Int): OrthoOffset? =
+        doc?.orthoOffsetOf(if (axis == 0) xNode else yNode)?.takeIf { it.axis == axis && it.writable }
+
+    override val dragNodes: List<Node>
+        get() = listOfNotNull(writableMaster(xNode) ?: offsetAt(0)?.offset, writableMaster(yNode) ?: offsetAt(1)?.offset)
 
     override val dragMovable: Boolean get() = dragNodes.isNotEmpty() || junction?.handle != null
 
@@ -635,8 +678,15 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode, private va
         // junction**. Handing over the whole cursor made the junction jump to the pointer, so dragging an
         // outer corner along its own arm dragged the shared centre sideways with it and collapsed the figure;
         // handing both coordinates to *one* of two junctions lost the other axis entirely (issue #4).
-        val jx = if (mx == null) junctionAt(0) else null
-        val jy = if (my == null) junctionAt(1) else null
+        // …and a coordinate re-anchored to another point is written through its **offset**, for exactly the
+        // same reason and one step earlier than the junction: it is that coordinate's degree of freedom, so
+        // a drag along that axis must write it rather than doing nothing at all (GitHub issue #23)
+        val ox = if (mx == null) offsetAt(0) else null
+        val oy = if (my == null) offsetAt(1) else null
+        ox?.place(at.x)
+        oy?.place(at.y)
+        val jx = if (mx == null && ox == null) junctionAt(0) else null
+        val jy = if (my == null && oy == null) junctionAt(1) else null
         if (jx != null && jx === jy) {
             // one junction owns both coordinates (a weld onto its point): give it the whole cursor, so it
             // follows as closely as its curve allows — a projection, which no pair of per-axis places is
@@ -657,7 +707,11 @@ class OrthoCornerHandle(val xNode: SourceNode, val yNode: SourceNode, private va
             }
         // a leg length is a distance between two of this path's own coordinates, so a frame leaves it alone —
         // a placement changes the coordinates' origin, and rotation preserves distance
-        return coords + (legAnchor?.let { listOf(lengthField("leg length", ownNode, it)) } ?: emptyList())
+        //
+        // …and, last, the offsets a re-anchored coordinate is measured by (GitHub issue #23) — the DOF that
+        // coordinate has from then on, named after the anchor, exactly as a relative point's `distance` is.
+        return coords + (legAnchor?.let { listOf(lengthField("leg length", ownNode, it, doc)) } ?: emptyList()) +
+            (doc?.orthoOffsetFields(this) ?: emptyList())
     }
 
     /** [world] in the space this corner's coordinates live in: the frame's, when it has one. */
@@ -739,12 +793,26 @@ class OrthoEdgeHandle(private val doc: Document, private val path: OrthoPath, pr
         return if (path.legAxis(i) == 0) a.corner.xNode to b.corner.xNode else a.corner.yNode to b.corner.yNode
     }
 
-    /** The junction owning this leg's perpendicular coordinate when the leg does not — see [Junction]. */
-    private val junction: Junction? get() = if (sharedNode != null) null else perpendicular?.let { doc.junctionOf(it) }
+    /**
+     * The offset owning this leg's perpendicular coordinate when the leg does not — the coordinate has been
+     * re-anchored to another point (OP-4 case b, GitHub issue #23), and the offset is its freedom from then
+     * on, so dragging the leg across itself writes that instead of nothing.
+     */
+    private val offset: OrthoOffset?
+        get() =
+            if (sharedNode != null) {
+                null
+            } else {
+                perpendicular?.let { p -> doc.orthoOffsetOf(p)?.takeIf { it.axis == (if (axis == 0) 1 else 0) && it.writable } }
+            }
 
-    override val dragNodes: List<SourceNode> get() = listOfNotNull(sharedNode)
+    /** The junction owning this leg's perpendicular coordinate when neither the leg nor an offset does. */
+    private val junction: Junction?
+        get() = if (sharedNode != null || offset != null) null else perpendicular?.let { doc.junctionOf(it) }
 
-    override val dragMovable: Boolean get() = sharedNode != null || junction?.handle != null
+    override val dragNodes: List<Node> get() = listOfNotNull(sharedNode ?: offset?.offset)
+
+    override val dragMovable: Boolean get() = dragNodes.isNotEmpty() || junction?.handle != null
 
     override fun drag(
         world: Vec2,
@@ -757,6 +825,12 @@ class OrthoEdgeHandle(private val doc: Document, private val path: OrthoPath, pr
         val want = if (axis == 0) at.y else at.x
         sharedNode?.let {
             it.value = ScalarValue(Quantity.mm(want))
+            return
+        }
+        // a re-anchored perpendicular coordinate is written through its offset (GitHub issue #23) — the same
+        // one write the corners at either end of this leg perform, since it is one coordinate chain
+        offset?.let {
+            it.place(want)
             return
         }
         // this leg's own coordinate belongs to the junction it meets at; ask the junction to *place* that
@@ -780,8 +854,8 @@ class OrthoEdgeHandle(private val doc: Document, private val path: OrthoPath, pr
         val (start, end) = along
         return listOf(
             position,
-            lengthField("length (move end)", end, start),
-            lengthField("length (move start)", start, end),
+            lengthField("length (move end)", end, start, doc),
+            lengthField("length (move start)", start, end, doc),
         )
     }
 }
