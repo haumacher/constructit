@@ -14406,6 +14406,37 @@ the composition table is driven generically as well as by its own test.
   removes the chain that makes them quadratic, and paying to memoize a structure that is about to stop
   existing is paying twice.
 
+- **Turn 77 — one dressed body, many roundings** (GitHub #35, part 2; OP-30; session 81). The user's sentence has two
+  halves and they turn out to be one mechanism: *"all fillet operations targeting the same body should be
+  applied at once"* and *"I have no chance to remove a fillet from some edge except the very last one
+  added"*. The chain answered neither, and it answered them in the same way — each rounding was a *body*, so
+  the only rounding you could take off was the one nothing stood on. Part 2 makes a part carry **one
+  dressing** whose entries are its roundings: one solid element, one row per rounding under it, each with its
+  own step, its own size to retype and its own Delete, and the node re-stamped in place behind a
+  re-pointable view so nothing built on the body is rewired. The delivery's own surprise is that
+  `Feature3.Blend` did not have to change: the entries live in the editor, and *what makes them one pass* is
+  that they share a **size node** — consecutive entries with the same kind, size node and profile node become
+  one `Blend3.blended` call. So the no-solver stance's oldest sentence, *sharing a node is equality*, turns
+  out to be the performance answer too: the reporter's seven roundings all read his one parameter `r`, so
+  they are one `Feature3.Blend` with seven targets where there were seven levels. Two of the design's leans
+  were argued down by the code rather than by taste. A rounding of a **rail** is *not* an entry — a rail's
+  index is a function of the entry order, so an entry addressing one would round a different edge as soon as
+  some *other* rounding was deleted — and it is a dressing of its own instead, which costs nothing because
+  that is what a chain always was. And the migration of an old chain is decided over the **whole script**
+  before anything is built: a chain joins only where nothing but the next rounding reads an intermediate,
+  because folding an intermediate something else reads into the final body would grow it every later
+  rounding. What is left standing is one index-stability gap, refused rather than paid for silently: removing
+  an entry slides the bands after it, so a rounding chained on a rail holds the entry under it in place until
+  a removed rounding can keep its slots the way a consumed edge already does. And one lesson the review found
+  the hard way, which generalizes past this feature: **a re-stamp that keeps an element must not go through a
+  replay.** Every other structural edit rewrites the journal and replays it into a fresh document, because
+  what *those* change is which elements exist; a dressing's entry changes only how one surviving element is
+  made, so replaying threw away every consumer built on it and handed back copies — the section held its old
+  area while the body it names grew. Removing an entry is now the same in-place re-stamp that adding one
+  always was, and the suite holds the two to one standard by asserting, after each, that the in-place body
+  *is* the body a replay of the saved script builds.
+
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -15873,6 +15904,185 @@ measurement says what they cost: **97 crease reads and 2.3 ms of the 60**, under
 memo would have to widen `Blend3`'s private `Piece`, `Crease`, `Wedge` and `Station` to module visibility or
 be stored behind a cast. Part 2 removes the term entirely by removing the chain, so paying for it there is
 paying once.
+
+### Implementation status (as built — **part 2: one dressing per part**, session 81)
+
+Part 2 is delivered and the chain is gone from the ordinary case: a part carries **one dressing**, its
+roundings are rows of the element list, and any one of them comes off on its own. What follows is the shape
+it took, the three decisions the design left to the package, and the one thing it does **not** yet do.
+
+**The dressing, and where it lives.** `Feature3.Blend` is unchanged — that is the load-bearing surprise of
+the delivery. The entries live one layer up, in the editor (`Document.Dressing`, `Document.DressEntry`): an
+ordered list of *one gesture each* — the kind, the size **node**, the drawn profile, whether the click named
+a face, and the addresses and scored choices it resolved. The dressed body element publishes its solid behind
+a re-pointable view (`Construction.indirect`, OP-5's binding rule), so adding or removing a rounding
+**re-stamps the node in place**: the element keeps its identity and its name, and everything built on the
+body — a sketch space on a face, a cut, a section, a boolean — follows without one input list being rewired.
+That is OP-23's re-stamp said about a feature's own inputs rather than about a pattern's count, and it is
+what makes *"only produce a single filleted result object"* true of the element list, the file and the graph
+at once.
+
+**Passes: what "applied at once" turned out to mean.** The entries are grouped into **passes** — consecutive
+entries that share a kind, a size *node* and a profile *node* are **one** `Blend3.blended` call, all their
+bands fresh, every corner among them built in one go and one stitched tool per group. Grouping is by node
+identity and by adjacency, which are facts about the **graph** and not about the numbers, so the count of
+sweeps and booleans cannot move when a radius is retyped (OP-21). The reporter's file is the case this was
+built for and it collapses whole: his seven roundings all read the one parameter `r`, so they are one pass —
+one `Feature3.Blend` with seven targets standing directly on the extrusion, where there used to be seven
+levels. *"The same radius on all these edges"* being one parameter feeding many roundings is the no-solver
+stance's own answer (equality by sharing), and here it is also the performance answer: sharing the node is
+what makes the body one boolean group.
+
+Roundings by **different** parameters chain, as a chain of roundings always has, and the corners between the
+passes are built by the machinery that has always built them. The design's own sentence was *one* `blended`
+call for all entries whatever their sizes; that is a change to `Blend3.blended`, which takes one
+`BlendSection` for its whole target list, and `Blend3` was outside this package's boundary. What it would
+take is small and is written down at the end of this note.
+
+**The pick, and the rail decision — decided against the design's lean.** The design leaned to *"a rounding of
+a rail is an entry like any other, since rails extend the base's edge list in stable order"*. They do extend
+it; the order is the **entries'**. A band's index is the base's edge count plus the position of its target
+among all the entries' targets, so removing entry 2 moves entry 3's rails — and an entry addressing a rail
+would then silently round a *different* edge because some other rounding was deleted, which is exactly the
+instability OP-17 exists to forbid. So an entry addresses the **base** only: a pick whose address is a base
+edge or a base face is one more entry, and a pick of a **rail** — an edge that exists only because of an
+earlier rounding — is a **dressing of its own standing on the first**. Nothing is lost and nothing is
+refused: a dressing on a dressing is what a chain of roundings always was, and the note says which of the
+two happened. That also keeps the rail's own address honest, because the body it addresses no longer changes
+under it.
+
+**The file: no new row, one new version.** A rounding is the `tool filletedge els=… clicks=… scalar=…
+signs=… -> …` step it always was, and `signs=` still carries the address first and four (or five) integers
+per edge. Two things about such a step changed, both facts about the drawing rather than about the file:
+the **first** rounding on a body declares **two** names — the dressed body and its first entry, because
+every rounding is now a row that can be removed — and a rounding whose `els=` names a body that is already
+dressed adds an entry to it instead of making a second solid. `els=` names the body; a step handed an
+*entry* (a click on its row, an older file's chain step) is normalised to the body before it is recorded, so
+the file is a fixed point from the first save on. `DRESSED_BODY_VERSION = 6`.
+
+**The migration, and where it stops.** A file written before 6 is read the new way exactly where doing so is
+**lossless**, and that is decided over the whole script before anything is built
+(`DocumentFormat.dressingJoins`): a rounding joins the dressing its `els=` names when that body was made by
+an **earlier rounding** and **nothing else in the script reads it**. A pure chain is therefore one dressed
+body with N entries and comes back as one; a chain something else reads an intermediate of — a fusion with
+the two-fillet stage, a section of it, a sketch space on one of its faces — keeps the chain it was written
+as, because under the new reading that intermediate would grow every later rounding and the drawing would
+change under the user. References are counted over every unquoted word of every step, which over-counts
+rather than under-counts, and over-counting keeps a chain a chain: the safe direction for a migration. The
+load says what happened **once** (`loadNotes`), and the one element-count allowance the reading needs — a
+pre-6 step declaring one name and now creating two — is named at `Document.migrationExtras` rather than being
+a general licence for drift. On the reporter's own file: seven steps in, one dressed body with seven entries
+out, the same volume to a part in `1e6` (45496.068 mm³ against the chain's own answer on this build, measured
+by making the same file impure with one extra `show`), and `save → load → save` a fixed point.
+
+**Removing one is an edit of the body** (OP-23), **made in place**. The journal loses that rounding's step,
+the entry list loses the entry, and the body's node is rebuilt without it and bound onto the same view — the
+very move adding one makes. An ordinary entry's step created nothing but that entry, so the step simply goes;
+a dressing's **first** rounding is the step that made the body, so the **next** entry's step is re-stamped to
+create the body too, addressing what the dropped step addressed, and the dropped step goes. (The merged step
+stays where the surviving gesture stood, not where the dropped one did: its own `param` was declared between
+the two, and a step may not run before the parameter it names.) So *every* rounding is removable, which is
+the half of the report the chain could not answer at all — *"I have no chance to remove a fillet from some
+edge except the very last one added"*. The **only** rounding of a body is refused by name, because that body
+*is* that rounding and what the user means is to delete the body.
+
+**Why in place, and not the delete machinery's journal-edit-and-replay** (the orchestrator's probe, and the
+one thing this package got wrong the first time). Every other structural edit in this drawing — a pattern's
+count, a skin's matched pair, a wall's extension — rewrites the journal and **replays it into a fresh
+document**, and that is right for them: what they change is *which elements exist*, so a new document is the
+answer and the shell adopts it. A dressing's entry is not that. The body it belongs to is an element that
+**stays**, and the whole point of publishing it behind a view is that everything built on it — a section, a
+face space, a cut, a boolean operand, a placement, a measurement — goes on meaning that body. Replaying
+throws all of those away and builds copies, so a caller holding any of them reads the body of the document
+that no longer exists: the probe's section stayed at its two-rounding area while the body it names grew. It
+looked right on screen, because the shell adopts the replayed document; it was wrong for everything that
+holds an element, which is every consumer, every test and the undo across it. So removal became the same
+in-place re-stamp addition always was ([Document.removeDressingEntry]): one mechanism, one thing to be right,
+and the file still the authority — the suite asserts after every add and every remove that the in-place body
+**is** the body a replay of the saved script builds, to a part in `1e9`.
+
+**One construction for a pass, so the two cannot disagree.** The first rounding used to build its body with
+the gesture's own `whole`/`address` and let the node resolve a face pick's edges at eval time, while a
+re-stamp rebuilt it from the resolved list. That is two constructions of one thing, and the moment an
+unrelated rounding was added the first pass would quietly change its meaning. Both now go through
+`Document.passRef`, which always hands over the **resolved** target list (`run=`) — which edges a gesture
+named is decided when the step runs (OP-21) — so a whole-face pick that skipped edges an earlier rounding
+took keeps skipping exactly those, whatever is added beside it. The mesh tier keeps its own call unchanged:
+it is not a dressing, and no stored byte of it may move (OP-18).
+
+**The audit behind that.** Every consumer of a solid element in `Document` takes `el.ref` — the view — and so
+reads the body as it stands: `spaceSectionNodeOf`, `intrinsicSectionNode`, `createFaceSpace`, `cutOnFace`,
+`extrudeOnFace`, `projectOntoFace`, `sectionSolid`, `combineSolids`, `shellSolid`, `cutOpenings`,
+`cutByChain`, `splitByChain`, `placeSolid`, `measureSolidVolume`, `measureSolidExtent`, and the blend itself.
+The two functions that *do* resolve a view to a concrete node are `builtRef` and `pieceRef`, the
+trimmable-curve pair (GitHub #25), reached only for a `SEGMENT` or an `ARC`; `isTrimmed` is now bounded to
+those two kinds for the same reason, so a re-stamped body cannot answer a question that is about a trim. The
+export seam, the 3D scene and the hit test hold no node at all — they evaluate the element on every pass. Two
+things a dressed body is deliberately **not** a consumer-base for, both pre-existing and both refused by
+name: a **shell** of a rounded body (*"shell the body first and round it afterwards"*), and a further
+**entry** once an ordinary boolean, a cut or a placement stands on it — that body is no longer the drawing's
+tip, so the rounding cuts the tip instead, which is OP-17's sequential-feature rule and is what keeps the
+model from forking.
+
+**A rounding has no hide.** It is the first element kind that is **structure rather than geometry**: it draws
+nothing in either view, exports nothing, bounds nothing, and the body it belongs to is the one object. So
+hiding it would say nothing, and the toggle refuses with the gesture that does work (`Document.hideRefusal`).
+The panel draws it as a row **under** its body, with the readout that says which edge and what size, and the
+element-kind noun is in the bundle (`ui.element.dressing`, German `Verrundung`) — the one kind whose word the
+panel *names* rather than merely lists (OP-29).
+
+**One index-stability gap, named and refused rather than paid for silently.** The dressed list is the base's
+own faces and edges at their own indices, then one band (two rails) per rounded edge in entry order, then the
+corner patches. **Adding** a rounding moves nothing that a drawing can address: the base's slots keep their
+indices, and every band and rail already there keeps its own. What it does move is the **corner patches**,
+which stand after all the bands, by one — where a chain appended each level's bands *and* corners together
+and so kept a strict prefix. **Removing** a rounding is the harder case: every band and rail after it slides
+up by that entry's count. What actually holds such an address is exactly one thing, and it is why this is
+narrow: a sketch space records a **footprint boundary piece**, not a face index
+(`Section3.FACE_ADDRESS_CONVENTION`), and a footprint is the base's own plan, which no rounding touches. What
+does hold one is a **rounding chained on a rail** — the one pick the rail decision above keeps out of the
+dressing for this very reason — and while one stands there the removal is refused by name
+(`Document.entryRemovalRefusal`), with the gesture that works.
+
+The cure is the design's own: a **slot kept for the life of the dressing** — a removed rounding's bands,
+rails and corner faces staying in the list with a reason, exactly as an edge a rounding consumed keeps its
+slot. Together with per-target sections in one `blended` call it is the same small change in one place, and
+it is the next step of OP-30 rather than a defect of it:
+
+- `Feature3.Blend` gains a per-target section (or `Blend3.blended` takes `(targets, section, choices)`
+  triples instead of one section for the list), which turns the six sites in `Blend3` that read `f.section`
+  inside a `for ((k, i) in f.targets.withIndex())` loop into per-target reads — `chainPieces`,
+  `dressingsOf`, `piecesOf`, `dressedEdges`'s consumed-edge reason and `smoothRail`'s kind test (the rest of
+  `Blend3` already works per **piece**, each of which carries its own section, which is why this is small);
+- a target may be **absent** (a tombstone), contributing a band slot and a corner slot with a reason and no
+  surface, which is `dressedEdges`/`dressedFaces` emitting what a consumed edge already emits.
+
+Both are edits to `Blend3` and `Section3`, which part 1 owned in the same session; they are recorded here so
+that the next session starts from the mechanism rather than from a surprise.
+
+**What the tests hold.** `DressedBodyTest` (10) — the reporter's file as one dressed body with seven entries
+in one pass, its volume against the chain's own answer on this build and the file a fixed point with one load
+note; three gestures on the dressed body as one solid and three rows, with the shared-parameter case one pass
+and the three-parameter case three; the middle rounding off with one undo putting it back and its body equal
+to the two remaining roundings made fresh; the **first** rounding off too, with the body keeping its identity
+and the file a fixed point; the only rounding refused by name; the rail pick a dressing of its own holding
+the entry under it in place with the refusal's own words; one entry's size retyped with the other two
+untouched in the file; a rounding on a fused body still today's `MeshBoolean` tier in today's words; and the
+hide refused with what to do instead. `DressedBodyConsumerTest` (9) is the audit made executable: one test per class of consumer built on a dressed
+body — a section's area, a face space's own drawn outline, a cut drilled from one of its faces, a fused
+body's volume, a placed copy's volume, a volume measurement, the export seam's triangle count — each built
+*before* the dressing changes and each asserting an exact number that moves when a rounding is taken off and
+again when its size is retyped, plus the two refusals that say a shell and a post-boolean entry are not
+consumers at all, plus the file a fixed point and the in-place body equal to the replayed one across every
+mutation. `BrowserE2ETest.roundingsAreListedUnderTheirBodyInBrowser` carries it
+through the real shell over HTTP (the general engine is a dynamically imported module a `file:` page may not
+fetch): one solid row, a rounding row indented under it per gesture, the readout in each row's tooltip, the
+noun in German, and one rounding deleted from the panel leaving the body standing. Seven existing tests were
+re-based on the new contract rather than weakened — what used to count *solids* now counts **roundings**,
+`BlendMixedVertexTest` compares the body with *n* roundings against the body with *n + 1* by cutting the same
+script short, and the pivot it used to see *superseded* is now built once about the band because one pass
+never makes the sharp-upright corner in the first place. **2670 → 2696 green**, `assertManifold` throughout.
+
 
 ## Languages (OP-29 — OPEN; design entry, session 81)
 
@@ -19775,6 +19985,16 @@ its own **warp** (the rule `Geom3.sweep` already follows) would make both turns 
 what a ruled loft *means* rather than a defect fix.
 
 **Queued in session 81 — GitHub #35 in two parts; part 1 retired in session 81.** (1) *The chain's cost* — **done**: the dressed face and edge lists are memoized per `Feature3.Blend` instance and the chain is rebuilt from its root only where a corner that turns about a band is *fresh*, which took the reporter's seven roundings from 950.8 ms to about 60 ms with `BlendChainCostTest` counting the derivations and the booleans rather than the clock; see the as-built note under the OP-30 entry. (2) *One dressed body, many roundings* (OP-30): entries under one solid, each removable, one stitched tool; see the OP-30 entry. Ahead of the languages' remaining slices, the issue tracker ranking first.
+
+**Retired in session 81 — GitHub #35 part 2 (OP-30), *one dressed body, many roundings*.** A part carries one
+dressing; its roundings are rows of the element list, each removable on its own; roundings that share a size
+parameter are one `Blend3.blended` pass, so the reporter's seven levels are one `Feature3.Blend` with seven
+targets. The format's version rose to 6 and a **pure** chain in an older file is re-stated as that body
+losslessly, a chain something else reads an intermediate of staying a chain. See the as-built note under the
+OP-30 entry, with the rail decision, the migration's purity rule, and the one index-stability gap left
+standing with its cure (a slot kept for the life of the dressing, and per-target sections in one `blended`
+call — both edits to `Blend3`/`Section3`).
+
 
 **Queued in session 81 — level sections through a rounded body, two refusals found by the OP-30 probe.** Both pre-date OP-30 and both speak the same sentence (*"the plane's section of this solid does not close into an area — one of the faces it crosses is cut in a way this drawing states only as curves; read the section on a working plane instead"*): (a) a **single band with a free end** — a fillet along one rim edge of a plate — notches the two side faces its caps stand in with the wedge's own section, and `dressedFaces` corrects the outlines of the band's *own* two faces only, so those side faces keep a stale outline and the level section cannot close; the cure is the same analytic correction for the **end** faces (a wedge of two lines and an arc taken out of a corner of the outline — line against line, line against circle, nothing new). (b) a **chain of roundings** (two levels, or two sizes inside one dressing, which chain by design until the one-pass-per-size follow-up lands) — the second level's trims land on faces the first already corrected, and the correction is not composed; the one-pass follow-up removes the chain for one dressing, and the composition is the general cure. A whole-face rounding (a closed chain) sections exactly today, which is why the OP-30 probe uses one.
 
