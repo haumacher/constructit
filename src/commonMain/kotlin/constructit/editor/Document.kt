@@ -14052,13 +14052,34 @@ class Document {
     /**
      * Whether an **older file's** chain step may join the dressing its `els=` names (OP-30's migration).
      *
-     * True for every live gesture and for every file written at [DocumentFormat.DRESSED_BODY_VERSION] or
-     * later, where the step's own shape says what it means. For an older file the loader decides it per line
-     * ([DocumentFormat.dressingJoins]) and sets this: a **pure** chain of roundings re-states losslessly as
-     * one dressed body with N entries, and a chain something else reads an intermediate body of stays a
-     * chain, because under the new reading that intermediate would grow the later roundings too.
+     * Set per line by the loader ([DocumentFormat.dressingJoins]) while a file older than
+     * [DocumentFormat.DRESSED_BODY_VERSION] is replaying, and true otherwise: a **pure** chain of roundings
+     * re-states losslessly as one dressed body with N entries, and a chain something else reads an
+     * intermediate body of stays a chain, because under the new reading that intermediate would grow the
+     * later roundings too. A file *at* that version says which it is by itself — see [dressingDeclares].
      */
     internal var dressingJoins: Boolean = true
+
+    /**
+     * **How many names the rounding step now replaying declares** — the structure of a dressing, read off the
+     * file rather than decided again (OP-18), and −1 for a live gesture, which has no file to read.
+     *
+     * *The declaration count **is** the join.* A rounding writes `-> body,entry` when it makes a dressed body
+     * — its first rounding, and every rounding that **chains** on a body rather than joining it — and
+     * `-> entry` when it adds a rounding to the dressing of the body its `els=` names. Nothing else in the
+     * step distinguishes the two, and nothing else has to: the writer states what it built, and a load takes
+     * it verbatim.
+     *
+     * This is the fix for a save-and-load disagreement that made an impure chain unloadable. The reader used
+     * to *re-derive* the decision from the graph — join whenever the body named is dressed and is the
+     * drawing's tip — while the writer had taken it from something the graph no longer says: the **migration
+     * gate**, which is a fact about the older script (does anything else read this intermediate?). So a
+     * chain that stayed a chain was written with two names and read as producing one, and the file it had
+     * just written would not load. A structural decision is recorded and restated, never re-scored; that is
+     * OP-1's rule for a discrete choice and OP-18's for a stored literal, and it was the one place in this
+     * feature where it had been left to be worked out again.
+     */
+    internal var dressingDeclares: Int = -1
 
     /**
      * How many elements the step now replaying created **beyond what the script declares**, because this
@@ -14416,9 +14437,22 @@ class Document {
         // **The dressing this gesture may join** (OP-30): the body must be the one the click addresses
         // *and* the drawing's tip of its own chain — a body an ordinary boolean stands on top of is cut at
         // that tip and not dressed further (OP-17's sequential-feature rule), and a body whose edges are
-        // named by something under it is not a dressing at all. [dressingJoins] is the loader's gate: a
-        // chain in an older file joins only where re-stating it as entries is lossless.
-        val dress = dressingOf(on)?.takeIf { tipEl === on && baseEl === on && (replayingVersion == null || dressingJoins) }
+        // named by something under it is not a dressing at all.
+        //
+        // **Who decides, in the three cases.** A *live* gesture decides here, from the graph and the address
+        // ([addressesBase]). A file **at** [DocumentFormat.DRESSED_BODY_VERSION] or later has already
+        // decided and says so by how many names the step declares ([dressingDeclares]) — one for a rounding
+        // that joins, two for one that makes a body — and the load takes that verbatim rather than working
+        // it out again, which is what keeps the writer and the reader agreeing for every chain shape. An
+        // **older** file has no such convention, so the migration gate decides it per line ([dressingJoins]).
+        val version = replayingVersion
+        val joins =
+            when {
+                version == null -> true
+                version >= DocumentFormat.DRESSED_BODY_VERSION -> dressingDeclares == 1
+                else -> dressingJoins
+            }
+        val dress = dressingOf(on)?.takeIf { tipEl === on && baseEl === on && joins }
         // how the click named its target, so the note can say it (see [BlendPick]); false on a replay, which
         // scores nothing at all
         var inView = false
@@ -14501,7 +14535,10 @@ class Document {
         // body that is already dressed, it is one more **entry** of that dressing and not a body of its own.
         // The node is re-stamped with the new entry list and the body keeps its identity, its name and
         // everything built on it (OP-23's re-stamp, OP-5's binding rule).
-        val join = dress?.takeIf { addressesBase(it, whole, address, targets, ev) }
+        // …and **only a live gesture asks whether the pick addresses the base** (the rail decision): where the
+        // file has already said this rounding joins, that is the answer, and re-deriving it would let a body
+        // whose parameter changed under it fail to *load* rather than merely be invalid (OP-3, OP-18).
+        val join = dress?.takeIf { replayingVersion != null || addressesBase(it, whole, address, targets, ev) }
         if (join != null) {
             // …and an older file's chain, re-stated as entries, says so **once** (OP-18's version marker:
             // the meaning of those steps changed, deliberately, and a load may say so exactly one time)

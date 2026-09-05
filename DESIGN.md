@@ -15975,6 +15975,29 @@ a general licence for drift. On the reporter's own file: seven steps in, one dre
 out, the same volume to a part in `1e6` (45496.068 mm³ against the chain's own answer on this build, measured
 by making the same file impure with one extra `show`), and `save → load → save` a fixed point.
 
+**The declaration count *is* the structure — the one rule the writer and the reader share** (the defect
+`BlendChainCostTest` found after the merge, and it was a data-loss class one). A rounding step writes
+**`-> body,entry`** when it makes a dressed body — its first rounding, and every rounding that **chains** on
+a body rather than joining it — and **`-> entry`** when it adds a rounding to the dressing of the body its
+`els=` names; a load at version 6 or later takes that verbatim instead of deciding again
+(`Document.dressingDeclares`). Where a prefix joins and the rest chains, the boundary is therefore the same
+on write and on read *because it is written down*, one step at a time, and needs no second derivation.
+
+What it replaced, and why that could not work: the reader used to re-derive the decision from the graph —
+join whenever the body named is dressed and is the drawing's tip — while the writer had taken it from
+something the graph no longer says, the **migration gate**, which is a fact about the *older script* (does
+anything else read this intermediate?). So a chain that stayed a chain was written with two names and read
+as producing one, and the file this build had just written would not load at all: `line 15: 'tool' created 1
+element(s) but the script declares 2`. Any drawing whose rounding chain is impure could not be reopened
+after saving. The general lesson is OP-1's and OP-18's, in the one place this feature had left it out: **a
+structural decision is recorded and restated, never worked out again.** The three shapes a chain can have
+are now one rule and are held by regressions on each — a chain nothing joins (every step two names), a
+**semi-pure** one whose prefix folds into a dressing and whose rest chains on it (the reporter's file with a
+single `show els=e16`: two steps make a body, five join one), and a rounding after a **cut**, which is the
+mesh tier and declares one name because it makes no dressing at all. A *pre-6* file has no such convention —
+every step there declares one name — so it keeps the migration gate above, and the one extra element that
+reading brings is the named allowance `Document.migrationExtras`.
+
 **Removing one is an edit of the body** (OP-23), **made in place**. The journal loses that rounding's step,
 the entry list loses the entry, and the body's node is rebuilt without it and bound onto the same view — the
 very move adding one makes. An ordinary entry's step created nothing but that entry, so the step simply goes;

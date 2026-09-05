@@ -800,6 +800,7 @@ object DocumentFormat {
         } finally {
             doc.replayingVersion = null
             doc.dressingJoins = true
+            doc.dressingDeclares = -1
         }
         doc.publishLoadNotes()
         return doc to ctx.notes
@@ -835,9 +836,10 @@ object DocumentFormat {
             replaySteps(doc, lines)
         } finally {
             doc.replayingVersion = null
-            // …and the loader's migration gate goes back to "every gesture joins", which is what a live one
-            // means: only an older file's chain is ever held to a per-step decision (OP-30)
+            // …and the loader's two per-step facts go back to what a *live* gesture means: it decides for
+            // itself, and there is no declaration to read (OP-30)
             doc.dressingJoins = true
+            doc.dressingDeclares = -1
         }
         doc.publishLoadNotes()
     }
@@ -866,6 +868,9 @@ object DocumentFormat {
             restamp?.resized = false
             restamp?.alignFromEnd = false
             doc.dressingJoins = joins == null || lineNo in joins
+            // …and, for a file at this version, the step's own declaration is the structure of the dressing:
+            // one name joins, two make a body (see [Document.dressingDeclares])
+            doc.dressingDeclares = declared.size
             // …and the migration's element-count allowance is this step's alone: a step that was dropped
             // with a reason must not lend its allowance to the next one (OP-18)
             doc.takeMigrationExtras()

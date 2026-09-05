@@ -123,6 +123,117 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         assertTrue(DocumentFormat.load(once).loadNotes.isEmpty(), "and the migrated file needs no note of its own")
     }
 
+    /**
+     * **The writer and the reader agree for every shape a chain of roundings can have** — the defect
+     * `BlendChainCostTest` found: a version-6 file in which a chain *stays* a chain was written with two
+     * result names on a chain step and read as producing one, so the file this build had just written would
+     * not load. The rule that fixes it is the file's own: **the declaration count is the structure** — one
+     * name joins the dressing of the body `els=` names, two names make a dressed body and its first rounding
+     * — and a load takes it verbatim instead of deciding again ([Document.dressingDeclares]).
+     *
+     * Three shapes, and each must load, be a fixed point through two more save/load rounds, and stand on the
+     * body the version-5 chain always built.
+     */
+    private fun fixedPoint(
+        script: String,
+        what: String,
+    ): Document {
+        val first = DocumentFormat.load(script)
+        val once = DocumentFormat.save(first)
+        val twice = DocumentFormat.save(DocumentFormat.load(once))
+        assertEquals(once, twice, "$what: the file this build writes is the file it reads:\n$once")
+        assertEquals(twice, DocumentFormat.save(DocumentFormat.load(twice)), "$what: and again")
+        return first
+    }
+
+    /** Every intermediate read by a later step, so **nothing** joins: the seven levels stay seven. */
+    private val impureChain = reported.trimEnd() + "\nshow els=e14,e15,e16,e17,e18,e19\n"
+
+    /** One intermediate read half way along: the prefix joins, the rest chains on it. */
+    private val semiPureChain = reported.trimEnd() + "\nshow els=e16\n"
+
+    @Test
+    fun anImpureChainStaysAChainAndTheFileItWritesIsTheFileItReads() {
+        val doc = fixedPoint(impureChain, "an impure chain")
+        assertEquals(8, doc.elements.count { it.kind == ElementKind.SOLID }, "the extrusion and seven levels")
+        assertEquals(7, entriesOf(doc).size, "each level with a rounding row of its own")
+        assertTrue(doc.loadNotes.isEmpty(), "nothing was migrated, so nothing is said: ${doc.loadNotes}")
+        // every level's step declares its own body **and** that body's one rounding
+        val once = DocumentFormat.save(doc)
+        assertEquals(7, once.lines().count { it.startsWith("tool filletedge") && Regex("-> e\\d+,e\\d+$").containsMatchIn(it) }, "seven chain steps:\n$once")
+    }
+
+    @Test
+    fun aSemiPureChainJoinsItsPrefixAndChainsTheRest() {
+        val doc = fixedPoint(semiPureChain, "a semi-pure chain")
+        // the extrusion and **two** dressed bodies: the prefix up to the read intermediate is one dressing,
+        // and the rest is a second one standing on it
+        assertEquals(3, doc.elements.count { it.kind == ElementKind.SOLID }, "the extrusion and two dressed bodies")
+        assertEquals(7, entriesOf(doc).size, "all seven roundings are still roundings")
+        assertEquals(1, doc.loadNotes.size, "…and the load says the prefix was re-stated once: ${doc.loadNotes}")
+        // the boundary is where the read intermediate is, and it is the declaration count that states it
+        val once = DocumentFormat.save(doc)
+        val steps = once.lines().filter { it.startsWith("tool filletedge") }
+        assertEquals(7, steps.size, "all seven steps are still there:\n$once")
+        assertEquals(2, steps.count { Regex("-> e\\d+,e\\d+$").containsMatchIn(it) }, "two of them make a body:\n$once")
+        assertEquals(5, steps.count { Regex("-> e\\d+$").containsMatchIn(it) }, "…and five join one:\n$once")
+    }
+
+    @Test
+    fun everyChainShapeStandsOnTheSameBody() {
+        val tip = { doc: Document -> volumeOf(doc.elements.last { it.kind == ElementKind.SOLID }) }
+        val chain = tip(DocumentFormat.load(impureChain))
+        for ((what, script) in listOf("the pure chain" to reported, "a semi-pure chain" to semiPureChain)) {
+            val v = tip(DocumentFormat.load(script))
+            assertTrue(abs(v - chain) <= abs(chain) * 1e-6, "$what is the version-5 chain's body: $v vs $chain")
+            // …and it is still that body after the round trip this build's own writer makes
+            val back = tip(DocumentFormat.load(DocumentFormat.save(DocumentFormat.load(script))))
+            assertTrue(abs(back - chain) <= abs(chain) * 1e-6, "$what survives save and load: $back vs $chain")
+        }
+    }
+
+    @Test
+    fun aRoundingAfterACutIsAChainAndItsFileIsAFixedPoint() {
+        // a plate, one rounding, a hole cut from one of its faces, then a second rounding — the second one
+        // stands on the cut and not on the dressing, because the cut is the drawing's tip (OP-17)
+        val ed = plate()
+        ed.activeScalar = ed.doc.newParameter("r", 3.0.mm)
+        ed.setTool(Tools.BLEND_EDGE)
+        ed.click(Vec2(20.0, 0.0))
+        assertEquals(1, entriesOf(ed.doc).size, "the first rounding: ${ed.statusHint}")
+        ed.setTool(Tools.SKETCH_ON_FACE)
+        ed.click(Vec2(40.0, 15.0))
+        assertTrue(!ed.activeSpace.isPlan, "a face opened as a space: ${ed.statusHint}")
+        ed.setTool(Tools.CIRCLE_R)
+        for (c in "4") ed.key(c.toString())
+        ed.key("Enter")
+        ed.click(Vec2(0.0, 9.0))
+        ed.setTool(Tools.CUT)
+        for (c in "6") ed.key(c.toString())
+        ed.key("Enter")
+        ed.click(Vec2(4.0, 9.0))
+        val cut = ed.doc.elements.last { it.kind == ElementKind.SOLID }
+        assertNull((Evaluator().eval(cut.ref.node) as? EvalResult.Invalid)?.reason, "the cut body builds: ${ed.statusHint}")
+        ed.doc.activeSpace = ed.doc.planSpace
+        ed.activeScalar = ed.doc.scalars.first { it.name == "r" }
+        ed.setTool(Tools.BLEND_EDGE)
+        ed.click(Vec2(20.0, 30.0))
+        val tip = ed.doc.elements.last { it.kind == ElementKind.SOLID }
+        assertTrue(tip !== cut, "the second rounding is a body of its own, standing on the cut: ${ed.statusHint}")
+        // …and it is the **mesh tier**, because the body it addresses is not the body it cuts (OP-9's sink
+        // rule): no dressing, no entry row, one declared name — which is what the reader builds again
+        assertTrue(featureOf(tip) is Feature3.MeshBoolean, "the mesh tier: ${featureOf(tip)}")
+        assertEquals(1, entriesOf(ed.doc).size, "so the drawing still has exactly one rounding row")
+
+        val v = volumeOf(tip)
+        val once = DocumentFormat.save(ed.doc)
+        val twice = DocumentFormat.save(DocumentFormat.load(once))
+        assertEquals(once, twice, "the file this build writes is the file it reads:\n$once")
+        assertEquals(twice, DocumentFormat.save(DocumentFormat.load(twice)), "and again")
+        val back = DocumentFormat.load(twice)
+        assertClose(volumeOf(back.elements.last { it.kind == ElementKind.SOLID }), v, abs(v) * 1e-6, "and the same body comes back")
+    }
+
     // ---- 2. through the editor ----
 
     private fun Editor.click(world: Vec2) {

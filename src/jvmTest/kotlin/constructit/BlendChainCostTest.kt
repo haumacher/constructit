@@ -39,6 +39,12 @@ import kotlin.test.assertTrue
  * holds fixed is the number of derivations, the number of booleans, and every volume along the chain.
  */
 class BlendChainCostTest {
+    /*
+     * The reporter's file, verbatim but for one closing `show` line naming every intermediate: since OP-30 a pure
+     * chain of roundings loads as one dressed body with entries, and this test is about the **chain** — a step whose
+     * result something else reads keeps its chain, so that one line is what keeps the seven levels seven.
+     */
+
     /**
      * GitHub #35's attached file, verbatim. Seven `filletedge` steps on one extrusion: top edges 12, 13, 14
      * and 15, convex uprights 1 and 3, and the concave upright 2 — the one whose rounding re-turns a corner.
@@ -65,6 +71,7 @@ tool filletedge els=e16 clicks=-1.6336097588108203,35.97358839564461 scalar="r" 
 tool filletedge els=e17 clicks=-11.301657028615722,8.858099327956722 scalar="r" signs=2;-1;1;0;-1 -> e18
 tool filletedge els=e18 clicks=56.88568755568988,21.122250050431774 scalar="r" signs=3;-1;1;0;1 -> e19
 tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" signs=15;-1;1;0;1 -> e20
+show els=e14,e15,e16,e17,e18,e19
 """.trimStart()
 
     /**
@@ -146,7 +153,9 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
     @Test
     fun everyLevelKeepsItsVolumeAndOnlyTheMixedCornerRebuilds() {
         val doc = DocumentFormat.load(script)
-        assertEquals(script, DocumentFormat.save(doc), "the reporter's file saves back byte-equal")
+        // a version-5 file saves back under the current header, so the file is asserted as a fixed point
+        val once = DocumentFormat.save(doc)
+        assertEquals(once, DocumentFormat.save(DocumentFormat.load(once)), "the reporter's file is a fixed point")
         val solids = doc.elements.filter { it.kind == ElementKind.SOLID }
         doc.setParameter(doc.scalars.single { it.name == "r" }, 6.0.mm)
         val combines = ArrayList<Int>()
