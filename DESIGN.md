@@ -14359,6 +14359,53 @@ the composition table is driven generically as well as by its own test.
   thing the doctrine is about, and when they finally are, some of what they find is a bug, some is a wrong
   record, some is sound, and one is a design decision nobody had noticed making.
 
+- **Turn 76 — a chain pays for its own depth twice, and one of the two debts was never owed** (GitHub #35,
+  part 1; session 81). The report: *"After adding a small number of 3D fillets, the UI becomes totally
+  unresponsive — changing the radius or moving a point takes tenth of seconds."* Seven roundings, 950.8 ms a
+  recompute, and the cost stepping **fivefold per level** — which is the shape of the thing rather than a
+  constant, and the two causes turned out to be one of each kind a performance defect comes in. The first was
+  an ordinary missing memo with an extraordinary exponent: a dressed body's face and edge lists are read
+  *recursively* — this level's from the base's, and every piece of the chain under it from the list of the
+  level below — so with no memo the tip re-derived the whole chain once per target and once per corner, and
+  `T(n) ≈ Σ T(k)`. What made the fix small is a fact the DAG already had: a chain of roundings is **one object
+  graph**, a level's `base` being the very instance the level below produced, so two `by lazy` fields on
+  `Feature3.Blend` make the whole chain linear with no cache to own, no key to invent and nothing to evict —
+  the memo lives exactly as long as the value it belongs to. That is OP-5's own answer one tier down from
+  where OP-5 usually stands, and it is worth recording that the *reason* it works is the purity claim: the
+  lists are a function of the feature, so a per-instance memo is not a cache at all.
+
+  The second cause is the more interesting one, because the debt was never owed and the record said it was.
+  Session 81 wrote *"any corner that turns about an upright"* rebuilds the chain from its undressed root, and
+  that sentence is wider than the argument under it. The argument is about a corner **arriving**: it is the
+  level that first states the pair's set-back ends and its wider pivot that meets bands already run past
+  them, and a further boolean of the same sign can never take that back. Once that level has rebuilt, the
+  body *is* that corner's answer, and a rounding somewhere else on the part has nothing to do with it. So the
+  rule became *a corner that turns about a band rebuilds at the level where it is **fresh*** — one of its
+  ends, or its upright, being a rounding this gesture makes — which is `cornerFacesOf`'s own freshness test,
+  and the agreement is not a coincidence: the level that lists the corner as a new face of the body is the
+  level that has to build the body it is a face of. The package proposed a narrower rule still — only a fresh
+  **upright** counts, a fresh *pair* about an existing upright needing nothing — and the suite refuted it in
+  one run, which is the part worth keeping. `theOtherSectorPivotsTheSameWay` rounds a cavity's two fills one
+  gesture at a time, so the *first* fill is united at full length while there is no second band to make a
+  corner with; when the second arrives, the corner sets that first band **back**, and a union cannot unsay a
+  union. 2.107 mm³ of extra material, exactly the tail standing where the ring torus should be. The general
+  lesson is the one the no-solver stance keeps teaching: an argument about *what a gesture changes* has to
+  count the gestures that came before it, because a pair built one band at a time is not a pair built at
+  once.
+
+  What the regression asserts is **counts, not milliseconds** (OP-15): two test-visible counters,
+  `Geom3.combines` and `Blend3.derivations`, observers of a derivation in the same sense `Solid3.meterTo` is,
+  and the reporter's file pinned at 13 derivations and 8 booleans with the boolean count *per level* reading
+  `1 1 1 1 2 1 1` — one fresh group a level and the single rebuild where the mixed corner is made. A clock
+  would have said the same thing today and something else on a loaded machine, and it would not have said
+  *why*. Every volume along the chain is held to a part in `1e9` against the pre-package build, which is what
+  makes the whole thing a cost fix and not a geometry change: the first five levels are bit-identical and the
+  last two move by a part in `1e11`, the general engine's own noise about a different order of the same two
+  booleans. 950.8 ms → about 60 ms, and the fivefold step is gone. One term was left standing and measured
+  rather than removed — `piecesOf`/`chainPieces` are still `O(n²)`, worth 2.3 ms of the 60 — because part 2
+  removes the chain that makes them quadratic, and paying to memoize a structure that is about to stop
+  existing is paying twice.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -15715,6 +15762,117 @@ its coplanarity is exact, so it keeps it.
   ring with no vertices. Break it into arcs first — refused by name.
 - **The carrier curves are not consumed.** A thickened segment stays a visible segment, as the ortho
   carrier's legs always did. Hiding it is a view decision, and the view has no such state (OP-18).
+
+## One dressed body, many roundings (OP-30 — OPEN; design entry, session 81)
+
+**The ask (user, GitHub #35).** *"Each fillet creates a new 3D object — this may be part of the performance
+problem and also is inconvenient. I have no chance to remove a fillet from some edge except the very last one
+added. All fillet operation should better be explicit in the element list and all fillet operations targeting
+the same body should be applied at once and only produce a single filleted result object?"* Adopted as stated;
+it is the design the corner machinery has been asking for since session 79.
+
+**What the chain costs, measured (#35's file, seven roundings).** A recompute after a radius change takes
+about a second on the JVM and the per-level cost grows fivefold along the chain: the dressed face and edge
+lists are derived recursively at every ask with no memo, and since the pivot-about-a-band rule (session 81) a
+level whose chain has a corner about a rounded upright rebuilds the whole chain from its root. Part 1 of #35
+fixes both inside the chain (memoized lists, a rebuild only where a *fresh* rounding is the upright of an
+existing corner). Part 2 is this entry: the chain itself is the wrong shape.
+
+**The design.** A part carries **one dressing**: an ordered list of entries, each *one rounding gesture* —
+an edge or a face of the **base** body, a kind (fillet, chamfer, drawn profile), a size or profile, and the
+discrete choices the click scored. The first rounding on a body creates the **dressed body** as one solid
+element; every later rounding the user makes on that dressed body (the thing they see and click) **adds an
+entry** to it rather than a new solid. Evaluation is one `Blend3.blended` over all entries as fresh pieces:
+every band in one pass, every corner built among them — crossing, pivot, pivot about a band, ball — and one
+stitched tool per group, so one or two booleans however many edges are rounded. That is what makes it fast,
+and it is also what makes it right: corners are built among *all* the roundings instead of being re-discovered
+level by level.
+
+**Structure, addresses, removal (OP-17, OP-21, OP-23).** Entries address edges and faces of the *base*, so an
+entry's meaning never depends on the entries before it, and any entry can be removed. Removing one is an
+**edit** in OP-23's sense: the dressed body's node is re-stamped without that entry, one undo step, the file's
+step for it deleted. The dressed list keeps index stability the way consumed edges do: a removed entry's bands
+and corner faces keep their slots with a reason, so a sketch space or a section on a later band does not
+renumber. In the **element list** the dressed body is one line and its entries are its children — each named,
+each with its own hide, delete and *"which edge, which size"* readout, each re-pickable to change its size.
+
+**The file.** Nothing new in vocabulary: the first rounding is the step it always was (`tool filletedge
+els=e13 … -> e14`, the dressed body); each later one is the same row addressing the dressed body (`els=e14`)
+and naming its **entry** (`-> e15`), so an entry has a script name like everything else. A file written as a
+**chain** (e14 → e15 → e16 …, every step a new solid) keeps loading as a chain — its steps are its steps, and
+their meaning is frozen (OP-18); the header version rises so a load can say once that the chain is now one
+dressed body with entries *if* a migration is built, and that migration is a decision for the package: a pure
+chain (no other feature between two roundings) is exactly one dressed body with N entries and can be re-stated
+losslessly; a chain interleaved with a cut or a fusion stays a chain.
+
+**What is deliberately not in it.** A rounding on a body an ordinary boolean made stays what it is today
+(`Feature3.MeshBoolean` with a silhouette plan); a dressing on a dressing (a rounding of a band's rail) is an
+entry like any other, since a rail is an edge of the dressed body and the base's edge list is extended by
+bands in stable order.
+
+#### Implementation status (as built — **part 1: the chain's cost**, session 81; GitHub #35)
+
+**What the reporter measured, reproduced.** *"After adding a small number of 3D fillets, the UI becomes
+totally unresponsive — changing the radius or moving a point takes tenth of seconds."* His file is an L-shaped
+extrusion with seven roundings on it — four top edges, two convex uprights and the concave upright between
+them — and it is now a test fixture verbatim (`BlendChainCostTest`). On the JVM, one recompute of the tip
+after `r = 5 → 6 mm` took **950.8 ms**, and level by level `1.4 1.9 5.6 14.1 38.0 147.2 760.9 ms`: a
+**fivefold step per rounding**, which is exponential in the chain's depth and not a constant anybody could
+tune away. It is **about 60 ms** now (52–66 ms across runs), roughly `2 2 7 11 12 14 20 ms` level by level —
+the fivefold step is gone and what is left is the booleans, which grow with the body and not with the chain.
+
+**Cause one: the dressed lists had no memo, and a chain re-derived them exponentially.** `Section3.faces` of
+a dressed body is the base's list corrected plus this level's bands and corners, and every piece of the chain
+*under* a level is prepared by reading the list of the level below it (`Blend3.chainPieces`). So one ask at
+the tip asked the level below it once per target and once per corner, that level asked the one below it
+again, and the cost was `T(n) ≈ Σ T(k)`. The memo lives on the **feature instance**
+(`Feature3.Blend.dressedFaces` / `.dressedEdges`, two `by lazy` fields in the class body) because that is
+where a chain's identity already is: a level's `base` **is** the same object as the level below's feature, so
+a per-instance memo makes the whole chain linear with no global cache, no weak map and no eviction — the memo
+lives exactly as long as the value it belongs to, and a drag that rebuilds the chain every frame drops the
+old one with it. Being in the class **body**, the fields are outside the data class's `equals`/`hashCode`/
+`copy`, so nothing about identity or purity moves (OP-5, OP-15).
+
+**Cause two: the rebuild rule was wider than its own argument, and the argument says *fresh*.** Session 81
+rebuilt the whole chain from its undressed root for *"any corner that turns about an upright"*, so every
+level after the first mixed corner paid `O(n)` booleans and a recompute paid `O(n²)`. The argument is about
+a corner **arriving**: it is the level that first states the pair's set-back ends and its wider pivot that
+meets bands already run past them, and a boolean of the same sign cannot take that back. Once that level has
+rebuilt, the chain on the body *is* that corner's answer and every later rounding is an ordinary fresh group
+again. So the rule is now **a corner that turns about a band rebuilds at the level where it is fresh** —
+where one of its two ends, *or* its upright, is a rounding this gesture makes. That is `cornerFacesOf`'s own
+freshness test and deliberately the same one: the level that lists the corner as a new face of the body is
+the level that has to build the body it is a face of.
+
+**The narrower rule #35 proposed does not hold, and the fixture that refutes it was already in the suite.**
+The package asked whether a fresh **pair** about an already-rounded upright could skip the rebuild, on the
+grounds that nothing has run past anything yet. It cannot, because a pair is not built in one gesture:
+`BlendMixedVertexTest.theOtherSectorPivotsTheSameWay` rounds the cavity's two fills one at a time, so the
+**first** fill is united at its full length while there is no second band to make a corner with — and when
+the second arrives, the corner sets that first band *back*, which a further union can never do. Skipping the
+rebuild there left the body **2.107 mm³** heavier than the same three gestures in the other order (40007.239
+against 40005.132 mm³), which is exactly the tail of the first fill standing where the ring torus should. The
+same reading holds one sector over: a corner ends the **upright's** own band too, and a second subtraction
+cannot give back what the full-length cut took.
+
+**The regression counts the work, it does not read a clock** (OP-15). `Geom3.combines` and
+`Blend3.derivations` are two test-visible counters — observers of a derivation, never a second definition of
+one, the discipline `Solid3.meterTo` is already written in. On the reporter's file one recompute of the tip
+is **13 derivations** (each of the seven levels validates its own dressed face list before handing the body
+on, and the six that another rounding stands on have their edge list read to resolve its target; the tip's
+edge list is never asked, because nothing is built on it yet) and **8 booleans** (six levels apply their one
+fresh group to the tip, and level 5 — where the corner about the concave upright is fresh — rebuilds from
+the root in two groups). Level by level the booleans read `1 1 1 1 2 1 1` where they used to read
+`1 1 1 1 2 2 2`. Every volume along the chain is asserted against the pre-package build to a part in `1e9`;
+the first five levels are bit-identical and the last two differ by a part in `1e11`, which is the general
+engine's own float32 noise about a different order of the same two booleans.
+
+**One cut, measured and named.** `piecesOf`/`chainPieces` are still `O(n²)` over a chain — a level's pieces
+walk the levels below it, and two readers per level ask for them. They were left unmemoized because the
+measurement says what they cost: **97 crease reads and 2.3 ms of the 60**, under four percent, where the
+memo would have to widen `Blend3`'s private `Piece`, `Crease`, `Wedge` and `Station` to module visibility or
+be stored behind a cast. Part 2 removes the term entirely by removing the chain, so paying for it there is
+paying once.
 
 ## Languages (OP-29 — OPEN; design entry, session 81)
 
@@ -19615,6 +19773,8 @@ entries. What it leaves is one recorded extension, not a cut: a ruled band is th
 split, so which quarter turn of a four-piece correspondence folds depends on that split — refining the band by
 its own **warp** (the rule `Geom3.sweep` already follows) would make both turns buildable and is a change to
 what a ruled loft *means* rather than a defect fix.
+
+**Queued in session 81 — GitHub #35 in two parts; part 1 retired in session 81.** (1) *The chain's cost* — **done**: the dressed face and edge lists are memoized per `Feature3.Blend` instance and the chain is rebuilt from its root only where a corner that turns about a band is *fresh*, which took the reporter's seven roundings from 950.8 ms to about 60 ms with `BlendChainCostTest` counting the derivations and the booleans rather than the clock; see the as-built note under the OP-30 entry. (2) *One dressed body, many roundings* (OP-30): entries under one solid, each removable, one stitched tool; see the OP-30 entry. Ahead of the languages' remaining slices, the issue tracker ranking first.
 
 **Queued in session 81 — languages (OP-29), four slices, behind the issue tracker.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, and the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge. See *Languages (OP-29)*.
 

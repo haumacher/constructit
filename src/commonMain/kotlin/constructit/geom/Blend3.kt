@@ -170,6 +170,23 @@ data class BlendSection(val kind: BlendKind, val size: Double, val profile: List
  * `Feature3.MeshBoolean` with a silhouette plan, and the tool help says so.
  */
 object Blend3 {
+    /**
+     * **The instrument**: how many dressed lists have been *derived* rather than read off a memo since
+     * [resetDerivations] (GitHub #35).
+     *
+     * An observer of a derivation and never a second definition of one, exactly as [Solid3.meterTo] is: the
+     * lists are the same lists whether anybody is counting. It exists because the defect this counts is a
+     * **cost**, and a cost is asserted by counting the work, not by reading a clock (OP-15 — a test that
+     * timed this would be a test that fails on a loaded machine).
+     */
+    var derivations: Int = 0
+        private set
+
+    /** Set [derivations] back to zero — the test's own bookend. */
+    fun resetDerivations() {
+        derivations = 0
+    }
+
     /** How close to parallel/perpendicular counts as it, on a dot product of unit vectors. */
     private const val DIR_EPS = 1e-9
 
@@ -3097,15 +3114,44 @@ object Blend3 {
             return next to null
         }
 
-        // **A corner that turns about an upright is rebuilt from the root, and the tip cannot be re-cut**
-        // (session 81). Such a corner sets its two bands *back* along their own edges and turns the pivot on
-        // a wider circle, so whichever of the three arrived last, some band on the body already ran past
-        // where the corner now ends it — and a further boolean of the same sign can never take that back (a
-        // second subtraction only removes more; a second union only adds more). So the whole chain is rebuilt
-        // from its own undressed root, every group applied in dependency order, and for the two sectors that
-        // is `(root ∪ upright) − chain'` and `(root − upright) ∪ fills'`. Where no corner turns about an
-        // upright the old path stands untouched, so no existing drawing's mesh moves by one bit.
-        val stale = corners.any { it.extra.isNotEmpty() }
+        // **A corner that turns about a band rebuilds the chain from the root at the level where it is
+        // *fresh*, and the tip cannot be re-cut** (session 81, tightened by GitHub #35 part 1).
+        //
+        // *Why a rebuild is needed at all.* A corner about a rounded upright sets its two bands **back**
+        // along their own edges and turns the pivot on a **wider** circle. So the moment the upright becomes
+        // a band, the two bands already on the body have run **past** where the corner now ends them — and a
+        // further boolean of the same sign can never take that back (a second subtraction only removes more;
+        // a second union only adds more). The whole chain is therefore rebuilt from its own undressed root,
+        // every group applied in dependency order, and for the two sectors that is `(root ∪ upright) − chain'`
+        // and `(root − upright) ∪ fills'` — both the rolling ball's own answer.
+        //
+        // *And why only where the corner is **fresh**.* The argument above is about a corner **arriving**:
+        // it is the level that first states the pair's set-back ends and its wider pivot that meets bands
+        // already run past them. Once that level has rebuilt, the chain on the body *is* the corner's own
+        // answer, and every later rounding is an ordinary fresh group again — nothing about it moves a
+        // set-back or widens a circle, and the corner it does not touch is already right. Session 81 said
+        // *"any corner that turns about an upright"*, so **every** level after the first mixed corner
+        // rebuilt the whole chain: `O(n)` booleans per level and `O(n²)` for a recompute, which is the
+        // second half of what GitHub #35 measured. The rule the argument actually carries is: **a corner
+        // that turns about a band rebuilds at the level where it is fresh** — where one of its two ends, or
+        // its upright, is a rounding *this* gesture makes. That is [cornerFacesOf]'s own freshness test, and
+        // deliberately the same one: the level that *lists* the corner as a new face of the body is the
+        // level that has to build the body it is a face of.
+        //
+        // *Why the pair counts and not only the upright.* GitHub #35 asked whether a fresh **pair** about an
+        // already-rounded upright could skip the rebuild too, on the grounds that nothing has run past
+        // anything yet. It cannot, and `BlendMixedVertexTest.theOtherSectorPivotsTheSameWay` is the fixture
+        // that proves it: the cavity's two fills are rounded one gesture at a time, so the **first** fill
+        // was united at its full length while there was no second band to make a corner with — and when the
+        // second arrives, the corner sets that first band *back*, which a further union can never do. The
+        // body came out 2.107 mm³ heavier than the same three gestures in the other order (40007.239 against
+        // 40005.132 mm³), which is precisely the tail of the first fill standing where the ring torus should.
+        // The same reading holds one sector over: the upright's own band is ended by the corner too, and a
+        // second subtraction cannot give back what the full-length cut took.
+        //
+        // Where no corner about a band is fresh the old path stands untouched — fresh groups applied to the
+        // tip — so no existing drawing's mesh moves by more than the general engine's own float32 noise.
+        val stale = corners.any { c -> c.extra.isNotEmpty() && (c.ends.any { !pieces[it.first].existing } || c.extra.any { !pieces[it].existing }) }
         if (!stale) {
             var result = applyTo
             for (group in groups) {
@@ -3408,7 +3454,16 @@ object Blend3 {
      * their own carriers: a line against a line, a line against a circle, a circle against a circle, all
      * of them the intersections this drawing already computes. Nothing is sampled and nothing is fitted.
      */
-    fun dressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, String?> {
+    fun dressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, String?> = f.dressedFaces
+
+    /**
+     * The derivation itself — run at most **once per feature instance**, behind the memo on
+     * [Feature3.Blend.dressedFaces], which is the whole of GitHub #35's first cause (OP-5). The seam stays
+     * where it was: [Section3.faces] still asks [dressedFaces], and what changed is only how often the
+     * answer has to be worked out.
+     */
+    internal fun deriveDressedFaces(f: Feature3.Blend): Pair<List<FacePatch>?, String?> {
+        derivations++
         val (baseFaces, whyFaces) = Section3.faces(f.base)
         if (baseFaces == null) return null to whyFaces
         val (dressings, whyDress) = dressingsOf(f)
@@ -3700,7 +3755,11 @@ object Blend3 {
      * What the rails buy is what makes a chain a chain: after a fillet, *"the edge between the band and the
      * top face"* is a first-class edge that a further blend can be addressed by.
      */
-    fun dressedEdges(f: Feature3.Blend): Pair<List<SolidEdge>?, String?> {
+    fun dressedEdges(f: Feature3.Blend): Pair<List<SolidEdge>?, String?> = f.dressedEdges
+
+    /** The derivation itself, run once per feature instance — see [deriveDressedFaces]. */
+    internal fun deriveDressedEdges(f: Feature3.Blend): Pair<List<SolidEdge>?, String?> {
+        derivations++
         val (baseEdges, whyEdges) = Section3.edges(f.base)
         if (baseEdges == null) return null to whyEdges
         val (dressings, whyDress) = dressingsOf(f)

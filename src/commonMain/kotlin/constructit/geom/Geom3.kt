@@ -493,6 +493,30 @@ sealed interface Feature3 {
 
         /** What this blend's section **is** — the one object [Blend3] reads it through. */
         val section: BlendSection get() = BlendSection(kind, size, profile)
+
+        /**
+         * **The dressed face and edge lists, derived at most once per feature instance** (OP-5, GitHub #35).
+         *
+         * *Why the memo has to live here.* A dressed list is read **recursively**: this level's is the base's
+         * corrected, plus its own bands and corners, and every piece of the chain under it is prepared by
+         * reading the list of the level below it ([Blend3.chainPieces]). So one ask at the tip asked the
+         * level below it once per target and once per corner, that level asked the one below it again, and
+         * the cost of a chain of `n` roundings was `T(n) ≈ Σ T(k)` — **exponential**, which is what the
+         * reporter measured (a fivefold step per rounding, a second for seven of them).
+         *
+         * A [Feature3.Blend]'s `base` **is the same instance** as the level below's feature — a chain is one
+         * object graph, not a copy per level — so a lazily computed field on the feature makes the whole
+         * chain linear with no global cache, no weak map and no eviction: the memo lives exactly as long as
+         * the value it belongs to, and a drag that rebuilds the chain every frame drops the old one with it.
+         *
+         * It is a memo in [constructit.core.Node.computeMemoized]'s sense and it changes nothing observable:
+         * the lists are a pure function of `(base, targets, kind, size, choices, profile)` (OP-15), and being
+         * declared in the class **body** they are excluded from the data class's `equals`/`hashCode`/`copy`.
+         */
+        internal val dressedFaces: Pair<List<FacePatch>?, String?> by lazy { Blend3.deriveDressedFaces(this) }
+
+        /** The dressed edge list, memoized for the reason [dressedFaces] states. */
+        internal val dressedEdges: Pair<List<SolidEdge>?, String?> by lazy { Blend3.deriveDressedEdges(this) }
     }
 
     /**
@@ -3064,13 +3088,31 @@ object Geom3 {
         kind: BoolOp,
         a: Solid3,
         b: Solid3,
-    ): Pair<Solid3?, String?> =
-        if (sameAxis(a.feature, b.feature)) {
+    ): Pair<Solid3?, String?> {
+        combines++
+        return if (sameAxis(a.feature, b.feature)) {
             boolean(kind, a, b)
         } else {
             val (mesh, why) = MeshBool.boolean(kind, a.mesh, b.mesh)
             if (mesh == null) null to why else Solid3.of(Feature3.MeshBoolean(kind), mesh) to null
         }
+    }
+
+    /**
+     * **The instrument**: how many booleans [combine] has run since [resetCombines] (GitHub #35).
+     *
+     * An observer of a derivation, never a second definition of one — the same discipline
+     * [Solid3.meterTo] is written in. A dressed chain's cost is *how many booleans it runs*, so the
+     * regression that guards it counts them rather than timing them (a clock would fail on a loaded
+     * machine and would say nothing about why).
+     */
+    var combines: Int = 0
+        private set
+
+    /** Set [combines] back to zero — the test's own bookend. */
+    fun resetCombines() {
+        combines = 0
+    }
 
     /**
      * Whether the **watertight** [mesh] encloses [p] — the generalized winding number, summed over the
