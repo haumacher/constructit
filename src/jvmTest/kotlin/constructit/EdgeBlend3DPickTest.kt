@@ -185,7 +185,8 @@ param "h2" = 9mm
         val step = assertNotNull(stepOf(ed, "filletedge"), "the fillet was made: ${ed.statusHint}")
         assertTrue(
             step.startsWith("tool filletedge els=e13 clicks=") &&
-                step.endsWith("scalar=\"h2\" signs=12;-1;1;0;1 -> e14"),
+                // …and it declares two names: the dressed body, and the rounding that is its first entry (OP-30)
+                step.endsWith("scalar=\"h2\" signs=12;-1;1;0;1 -> e14,e15"),
             "the reporter's own expected step: $step",
         )
         assertTrue("picked in the 3D view" in ed.statusHint, "and it says which picture answered: ${ed.statusHint}")

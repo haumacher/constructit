@@ -90,9 +90,10 @@ class BlendVertexProbeTest {
     ) {
         ed.activeScalar = ed.doc.scalars.first { it.name == "r" }
         ed.setTool(Tools.BLEND_FACE)
-        val before = ed.solids().size
+        // one gesture, one **rounding**: since OP-30 that is one entry under one dressed body
+        val before = ed.doc.elements.count { it.kind == ElementKind.DRESSING }
         view(ed, cam).clickWorld(at)
-        assertEquals(before + 1, ed.solids().size, "face at $at from $cam: ${ed.statusHint}")
+        assertEquals(before + 1, ed.doc.elements.count { it.kind == ElementKind.DRESSING }, "face at $at from $cam: ${ed.statusHint}")
         if (edges != null) assertTrue(edges in ed.statusHint, "$edges: ${ed.statusHint}")
         assertManifold(ed.meshOf(ed.solids().last()), "after rounding the face at $at")
     }

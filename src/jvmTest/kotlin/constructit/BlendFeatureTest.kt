@@ -447,7 +447,10 @@ class BlendFeatureTest {
         ed.activeScalar = ed.doc.newParameter("r2", 3.0.mm)
         ed.setTool(Tools.CHAMFER_EDGE)
         ed.click(Vec2(20.0, 30.0))
-        assertEquals(3, ed.solids().size, "fillet then chamfer, one chain: ${ed.statusHint}")
+        // **One dressed body with two entries** (OP-30). They round by different parameters, so they are two
+        // passes — which is exactly the chain of two dress-up features the feature assertion below reads.
+        assertEquals(2, ed.solids().size, "fillet then chamfer, one dressed body: ${ed.statusHint}")
+        assertEquals(2, ed.doc.elements.count { it.kind == ElementKind.DRESSING }, "…with a row per rounding")
         val v = volumeOf(ed.solids().last())
 
         val text = DocumentFormat.save(ed.doc)

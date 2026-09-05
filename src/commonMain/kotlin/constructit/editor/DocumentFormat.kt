@@ -119,7 +119,7 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 5
+    const val VERSION = 6
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
@@ -171,6 +171,31 @@ object DocumentFormat {
      * is what makes the re-saved file a fixed point.
      */
     const val PLANAR_JOIN_VERSION = 5
+
+    /**
+     * The first version in which a part carries **one dressing with many roundings** (OP-30, GitHub #35:
+     * *"all fillet operations targeting the same body should be applied at once and only produce a single
+     * filleted result object"*).
+     *
+     * **No new row kinds and no new arguments.** A rounding is the `tool filletedge els=… clicks=… scalar=…
+     * signs=… -> …` step it always was. Two things about such a step changed, and both are facts about the
+     * *drawing* rather than about the file, so the bytes are read the new way unambiguously:
+     *
+     * - a rounding whose `els=` names a body that is **already dressed** adds an **entry** to it instead of
+     *   making a second solid, so it declares its entry's name where it used to declare a solid's;
+     * - the **first** rounding on a body declares two names rather than one — the dressed body and its first
+     *   entry — because every rounding is now a row of its own that can be removed.
+     *
+     * **The migration, and where it stops.** A file written before this reads its chain the new way where
+     * doing so is *lossless*: a **pure** chain (each step's `els=` is the previous step's own result, and
+     * nothing else in the script reads any intermediate) is exactly one dressed body with N entries and comes
+     * back as one, its intermediate names becoming the entries' ([dressingJoins]). A chain something else
+     * reads an intermediate body of — a fusion with the two-fillet stage, a section of it — is **not**
+     * re-stated, because under the new reading that intermediate would grow every later rounding too and the
+     * drawing would change under the user; those steps keep the chain they were written as, and the load says
+     * so. The one element-count allowance the reading needs is named at [Document.migrationExtras].
+     */
+    const val DRESSED_BODY_VERSION = 6
 
     const val HEADER = "constructit $VERSION"
 
@@ -774,6 +799,7 @@ object DocumentFormat {
             replaySteps(doc, lines, ctx)
         } finally {
             doc.replayingVersion = null
+            doc.dressingJoins = true
         }
         doc.publishLoadNotes()
         return doc to ctx.notes
@@ -809,6 +835,9 @@ object DocumentFormat {
             replaySteps(doc, lines)
         } finally {
             doc.replayingVersion = null
+            // …and the loader's migration gate goes back to "every gesture joins", which is what a live one
+            // means: only an older file's chain is ever held to a per-step decision (OP-30)
+            doc.dressingJoins = true
         }
         doc.publishLoadNotes()
     }
@@ -819,6 +848,11 @@ object DocumentFormat {
         restamp: Restamp? = null,
     ) {
         val byName = HashMap<String, Element>()
+        // **Which of an older file's chain steps may be re-stated as entries** (OP-30) — decided once, over
+        // the whole script, before anything is built, because it is a question about the *file*: whether
+        // anything besides the next rounding reads an intermediate body. A file at this version or later
+        // says what it means by its own shape, so nothing is gated there (null).
+        val joins = if ((doc.replayingVersion ?: VERSION) < DRESSED_BODY_VERSION) dressingJoins(lines) else null
         for ((lineNo, line) in lines.drop(1).withIndex()) {
             val (body, declared) = split(line)
             var words = splitWords(body)
@@ -831,6 +865,10 @@ object DocumentFormat {
             val before = doc.elements.toHashSet()
             restamp?.resized = false
             restamp?.alignFromEnd = false
+            doc.dressingJoins = joins == null || lineNo in joins
+            // …and the migration's element-count allowance is this step's alone: a step that was dropped
+            // with a reason must not lend its allowance to the next one (OP-18)
+            doc.takeMigrationExtras()
             try {
                 apply(doc, words, byName, restamp)
             } catch (e: DropStep) {
@@ -851,7 +889,11 @@ object DocumentFormat {
             // only a step the re-stamp itself resized may create a different number of elements than the
             // script declares; everywhere else that is still the load error it always was (OP-18)
             val elastic = restamp?.resized == true
-            if (created.size != declared.size && !elastic) {
+            // …and the one **named** migration that legitimately creates more than the script declares: a
+            // rounding in a file older than [DRESSED_BODY_VERSION] now makes its body's first entry too
+            // (see [Document.migrationExtras]). The names still map from the start, so `-> e14` is the body.
+            val migrated = doc.takeMigrationExtras()
+            if (created.size != declared.size + migrated && !elastic) {
                 throw LoadError(
                     "line ${lineNo + 2}: '${words.firstOrNull()}' created ${created.size} element(s) " +
                         "but the script declares ${declared.size} (${declared.joinToString(",")}) — the file was " +
@@ -864,6 +906,59 @@ object DocumentFormat {
             declared.forEachIndexed { i, n -> created.getOrNull(i + shift)?.let { byName[n] = it } }
         }
     }
+
+    /** The tool rows that make a rounding — the steps OP-30's dressing is built out of. */
+    private val DRESS_TOOLS =
+        setOf(Tools.BLEND_EDGE, Tools.BLEND_FACE, Tools.CHAMFER_EDGE, Tools.CHAMFER_FACE, Tools.PROFILE_EDGE, Tools.PROFILE_FACE)
+
+    /**
+     * Which rounding steps of an **older** script may join the dressing their `els=` names, as line indices
+     * into `lines.drop(1)` — OP-30's migration, decided from the file and never from the geometry.
+     *
+     * The rule is *purity*, and it is exactly the condition under which re-stating a chain as one dressed
+     * body changes nothing the user can see: this step rounds a body an **earlier rounding** made, and
+     * **nothing else in the whole script reads that body**. Where something else does — a fusion with the
+     * two-fillet stage, a section of it, a sketch space on one of its faces — the intermediate is a body of
+     * the drawing in its own right; folding it into the final one would grow it every later rounding, so
+     * those steps keep the chain they were written as and the load says so rather than guessing.
+     *
+     * References are counted over every unquoted word of every step, which over-counts rather than
+     * under-counts (a name inside an expression is read as a reference) — and over-counting keeps a chain a
+     * chain, which is the safe direction for a migration.
+     */
+    private fun dressingJoins(lines: List<String>): Set<Int> {
+        val steps = lines.drop(1)
+        val declaredBy = HashMap<String, Int>()
+        val readCount = HashMap<String, Int>()
+        val roundings = HashMap<Int, List<String>>()
+        for ((i, line) in steps.withIndex()) {
+            val (body, decl) = split(line)
+            for (n in decl) declaredBy[n] = i
+            for (n in elementWords(body)) readCount[n] = (readCount[n] ?: 0) + 1
+            val words = splitWords(body)
+            if (words.firstOrNull() == "tool" && words.getOrNull(1) in DRESS_TOOLS) {
+                roundings[i] =
+                    words.drop(2).firstOrNull { it.startsWith("els=") }
+                        ?.removePrefix("els=")?.split(',')?.filter { it.isNotEmpty() }.orEmpty()
+            }
+        }
+        val out = HashSet<Int>()
+        for ((i, els) in roundings) {
+            val from = els.singleOrNull() ?: continue
+            val j = declaredBy[from] ?: continue
+            if (j >= i || j !in roundings) continue
+            if ((readCount[from] ?: 0) != 1) continue
+            out.add(i)
+        }
+        return out
+    }
+
+    /** Every `eN` an unquoted word of [body] names — the reference count [dressingJoins] is built on. */
+    private fun elementWords(body: String): List<String> =
+        splitWords(body)
+            .filter { !it.contains('"') }
+            .flatMap { it.split('=', ',', ';') }
+            .filter { it.length > 1 && it[0] == 'e' && it.drop(1).all { c -> c in '0'..'9' } }
 
     /** A step, in as many words as a note needs to identify it. */
     private fun describe(words: List<String>): String = words.take(3).joinToString(" ")

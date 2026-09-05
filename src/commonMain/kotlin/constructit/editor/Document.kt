@@ -238,6 +238,23 @@ enum class ElementKind {
     SOLID,
 
     /**
+     * One **rounding of a dressed body** (OP-30, GitHub #35): a fillet, a chamfer or a drawn profile along
+     * one edge or one face's boundary, listed under the body it dresses.
+     *
+     * *"All fillet operations targeting the same body should be applied at once and only produce a single
+     * filleted result object"* — this is the other half of the user's sentence: the operations themselves
+     * are **explicit in the element list**, one row each, each with its own name, its own step, its own size
+     * to retype and its own Delete. It is the first kind that is **structure rather than geometry**: it
+     * draws nothing in either view, it exports nothing, and it bounds nothing — the body it belongs to is
+     * the one object, and this row is one line of how that object is made ([Document.DressEntry]).
+     *
+     * Which is also why it has **no hide**: hiding is a fact about a *picture*, and an entry is not one. A
+     * rounding one does not want off the body is removed, not hidden — the toggle refuses by name and says
+     * so ([Document.hideRefusal]).
+     */
+    DRESSING,
+
+    /**
      * A **dimension**: annotation, showing a measurement node's live value (OP-4). Neither scaffolding
      * nor result geometry — OP-14's third, organizational column — see [Element.isAnnotation].
      */
@@ -1650,7 +1667,23 @@ class Document {
         tool: ToolDef,
         picks: Picks,
         scalars: List<ScalarEntry>,
-    ) = recordingTool(tool.id, picks, scalars) { tool.build(this, picks, toolScalarRefs(tool, picks.dofs, scalars)) }
+    ): Unit =
+        namingBodies(picks).let { p -> recordingTool(tool.id, p, scalars) { tool.build(this, p, toolScalarRefs(tool, p.dofs, scalars)) } }
+
+    /**
+     * [picks] with any **entry of a dressing** replaced by the body it belongs to (OP-30).
+     *
+     * One place, before the step is recorded, so the *file* names the body: an entry is one line of how that
+     * body is made and is nothing to build on, and a step that named an entry would lose its subject the
+     * moment a different rounding was removed. The two routes that hand one in are a click on an entry's row
+     * and an **older file's** chain step, whose `els=` names the intermediate solid that chain used to make
+     * and which this build reads as that body's entry — so the re-saved script says `els=` the body, and the
+     * file is a fixed point from the first save on.
+     */
+    private fun namingBodies(picks: Picks): Picks {
+        if (picks.elements.none { dressingWith(it) != null }) return picks
+        return picks.withElements(picks.elements.map { dressingWith(it)?.body ?: it })
+    }
 
     /**
      * The scalar refs [tool]'s [build] receives: the parameters picked or typed for it, and then **one free
@@ -1807,7 +1840,10 @@ class Document {
      * sketch showed the whole plan, and the row's `· space` suffix was the only thing distinguishing what the
      * canvas was drawing from what it was not. That suffix now only ever appears on a solid.
      */
-    fun listedIn(el: Element): Boolean = el.space == activeSpace.name || el.kind == ElementKind.SOLID
+    fun listedIn(el: Element): Boolean =
+        el.space == activeSpace.name || el.kind == ElementKind.SOLID ||
+            // …and a rounding is listed wherever its body is, because that is what it is a line of (OP-30)
+            el.kind == ElementKind.DRESSING
 
     /**
      * The elements the panel lists for the active space — [listedIn], in document order.
@@ -1815,7 +1851,21 @@ class Document {
      * A query rather than a filter the shell applies: which elements a space owns is the document's rule, and
      * the browser shell renders whatever this returns (the same discipline as [Editor.selectionFields]).
      */
-    fun listedElements(): List<Element> = elements.filter { listedIn(it) }
+    fun listedElements(): List<Element> {
+        val listed = elements.filter { listedIn(it) }
+        if (dressings.isEmpty()) return listed
+        // **A rounding is listed under the body it dresses** (OP-30): the panel is a tree one level deep, and
+        // that level is stated here rather than by whoever draws it — the same division of labour [listedIn]
+        // already makes. Document order is otherwise untouched, so an entry only ever *moves up* to its body.
+        val under = dressings.associate { d -> d.body to d.entries.map { it.el }.filter { e -> listed.any { it === e } } }
+        val out = ArrayList<Element>(listed.size)
+        for (el in listed) {
+            if (dressingWith(el) != null) continue
+            out.add(el)
+            under[el]?.let { out.addAll(it) }
+        }
+        return out
+    }
 
     /**
      * An element that cannot be built right now, and the node's own words for why (OP-3).
@@ -3739,7 +3789,8 @@ class Document {
     private fun pieceRef(el: Element): Ref<*> = (el.ref.node as? IndirectNode)?.let { Ref<Value>(it.boundTo ?: it.target) } ?: el.ref
 
     /** Whether [el] has been trimmed by a rounding — its view is bound onto something other than the curve it was built as. */
-    fun isTrimmed(el: Element): Boolean = (el.ref.node as? IndirectNode)?.boundTo != null
+    fun isTrimmed(el: Element): Boolean =
+        (el.kind == ElementKind.SEGMENT || el.kind == ElementKind.ARC) && (el.ref.node as? IndirectNode)?.boundTo != null
 
     /**
      * Every node [el] publishes its geometry **by**: the view it is displayed through, the curve it was
@@ -10464,8 +10515,13 @@ class Document {
         visible: Boolean,
     ): Int {
         // what is hidden by construction is never *shown* and never named in a step: a welded alias, and a
-        // boundary's duplicate joint marker (OP-14) — showing either draws a second point on the first
-        val subject = els.filter { el -> elements.any { it === el } && !(visible && hiddenByConstruction(el)) }
+        // boundary's duplicate joint marker (OP-14) — showing either draws a second point on the first.
+        // …and a **rounding** is not a picture at all (OP-30), so there is nothing of it to hide: see
+        // [hideRefusal], which is what the gesture says instead of doing nothing.
+        val subject =
+            els.filter { el ->
+                elements.any { it === el } && !(visible && hiddenByConstruction(el)) && hideRefusal(el) == null
+            }
         val changed = subject.count { it.visible != visible }
         if (changed == 0) return 0
         // the step asserts the state of everything the gesture named, not only what moved: replaying it must
@@ -10475,6 +10531,23 @@ class Document {
         }
         return changed
     }
+
+    /**
+     * Why [el] cannot be hidden or shown, in the user's words — or null for everything that can be (OP-30).
+     *
+     * One kind answers this, and the answer is a decision rather than an omission: an **entry of a dressing**
+     * is *structure*, not a picture. It draws nothing in either view — the body it belongs to is the one
+     * object — so "hidden" would say nothing about it, and a toggle that silently did nothing would be worse
+     * than one that refuses. What the user wants when they reach for it is to take the rounding **off**, and
+     * that is Delete, which removes the entry and re-stamps the body without it.
+     */
+    fun hideRefusal(el: Element): String? =
+        if (el.kind != ElementKind.DRESSING) {
+            null
+        } else {
+            "${nameOf(el)} is a rounding of ${dressingWith(el)?.let { nameOf(it.body) } ?: "a body"}, not a picture — " +
+                "it has nothing of its own to hide. Press Delete to take the rounding off the body instead"
+        }
 
     /**
      * Build a retained thick path of [thickness] around the carrier [path] (OP-21). One node computes
@@ -13901,6 +13974,353 @@ class Document {
         return if (r == null || r <= 0.0) null else BlendSection(kind, r)
     }
 
+    // ---- one dressed body, many roundings (OP-30, GitHub #35) ----
+
+    /**
+     * One **rounding** of a dressed body: one gesture, and everything that gesture decided (OP-30).
+     *
+     * *"All fillet operations targeting the same body should be applied at once and only produce a single
+     * filleted result object"* — this is the "one fillet operation", made explicit. A part carries **one**
+     * dressing ([Dressing]) whose entries are its roundings in order, and the body they make is one element.
+     *
+     * **[address] and [targets] are indices into the *base's* own lists**, never into the dressed body's, and
+     * that is the whole reason any entry can be removed: a base edge keeps its index whatever roundings stand
+     * beside it (the dressed list *extends* the base's — `Feature3.Blend`), so an entry's meaning never
+     * depends on the entries before it. A pick that names a **rail** — an edge that exists only because of an
+     * earlier rounding — is refused this list by [Document.addressesBase] and becomes a dressing of its own.
+     *
+     * [size] is the node, not a number, and it is what decides the **passes**: entries that round by the same
+     * parameter with the same kind and the same drawn profile are one `Blend3.blended` call, every corner
+     * among them built in one go and one stitched tool per group. Equality by *sharing* — the no-solver
+     * stance's own answer — rather than by comparing two doubles at eval time, which would make the number
+     * of booleans a function of the numbers (OP-21).
+     */
+    class DressEntry(
+        /** The element this entry is — a [ElementKind.DRESSING] row under its body, with a name and a step. */
+        val el: Element,
+        val kind: BlendKind,
+        /** The size parameter this entry rounds by, or null for a drawn-profile entry. */
+        val size: ScalarRef?,
+        /** The drawn profile element a [BlendKind.PROFILE] entry runs, or null for the two built-ins. */
+        val profile: Element?,
+        val profileRef: ProfileRef?,
+        /** Whether the gesture named a whole face's boundary rather than one edge. */
+        val whole: Boolean,
+        val address: Int,
+        val targets: List<Int>,
+        val choices: List<BlendChoice>,
+        /** What the click named, in the drawing's own words — the panel's readout. */
+        val where: String,
+    )
+
+    /**
+     * A part's **dressing**: the body one solid element shows, and the roundings it is made of (OP-30).
+     *
+     * [body]'s ref is a re-pointable view ([Construction.indirect]) over the chain of passes, so adding or
+     * removing an entry re-stamps the node **in place**: the element keeps its identity and its name, and a
+     * sketch space on a band, a cut, a section — everything built on the body — follows without a single
+     * input list being rewired (OP-5's binding rule, OP-23's re-stamp).
+     */
+    class Dressing(
+        val body: Element,
+        /** The undressed body this dressing dresses — whose edge and face lists the entries address. */
+        val base: Element,
+    ) {
+        val entries = ArrayList<DressEntry>()
+    }
+
+    private val dressings = ArrayList<Dressing>()
+
+    /** The dressing [el] **is the body of**, or null when it is not a dressed body. */
+    fun dressingOf(el: Element): Dressing? = dressings.firstOrNull { it.body === el }
+
+    /** The dressing [el] is an **entry of**, or null when it is not an entry — see [dressEntryOf] for which. */
+    fun dressingWith(el: Element): Dressing? = dressings.firstOrNull { d -> d.entries.any { it.el === el } }
+
+    /** The entry [el] **is**, or null when it is not one. */
+    fun dressEntryOf(el: Element): DressEntry? = dressings.firstNotNullOfOrNull { d -> d.entries.firstOrNull { it.el === el } }
+
+    /**
+     * What the entry [el] **is**, in the drawing's own words — *"a fillet of 5 mm along the upright edge"* —
+     * or null when [el] is no entry. The panel's readout, and the sentence its row's tooltip is built from.
+     */
+    fun dressEntryReadout(el: Element): String? {
+        val e = dressEntryOf(el) ?: return null
+        return entryPhrase(e.kind, e.size, e.profile, e.whole, e.where, e.targets.size, 0)
+    }
+
+    /**
+     * Whether an **older file's** chain step may join the dressing its `els=` names (OP-30's migration).
+     *
+     * True for every live gesture and for every file written at [DocumentFormat.DRESSED_BODY_VERSION] or
+     * later, where the step's own shape says what it means. For an older file the loader decides it per line
+     * ([DocumentFormat.dressingJoins]) and sets this: a **pure** chain of roundings re-states losslessly as
+     * one dressed body with N entries, and a chain something else reads an intermediate body of stays a
+     * chain, because under the new reading that intermediate would grow the later roundings too.
+     */
+    internal var dressingJoins: Boolean = true
+
+    /**
+     * How many elements the step now replaying created **beyond what the script declares**, because this
+     * build reads that step differently than the build that wrote it (OP-18).
+     *
+     * Exactly one thing sets it: a rounding in a file older than [DocumentFormat.DRESSED_BODY_VERSION], whose
+     * step declared one name because a rounding then made a body and nothing else, and which now also makes
+     * that body's first **entry**. Read and cleared by the loader's element-count check, so the allowance is
+     * one named migration rather than a licence for any drift.
+     */
+    internal var migrationExtras: Int = 0
+
+    /** Whether this load already said that a chain of roundings came back as one dressed body (OP-30). */
+    private var saidDressedBody = false
+
+    internal fun takeMigrationExtras(): Int = migrationExtras.also { migrationExtras = 0 }
+
+    /**
+     * Whether the pick `(whole, address, targets)` names edges and faces of [d]'s **base** — the one question
+     * that decides whether a rounding on a dressed body is an entry of it or a dressing of its own (OP-30).
+     *
+     * **The rail decision, and its argument.** The design leaned to *"an entry like any other, since rails
+     * extend the base's edge list in stable order"*. They do extend it, but the order is the **entries'**: a
+     * band's index is the base's edge count plus the position of its target among all the entries' targets.
+     * Remove entry 2 and entry 3's rails move — so an entry addressing a rail would silently change which
+     * edge it rounds when a *different* rounding is deleted, which is precisely the index instability OP-17
+     * forbids. So a rail pick is **not** an entry. It is not refused either, because nothing is lost by
+     * saying yes to it honestly: rounding a rail is a second dressing standing on the first, which is what a
+     * chain of roundings always was, and the note says so.
+     */
+    private fun addressesBase(
+        d: Dressing,
+        whole: Boolean,
+        address: Int,
+        targets: List<Int>,
+        ev: Evaluator,
+    ): Boolean {
+        val base = (ev.valueOf(d.base.ref) as? SolidValue)?.solid ?: return false
+        val edges = Section3.edges(base.feature).first?.size ?: return false
+        if (targets.any { it >= edges }) return false
+        return if (whole) address < (Section3.faces(base.feature).first?.size ?: return false) else address < edges
+    }
+
+    /**
+     * Build [d]'s body from its entries and **bind the view onto it** (OP-30) — the re-stamp, in one place.
+     *
+     * The entries are grouped into **passes** by the section they round with: consecutive entries that share
+     * a kind, a size *node* and a profile *node* are one `Blend3.blended` call, so the reporter's seven
+     * roundings at one radius `r` are one pass — one set of corners built among all of them and one stitched
+     * tool per group, which is the whole of what *"applied at once"* asks for. Grouping is by node identity
+     * and by adjacency, both facts about the **graph** rather than about the numbers, so the count of sweeps
+     * and booleans cannot move when a radius is retyped (OP-21). Entries rounding by different parameters
+     * chain, exactly as a chain of roundings always has, and the corners between the passes are built by the
+     * same machinery that has always built them ([Blend3]'s existing bands).
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun rebuildDressing(d: Dressing) {
+        val plane = planeOfSpace(d.base.space)
+        var tip = d.base.ref as SolidRef
+        var pass = ArrayList<DressEntry>()
+
+        fun flush() {
+            val lead = pass.firstOrNull() ?: return
+            tip = passRef(tip, plane, lead.kind, lead.size, lead.profileRef, pass.flatMap { it.targets }, pass.flatMap { it.choices })
+            pass = ArrayList()
+        }
+        for (e in d.entries) {
+            val lead = pass.firstOrNull()
+            if (lead != null && !(lead.kind == e.kind && lead.size?.node === e.size?.node && lead.profileRef?.node === e.profileRef?.node)) flush()
+            pass.add(e)
+        }
+        flush()
+        (d.body.ref.node as IndirectNode).boundTo = tip.node
+    }
+
+    /**
+     * **One pass of a dressing**: [targets] of [from] rounded in one `Blend3.blended` call (OP-30).
+     *
+     * The single place a dressing's geometry is constructed — the first rounding builds its body through it
+     * and every re-stamp rebuilds through it — because the two must not be able to disagree. What makes them
+     * the same is that both hand over the **resolved target list** (`run=`) rather than an address for the
+     * node to resolve at eval time: which edges a gesture named is decided when the step runs (OP-21), so a
+     * whole-face pick that skipped edges an earlier rounding took keeps skipping exactly those, and adding an
+     * unrelated rounding cannot re-resolve a pass that was already built.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun passRef(
+        from: SolidRef,
+        plane: PlaneRef,
+        kind: BlendKind,
+        size: ScalarRef?,
+        profile: ProfileRef?,
+        targets: List<Int>,
+        choices: List<BlendChoice>,
+    ): SolidRef =
+        cx.blend(
+            from,
+            from,
+            plane,
+            size,
+            kind,
+            whole = false,
+            address = targets.firstOrNull() ?: 0,
+            choices = choices,
+            profile = profile,
+            run = targets,
+        )
+
+    /**
+     * Take the entry [el] off its dressing **in place** (OP-30): the journal loses its step, the entry list
+     * loses the entry, and the body's node is re-stamped without it — the view re-pointed, so the element
+     * keeps its identity and **every consumer of the body follows on the next pass** (OP-5's binding rule).
+     *
+     * In place rather than by a save-and-replay, and that is the whole of the fix the orchestrator's probe
+     * asked for: a replay builds a *new* document, so a section, a face space, a boolean or an export that
+     * was built on the body would go on reading the body of the document that was thrown away. Adding a
+     * rounding always re-stamped in place; removing one now does too, so the two are one mechanism and there
+     * is only one thing to be right.
+     *
+     * False where the entry cannot be taken off on its own — it is the dressing's only one — which the caller
+     * has already refused by name ([Editor.deleteSelection]).
+     */
+    fun removeDressingEntry(el: Element): Boolean {
+        val d = dressingWith(el) ?: return false
+        if (d.entries.size <= 1) return false
+        if (!journalWithoutEntry(el)) return false
+        d.entries.removeAll { it.el === el }
+        elements.removeAll { it === el }
+        scoredSigns.remove(el.id)
+        rebuildDressing(d)
+        return true
+    }
+
+    /** One entry's readout, in the drawing's own words — *"a fillet of 5 mm along the upright edge"*. */
+    private fun entryPhrase(
+        kind: BlendKind,
+        size: ScalarRef?,
+        profileEl: Element?,
+        whole: Boolean,
+        where: String,
+        count: Int,
+        already: Int,
+    ): String =
+        (
+            if (kind == BlendKind.PROFILE) {
+                "the profile ${profileEl?.let { nameOf(it) } ?: "?"} run"
+            } else {
+                "a ${kind.word} of ${size?.let { lengthWord(it) } ?: "?"}"
+            }
+        ) + " along ${if (whole) "every edge of " else ""}$where" +
+            // …and what it did **not** take, in the words a first rounding says it in ([madeSolid]): a face
+            // gesture breaks the edges of that face that are still sharp, and the note says so rather than
+            // leaving "(2 edges)" on a four-edged face to be a surprise
+            (
+                if (count > 1 || already > 0) {
+                    " ($count edge${if (count == 1) "" else "s"}" +
+                        (if (already > 0) " — $already ${if (already == 1) "was" else "were"} already rounded" else "") + ")"
+                } else {
+                    ""
+                }
+            )
+
+    /** Which entry [el] is of its dressing, or −1 — the order a bulk removal has to work in (see [Editor]). */
+    fun dressEntryIndex(el: Element): Int = dressingWith(el)?.entries?.indexOfFirst { it.el === el } ?: -1
+
+    /**
+     * Why removing **all** of [els] at once would leave a dressing with no rounding at all, or null — the
+     * bulk form of the single-entry refusal ([Editor.deleteSelection]): a body's *last* rounding is what
+     * makes it that body, so what the user means there is to delete the body.
+     */
+    fun entriesEmptyingRefusal(els: List<Element>): String? {
+        for (d in dressings) {
+            val doomed = d.entries.count { e -> els.any { it === e.el } }
+            if (doomed > 0 && doomed == d.entries.size) {
+                return "${nameOf(d.body)} would be left with no rounding at all, and it is the roundings that " +
+                    "make it that body — delete ${nameOf(d.body)} itself to take them all off, or leave one on"
+            }
+        }
+        return null
+    }
+
+    /**
+     * Why removing the entry [el] would move an address something else already recorded, or null when it
+     * would not — the one index-stability gap OP-30 leaves, refused rather than paid for silently (OP-17).
+     *
+     * **What moves and what does not.** The dressed list is the base's own faces and edges at their own
+     * indices, then one **band** (two **rails**) per rounded edge in entry order, then the corner patches.
+     * *Adding* a rounding therefore moves nothing that was already addressable: the base's slots keep their
+     * indices and every band and rail already there keeps its own — only the corner patches, which stand
+     * after all the bands, shift by one (stated at OP-30 in DESIGN.md). **Removing** one is the other case:
+     * every band and rail after it slides up by that entry's own count.
+     *
+     * What actually *holds* such an address is exactly one thing, and it is why this is narrow: a sketch
+     * space records a **footprint boundary piece**, not a face index ([Section3.FACE_ADDRESS_CONVENTION]),
+     * and a footprint is the base's own plan, which no rounding touches. What does hold one is a **rounding
+     * chained on a rail** of this body — an edge that exists only because of an earlier entry — which is the
+     * one pick OP-30 keeps out of the dressing for this very reason.
+     *
+     * The cure is a **slot kept for the life of the dressing**: a removed rounding's bands, rails and corner
+     * faces staying in the list with a reason, exactly as an edge a rounding consumed keeps its slot. That is
+     * a change to `Blend3`'s own layout rather than to the editor, so until it is made the removal is refused
+     * **by name**, with the gesture that does work.
+     */
+
+    fun entryRemovalRefusal(el: Element): String? {
+        val d = dressingWith(el) ?: return null
+        val k = d.entries.indexOfFirst { it.el === el }
+        if (k < 0) return null
+        val baseEdges =
+            (Evaluator().valueOf(d.base.ref) as? SolidValue)?.solid?.feature
+                ?.let { Section3.edges(it).first?.size } ?: return null
+        val firstRail = baseEdges + 2 * d.entries.take(k).sumOf { it.targets.size }
+        val standing =
+            dressings.firstOrNull { other -> other.base === d.body && other.entries.any { it.address >= firstRail } }
+                ?: return null
+        return "${nameOf(el)} cannot be removed while ${nameOf(standing.body)} is rounded on a rail of " +
+            "${nameOf(d.body)} that stands after this rounding's own — taking it off would slide that rail's " +
+            "number and round a different edge. Remove ${nameOf(standing.body)} first, or take off a " +
+            "rounding no rail of it stands after"
+    }
+
+    /**
+     * Remove the entry [el] from the dressing it belongs to, **by editing the journal** — the caller then
+     * re-saves and replays, which is what makes it one undo with the body keeping its name (OP-23).
+     *
+     * Two shapes, because a dressing's **first** rounding is the step that made the body:
+     * - an ordinary entry's step created nothing but that entry, so the step goes and nothing else moves;
+     * - the first entry's step created the body *and* the entry, so the **next** entry's step is re-stamped
+     *   to create the body too, addressing what the dropped step addressed, and the dropped step goes. The
+     *   body is still declared by one step, so its name and everything built on it survive; the surviving
+     *   step stays where it stood, because its own `param` was declared between the two.
+     *
+     * False where the entry is the dressing's only one: then the body *is* that rounding, and the honest
+     * gesture is to delete the body — which the ordinary delete already does, and which the caller says.
+     */
+    internal fun journalWithoutEntry(el: Element): Boolean {
+        val d = dressingWith(el) ?: return false
+        val i = d.entries.indexOfFirst { it.el === el }
+        val step = creatingStep(el) ?: return false
+        if (i > 0 || !step.creates.any { it === d.body }) {
+            journal.remove(step)
+            return true
+        }
+        // the **first surviving** rounding after this one, so removing two at once still leaves the body
+        // declared by a step: the one just above it may already be gone from the journal
+        val next = d.entries.drop(1).firstOrNull { e -> creatingStep(e.el) != null } ?: return false
+        val nextStep = creatingStep(next.el) ?: return false
+        // the surviving gesture's own arguments, addressing what *this* step addressed: the base, which the
+        // dropped step named and the next one named the body by
+        val args = nextStep.args.map { a -> if (a is Arg.Keyed && a.key == "els") step.args.firstOrNull { it is Arg.Keyed && it.key == "els" } ?: a else a }
+        val merged = Step(nextStep.kind, args)
+        merged.creates.add(d.body)
+        merged.creates.add(next.el)
+        merged.createsScalars.addAll(nextStep.createsScalars)
+        merged.ownDofs.addAll(nextStep.ownDofs)
+        // …and it stands where the **surviving** gesture stood, not where the dropped one did: its own
+        // parameter was declared between the two, and a step may not run before the `param` it names
+        journal[journal.indexOfFirst { it === nextStep }] = merged
+        journal.remove(step)
+        return true
+    }
+
     /**
      * **Break an edge of [solid]** — a fillet or a chamfer along a provenance-named edge, built as OP-9's own
      * sentence: the 2D fillet construction run in the edge's normal section, swept along the edge, applied by
@@ -13937,8 +14357,12 @@ class Document {
         profileEl: Element? = null,
     ): Element? {
         val what = "${kind.word.replaceFirstChar { it.uppercase() }} ${if (whole) "the edges of a face" else "an edge"}"
-        if (solid.kind != ElementKind.SOLID) {
-            note = "$what: ${nameOf(solid)} is ${kindWord(solid)}, not a solid — click the body whose edge you want broken"
+        // **A pick that names an entry names the body it belongs to** (OP-30). Two routes reach here that
+        // way: a click on an entry's row in the element list, and an *older file's* chain step, whose `els=`
+        // names the intermediate solid the chain used to make and which is now that body's entry.
+        val on = dressingWith(solid)?.body ?: solid
+        if (on.kind != ElementKind.SOLID) {
+            note = "$what: ${nameOf(on)} is ${kindWord(on)}, not a solid — click the body whose edge you want broken"
             return null
         }
         // **the drawn section, resolved to an ordinary operand** (GitHub #30). A profile is a curve of the
@@ -13978,17 +14402,23 @@ class Document {
         // journal prefix, and replaying the prefix rebuilds exactly the elements and edges they walk. (The
         // face-space cut records its tip instead because its input — the *space's* anchor — is not named by
         // its step at all, so there would be nothing durable to re-resolve from.)
-        val baseEl = analyticBaseOf(solid, ev)
+        val baseEl = analyticBaseOf(on, ev)
         val body =
-            (ev.valueOf(baseEl?.ref ?: solid.ref) as? SolidValue)?.solid ?: run {
-                note = "$what: ${nameOf(solid)} has no value right now, so it shows no edges to break"
+            (ev.valueOf(baseEl?.ref ?: on.ref) as? SolidValue)?.solid ?: run {
+                note = "$what: ${nameOf(on)} has no value right now, so it shows no edges to break"
                 return null
             }
         if (baseEl == null) {
-            note = "$what: ${nameOf(solid)} — ${Section3.edges(body.feature).second}"
+            note = "$what: ${nameOf(on)} — ${Section3.edges(body.feature).second}"
             return null
         }
-        val tipEl = tipOfChain(solid, ev) ?: solid
+        val tipEl = tipOfChain(on, ev) ?: on
+        // **The dressing this gesture may join** (OP-30): the body must be the one the click addresses
+        // *and* the drawing's tip of its own chain — a body an ordinary boolean stands on top of is cut at
+        // that tip and not dressed further (OP-17's sequential-feature rule), and a body whose edges are
+        // named by something under it is not a dressing at all. [dressingJoins] is the loader's gate: a
+        // chain in an older file joins only where re-stating it as entries is lossless.
+        val dress = dressingOf(on)?.takeIf { tipEl === on && baseEl === on && (replayingVersion == null || dressingJoins) }
         // how the click named its target, so the note can say it (see [BlendPick]); false on a replay, which
         // scores nothing at all
         var inView = false
@@ -13997,13 +14427,13 @@ class Document {
                 val pick = blendTarget(body, whole, at, view, ev)
                 inView = pick.inView
                 pick.index ?: run {
-                    note = "$what: ${nameOf(solid)} — ${pick.why}"
+                    note = "$what: ${nameOf(on)} — ${pick.why}"
                     return null
                 }
             }
         val (targets, whyTargets) = Blend3.targets(body.feature, whole, address, tangentRun(baseEl, ev))
         if (targets == null) {
-            note = "$what: ${nameOf(solid)} — $whyTargets"
+            note = "$what: ${nameOf(on)} — $whyTargets"
             return null
         }
         // **four integers per edge for the built-in rows, five for a drawn profile** — the fifth is which
@@ -14039,7 +14469,7 @@ class Document {
                 val (scored, why) = Blend3.choicesFor(body, targets, sec, onFace)
                 val fresh =
                     scored ?: run {
-                        note = "$what: ${nameOf(solid)} — $why"
+                        note = "$what: ${nameOf(on)} — $why"
                         return null
                     }
                 // **A recorded choice is never re-decided** (OP-18). A file written before one pick ran along
@@ -14049,7 +14479,7 @@ class Document {
                 if (stored.size == 1 && targets.size > 1) {
                     if ((replayingVersion ?: 0) in 1 until DocumentFormat.SUPERSEDING_FILLET_VERSION) {
                         noteLoad(
-                            "${nameOf(solid)}'s ${kind.word} now runs along all ${targets.size} edges of the " +
+                            "${nameOf(on)}'s ${kind.word} now runs along all ${targets.size} edges of the " +
                                 "tangent-continuous run through the edge it named — they are one smooth band, " +
                                 "which is what the drawing says they are; the added edges' choices are scored " +
                                 "once here and written on the next save",
@@ -14060,8 +14490,52 @@ class Document {
                     fresh
                 }
             }
-        val el =
-            add(
+        val where =
+            if (whole) {
+                Section3.faces(body.feature).first?.getOrNull(address)?.name?.label ?: "a face"
+            } else {
+                Section3.edges(body.feature).first?.getOrNull(address)?.name?.label ?: "an edge"
+            }
+        val entrySigns = listOf(address) + choices.flatMap { if (kind == BlendKind.PROFILE) it.signsWithFlip() else it.signs() }
+        // **One dressing per part** (OP-30): where this gesture rounds an edge or a face of the *base* of a
+        // body that is already dressed, it is one more **entry** of that dressing and not a body of its own.
+        // The node is re-stamped with the new entry list and the body keeps its identity, its name and
+        // everything built on it (OP-23's re-stamp, OP-5's binding rule).
+        val join = dress?.takeIf { addressesBase(it, whole, address, targets, ev) }
+        if (join != null) {
+            // …and an older file's chain, re-stated as entries, says so **once** (OP-18's version marker:
+            // the meaning of those steps changed, deliberately, and a load may say so exactly one time)
+            if ((replayingVersion ?: DocumentFormat.VERSION) < DocumentFormat.DRESSED_BODY_VERSION && !saidDressedBody) {
+                saidDressedBody = true
+                noteLoad(
+                    "the roundings of ${nameOf(join.body)} were a chain of solids, one per fillet; they are now " +
+                        "one dressed body with an entry per rounding — every one of them removable on its own, " +
+                        "and the ones that share a ${kind.sizeWord} applied in one pass",
+                )
+            }
+            val el = add(cx.dressingSize(size), ElementKind.DRESSING, Styles.SOLID)
+            el.space = join.base.space
+            join.entries.add(DressEntry(el, kind, size, profileEl, profileRef, whole, address, targets, choices, where))
+            rebuildDressing(join)
+            registerSigns(el, entrySigns)
+            val why = (Evaluator().eval(join.body.ref.node) as? EvalResult.Invalid)?.reason
+            note =
+                "${nameOf(el)} is " +
+                "${entryPhrase(kind, size, profileEl, whole, where, targets.size, if (whole) Blend3.roundedAlready(body.feature, address) else 0)} — " +
+                "rounding ${join.entries.size} of ${nameOf(join.body)}, applied with the others in one pass" +
+                (if (inView) ", picked in the 3D view" else "") +
+                (if (why == null) "; select the row and press Delete to take it off again" else ", but the body cannot be built with it: $why")
+            return el
+        }
+        // **The dressable case builds through [passRef]** — the one construction a dressing has — so that the
+        // body a first rounding makes is bit for bit the body a re-stamp rebuilds. The mesh tier keeps its own
+        // call, unchanged: it is not a dressing, it resolves a whole-face pick at eval time as it always has,
+        // and nothing about it may move (OP-18).
+        val dressable = baseEl === tipEl
+        val made =
+            if (dressable) {
+                passRef(baseEl.ref as SolidRef, planeOfSpace(baseEl.space), kind, size, profileRef, targets, choices)
+            } else {
                 cx.blend(
                     tipEl.ref as SolidRef,
                     baseEl.ref as SolidRef,
@@ -14074,18 +14548,30 @@ class Document {
                     // the run the pick stands for, resolved from the registry here and never stored (#29)
                     run = if (whole) emptyList() else targets,
                     profile = profileRef,
-                ),
-                ElementKind.SOLID,
-                Styles.SOLID,
-            )
-        el.space = baseEl.space
-        registerSigns(el, listOf(address) + choices.flatMap { if (kind == BlendKind.PROFILE) it.signsWithFlip() else it.signs() })
-        val where =
-            if (whole) {
-                Section3.faces(body.feature).first?.getOrNull(address)?.name?.label ?: "a face"
-            } else {
-                Section3.edges(body.feature).first?.getOrNull(address)?.name?.label ?: "an edge"
+                )
             }
+        // **The dressed body publishes itself behind a view** (OP-30): re-stamping it with one more entry
+        // then binds the view onto the freshly built node, so every consumer of the body — a sketch space on
+        // a band, a cut, a section — follows without one input list being rewired (OP-5, [Construction.indirect]).
+        // A blend the mesh tier made is not a dressing and gets no view: it names no edges to add an entry for.
+        val el = add(if (dressable) cx.indirect(made) else made, ElementKind.SOLID, Styles.SOLID)
+        el.space = baseEl.space
+        if (dressable) {
+            val entryEl = add(cx.dressingSize(size), ElementKind.DRESSING, Styles.SOLID)
+            entryEl.space = baseEl.space
+            dressings.add(
+                Dressing(el, baseEl).also {
+                    it.entries.add(DressEntry(entryEl, kind, size, profileEl, profileRef, whole, address, targets, choices, where))
+                },
+            )
+            registerSigns(entryEl, entrySigns)
+            // …and an older file declares one name for this step, because it was written when a rounding made
+            // a body and nothing else. The entry element is the migration's own extra (OP-18, and see
+            // [DocumentFormat.DRESSED_BODY_VERSION]); the next save declares both names.
+            if ((replayingVersion ?: DocumentFormat.VERSION) < DocumentFormat.DRESSED_BODY_VERSION) migrationExtras++
+        } else {
+            registerSigns(el, entrySigns)
+        }
         madeSolid(
             el,
             "${nameOf(tipEl)} with " +

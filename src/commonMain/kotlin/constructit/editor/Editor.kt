@@ -365,6 +365,12 @@ class Editor(
             }
             return false
         }
+        // **Deleting a rounding is an edit of the body it belongs to** (OP-30), not a delete of geometry:
+        // its step goes and the dressed body is re-stamped without it — one undo, the body keeping its
+        // identity, its name and everything built on it. Handled here rather than by the ordinary step
+        // closure because a dressing's *first* rounding shares its step with the body, and dropping that
+        // step would take the body and every other rounding with it.
+        if (targets.any { it.kind == ElementKind.DRESSING }) return deleteDressingEntries(targets)
         val roots = ArrayList<Step>()
         for (el in targets) {
             val root = doc.creatingStep(el)
@@ -410,6 +416,63 @@ class Editor(
         adopt(fresh)
         checkpoint()
         statusHint = if (dependents == 0) "Deleted $what" else "Deleted $what and $dependents dependent${if (dependents == 1) "" else "s"}"
+        changed()
+        return true
+    }
+
+    /**
+     * Delete the selected **roundings** (OP-30) — the journal edited, re-saved and replayed, exactly as every
+     * other structural edit is (OP-23's re-stamp; [Document.journalWithoutEntry] states the two shapes).
+     *
+     * All-or-nothing and by name, as the ordinary delete is: a mixed selection is refused rather than half
+     * done, and the **only** rounding of a body is refused with the gesture that does work named — that body
+     * *is* that rounding, so what the user means is to delete the body.
+     */
+    private fun deleteDressingEntries(targets: List<Element>): Boolean {
+        val others = targets.filter { it.kind != ElementKind.DRESSING }
+        if (others.isNotEmpty()) {
+            statusHint =
+                "Delete: ${doc.nameOf(others.first())} is not a rounding — a rounding is removed from its " +
+                "body on its own, so select the roundings and the rest separately"
+            changed()
+            return false
+        }
+        for (el in targets) {
+            doc.entryRemovalRefusal(el)?.let {
+                statusHint = "Delete: $it"
+                changed()
+                return false
+            }
+            val d = doc.dressingWith(el)
+            if (d != null && d.entries.size == 1) {
+                statusHint =
+                    "Delete: ${doc.nameOf(el)} is the only rounding of ${doc.nameOf(d.body)} — that body *is* " +
+                    "that rounding, so delete ${doc.nameOf(d.body)} itself to take it off"
+                changed()
+                return false
+            }
+        }
+        doc.entriesEmptyingRefusal(targets)?.let {
+            statusHint = "Delete: $it"
+            changed()
+            return false
+        }
+        val what = if (targets.size == 1) doc.nameOf(targets[0]) else "${targets.size} roundings"
+        val before = DocumentFormat.save(doc)
+        // **last rounding first**, so the one that shares its step with the body is re-stamped once, at the
+        // end, onto a rounding that is still there (see [Document.journalWithoutEntry])
+        for (el in targets.sortedByDescending { doc.dressEntryIndex(it) }) {
+            if (!doc.removeDressingEntry(el)) {
+                restore(before)
+                statusHint = "Delete: ${doc.nameOf(el)} has no construction step to remove"
+                changed()
+                return false
+            }
+        }
+        // the rows are gone, so nothing may still point at them
+        clearSelection()
+        checkpoint()
+        statusHint = "Removed the rounding $what — the body is re-built with the rest of them in one pass"
         changed()
         return true
     }
@@ -1911,7 +1974,15 @@ class Editor(
     fun setSelectionVisible(visible: Boolean): Int {
         val n = doc.setElementsVisible(selectedElements, visible)
         if (n > 0) checkpoint()
-        statusHint = if (n == 0) "Nothing to ${if (visible) "show" else "hide"}" else "${if (visible) "Shown" else "Hidden"} $n element${if (n == 1) "" else "s"}"
+        // …and a selection that contains nothing but things with nothing to hide says which and why, rather
+        // than "Nothing to hide", which reads as a bug (OP-30: a rounding is structure, not a picture)
+        val refused = selectedElements.firstNotNullOfOrNull { doc.hideRefusal(it) }
+        statusHint =
+            when {
+                n > 0 -> "${if (visible) "Shown" else "Hidden"} $n element${if (n == 1) "" else "s"}"
+                refused != null -> refused
+                else -> "Nothing to ${if (visible) "show" else "hide"}"
+            }
         changed()
         return n
     }

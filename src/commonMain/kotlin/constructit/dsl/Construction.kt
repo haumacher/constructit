@@ -3543,7 +3543,7 @@ class Construction {
         // fact this builder already knows: every blend records the root of the chain it makes, so the next
         // one reads it off the graph rather than looking for it in a value. The arity is structural, exactly
         // as [chained] is, and nothing stored changes — no step, no `signs=`, no version.
-        val chainRoot = if (chained) null else blendChainRoot[base.node]
+        val chainRoot = if (chained) null else chainRootOf(base.node)
         // the operand indices are computed here, once, because three of them are optional: a chained blend
         // carries its base, a blend is stated by a size **or** by a drawn profile, and a blend of a blend
         // carries the root of its chain
@@ -3606,6 +3606,33 @@ class Construction {
      * that rebuilds the same construction rebuilds the same map, and nothing about it is stored.
      */
     private val blendChainRoot = HashMap<Node, SolidRef>()
+
+    /**
+     * The chain root recorded for [node], **seen through a re-pointable view** ([IndirectNode]).
+     *
+     * A dressed body publishes its solid behind a view so that adding a rounding can re-stamp the node in
+     * place (OP-30, and OP-5's binding rule: the view is the mutation point, so no consumer is rewired).
+     * A view is not the node the builder recorded a root against, so the lookup follows it — otherwise a
+     * rounding *on* a dressed body would find no undressed root and refuse the one rebuild that needs it
+     * (the pivot about a band, session 81).
+     */
+    private fun chainRootOf(node: Node): SolidRef? =
+        blendChainRoot[node] ?: (node as? IndirectNode)?.let { chainRootOf(it.boundTo ?: it.target) }
+
+    /**
+     * The **value one entry of a dressing shows**: the size that entry rounds by (OP-30).
+     *
+     * An entry is structure, not geometry — it has no body of its own, it is one line of the body it belongs
+     * to — but it is an ordinary element of the drawing all the same, so it needs a node with a value: one
+     * the inspector can read and the panel can print. A pass-through over the entry's own size parameter is
+     * exactly that and nothing more; a profile-shaped entry states no size and reads zero.
+     */
+    fun dressingSize(size: ScalarRef?): ScalarRef =
+        if (size == null) {
+            op<ScalarValue> { EvalResult.Ok(ScalarValue(Quantity.mm(0.0))) }
+        } else {
+            op(size) { EvalResult.Ok(it[0]) }
+        }
 
     // ---- shelling: a wall of a stated thickness, hollowed out by construction (session 75) ----
 

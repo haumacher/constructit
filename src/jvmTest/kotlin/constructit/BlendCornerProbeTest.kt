@@ -47,9 +47,11 @@ class BlendCornerProbeTest {
     ): Element {
         ed.activeScalar = ed.doc.scalars.first { it.name == "c" }
         ed.setTool(tool)
-        val before = ed.doc.elements.count { it.kind == ElementKind.SOLID }
+        // one gesture, one **rounding** — which since OP-30 is one entry under one dressed body rather than
+        // one more solid, so what counts a gesture is the entry list
+        val before = ed.doc.elements.count { it.kind == ElementKind.DRESSING }
         ed.click(at)
-        assertEquals(before + 1, ed.doc.elements.count { it.kind == ElementKind.SOLID }, "$tool at $at: ${ed.statusHint}")
+        assertEquals(before + 1, ed.doc.elements.count { it.kind == ElementKind.DRESSING }, "$tool at $at: ${ed.statusHint}")
         return solidOf(ed)
     }
 
