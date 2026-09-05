@@ -479,8 +479,20 @@ sealed interface Feature3 {
         val kind: BlendKind,
         val size: Double,
         val choices: List<BlendChoice>,
+        /**
+         * The **drawn section** a [BlendKind.PROFILE] blend runs, in its own (setback, setback) coordinates
+         * — empty for the two built-ins, which state their section from [size] alone (GitHub #30).
+         *
+         * A value like every other input of a feature: the profile is an ordinary drawn element of the
+         * construction, so editing it re-blends the body through the same recompute a retyped radius uses,
+         * and deleting it cascades (OP-21).
+         */
+        val profile: List<ProfileElement> = emptyList(),
     ) : Feature3 {
         override val footprint: List<Region> get() = base.footprint
+
+        /** What this blend's section **is** — the one object [Blend3] reads it through. */
+        val section: BlendSection get() = BlendSection(kind, size, profile)
     }
 
     /**

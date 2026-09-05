@@ -62,8 +62,11 @@ sealed interface FaceName {
      * feature's own order for that edge (the dressed list keeps every base index, [Feature3.Blend]), so the
      * one number names both the band and the crease it rounds.
      */
-    data class BlendBand(val edge: Int) : FaceName {
-        override val label: String get() = "the rounded band along edge #${edge + 1}"
+    data class BlendBand(val edge: Int, val piece: Int = 0) : FaceName {
+        override val label: String
+            get() =
+                "the rounded band along edge #${edge + 1}" +
+                    (if (piece == 0) "" else ", piece #${piece + 1}")
     }
 
     /**
@@ -82,14 +85,14 @@ sealed interface FaceName {
      * an address that points *at* a corner, which is the same exposure a band whose surface cannot be stated
      * already carries.
      */
-    data class BlendCorner(val edges: List<Int>) : FaceName {
+    data class BlendCorner(val edges: List<Int>, val piece: Int = 0) : FaceName {
         override val label: String
             get() =
                 "the rounded corner where " +
                     edges.joinToString(", ") { "edge #${it + 1}" }.let {
                         val at = it.lastIndexOf(", ")
                         if (at < 0) it else it.substring(0, at) + " and " + it.substring(at + 2)
-                    } + " meet"
+                    } + " meet" + (if (piece == 0) "" else ", piece #${piece + 1}")
     }
 
     /**
@@ -1787,8 +1790,8 @@ object Section3 {
             // except where the plane runs **parallel** to those rulings, which no ruling crosses and which
             // the band states exactly instead (`Blend3.parallelBandCut`, the cut a sectioned rounded plate
             // is actually asked for)
-            Blend3.bandCut(feature, n.edge, cut)?.let { return bandCutToEdge(label, it) }
-            Blend3.parallelBandCut(feature, n.edge, cut)?.let { pieces ->
+            Blend3.bandCut(feature, n.edge, n.piece, cut)?.let { return bandCutToEdge(label, it) }
+            Blend3.parallelBandCut(feature, n.edge, n.piece, cut)?.let { pieces ->
                 // the extras are what *no index names*, so a single piece is the edge's own curve and
                 // nothing besides — [bandCutToEdge]'s convention, kept
                 return if (pieces.size == 1) {
@@ -1797,7 +1800,7 @@ object Section3 {
                     SectionEdge(label, null, null, CUT_TWICE) to pieces.map { DrawnPiece(it, false) }
                 }
             }
-            val strip = Blend3.bandStrip(feature, n.edge)
+            val strip = Blend3.bandStrip(feature, n.edge, n.piece)
             if (strip != null) return cutRuledStrip(label, strip, cut)
             return SectionEdge(label, null, null, patch.reason ?: "the plane does not cut $label") to emptyList()
         }

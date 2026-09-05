@@ -15,6 +15,7 @@ import constructit.editor.ElementKind
 import constructit.editor.Tools
 import constructit.geom.Blend3
 import constructit.geom.BlendKind
+import constructit.geom.BlendSection
 import constructit.geom.EdgeName
 import constructit.geom.FaceName
 import constructit.geom.Feature3
@@ -91,7 +92,7 @@ class BlendFeatureTest {
         val body = ev.solid(base)
         val (targets, whyT) = Blend3.targets(body.feature, whole, address)
         assertNotNull(targets, whyT)
-        val (choices, why) = Blend3.choicesFor(body, targets, size, kind)
+        val (choices, why) = Blend3.choicesFor(body, targets, BlendSection(kind, size))
         assertNotNull(choices, why)
         return cx.blend(base, base, cx.planeXY(), cx.const(size.mm), kind, whole, address, choices)
     }
@@ -200,7 +201,7 @@ class BlendFeatureTest {
         for (k in baseEdges.indices) if (k != i) assertNull(edges[k].reason, "${edges[k].name.label} is untouched")
 
         // …and building on an edge that is gone is refused in exactly those words
-        val (_, whyAgain) = Blend3.choicesFor(Evaluator().solid(rounded), listOf(i), 1.0, BlendKind.FILLET)
+        val (_, whyAgain) = Blend3.choicesFor(Evaluator().solid(rounded), listOf(i), BlendSection(BlendKind.FILLET, 1.0))
         assertEquals(gone, whyAgain, "a second blend on the consumed edge declines by the flag")
     }
 

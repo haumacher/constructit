@@ -2633,4 +2633,83 @@ class BrowserE2ETest {
             browser.close()
         }
     }
+
+    /**
+     * **A custom blend profile through the real shell** (GitHub #30, session 80): the two new rows are in the
+     * palette, a two-segment profile drawn about the origin shapes a plate's rim in two clicks, and one undo
+     * takes the whole gesture back.
+     *
+     * The claim is reachability, made where a user makes it — the palette, the tree and the status line — and
+     * the one thing only a browser can answer: that a row whose **section is a drawing rather than a number**
+     * needs no field, no dialog and no mode, and that the shell's own undo takes the pair of picks as one.
+     */
+    @Test
+    fun aCustomBlendProfileIsReachableInBrowser() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val index = File("build/dist/js/productionExecutable/index.html")
+        assertTrue(index.exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        Playwright.create().use { pw ->
+            val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+            val page = browser.newPage()
+            val errors = ArrayList<String>()
+            page.onPageError { errors.add(it) }
+            page.setViewportSize(1000, 700)
+            page.navigate(index.toURI().toString())
+            page.waitForSelector("#canvas")
+
+            fun status(): String = page.querySelector("#status").textContent()
+
+            fun tree(): List<String> = page.querySelectorAll("#tree .item").map { it.textContent() }
+
+            // both rows are in the palette, each with a button of its own
+            assertTrue(page.querySelector("#tool-blendedge") != null, "*Blend edge with a profile* is in the palette")
+            assertTrue(page.querySelector("#tool-blendfaceedges") != null, "*Blend the edges of a face with a profile* is too")
+
+            val box = page.querySelector("#canvas").boundingBox()
+            val cx = box.x + box.width * 0.5
+            val cy = box.y + box.height * 0.5
+
+            // a plate, well clear of the origin the profile is drawn about
+            page.click("#tool-rectpath")
+            page.mouse().click(cx + 40.0, cy - 40.0)
+            page.mouse().click(cx + 160.0, cy - 130.0)
+            page.fill("#p-name", "depth")
+            page.fill("#p-value", "20")
+            page.click("#p-add")
+            page.click("#tool-extrude")
+            page.mouse().click(cx + 100.0, cy - 40.0)
+            assertTrue(tree().any { it.startsWith("solid") }, "the plate is in the tree: ${tree()}")
+
+            // …and the profile: a two-segment chain about the origin, whose coordinates are the two setbacks
+            page.click("#tool-chain")
+            page.mouse().click(cx + 48.0, cy)
+            page.mouse().click(cx + 48.0, cy - 12.0)
+            page.mouse().click(cx, cy - 24.0)
+            page.keyboard().press("Enter")
+            assertTrue(tree().any { it.startsWith("chain") }, "the profile is in the tree: ${tree()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/47-profile-drawn.png")))
+
+            // the gesture: the body near the edge, then the profile — no number typed anywhere
+            val before = tree().size
+            page.click("#tool-blendedge")
+            page.mouse().click(cx + 100.0, cy - 40.0)
+            page.mouse().click(cx + 30.0, cy - 15.0)
+            assertTrue(tree().size > before, "the shaped body is in the tree: ${tree()} — ${status()}")
+            assertTrue(status().contains("with the profile"), "and the shell says what it ran: ${status()}")
+            page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/48-profile-blended.png")))
+
+            // one undo takes the whole two-pick gesture back, and one redo puts it there again
+            val after = tree()
+            page.click("#e-undo")
+            assertEquals(before, tree().size, "one undo takes the gesture back: ${tree()}")
+            page.click("#e-redo")
+            assertEquals(after, tree(), "and one redo puts it back exactly as it was: ${tree()}")
+
+            assertTrue(errors.isEmpty(), "the shell threw: $errors")
+            browser.close()
+        }
+    }
 }

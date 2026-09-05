@@ -428,6 +428,23 @@ outline the rounding leaves at that height, bands, balls and all. One limit is s
 blend applied to a body that was **fused** with another one is a mesh body — it draws, measures, prints and
 exports, and its section offers no inputs.
 
+**And the section can be a drawing.** *Blend edge with a profile* and *Blend the edges of a face with a
+profile* are the same two gestures with the section **drawn** instead of typed — the reporter's own *"cutting
+polystyrene with a hot wire"*. Draw an open curve about the sketch space's origin — a chain, a segment, an
+arc, a Bézier — with one end on each axis, then click the body near the edge and then that drawing. Its two
+coordinates **are** the two setbacks: x is how far the cut reaches along the first face, y how far along the
+second, so a segment from `(3, 0)` to `(0, 6)` bevels 3 mm off one face and 6 mm off the other, and a
+**skewed** edge is cut to the length a rasp would reach there rather than to a shorter one. A quarter-arc is
+the fillet, a straight run the chamfer, and everything else is what you drew: a cove, an ogee, a step — whose
+flats are faces you can sketch on. The profile stays a live drawing, so reshaping it re-cuts the body, and one
+profile shared by several edges keeps them equal by construction. The corners are the built-in rows' own:
+where two edges carry the **same** profile they mitre, an inside corner pivots the section round the upright,
+and where three meet at a box corner they close at the profile's own apex. What it declines it declines by
+name: ends that do not sit on the two axes, a section that crosses itself, a setback that reaches past a face
+(with the fraction of the drawing that would fit), two *different* profiles at one corner, and a profile that
+reaches outside the corner — which would **add** material rather than take it, and for which the way is a
+swept solid fused on.
+
 **Hollowing a solid to a wall thickness.** *Shell (open a face)* takes a wall thickness and one click on the
 body **on the face you want left open** — a cup, a box, a housing — and *Hollow (closed shell)* leaves the body
 closed all round, which is what a sealed vessel or a float wants. The cavity is the body's own profile stepped

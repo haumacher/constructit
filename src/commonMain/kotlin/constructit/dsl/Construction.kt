@@ -47,6 +47,7 @@ import constructit.geom.Bezier
 import constructit.geom.Blend3
 import constructit.geom.BlendChoice
 import constructit.geom.BlendKind
+import constructit.geom.BlendSection
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
 import constructit.geom.CarryMode
@@ -3400,6 +3401,16 @@ class Construction {
     // belongs (OP-21's rule). The operands are ordinary solid nodes, so a boolean's result is an operand
     // of the next boolean — prisms are closed under these three operations, which is the point.
 
+    /**
+     * A drawn **chain**'s own finite pieces, read as a [Profile] — the open run a blend's section is drawn
+     * as (GitHub #30).
+     *
+     * One accessor node and nothing else: the chain's two rays are not part of a section (a profile has two
+     * ends, and they are the two setbacks), so what is taken is exactly its finite run, in its own order.
+     */
+    fun chainProfile(chain: ChainRef): ProfileRef =
+        op(chain) { EvalResult.Ok(ProfileValue(Profile((it[0] as ChainValue).chain.pieces))) }
+
     // ---- the edge blend: the 2D fillet, one dimension up (session 71, slice 2) ----
 
     /**
@@ -3434,11 +3445,20 @@ class Construction {
         applyTo: SolidRef,
         base: SolidRef,
         space: PlaneRef,
-        size: ScalarRef,
+        size: ScalarRef?,
         kind: BlendKind,
         whole: Boolean,
         address: Int,
         choices: List<BlendChoice>,
+        /**
+         * The **drawn section** a [BlendKind.PROFILE] blend runs along the edge, and null for the two
+         * built-ins, whose section is stated by [size] alone (GitHub #30).
+         *
+         * An ordinary operand rather than a stored literal, which is what makes the general tier follow the
+         * DAG like everything else: drag an end of the profile and the body re-blends on the same recompute
+         * a retyped radius uses, and deleting the profile cascades because the step names it (OP-21/OP-18).
+         */
+        profile: ProfileRef? = null,
         /**
          * The **tangent-continuous run** the picked address stands for, resolved by the editor from the 2D
          * joint registry (GitHub #29) — empty for the plain reading, one edge per address.
@@ -3454,17 +3474,25 @@ class Construction {
         // structure at build time (OP-21): whether this blend chains onto an earlier one is a fact about the
         // *graph*, so it decides the arity here rather than being read off a value inside compute
         val chained = applyTo !== base
-        return op(*listOfNotNull<Ref<*>>(applyTo, base.takeIf { chained }, space, size).toTypedArray()) {
+        // the operand indices are computed here, once, because two of them are optional: a chained blend
+        // carries its base, and a blend is stated by a size **or** by a drawn profile
+        val iBase = if (chained) 1 else 0
+        val iSpace = iBase + 1
+        val iSize = if (size == null) -1 else iSpace + 1
+        val iProfile = if (profile == null) -1 else maxOf(iSpace, iSize) + 1
+        return op(*listOfNotNull<Ref<*>>(applyTo, base.takeIf { chained }, space, size, profile).toTypedArray()) {
             val tip = (it[0] as SolidValue).solid
-            val body = if (chained) (it[1] as SolidValue).solid else tip
+            val body = if (chained) (it[iBase] as SolidValue).solid else tip
             openShellOf(tip)?.let { why -> return@op EvalResult.Invalid(why) }
-            val plane = (it[if (chained) 2 else 1] as PlaneValue).plane
-            val r = sc(it[if (chained) 3 else 2]).requireDim(Dimension.LENGTH, "${kind.word} ${kind.sizeWord}").mm
+            val plane = (it[iSpace] as PlaneValue).plane
+            val r = if (iSize < 0) 0.0 else sc(it[iSize]).requireDim(Dimension.LENGTH, "${kind.word} ${kind.sizeWord}").mm
+            val drawn = if (iProfile < 0) emptyList() else (it[iProfile] as ProfileValue).profile.elements
+            val sec = BlendSection(kind, r, drawn)
             val (resolved, whyTargets) =
                 if (!whole && run.isNotEmpty()) run to null else Blend3.targets(body.feature, whole, address)
             val targets = resolved
             if (targets == null) return@op EvalResult.Invalid(whyTargets ?: "this solid has no edge to blend there")
-            val (out, why) = Blend3.blended(body, tip, targets, r, kind, choices)
+            val (out, why) = Blend3.blended(body, tip, targets, sec, choices)
             if (out == null) return@op EvalResult.Invalid(why ?: "cannot blend that edge")
             val dressed =
                 if (!chained) {
@@ -3473,7 +3501,7 @@ class Construction {
                     // base's ([Feature3.Blend]). The triangles are the ones the boolean just made, restated
                     // under the analytic feature and sharing the very same derivation, which is the whole
                     // point of `Solid3.restated`: one mesh, two statements of the same body.
-                    val f = Feature3.Blend(body.feature, targets, kind, r, choices.take(targets.size))
+                    val f = Feature3.Blend(body.feature, targets, kind, r, choices.take(targets.size), drawn)
                     // it must still say why, if the dressed list cannot be stated — otherwise a body would
                     // claim faces it cannot produce, and every reader downstream would meet the refusal
                     // instead of this node (OP-3: the refusal belongs where the decision is)

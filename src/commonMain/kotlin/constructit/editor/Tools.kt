@@ -216,6 +216,17 @@ enum class SlotKind {
     SECTION_CURVE,
 
     /**
+     * A **blend's drawn profile** (GitHub #30): the open curve a rounding's section is, read in the corner's
+     * own frame — one drawn curve of any kind, or a drawn chain (`Document.isBlendProfile`).
+     *
+     * A slot of its own rather than [CURVE] or [CHAIN], and the reason is what it excludes: a profile has
+     * **two ends**, one to land on each face, so an infinite line, a whole circle and anything closed are
+     * not profiles however good a curve they are. [CHAIN] accepts exactly those (it wants a curve that
+     * *separates* its plane, which is the opposite requirement), and [CURVE] accepts a line.
+     */
+    BLEND_PROFILE,
+
+    /**
      * A **sphere locus** (OP-28): the carrier of a stated distance in space, picked where it is drawn — on
      * its outline circle in the plan, on its great circles in the 3D view.
      *
@@ -1133,6 +1144,18 @@ object Tools {
     const val CHAMFER_FACE = "chamferfaceedges"
 
     /**
+     * **The general tier of the edge blend** (GitHub #30, session 80): the section is a *drawn* curve rather
+     * than a solved one — the user's own *"cutting polystyrene with a hot wire"*.
+     *
+     * Two more rows for the four above's own reason, and a third [BlendKind] rather than an optional slot on
+     * the existing rows: which granularity **and** which section a gesture stated are the most durable things
+     * a step can carry, and the tool row already carries both (OP-18). The profile itself is an ordinary
+     * drawn element the step names, so it follows the DAG like any operand.
+     */
+    const val PROFILE_EDGE = "blendedge"
+    const val PROFILE_FACE = "blendfaceedges"
+
+    /**
      * **The shell** (session 75): hollow a body to a stated wall thickness — a real member is hollow, and the
      * only route before this was subtracting a hand-built inner solid.
      *
@@ -1468,6 +1491,8 @@ object Tools {
             ToolDef(BLEND_FACE, "Fillet the edges of a face", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("radius")), help = "Type a radius, then click a body **on** the face whose edges you want broken (in the 3D view the face under the pointer, wherever the camera stands): every piece of that face's boundary is rounded in one gesture — the two cap faces of an outline revolved less than a full turn, the rim of an extruded plate. Where the boundary runs on smoothly from one piece to the next the rounding does too, with no crack at the join; where it turns a sharp corner the two roundings meet in a proper corner, and where it turns an **inside** corner the ball pivots round it rather than leaving the corner's own spike. Round the upright at a corner too and all three meet in the ball itself — a round corner, not three sharp edges. A radius the corner cannot host says so and names the largest that fits. One radius for the whole chain, and it stays a parameter. The result is a feature of its own: its faces are the body's own faces with the rounding's band appended, so you can still sketch on a face of it, drill a Cut from one, and use a working plane's section of it as construction input. One case stays a mesh body and says so: a blend on a body that was fused with (or cut by) another one has no face list to extend, so it draws a footprint hint you can click, measures, prints and exports, and its section offers no construction inputs.", slotNames = listOf("solid, clicked on a face"), icon = Icons.BLEND_FACE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.FILLET, whole = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
             ToolDef(CHAMFER_EDGE, "Chamfer edge", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("setback")), help = "Type a setback, then click a body near the edge you want bevelled: the same construction as Fillet edge with a straight bevel in place of the arc, picked the same way in either view — and, as there, one click takes the whole run that carries on smoothly through it. The setback is measured along each leg from the corner, which where a leg is curved in section means arc distance — the same convention the 2D chamfer uses. The result is a feature of its own: its faces are the body's own faces with the rounding's band appended, so you can still sketch on a face of it, drill a Cut from one, and use a working plane's section of it as construction input. One case stays a mesh body and says so: a blend on a body that was fused with (or cut by) another one has no face list to extend, so it draws a footprint hint you can click, measures, prints and exports, and its section offers no construction inputs.", slotNames = listOf("solid, clicked near an edge"), icon = Icons.CHAMFER_EDGE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.CHAMFER, whole = false, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
             ToolDef(CHAMFER_FACE, "Chamfer the edges of a face", ToolCategory.SOLIDS, listOf(SlotKind.SOLID), scalars = listOf(len("setback")), help = "Type a setback, then click a body on the face whose edges you want bevelled (in the 3D view the face under the pointer, wherever the camera stands): every piece of that face's boundary gets the same bevel in one gesture. The setback is measured along each leg from the corner, arc distance where a leg is curved in section. The result is a feature of its own: its faces are the body's own faces with the rounding's band appended, so you can still sketch on a face of it, drill a Cut from one, and use a working plane's section of it as construction input. One case stays a mesh body and says so: a blend on a body that was fused with (or cut by) another one has no face list to extend, so it draws a footprint hint you can click, measures, prints and exports, and its section offers no construction inputs.", slotNames = listOf("solid, clicked on a face"), icon = Icons.CHAMFER_FACE) { d, p, s -> d.blendEdges(p.elements[0], s[0], BlendKind.CHAMFER, whole = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs) },
+            ToolDef(PROFILE_EDGE, "Blend edge with a profile", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.BLEND_PROFILE), crossSpace = true, help = "Draw the section you want cut out of the edge — a chain, a segment, an arc, a Bézier, any open curve with two ends — then click the body near the edge you want shaped, and then that profile. The two numbers of the drawing **are** the two setbacks: its x is how far the cut reaches along the first face and its y how far along the second, so a segment from (3, 0) to (0, 6) bevels 3 mm off one face and 6 mm off the other. Draw it about the sketch space's origin, with one end on each axis — the origin is the edge itself. The first end is the setback on the face you are looking at when you click, so which way round it goes is what the click says and it is remembered. Because the numbers are setbacks and not distances square to anything, a **skewed** edge is cut to the length a rasp would reach there, not to a shorter one. A round profile gives the fillet, a straight one the chamfer, and anything else gives what you drew: a cove, an ogee, a step — a step's flats are faces you can sketch on. The profile stays a live drawing, so reshaping it re-cuts the body, and one profile shared by several edges keeps them equal by construction. A profile that reaches outside the corner would *add* material and says so; to add a bead, sweep a closed section along the edge and fuse it. The result is a feature of its own: its faces are the body's own faces with the profile's own bands appended — one per piece of it — so you can still sketch on a flat one, drill a Cut from it, and use a working plane's section of the body as construction input. A Bézier or conic piece sweeps a surface this drawing has no name for: it draws, measures, prints and exports, and offers no sketch plane.", slotNames = listOf("solid, clicked near an edge", "profile"), icon = Icons.PROFILE_EDGE) { d, p, _ -> d.blendEdges(p.elements[0], null, BlendKind.PROFILE, whole = false, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs, profileEl = p.elements.getOrNull(1)) },
+            ToolDef(PROFILE_FACE, "Blend the edges of a face with a profile", ToolCategory.SOLIDS, listOf(SlotKind.SOLID, SlotKind.BLEND_PROFILE), crossSpace = true, help = "The same gesture as *Blend edge with a profile*, one granularity up: click the body **on** the face whose edges you want shaped, then the profile, and every edge of that face still sharp is cut with it. The profile's first end is the setback on the face you clicked — for every edge of the chain — which is what makes the corners between them meet properly. Where the boundary runs on smoothly the cut does too; where it turns a sharp corner the two cuts mitre; where it turns an inside corner the section pivots round it. Two edges given two *different* profiles cannot share a corner and say so. The result is a feature of its own: its faces are the body's own faces with the profile's own bands appended — one per piece of it — so you can still sketch on a flat one, drill a Cut from it, and use a working plane's section of the body as construction input. A Bézier or conic piece sweeps a surface this drawing has no name for: it draws, measures, prints and exports, and offers no sketch plane.", slotNames = listOf("solid, clicked on a face", "profile"), icon = Icons.PROFILE_FACE) { d, p, _ -> d.blendEdges(p.elements[0], null, BlendKind.PROFILE, whole = true, at = p.clicks.firstOrNull() ?: p.at, view = p.view, signs = p.signs, profileEl = p.elements.getOrNull(1)) },
             // ----- The shell (session 75): one `SOLID` pick, one length, and — for the open row — the face the
             // click named, scored once and written into the step's `signs=` (OP-1/OP-18). The construction is
             // the op node's ([Shell3]); the two rows are one build with one flag, which is what keeps the
@@ -1707,6 +1732,7 @@ object Tools {
             SlotKind.AREA -> "area"
             SlotKind.SOLID -> "solid"
             SlotKind.CHAIN -> "chain, line or closed curve"
+            SlotKind.BLEND_PROFILE -> "profile — a chain, segment, arc or curve"
             SlotKind.LOFT_PART -> "section, apex or guide"
             SlotKind.POINT3 -> "point in space"
             SlotKind.PATH3 -> "curve in space"

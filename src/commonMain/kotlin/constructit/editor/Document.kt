@@ -21,6 +21,7 @@ import constructit.core.PlaneValue
 import constructit.core.Point3Value
 import constructit.core.PointSetValue
 import constructit.core.PointValue
+import constructit.core.ProfileValue
 import constructit.core.RayValue
 import constructit.core.RegionValue
 import constructit.core.ScalarValue
@@ -48,6 +49,7 @@ import constructit.dsl.PlaneRef
 import constructit.dsl.Point3Ref
 import constructit.dsl.PointRef
 import constructit.dsl.PointSetRef
+import constructit.dsl.ProfileRef
 import constructit.dsl.RayRef
 import constructit.dsl.Ref
 import constructit.dsl.RegionRef
@@ -78,6 +80,7 @@ import constructit.geom.Axis3
 import constructit.geom.Blend3
 import constructit.geom.BlendChoice
 import constructit.geom.BlendKind
+import constructit.geom.BlendSection
 import constructit.geom.BoolOp
 import constructit.geom.CarrierCurve
 import constructit.geom.CarryMode
@@ -13748,6 +13751,59 @@ class Document {
     // ---- edge blends: the 2D fillet, one dimension up (session 71, slice 2) ----
 
     /**
+     * Whether [el] can fill a blend's **profile** slot: one drawn curve of any kind, or a drawn chain
+     * (GitHub #30).
+     *
+     * A profile has **two ends**, one to land on each face. What the *slot* takes is every drawn curve and
+     * every closed result, and what has no two ends is refused **by name** at build time
+     * ([blendProfileRefusal]) rather than being silently unpickable — a click on a circle deserves the
+     * sentence that says why a circle cannot shape an edge, not a slot that ignores it (session 65).
+     *
+     * Everything accepted is read for its **numbers alone**: the profile's x is the setback along one face
+     * and its y the setback along the other, so which plane it happens to be drawn on contributes nothing
+     * but those two coordinates.
+     */
+    fun isBlendProfile(el: Element): Boolean = el.kind == ElementKind.CHAIN || el.isCurve || el.isArea
+
+    /** [el] as a blend's drawn section, or null when it is not one — see [isBlendProfile]. */
+    @Suppress("UNCHECKED_CAST")
+    private fun blendProfileOf(el: Element): ProfileRef? =
+        when (el.kind) {
+            ElementKind.CHAIN -> cx.chainProfile(el.ref as ChainRef)
+            ElementKind.SEGMENT, ElementKind.ARC, ElementKind.BEZIER, ElementKind.ELLIPTIC_ARC, ElementKind.FUNC_CURVE ->
+                cx.profile(el.ref)
+            else -> null
+        }
+
+    /** Why [el] is not a profile, in its own words. */
+    private fun blendProfileRefusal(el: Element): String =
+        when (el.kind) {
+            ElementKind.CIRCLE, ElementKind.ELLIPSE, ElementKind.OUTLINE, ElementKind.AREA ->
+                "is closed, and a rounding's profile has two ends — one to land on each face. Break it, or draw an open chain"
+            ElementKind.LINE, ElementKind.RAY ->
+                "runs on for ever, and a rounding's profile has two ends — one to land on each face. Draw a chain or a segment instead"
+            else -> "is ${kindWord(el)}, not a curve a rounding can be shaped by — draw a chain, a segment, an arc or a Bézier"
+        }
+
+    /**
+     * The section a **live** gesture scores its choices against — the typed size for the two built-ins, the
+     * drawn profile's own value for the general tier — or null when there is nothing to score against yet.
+     */
+    private fun scoringSection(
+        kind: BlendKind,
+        size: ScalarRef?,
+        profile: ProfileRef?,
+        ev: Evaluator,
+    ): BlendSection? {
+        if (kind == BlendKind.PROFILE) {
+            val drawn = ((ev.eval(profile!!.node) as? EvalResult.Ok)?.value as? ProfileValue)?.profile?.elements ?: return null
+            return if (drawn.isEmpty()) null else BlendSection(kind, 0.0, drawn)
+        }
+        val r = ((ev.eval(size!!.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
+        return if (r == null || r <= 0.0) null else BlendSection(kind, r)
+    }
+
+    /**
      * **Break an edge of [solid]** — a fillet or a chamfer along a provenance-named edge, built as OP-9's own
      * sentence: the 2D fillet construction run in the edge's normal section, swept along the edge, applied by
      * a boolean ([Blend3]).
@@ -13770,21 +13826,40 @@ class Document {
      * face, a section this rounding has no name for, a bend the wedge outgrows — is the node's business and
      * comes back as the reason it is invalid, so it heals when the number comes down (OP-3).
      */
+
     @Suppress("UNCHECKED_CAST")
     fun blendEdges(
         solid: Element,
-        size: ScalarRef,
+        size: ScalarRef?,
         kind: BlendKind,
         whole: Boolean,
         at: Vec2,
         view: PlaneProjection? = null,
         signs: List<Int> = emptyList(),
+        profileEl: Element? = null,
     ): Element? {
         val what = "${kind.word.replaceFirstChar { it.uppercase() }} ${if (whole) "the edges of a face" else "an edge"}"
         if (solid.kind != ElementKind.SOLID) {
             note = "$what: ${nameOf(solid)} is ${kindWord(solid)}, not a solid — click the body whose edge you want broken"
             return null
         }
+        // **the drawn section, resolved to an ordinary operand** (GitHub #30). A profile is a curve of the
+        // drawing — one piece of any kind, or a drawn chain — and it becomes a `ProfileRef` the blend node
+        // consumes, so editing it re-blends the body and deleting it cascades, exactly as any operand does.
+        val profileRef =
+            if (kind != BlendKind.PROFILE) {
+                null
+            } else {
+                val el = profileEl
+                if (el == null) {
+                    note = "$what: click the profile to run along the edge — a drawn chain, or one segment, arc or curve"
+                    return null
+                }
+                blendProfileOf(el) ?: run {
+                    note = "$what: ${nameOf(el)} ${blendProfileRefusal(el)}"
+                    return null
+                }
+            }
         val ev = Evaluator()
         // **Two walks, two questions, and they are not the same question** (session 71, slice 2).
         //
@@ -13833,17 +13908,37 @@ class Document {
             note = "$what: ${nameOf(solid)} — $whyTargets"
             return null
         }
-        val stored = signs.drop(1).chunked(4).mapNotNull { BlendChoice.of(it) }
+        // **four integers per edge for the built-in rows, five for a drawn profile** — the fifth is which
+        // end of it is the setback on which face. The chunk size is a property of the *tool id*, which the
+        // step already carries, so no older file is re-read differently and no version bump is owed (OP-18).
+        val perEdge = if (kind == BlendKind.PROFILE) 5 else 4
+        val stored = signs.drop(1).chunked(perEdge).mapNotNull { BlendChoice.of(it) }
         val choices =
             if (stored.size >= targets.size) {
                 stored.take(targets.size)
             } else {
-                val r = ((ev.eval(size.node) as? EvalResult.Ok)?.value as? ScalarValue)?.q?.mm
-                if (r == null || r <= 0.0) {
-                    note = "$what: type a positive ${kind.sizeWord} first (or pick a parameter in the panel)"
+                val sec = scoringSection(kind, size, profileRef, ev)
+                if (sec == null) {
+                    note =
+                        if (kind == BlendKind.PROFILE) {
+                            "$what: ${nameOf(profileEl!!)} has no value right now, so there is no profile to run along the edge"
+                        } else {
+                            "$what: type a positive ${kind.sizeWord} first (or pick a parameter in the panel)"
+                        }
                     return null
                 }
-                val (scored, why) = Blend3.choicesFor(body, targets, r, kind)
+                // **which face the click named** is what says which end of a drawn profile is which setback
+                // (GitHub #30): the face a face gesture landed on, or the face an edge pick was looking at.
+                val onFace =
+                    if (kind != BlendKind.PROFILE) {
+                        null
+                    } else if (whole) {
+                        Section3.faces(body.feature).first?.getOrNull(address)?.name
+                    } else {
+                        Blend3.faceOfEdgeToward(body.feature, address, planeOfSpace(baseEl.space).let { (ev.valueOf(it) as PlaneValue).plane })
+                            .first?.let { Section3.faces(body.feature).first?.getOrNull(it)?.name }
+                    }
+                val (scored, why) = Blend3.choicesFor(body, targets, sec, onFace)
                 val fresh =
                     scored ?: run {
                         note = "$what: ${nameOf(solid)} — $why"
@@ -13880,12 +13975,13 @@ class Document {
                     choices,
                     // the run the pick stands for, resolved from the registry here and never stored (#29)
                     run = if (whole) emptyList() else targets,
+                    profile = profileRef,
                 ),
                 ElementKind.SOLID,
                 Styles.SOLID,
             )
         el.space = baseEl.space
-        registerSigns(el, listOf(address) + choices.flatMap { it.signs() })
+        registerSigns(el, listOf(address) + choices.flatMap { if (kind == BlendKind.PROFILE) it.signsWithFlip() else it.signs() })
         val where =
             if (whole) {
                 Section3.faces(body.feature).first?.getOrNull(address)?.name?.label ?: "a face"
@@ -13894,7 +13990,14 @@ class Document {
             }
         madeSolid(
             el,
-            "${nameOf(tipEl)} with a ${kind.word} of ${lengthWord(size)} along ${if (whole) "every edge of " else ""}$where" +
+            "${nameOf(tipEl)} with " +
+                (
+                    if (kind == BlendKind.PROFILE) {
+                        "the profile ${nameOf(profileEl!!)} run"
+                    } else {
+                        "a ${kind.word} of ${lengthWord(size!!)}"
+                    }
+                ) + " along ${if (whole) "every edge of " else ""}$where" +
                 (if (baseEl !== tipEl) " of ${nameOf(baseEl)}" else "") +
                 (
                     if (targets.size > 1 || (whole && Blend3.roundedAlready(body.feature, address) > 0)) {
@@ -13912,7 +14015,13 @@ class Document {
                 // `Face3DPickTest` precedent): the two views answer this question by different evidence, and a
                 // user who got an edge they did not expect must be able to read which one answered.
                 (if (inView) ", picked in the 3D view" else "") +
-                " — the ${kind.sizeWord} is an ordinary parameter, so retyping it re-rounds the body",
+                (
+                    if (kind == BlendKind.PROFILE) {
+                        " — the profile is an ordinary drawing, so reshaping it re-cuts the body"
+                    } else {
+                        " — the ${kind.sizeWord} is an ordinary parameter, so retyping it re-rounds the body"
+                    }
+                ),
         )
         return el
     }

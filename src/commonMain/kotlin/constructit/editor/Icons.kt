@@ -569,26 +569,51 @@ object Icons {
     val SWEEP =
         ring(5.0, 18.5, 3.0) + path("M5 18.5 C 11 18.5, 11 5.5, 18.6 5.5") + arrow(19.6, 5.5, 1.0, 0.0, 2.8, 1.8)
 
+    /** Which section a blend glyph shows — the arc, the bevel, or the drawn one (GitHub #30). */
+    private enum class Section { ROUND, BEVEL, DRAWN }
+
     /**
-     * One edge of a body, rounded or bevelled — the same box either way, with the sharp corner it replaced
-     * kept as a ghost, exactly as the 2D [FILLET] and [CHAMFER] keep theirs.
+     * One edge of a body, rounded, bevelled or shaped by a drawn profile — the same box every way, with the
+     * sharp corner it replaced kept as a ghost, exactly as the 2D [FILLET] and [CHAMFER] keep theirs.
      */
-    private fun edgeBox(round: Boolean): String {
-        val top = if (round) "A 2 2 0 0 1 10.2 12" else "L10.2 12"
-        val low = if (round) "A 2 2 0 0 1 10.2 19" else "L10.2 19"
+    private fun edgeBox(section: Section): String {
+        val top =
+            when (section) {
+                Section.ROUND -> "A 2 2 0 0 1 10.2 12"
+                Section.BEVEL -> "L10.2 12"
+                Section.DRAWN -> "A 1.1 1.1 0 0 0 12 12 A 1.1 1.1 0 0 1 10.2 12"
+            }
+        val low =
+            when (section) {
+                Section.ROUND -> "A 2 2 0 0 1 10.2 19"
+                Section.BEVEL -> "L10.2 19"
+                Section.DRAWN -> "A 1.1 1.1 0 0 0 12 19 A 1.1 1.1 0 0 1 10.2 19"
+            }
         return path("M3 8 L12 3 L21 8 L13.8 12 $top Z") + path("M3 8 L3 15") + path("M21 8 L21 15") +
             path("M10.2 12 L10.2 19") + path("M13.8 12 L13.8 19") +
             path("M3 15 L10.2 19") + path("M21 15 L13.8 19") + path("M13.8 19 $low") +
             ghost("M10.2 12 L12 13.4 L13.8 12 M12 13.4 L12 20.6")
     }
 
-    val BLEND_EDGE = edgeBox(true)
+    val BLEND_EDGE = edgeBox(Section.ROUND)
 
-    val CHAMFER_EDGE = edgeBox(false)
+    val CHAMFER_EDGE = edgeBox(Section.BEVEL)
+
+    /**
+     * The **drawn** section (GitHub #30), and the mark that says so is the shape itself: an **ogee** where
+     * the arc and the bevel stand, which is a silhouette neither of them can be mistaken for at 22 pixels —
+     * the glyph draws the operation, so the operation here is *a section you drew*.
+     */
+    val PROFILE_EDGE = edgeBox(Section.DRAWN)
 
     /** Every edge of one **face**, rounded or bevelled: the rim is the subject, the sharp rim the ghost. */
-    private fun faceRim(round: Boolean): String {
-        fun corner(to: String) = if (round) "A 1.8 1.8 0 0 1 $to" else "L $to"
+    private fun faceRim(section: Section): String {
+        fun corner(to: String) =
+            when (section) {
+                Section.ROUND -> "A 1.8 1.8 0 0 1 $to"
+                Section.BEVEL -> "L $to"
+                Section.DRAWN -> "A 1.0 1.0 0 0 0 $to"
+            }
         val d =
             "M5.62 7.88 L9.88 5.62 " + corner("14.12 5.62") + " L18.38 7.88 " + corner("18.38 10.12") +
                 " L14.12 12.38 " + corner("9.88 12.38") + " L5.62 10.12 " + corner("5.62 7.88") + " Z"
@@ -598,9 +623,12 @@ object Icons {
             path("M5.62 13.2 L9.88 15.4") + path("M18.38 13.2 L14.12 15.4")
     }
 
-    val BLEND_FACE = faceRim(true)
+    val BLEND_FACE = faceRim(Section.ROUND)
 
-    val CHAMFER_FACE = faceRim(false)
+    val CHAMFER_FACE = faceRim(Section.BEVEL)
+
+    /** The whole rim taken by a drawn section — the rim's corners scooped where [BLEND_FACE] rounds them. */
+    val PROFILE_FACE = faceRim(Section.DRAWN)
 
     /**
      * Opened: a **tray** — outer rim, inner rim, and a shallow body under it. Deliberately not [BOX] plus a

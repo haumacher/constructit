@@ -453,6 +453,9 @@ class RecordedElementTest {
             SlotKind.SPHERE -> listOf(LOCUS_A_RIM, LOCUS_B_RIM, LOCUS_C_RIM)
             // the lift's slot: an ordinary drawn curve, and a second one so a repeat has somewhere to go
             SlotKind.DRAWN_RUN -> listOf(SEG_MID, SEG2_MID, CIRCLE_EDGE)
+            // a blend's drawn profile: an ordinary two-ended curve of the fixture (whether it *fits* the
+            // corner is the node's business — what this audit is about is that the pick is recorded)
+            SlotKind.BLEND_PROFILE -> listOf(SEG_MID, SEG2_MID, SEG_MID)
             // a section curve needs a working plane cutting a solid, which is a gesture of its own — the
             // rows that take one are covered by their own tests (IntersectionCurveToolTest)
             SlotKind.SECTION_CURVE -> null

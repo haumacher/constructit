@@ -13,6 +13,7 @@ import constructit.editor.Tools
 import constructit.editor.Viewport3
 import constructit.geom.Blend3
 import constructit.geom.BlendKind
+import constructit.geom.BlendSection
 import constructit.geom.FaceName
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
@@ -128,7 +129,7 @@ class BlendVertexTest {
         targets: List<Int>,
     ): SolidRef {
         val body = Evaluator().solid(base)
-        val (choices, why) = Blend3.choicesFor(body, targets, size, kind)
+        val (choices, why) = Blend3.choicesFor(body, targets, BlendSection(kind, size))
         assertNotNull(choices, why)
         // one address per gesture, so a many-edge fixture is many gestures — which is also what makes the
         // order-independence assertions below say something

@@ -19,13 +19,35 @@ import kotlin.math.sqrt
 enum class BlendKind {
     FILLET,
     CHAMFER,
+
+    /**
+     * **The general tier** (GitHub #30, session 80): the section is a *drawn* curve rather than a solved one
+     * — any open chain whose two ends land on the two faces, read in the corner's own frame, where its two
+     * coordinates **are** the setbacks along the two faces.
+     *
+     * The two built-ins are this one's own fixtures at a right dihedral: a segment from `(c, 0)` to `(0, c)`
+     * is [CHAMFER] vertex for vertex, and the quarter-arc centred at `(r, r)` is [FILLET]. Away from a right
+     * angle the frame is **oblique**, which is the whole point — the numbers stay setbacks, so a skewed
+     * corner is cut to the length a rasp reaches (see DESIGN.md, *Custom blend profiles*).
+     */
+    PROFILE,
     ;
 
     /** The word a refusal and a status line use. */
-    val word: String get() = if (this == FILLET) "fillet" else "chamfer"
+    val word: String get() =
+        when (this) {
+            FILLET -> "fillet"
+            CHAMFER -> "chamfer"
+            PROFILE -> "profile blend"
+        }
 
-    /** What the scalar this kind takes is called. */
-    val sizeWord: String get() = if (this == FILLET) "radius" else "setback"
+    /** What the scalar this kind takes is called — the drawn profile itself, for the general tier. */
+    val sizeWord: String get() =
+        when (this) {
+            FILLET -> "radius"
+            CHAMFER -> "setback"
+            PROFILE -> "profile"
+        }
 }
 
 /**
@@ -45,15 +67,69 @@ enum class BlendKind {
  * sector the blend fills is the **material** one — the blend is then subtracted — and `false` when it is the
  * void, where it is added.
  */
-data class BlendChoice(val a: Int, val b: Int, val branch: Int, val convex: Boolean) {
-    /** This choice as the four integers a step restates. */
+data class BlendChoice(val a: Int, val b: Int, val branch: Int, val convex: Boolean, val flip: Int = 1) {
+    /** This choice as the four integers a built-in row's step restates. */
     fun signs(): List<Int> = listOf(a, b, branch, if (convex) 1 else -1)
 
+    /**
+     * …and as the **five** a [BlendKind.PROFILE] row's step restates, the fifth being [flip] — which end of
+     * the drawn profile is the setback on which face.
+     *
+     * Five rather than four is unambiguous because the chunk size is a property of the **tool id**, which the
+     * step already carries: no `filletedge` or `chamferedge` step is re-read differently and no new file can
+     * be mistaken for an old one, so no version bump is owed (OP-18).
+     */
+    fun signsWithFlip(): List<Int> = signs() + flip
+
     companion object {
-        /** The choice four restated integers name, or null when there are not four of them. */
+        /** The choice four (or five) restated integers name, or null when there are not four of them. */
         fun of(signs: List<Int>): BlendChoice? =
-            if (signs.size < 4) null else BlendChoice(signs[0], signs[1], signs[2], signs[3] >= 0)
+            if (signs.size < 4) null else BlendChoice(signs[0], signs[1], signs[2], signs[3] >= 0, signs.getOrElse(4) { 1 })
     }
+}
+
+/**
+ * **What a blend's section is**: which kind, the size the two built-ins take, and — for
+ * [BlendKind.PROFILE] — the drawn chain, in its own (setback, setback) coordinates.
+ *
+ * One object rather than a pair of arguments threaded through a dozen signatures, and it is what makes the
+ * general tier an ordinary third case instead of a second construction: everything from [wedgeOf] down asks
+ * this for *the curve between the two tangencies* and knows nothing else about which row was used.
+ */
+data class BlendSection(val kind: BlendKind, val size: Double, val profile: List<ProfileElement> = emptyList()) {
+    /**
+     * How far this section reaches from the crease, in mm — the size for the two built-ins, and the drawn
+     * profile's own largest coordinate for the general tier.
+     *
+     * Used only where a *scale* is wanted (how far off the crease to probe for material, how big a step
+     * along a leg to score a direction with), never as a size the user typed.
+     */
+    fun reach(): Double =
+        if (kind != BlendKind.PROFILE) {
+            size
+        } else {
+            profile.flatMap { GeomMath.tessellatePiece(it, GeomMath.TESS_TOL_MM) }.maxOfOrNull { it.length() } ?: 0.0
+        }
+
+    /** This section at [k] times its stated size — the built-ins scale their number, a profile scales itself. */
+    fun scaledBy(k: Double): BlendSection =
+        if (kind != BlendKind.PROFILE) {
+            copy(size = size * k)
+        } else {
+            copy(profile = profile.map { GeomMath.transform(it, Affine.scaling(Vec2(0.0, 0.0), k)) })
+        }
+
+    /** How a refusal names the size that would fit — a number of millimetres, or a fraction of the drawing. */
+    fun fitPhrase(k: Double): String =
+        if (kind != BlendKind.PROFILE) {
+            "about ${Frames3.mm(size * k)} mm"
+        } else {
+            "about ${Frames3.mm(k * 100.0)}% of the profile you drew"
+        }
+
+    /** How a refusal names the size this section *is*. */
+    fun sizePhrase(): String =
+        if (kind != BlendKind.PROFILE) "of ${kind.sizeWord} ${Frames3.mm(size)} mm" else "of that profile"
 }
 
 /**
@@ -131,6 +207,12 @@ object Blend3 {
     /** How nearly two in-face directions must agree for the hand-over to be smooth rather than a corner. */
     private const val TANGENT_TOL = 1e-9
 
+    /** How far off an axis (mm) a drawn profile's end may stand and still be **on** that face — see [profileIn]. */
+    private const val PROFILE_TOL = 1e-7
+
+    /** How firmly two spans of a section must cross to be a crossing rather than a touch (mm²). */
+    private const val CROSS_EPS = 1e-18
+
     // ---- what a blend is addressed by ----
 
     /**
@@ -186,10 +268,14 @@ object Blend3 {
      *
      * Structural, never measured: a fillet's arc is tangent to both its legs *by construction*, so every rail
      * a [BlendKind.FILLET] appends is a smooth hand-over and no crease. A **chamfer**'s bevel meets its faces
-     * at an angle, so its rails are ordinary sharp edges and a later gesture may break them. Which level a
-     * rail was appended at is read by walking the chain — every dressed list keeps its base's indices and
-     * appends its own after them ([dressedEdges]) — so the answer is a fact about the feature and not about
-     * the geometry (OP-21).
+     * at an angle, so its rails are ordinary sharp edges and a later gesture may break them. A
+     * [BlendKind.PROFILE]'s rails are **sharp too, by the same rule read the other way**: whether a drawn
+     * section happens to leave its face tangentially is a property of the *values* it was drawn with, and a
+     * predicate that measured it would put geometry into a structural answer (OP-21). So a profile's rails
+     * are ordinary edges a later gesture may break, which is also the more useful reading — a step's flats
+     * genuinely do meet the faces at an angle. Which level a rail was appended at is read by walking the
+     * chain — every dressed list keeps its base's indices and appends its own after them ([dressedEdges]) —
+     * so the answer is a fact about the feature and not about the geometry (OP-21).
      */
     private fun smoothRail(
         feature: Feature3,
@@ -557,11 +643,11 @@ object Blend3 {
     private fun sectorOf(
         crease: Crease,
         mesh: Mesh3,
-        size: Double,
+        reach: Double,
     ): Pair<Triple<Int, Int, Boolean>?, String?> {
         val n1 = normalOf(crease.leg1) ?: return null to "${crease.edge.name.label}: ${crease.face1.name.label} has no side at that edge"
         val n2 = normalOf(crease.leg2) ?: return null to "${crease.edge.name.label}: ${crease.face2.name.label} has no side at that edge"
-        var scale = min(size, crease.length / 2.0)
+        var scale = min(reach, crease.length / 2.0)
         crease.leg1.circle?.let { scale = min(scale, it.radius) }
         crease.leg2.circle?.let { scale = min(scale, it.radius) }
         val delta = scale * PROBE_FRACTION
@@ -603,7 +689,28 @@ object Blend3 {
      * [piece] is what slice 3 carries the band away on: the surface the blend *adds* to the body is that one
      * curve swept along the edge, so the face list is built from the same object the boolean was.
      */
-    private class Wedge(val region: Region, val t1: Vec2, val t2: Vec2, val piece: ProfileElement)
+    private class Wedge(
+        val region: Region,
+        val t1: Vec2,
+        val t2: Vec2,
+        /**
+         * The blend's own section, **from [t1] to [t2]** — one piece for the two built-ins, the drawn chain
+         * for [BlendKind.PROFILE]. The order is the one [sectionPolygons] walks, so it is stated rather than
+         * re-derived.
+         */
+        val pieces: List<ProfileElement>,
+        /**
+         * Whether the wedge's own counter-clockwise loop traverses [pieces] **forwards**.
+         *
+         * This is what says which way the band faces, exactly and for any section: a counter-clockwise loop
+         * has its interior on the **left** of travel, so the direction *into* the wedge at a section piece is
+         * `perp(dir)` where the loop runs forwards and its negative where it runs back. The old rule — a
+         * fillet's `q − centre`, a chamfer's normal toward the corner — is this one collapsed onto the two
+         * shapes it was written for, and it is wrong for a **cove** (an arc bulging away from the crease),
+         * whose centre is on the other side. See [bandOutward].
+         */
+        val forward: Boolean,
+    )
 
     private fun sidePiece(
         leg: FilletLeg,
@@ -622,15 +729,21 @@ object Blend3 {
     /** The corner wedge of one scored choice, or the reason there is none at this size. */
     private fun wedgeOf(
         crease: Crease,
-        size: Double,
-        kind: BlendKind,
+        sec: BlendSection,
         choice: BlendChoice,
     ): Pair<Wedge?, String?> {
         val loop: Loop
         val t1: Vec2
         val t2: Vec2
-        val blendPiece: ProfileElement
-        if (kind == BlendKind.FILLET) {
+        val blendPieces: List<ProfileElement>
+        if (sec.kind == BlendKind.PROFILE) {
+            val (drawn, whyDrawn) = profileIn(crease, sec.profile, choice)
+            if (drawn == null) return null to whyDrawn
+            blendPieces = drawn
+            t1 = GeomMath.startOf(drawn.first())
+            t2 = GeomMath.endOf(drawn.last())
+            loop = Loop(listOf(sidePiece(crease.leg1, Vec2(0.0, 0.0), t1)) + drawn + listOf(sidePiece(crease.leg2, t2, Vec2(0.0, 0.0))))
+        } else if (sec.kind == BlendKind.FILLET) {
             val straight1 = crease.leg1.line
             val straight2 = crease.leg2.line
             val arc =
@@ -638,15 +751,15 @@ object Blend3 {
                     // two straight legs: the corner is a real point, so the fillet is the quadrant
                     // construction ([FilletMath.lineLineArc]) — the same split the 2D tool makes, for the
                     // same reason (two offset *lines* meet in one point and there is no branch to pick)
-                    FilletMath.lineLineArc(straight1, straight2, size, choice.a, choice.b)
-                        ?: return null to notFitting(crease, size, kind)
+                    FilletMath.lineLineArc(straight1, straight2, sec.size, choice.a, choice.b)
+                        ?: return null to notFitting(crease, sec)
                 } else {
-                    FilletMath.arcOf(crease.leg1, crease.leg2, size, FilletVariant(choice.a, choice.b, choice.branch))
-                        ?: return null to notFitting(crease, size, kind)
+                    FilletMath.arcOf(crease.leg1, crease.leg2, sec.size, FilletVariant(choice.a, choice.b, choice.branch))
+                        ?: return null to notFitting(crease, sec)
                 }
             t1 = arc.center + Vec2(cos(arc.startAngle), sin(arc.startAngle)) * arc.radius
             t2 = arc.center + Vec2(cos(arc.endAngle), sin(arc.endAngle)) * arc.radius
-            blendPiece = ProfileElement.ArcE(arc)
+            blendPieces = listOf(ProfileElement.ArcE(arc))
             loop = Loop(listOf(sidePiece(crease.leg1, Vec2(0.0, 0.0), t1), ProfileElement.ArcE(arc), sidePiece(crease.leg2, t2, Vec2(0.0, 0.0))))
         } else {
             // **the chamfer-on-arc convention, inherited** (session 76, item c): the corner of the section is
@@ -656,28 +769,172 @@ object Blend3 {
             // the two kinds differ in one piece — the bevel where the arc was — and in nothing else. For two
             // straight legs this is [FilletMath.chamferEnds] point for point, so no dressed body changes.
             val corner = Vec2(0.0, 0.0)
-            val a = FilletMath.setback(crease.leg1, corner, size, choice.a) ?: return null to notFitting(crease, size, kind)
-            val b = FilletMath.setback(crease.leg2, corner, size, choice.b) ?: return null to notFitting(crease, size, kind)
-            if ((b - a).length() <= Geom3.WELD_TOL) return null to notFitting(crease, size, kind)
+            val a = FilletMath.setback(crease.leg1, corner, sec.size, choice.a) ?: return null to notFitting(crease, sec)
+            val b = FilletMath.setback(crease.leg2, corner, sec.size, choice.b) ?: return null to notFitting(crease, sec)
+            if ((b - a).length() <= Geom3.WELD_TOL) return null to notFitting(crease, sec)
             val bevel = Segment(a, b)
             t1 = a
             t2 = b
-            blendPiece = ProfileElement.Seg(bevel)
+            blendPieces = listOf(ProfileElement.Seg(bevel))
             loop = Loop(listOf(sidePiece(crease.leg1, corner, t1), ProfileElement.Seg(bevel), sidePiece(crease.leg2, t2, corner)))
         }
-        val oriented = if (GeomMath.signedArea(loop) >= 0.0) loop else GeomMath.reverseLoop(loop)
+        val forward = GeomMath.signedArea(loop) >= 0.0
+        val oriented = if (forward) loop else GeomMath.reverseLoop(loop)
         if (abs(GeomMath.signedArea(oriented)) <= Geom3.WELD_TOL * Geom3.WELD_TOL) {
-            return null to "a ${kind.word} of ${Frames3.mm(size)} mm leaves no material at ${crease.edge.name.label}"
+            return null to "a ${sec.kind.word} ${sec.sizePhrase()} leaves no material at ${crease.edge.name.label}"
         }
-        return Wedge(Region(oriented, emptyList()), t1, t2, blendPiece) to null
+        // **a section that crosses itself has no region to take away** (GitHub #30's own refusal). Asked of
+        // the whole loop rather than of the drawing alone, because a profile that is simple on paper can
+        // still cross a leg once it is read in a skewed corner's frame.
+        if (sec.kind == BlendKind.PROFILE && crossesItself(oriented)) {
+            return null to
+                "that profile crosses itself once it is read in the corner at ${crease.edge.name.label}, so there " +
+                "is no corner region for it to take away — draw a profile that runs from one face to the other " +
+                "without doubling back"
+        }
+        return Wedge(Region(oriented, emptyList()), t1, t2, blendPieces, forward) to null
+    }
+
+    /**
+     * The drawn profile read **in the corner's own frame** — the whole of the general tier's mechanism, and
+     * the answer to the report's *"the cut must extend the length of the edge to produce the result of a
+     * rasped edge"*.
+     *
+     * *The frame.* Let `u1` be the unit direction of the first leg pointing the way the corner opens and
+     * `u2` the same for the second — the very directions [FilletMath.setback] steps along, which is why a
+     * one-segment profile comes out as [BlendKind.CHAMFER] vertex for vertex. A drawn point `(x, y)` is read
+     * as `x·u1 + y·u2`, so **x is the setback along the first face and y the setback along the second**, in
+     * millimetres, at *every* dihedral. The frame is therefore oblique wherever the two faces do not stand
+     * square, and that is the point rather than a distortion: the numbers stay setbacks, so a skewed corner
+     * is cut to the length a rasp reaches, and a drawn arc becomes the sheared arc a hot wire would leave.
+     *
+     * The rejected alternative was an **orthonormal** frame on the corner's bisector, which keeps a drawn
+     * circle circular at every angle and pays for it by having the profile's ends land on the two faces at a
+     * right dihedral only — so one drawing would serve one corner and could not be shared, which is the
+     * opposite of what sharing a node means here.
+     *
+     * *Which end goes to which face* is [BlendChoice.flip], scored once from the click and then taken
+     * verbatim (OP-1/OP-18): `+1` reads the drawn x as the setback on face 1, `-1` the other way round. The
+     * chain is returned running **from face 1 to face 2** whichever it was drawn, so everything downstream —
+     * the tangencies, the rails, the trims — keeps naming the same face by the same number.
+     */
+    private fun profileIn(
+        crease: Crease,
+        drawn: List<ProfileElement>,
+        choice: BlendChoice,
+    ): Pair<List<ProfileElement>?, String?> {
+        if (drawn.isEmpty()) return null to "that profile has no pieces to read"
+        if (crease.leg1.line == null || crease.leg2.line == null) {
+            return null to
+                "the section square to ${crease.edge.name.label} meets ${
+                    (if (crease.leg1.line == null) crease.face1 else crease.face2).name.label
+                } in a circle rather than in a straight leg, and a drawn profile states its two ends as " +
+                "setbacks along two straight legs — round that edge with Fillet edge or Chamfer edge, whose " +
+                "section is tangent to the curve by construction. A drawn profile against a curved leg is a " +
+                "future extension"
+        }
+        // the pieces must actually make one run, or the "two ends" the frame reads are not two ends
+        for (i in 0 until drawn.size - 1) {
+            if ((GeomMath.startOf(drawn[i + 1]) - GeomMath.endOf(drawn[i])).length() > PROFILE_TOL) {
+                return null to "that profile's piece ${i + 1} does not meet piece ${i + 2}, so it is not one run from face to face"
+            }
+        }
+        // …and it must run from one axis to the other: the drawn x-axis *is* one face and the y-axis the
+        // other, so a profile stating its ends anywhere else is stating no setbacks at all
+        val head = GeomMath.startOf(drawn.first())
+        val tail = GeomMath.endOf(drawn.last())
+        val run =
+            when {
+                abs(head.y) <= PROFILE_TOL && abs(tail.x) <= PROFILE_TOL -> drawn
+                abs(head.x) <= PROFILE_TOL && abs(tail.y) <= PROFILE_TOL -> drawn.reversed().map { GeomMath.reverse(it) }
+                else ->
+                    return null to
+                        "that profile's ends do not state a setback on each face: they stand at " +
+                        "(${Frames3.mm(head.x)}, ${Frames3.mm(head.y)}) and (${Frames3.mm(tail.x)}, ${Frames3.mm(tail.y)}), " +
+                        "and a profile's two ends must lie on the two axes — one at (x, 0), the other at (0, y). " +
+                        "Move them onto the axes"
+            }
+        val a = GeomMath.startOf(run.first()).x
+        val b = GeomMath.endOf(run.last()).y
+        if (a <= PROFILE_TOL || b <= PROFILE_TOL) {
+            return null to
+                "that profile states a setback of ${Frames3.mm(a)} and ${Frames3.mm(b)} mm, and a rounding needs a " +
+                "positive setback on each face — move the end that sits on the corner"
+        }
+        // **inside the corner's own quadrant, or it is a bead** — a profile reaching outside would *add*
+        // material at a convex edge, and a section driving two booleans of opposite sign is structure decided
+        // from a value (OP-21). Checked in the drawn coordinates, where the quadrant is exactly `x, y >= 0`.
+        for (e in run) {
+            for (q in GeomMath.tessellatePiece(e, GeomMath.TESS_TOL_MM)) {
+                if (q.x < -PROFILE_TOL || q.y < -PROFILE_TOL) {
+                    return null to
+                        "that profile reaches outside the corner between ${crease.face1.name.label} and " +
+                        "${crease.face2.name.label} — a profile that leaves the corner would add material rather " +
+                        "than take it away. To add a bead, sweep a closed section along the edge and fuse it"
+                }
+            }
+        }
+        val u1 = FilletMath.setback(crease.leg1, Vec2(0.0, 0.0), 1.0, choice.a)
+        val u2 = FilletMath.setback(crease.leg2, Vec2(0.0, 0.0), 1.0, choice.b)
+        if (u1 == null || u2 == null) return null to notFitting(crease, BlendSection(BlendKind.PROFILE, 0.0, drawn))
+        val forward = choice.flip >= 0
+        val cx = if (forward) u1 else u2
+        val cy = if (forward) u2 else u1
+        val map = Affine(cx.x, cx.y, cy.x, cy.y, 0.0, 0.0)
+        if (abs(map.det) <= DIR_EPS) {
+            return null to "${crease.face1.name.label} and ${crease.face2.name.label} run too nearly parallel at ${crease.edge.name.label} to read a profile in"
+        }
+        val mapped = run.map { GeomMath.transform(it, map) }
+        // with the flip the drawn x is the setback on **face 2**, so the run comes out face 2 → face 1 and is
+        // turned round: `t1` names face 1's tangency whichever way the profile was read
+        return (if (forward) mapped else mapped.reversed().map { GeomMath.reverse(it) }) to null
+    }
+
+    /** Whether a loop's own boundary crosses itself — asked of the tessellation, which is what is swept. */
+    private fun crossesItself(loop: Loop): Boolean {
+        val pts = ArrayList<Vec2>()
+        for (e in loop.elements) {
+            for (q in GeomMath.tessellatePiece(e, GeomMath.TESS_TOL_MM)) {
+                if (pts.isEmpty() || (q - pts.last()).length() > Geom3.WELD_TOL) pts.add(q)
+            }
+        }
+        while (pts.size > 1 && (pts.first() - pts.last()).length() <= Geom3.WELD_TOL) pts.removeAt(pts.size - 1)
+        val n = pts.size
+        if (n < 4) return false
+        for (i in 0 until n) {
+            for (j in i + 2 until n) {
+                // neighbours share a point by construction and are never a crossing
+                if (i == 0 && j == n - 1) continue
+                if (crosses(pts[i], pts[(i + 1) % n], pts[j], pts[(j + 1) % n])) return true
+            }
+        }
+        return false
+    }
+
+    /** Whether the two open segments `a→b` and `c→d` cross properly. */
+    private fun crosses(
+        a: Vec2,
+        b: Vec2,
+        c: Vec2,
+        d: Vec2,
+    ): Boolean {
+        fun side(
+            p: Vec2,
+            q: Vec2,
+            r: Vec2,
+        ): Double = (q - p).cross(r - p)
+        val d1 = side(a, b, c)
+        val d2 = side(a, b, d)
+        val d3 = side(c, d, a)
+        val d4 = side(c, d, b)
+        return d1 * d2 < -CROSS_EPS && d3 * d4 < -CROSS_EPS
     }
 
     private fun notFitting(
         crease: Crease,
-        size: Double,
-        kind: BlendKind,
+        sec: BlendSection,
     ): String =
-        "no ${kind.word} of ${kind.sizeWord} ${Frames3.mm(size)} mm fits between ${crease.face1.name.label} and " +
+        "no ${sec.kind.word} ${sec.sizePhrase()} fits between ${crease.face1.name.label} and " +
             "${crease.face2.name.label} at ${crease.edge.name.label}"
 
     /**
@@ -747,15 +1004,14 @@ object Blend3 {
     /** The largest size that fits at this crease, by halving — what a refusal names so it can be acted on. */
     private fun largestFitting(
         crease: Crease,
-        size: Double,
-        kind: BlendKind,
+        sec: BlendSection,
         choice: BlendChoice,
     ): Double {
         var lo = 0.0
-        var hi = size
+        var hi = 1.0
         repeat(FIT_STEPS) {
             val mid = (lo + hi) / 2.0
-            val (w, _) = wedgeOf(crease, mid, kind, choice)
+            val (w, _) = wedgeOf(crease, sec.scaledBy(mid), choice)
             if (w != null && tangenciesFit(crease, w)) lo = mid else hi = mid
         }
         return lo
@@ -791,7 +1047,7 @@ object Blend3 {
         val crease: Crease,
         val wedge: Wedge,
         val choice: BlendChoice,
-        val kind: BlendKind,
+        val sec: BlendSection,
         /** The wedge's boundary, counter-clockwise in the section frame, starting at the section's corner. */
         val section: List<Vec2>,
         /** The same boundary grown out through both faces, point for point — see [sectionPolygons]. */
@@ -868,7 +1124,7 @@ object Blend3 {
         wedge: Wedge,
     ): Pair<Pair<List<Vec2>, List<Vec2>>?, String?> {
         val o = Vec2(0.0, 0.0)
-        val arc = GeomMath.tessellatePiece(wedge.piece, GeomMath.TESS_TOL_MM)
+        val arc = wedge.pieces.flatMap { GeomMath.tessellatePiece(it, GeomMath.TESS_TOL_MM) }
         val n1 = outwardAt(wedge.t1, wedge.t2)
         val n2 = outwardAt(wedge.t2, wedge.t1)
         val plain: List<Vec2>
@@ -928,7 +1184,7 @@ object Blend3 {
         crease: Crease,
         wedge: Wedge,
         choice: BlendChoice,
-        kind: BlendKind,
+        sec: BlendSection,
     ): Pair<Piece?, String?> {
         val (polys, whyPoly) = sectionPolygons(crease, wedge)
         if (polys == null) return null to "${crease.edge.name.label}: $whyPoly"
@@ -939,7 +1195,7 @@ object Blend3 {
         if (caps == null) {
             return null to "${crease.edge.name.label}: ${whyCaps ?: "the rounding's section cannot be triangulated"}"
         }
-        return Piece(index, existing, crease, wedge, choice, kind, plain, grown, caps, soleElement(crease) as? Curve3Element.Seg3) to null
+        return Piece(index, existing, crease, wedge, choice, sec, plain, grown, caps, soleElement(crease) as? Curve3Element.Seg3) to null
     }
 
     /**
@@ -969,8 +1225,8 @@ object Blend3 {
                     val edge = edges.getOrNull(i) ?: continue
                     val crease = creaseOf(below, edge).first ?: continue
                     val choice = f.choices.getOrNull(k) ?: continue
-                    val wedge = wedgeOf(crease, f.size, f.kind, choice).first ?: continue
-                    out.add(pieceOf(i, true, crease, wedge, choice, f.kind).first ?: continue)
+                    val wedge = wedgeOf(crease, f.section, choice).first ?: continue
+                    out.add(pieceOf(i, true, crease, wedge, choice, f.section).first ?: continue)
                 }
             }
             f = below
@@ -1007,18 +1263,20 @@ object Blend3 {
         fun label(pieces: List<Piece>): String
 
         /**
-         * The **face** this corner adds to the dressed list, or null where it adds none.
+         * The **faces** this corner adds to the dressed list, in the section's own piece order — empty
+         * where it adds none.
          *
          * A crossing adds nothing: the two bands are trimmed against each other and every triangle still
          * belongs to one of them. A bevelled vertex adds nothing either, for the same reason one level up —
          * its three triangles lie exactly in the three bevel planes the bands already are. What *is* a new
          * surface is the ball: the spherical triangle at a convex vertex, and the horn torus (or cone) a
-         * pivot sweeps at an inside corner.
+         * pivot sweeps at an inside corner — and a pivot of a **drawn** section sweeps one such surface per
+         * piece of it, which is why this is a list (GitHub #30).
          */
-        fun face(
+        fun faces(
             pieces: List<Piece>,
-            name: FaceName,
-        ): FacePatch? = null
+            nameAt: (Int) -> FaceName,
+        ): List<FacePatch> = emptyList()
     }
 
     /**
@@ -1092,16 +1350,26 @@ object Blend3 {
          * square to the shared face, which [Revolve3] then names — a torus where the section is an arc, a
          * cone where it is a bevel — and cuts by its own table, meridian column included.
          */
-        override fun face(
+        override fun faces(
             pieces: List<Piece>,
-            name: FaceName,
-        ): FacePatch? {
-            val (frame, sr) = frameOf(pieces) ?: return null
-            return inCornersWords(Revolve3.bandPatch(frame, sr, name), name)
+            nameAt: (Int) -> FaceName,
+        ): List<FacePatch> {
+            val (frame, sections) = frameOf(pieces) ?: return emptyList()
+            return sections.mapIndexed { k, sr ->
+                val name = nameAt(k)
+                if (sr == null) {
+                    FacePatch(name, null, emptyList(), "${name.label} turns a piece of the profile this drawing has no revolved surface for")
+                } else {
+                    inCornersWords(Revolve3.bandPatch(frame, sr, name), name)
+                }
+            }
         }
 
-        /** The pivot as an axis frame and a profile in its own `(s, r)` — all [Revolve3] ever needs. */
-        fun frameOf(pieces: List<Piece>): Pair<Revolve3.Frame, ProfileElement>? {
+        /**
+         * The pivot as an axis frame and the profile in its own `(s, r)` — all [Revolve3] ever needs, once
+         * per piece of the section (a drawn chain pivots into a chain of surfaces, GitHub #30).
+         */
+        fun frameOf(pieces: List<Piece>): Pair<Revolve3.Frame, List<ProfileElement?>>? {
             val piece = pieces[a]
             val n = shared.plane?.normal?.normalized() ?: return null
             val axis = n * -1.0
@@ -1122,10 +1390,26 @@ object Blend3 {
             val e2 = piece.crease.ref.e2
             // the section's own `(x, y)` read as the frame's `(s, r)`: down the axis, out along the radius
             val map = Affine(e1.dot(axis), e1.dot(ea), e2.dot(axis), e2.dot(ea), 0.0, 0.0)
-            val (mid, _) = midOf(piece.wedge.piece) ?: return null
-            val outward = bandOutward(piece.wedge, piece.choice, mid) ?: return null
-            return frame to materialLeft(GeomMath.transform(piece.wedge.piece, map), map.linear(outward).normalized())
+            return frame to orientedSections(piece).map { if (it == null) null else mappedSection(it, map) }
         }
+    }
+
+    /**
+     * One already-oriented section piece carried through an affine [map], with *material to its left*
+     * re-established afterwards.
+     *
+     * The map may reverse orientation — the axis-aligned ones here are reflections as often as not — and
+     * material-left is the convention [Revolve3.bandOf] reads a flat band's outward side from, so it is
+     * restated after the map rather than assumed to survive it.
+     */
+    private fun mappedSection(
+        oriented: ProfileElement,
+        map: Affine,
+    ): ProfileElement? {
+        val (_, dir) = midOf(oriented) ?: return null
+        // material is to the left of an oriented piece, so its outward normal is to the right of travel
+        val outward = dir.perp() * -1.0
+        return materialLeft(GeomMath.transform(oriented, map), map.linear(outward).normalized())
     }
 
     /**
@@ -1173,10 +1457,12 @@ object Blend3 {
          * triangles lie exactly in the three bevel planes, which are the bands' own faces, so there is no
          * new surface there to name.
          */
-        override fun face(
+        override fun faces(
             pieces: List<Piece>,
-            name: FaceName,
-        ): FacePatch? {
+            nameAt: (Int) -> FaceName,
+        ): List<FacePatch> = listOfNotNull(ballFace(nameAt(0)))
+
+        private fun ballFace(name: FaceName): FacePatch? {
             val (centre, radius) = ball ?: return null
             // a sphere reads the same from every axis, so the frame takes the one the corner itself names —
             // from the vertex toward the ball — which makes the surface a function of the corner alone
@@ -1388,12 +1674,19 @@ object Blend3 {
         val loop = chainOfBlends(blends) ?: return null
         val first = pieces[members[0].first]
         var ball: Pair<Vec3, Double>? = null
+        // **the fill is the ball's own patch, or the three bevels' apex, and there is no third**. A drawn
+        // section of *one* piece falls into whichever of the two it is — an arc gives the ball, a segment the
+        // apex — so an asymmetric bevel and a single-arc profile both get their vertex. A section of
+        // **several** pieces has neither: the three bands then meet along three mitre creases rather than at
+        // one patch, and inventing a surface nobody constructed is the one thing this drawing does not do.
+        // Such a trio is left as it was — two bands claim each other and the third butts, exactly as session
+        // 80 leaves a chamfer vertex whose three faces turn through different angles (GitHub #30, a named cut).
         val fill =
-            when (val piece = first.wedge.piece) {
+            when (val piece = first.wedge.pieces.singleOrNull()) {
                 is ProfileElement.ArcE -> {
                     val centre = members[0].third.at(piece.arc.center)
                     for (m in members.drop(1)) {
-                        val other = (pieces[m.first].wedge.piece as? ProfileElement.ArcE) ?: return null
+                        val other = (pieces[m.first].wedge.pieces.singleOrNull() as? ProfileElement.ArcE) ?: return null
                         if ((m.third.at(other.arc.center) - centre).length() > RING_TOL) return null
                     }
                     ball = centre to piece.arc.radius
@@ -1502,7 +1795,7 @@ object Blend3 {
         val planes = ArrayList<Pair<Vec3, Double>>(members.size)
         for (m in members) {
             val piece = pieces[m.first]
-            val bevel = (piece.wedge.piece as? ProfileElement.Seg) ?: return null
+            val bevel = (piece.wedge.pieces.singleOrNull() as? ProfileElement.Seg) ?: return null
             val from = m.third.at(bevel.segment.a)
             val to = m.third.at(bevel.segment.b)
             val along = outOf(piece, m.second)
@@ -1936,44 +2229,52 @@ object Blend3 {
     fun choicesFor(
         base: Solid3,
         targets: List<Int>,
-        size: Double,
-        kind: BlendKind,
+        sec: BlendSection,
+        onFace: FaceName? = null,
     ): Pair<List<BlendChoice>?, String?> {
         val feature = base.feature
         val (edges, whyEdges) = Section3.edges(feature)
         if (edges == null) return null to whyEdges
+        val reach = sec.reach()
+        if (reach <= Geom3.WELD_TOL) return null to "this ${sec.kind.word} has no size at all to run along an edge"
         val out = ArrayList<BlendChoice>(targets.size)
         for (i in targets) {
             val edge = edges.getOrNull(i) ?: return null to "this solid has no edge #${i + 1}"
             val (crease, why) = creaseOf(feature, edge)
             if (crease == null) return null to why
-            val (sector, whySector) = sectorOf(crease, base.mesh, size)
+            val (sector, whySector) = sectorOf(crease, base.mesh, reach)
             if (sector == null) return null to whySector
             val (s1, s2, convex) = sector
+            // **which end of a drawn profile goes to which face** (GitHub #30): the first end is the setback
+            // on the face the click named — the one it looked at for an edge pick, the one it landed on for a
+            // face pick — so a chain round one face reads every edge the same way and its corners are
+            // congruent by construction. Scored once here and taken verbatim ever after (OP-1/OP-18).
+            val flip = if (onFace == null || crease.face1.name == onFace) 1 else -1
             val l1 = crease.leg1.line
             val l2 = crease.leg2.line
             out.add(
-                if ((l1 != null && l2 != null) || kind == BlendKind.CHAMFER) {
+                if ((l1 != null && l2 != null) || sec.kind != BlendKind.FILLET) {
                     // **which way along each leg the corner opens** — the quadrant [FilletMath.legSigns]
                     // scores one dimension down, and what a chamfer stores whatever its legs are (session 76:
-                    // the setback runs along the carrier, so the direction along it *is* the choice). The
-                    // probe walks the leg itself rather than its tangent, which for a straight leg is the
-                    // very same point and for a round one is exactly on the carrier.
-                    val step = min(size, crease.length / 2.0) * PROBE_FRACTION
+                    // the setback runs along the carrier, so the direction along it *is* the choice). A drawn
+                    // profile stores the very same two, since its two coordinates are setbacks along those
+                    // same legs. The probe walks the leg itself rather than its tangent, which for a straight
+                    // leg is the very same point and for a round one is exactly on the carrier.
+                    val step = min(reach, crease.length / 2.0) * PROBE_FRACTION
                     val q1 = FilletMath.setback(crease.leg1, Vec2(0.0, 0.0), step, 1)
                     val q2 = FilletMath.setback(crease.leg2, Vec2(0.0, 0.0), step, 1)
-                    if (q1 == null || q2 == null) return null to notFitting(crease, size, kind)
+                    if (q1 == null || q2 == null) return null to notFitting(crease, sec)
                     val sign1 = if (sideOf(crease.leg2, q1) == s2) 1 else -1
                     val sign2 = if (sideOf(crease.leg1, q2) == s1) 1 else -1
-                    BlendChoice(sign1, sign2, 0, convex)
+                    BlendChoice(sign1, sign2, 0, convex, flip)
                 } else {
                     // at least one round leg: the mixed fillet's stored variant — which side each leg is
                     // offset to, and which of the two intersections of those offsets the centre is
                     val centres =
-                        FilletMath.centres(crease.leg1, crease.leg2, size, s1, s2)?.takeIf { it.isNotEmpty() }
-                            ?: return null to notFitting(crease, size, kind)
+                        FilletMath.centres(crease.leg1, crease.leg2, sec.size, s1, s2)?.takeIf { it.isNotEmpty() }
+                            ?: return null to notFitting(crease, sec)
                     val branch = if ((centres.first()).length() <= (centres.last()).length()) 1 else -1
-                    BlendChoice(s1, s2, branch, convex)
+                    BlendChoice(s1, s2, branch, convex, flip)
                 },
             )
         }
@@ -2025,11 +2326,16 @@ object Blend3 {
         base: Solid3,
         applyTo: Solid3,
         targets: List<Int>,
-        size: Double,
-        kind: BlendKind,
+        sec: BlendSection,
         choices: List<BlendChoice>,
     ): Pair<Solid3?, String?> {
-        if (size <= Geom3.WELD_TOL) return null to "a ${kind.word} needs a positive ${kind.sizeWord} — this one is ${Frames3.mm(size)} mm"
+        val kind = sec.kind
+        if (kind != BlendKind.PROFILE && sec.size <= Geom3.WELD_TOL) {
+            return null to "a ${kind.word} needs a positive ${kind.sizeWord} — this one is ${Frames3.mm(sec.size)} mm"
+        }
+        if (kind == BlendKind.PROFILE && sec.profile.isEmpty()) {
+            return null to "a ${kind.word} needs a drawn profile to run along the edge"
+        }
         val feature = base.feature
         val (edges, whyEdges) = Section3.edges(feature)
         if (edges == null) return null to whyEdges
@@ -2043,16 +2349,16 @@ object Blend3 {
             val (crease, why) = creaseOf(feature, edge)
             if (crease == null) return null to why
             val choice = choices[k]
-            val (wedge, whyWedge) = wedgeOf(crease, size, kind, choice)
+            val (wedge, whyWedge) = wedgeOf(crease, sec, choice)
             if (wedge == null) return null to whyWedge
             if (!tangenciesFit(crease, wedge)) {
-                val fits = largestFitting(crease, size, kind, choice)
+                val fits = largestFitting(crease, sec, choice)
                 return null to
-                    "a ${kind.word} of ${kind.sizeWord} ${Frames3.mm(size)} mm reaches past ${crease.face1.name.label} " +
+                    "a ${kind.word} ${sec.sizePhrase()} reaches past ${crease.face1.name.label} " +
                     "or ${crease.face2.name.label} at ${crease.edge.name.label} — the largest that fits there is " +
-                    "about ${Frames3.mm(fits)} mm"
+                    sec.fitPhrase(fits)
             }
-            val (piece, whyPiece) = pieceOf(i, false, crease, wedge, choice, kind)
+            val (piece, whyPiece) = pieceOf(i, false, crease, wedge, choice, sec)
             if (piece == null) return null to whyPiece
             pieces.add(piece)
         }
@@ -2061,12 +2367,13 @@ object Blend3 {
         pieces.addAll(chainPieces(feature))
         val corners = cornersOf(pieces)
         crowdedCorner(pieces, corners)?.let { c ->
-            val fits = largestCornerFitting(pieces, size, kind)
+            val fits = largestCornerFitting(pieces, sec)
             return null to
-                "${c.label(pieces)} is too sharp for a ${kind.word} of ${kind.sizeWord} ${Frames3.mm(size)} mm — " +
+                "${c.label(pieces)} is too sharp for a ${kind.word} ${sec.sizePhrase()} — " +
                 "the corner the roundings share would reach further along an edge than the edge is long. " +
-                "The largest that fits there is about ${Frames3.mm(fits)} mm"
+                "The largest that fits there is ${sec.fitPhrase(fits)}"
         }
+        mixedCorner(pieces, corners)?.let { return null to it }
         val rings = HashMap<Pair<Int, Boolean>, Placement>()
         for (c in corners) for (end in c.ends) rings[end] = c.ringAt(end)
         var result = applyTo
@@ -2102,23 +2409,77 @@ object Blend3 {
     }
 
     /**
+     * Why two bands meeting at a shared vertex cannot make a corner, or null when every such meeting can —
+     * the **general tier's own refusal** (GitHub #30, fork 4).
+     *
+     * Two wedges make a mitre (or a pivot) only where they are **congruent in the face they share**: one
+     * section, one dihedral. Before the drawn profile that was rare enough to be left alone — two bands of
+     * different radii overlapping are trimmed by the boolean, which is what every build has done — but it is
+     * exactly the tangent contact GitHub #27 and #28 came from, and a drawn profile makes it ordinary: two
+     * adjacent edges given two different profiles, or a custom band meeting a built-in fillet along a chain
+     * of gestures. So where **at least one side is a drawn profile** the pair is refused by name with its
+     * cure, and where neither is the old behaviour stands untouched — no existing drawing changes.
+     *
+     * Only a meeting of **two** ends is judged. Three bands at one vertex that the ball cannot close (a
+     * multi-piece profile, session 80's unequal-turn chamfer) are left to the boolean exactly as they were:
+     * refusing there would take away a rounding the user can perfectly well have.
+     */
+    private fun mixedCorner(
+        pieces: List<Piece>,
+        corners: List<Corner>,
+    ): String? {
+        val claimed = HashSet<Pair<Int, Boolean>>()
+        for (c in corners) claimed.addAll(c.ends)
+        for (i in pieces.indices) {
+            for (j in i + 1 until pieces.size) {
+                val a = pieces[i]
+                val b = pieces[j]
+                if (a.sec.kind != BlendKind.PROFILE && b.sec.kind != BlendKind.PROFILE) continue
+                val sa = a.seg ?: continue
+                val sb = b.seg ?: continue
+                val shared =
+                    listOf(a.crease.face1, a.crease.face2)
+                        .firstOrNull { f -> f.plane != null && (f.name == b.crease.face1.name || f.name == b.crease.face2.name) }
+                        ?: continue
+                for (aAtStart in listOf(true, false)) {
+                    for (bAtStart in listOf(true, false)) {
+                        if ((i to aAtStart) in claimed || (j to bAtStart) in claimed) continue
+                        val corner = if (aAtStart) sa.start else sa.end
+                        if ((corner - (if (bAtStart) sb.start else sb.end)).length() > RING_TOL) continue
+                        // three or more bands at this point are the vertex's business, not this one's
+                        val here =
+                            pieces.indices.count { k ->
+                                pieces[k].seg?.let { (it.start - corner).length() <= RING_TOL || (it.end - corner).length() <= RING_TOL } == true
+                            }
+                        if (here != 2) continue
+                        return "the corner where ${a.crease.edge.name.label} meets ${b.crease.edge.name.label} on " +
+                            "${shared.name.label} carries two roundings that are not the same section on that face — " +
+                            "a corner is built only where the two are congruent there. Give both edges the same " +
+                            "profile, or round only one of the two edges that meet at it"
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    /**
      * The largest size whose corners all have room, by halving — what the crowded-corner refusal names so it
      * can be acted on, the same shape of answer [largestFitting] gives for a size that outgrows a face.
      */
     private fun largestCornerFitting(
         pieces: List<Piece>,
-        size: Double,
-        kind: BlendKind,
+        sec: BlendSection,
     ): Double {
         var lo = 0.0
-        var hi = size
+        var hi = 1.0
         repeat(FIT_STEPS) {
             val mid = (lo + hi) / 2.0
             val trial = ArrayList<Piece>(pieces.size)
             var ok = true
             for (p in pieces) {
-                val w = wedgeOf(p.crease, mid, kind, p.choice).first
-                val q = if (w == null) null else pieceOf(p.index, p.existing, p.crease, w, p.choice, p.kind).first
+                val w = wedgeOf(p.crease, p.sec.scaledBy(mid), p.choice).first
+                val q = if (w == null) null else pieceOf(p.index, p.existing, p.crease, w, p.choice, p.sec).first
                 if (q == null) {
                     ok = false
                     break
@@ -2182,12 +2543,15 @@ object Blend3 {
         val crease: Crease,
         val wedge: Wedge,
         val choice: BlendChoice,
-        val kind: BlendKind,
+        val sec: BlendSection,
     ) {
-        val name: FaceName get() = FaceName.BlendBand(index)
+        /** The band's own name — one per piece of the section, since a drawn profile has several. */
+        fun nameAt(piece: Int): FaceName = FaceName.BlendBand(index, piece)
+
+        val name: FaceName get() = nameAt(0)
 
         /** How this band is spoken of when it is the *thing* rather than the address — "the fillet". */
-        val kindWord: String get() = "${kind.word} itself"
+        val kindWord: String get() = "${sec.kind.word} itself"
     }
 
     private fun dressingsOf(f: Feature3.Blend): Pair<List<Dressing>?, String?> {
@@ -2199,9 +2563,9 @@ object Blend3 {
             val (crease, why) = creaseOf(f.base, edge)
             if (crease == null) return null to why
             val choice = f.choices.getOrNull(k) ?: return null to "this blend recorded no choice for edge #${i + 1}"
-            val (wedge, whyWedge) = wedgeOf(crease, f.size, f.kind, choice)
+            val (wedge, whyWedge) = wedgeOf(crease, f.section, choice)
             if (wedge == null) return null to whyWedge
-            out.add(Dressing(i, edge, crease, wedge, choice, f.kind))
+            out.add(Dressing(i, edge, crease, wedge, choice, f.section))
         }
         return out to null
     }
@@ -2257,7 +2621,7 @@ object Blend3 {
                 },
             )
         }
-        for (d in dressings) out.add(bandPatchOf(d))
+        for (d in dressings) out.addAll(bandPatchesOf(d))
         // …and the corners this blend's own bands make, **appended last** ([FaceName.BlendCorner]): the ball
         // at a convex vertex and the surface its pivot sweeps at an inside one are new surfaces, and a
         // crossing and a bevelled vertex are not
@@ -2277,8 +2641,8 @@ object Blend3 {
             val edge = edges.getOrNull(i) ?: return null
             val crease = creaseOf(f.base, edge).first ?: return null
             val choice = f.choices.getOrNull(k) ?: return null
-            val wedge = wedgeOf(crease, f.size, f.kind, choice).first ?: return null
-            out.add(pieceOf(i, false, crease, wedge, choice, f.kind).first ?: return null)
+            val wedge = wedgeOf(crease, f.section, choice).first ?: return null
+            out.add(pieceOf(i, false, crease, wedge, choice, f.section).first ?: return null)
         }
         out.addAll(chainPieces(f.base))
         return out
@@ -2300,8 +2664,13 @@ object Blend3 {
     ): Revolve3.BandCut? {
         val pieces = piecesOf(f) ?: return null
         for (c in cornersOf(pieces)) {
-            if (FaceName.BlendCorner(c.ends.map { pieces[it.first].index }.distinct().sorted()) != name) continue
-            if (c is Turn) return c.frameOf(pieces)?.let { (frame, sr) -> Revolve3.cutBandOf(frame, sr, cut) }
+            if (c.ends.map { pieces[it.first].index }.distinct().sorted() != name.edges) continue
+            if (c is Turn) {
+                return c.frameOf(pieces)?.let { (frame, sections) ->
+                    val sr = sections.getOrNull(name.piece) ?: return null
+                    Revolve3.cutBandOf(frame, sr, cut)
+                }
+            }
             if (c is Vertex) {
                 val (centre, radius) = c.ball ?: return null
                 return ballCut(centre, radius, c.members.map { outOf(pieces[it.first], it.second) }, c.at, cut)
@@ -2374,8 +2743,8 @@ object Blend3 {
         val out = ArrayList<FacePatch>()
         for (c in cornersOf(pieces)) {
             if (c.ends.none { it.first < f.targets.size }) continue
-            val name = FaceName.BlendCorner(c.ends.map { pieces[it.first].index }.distinct().sorted())
-            out.add(c.face(pieces, name) ?: continue)
+            val edges = c.ends.map { pieces[it.first].index }.distinct().sorted()
+            out.addAll(c.faces(pieces) { k -> FaceName.BlendCorner(edges, k) })
         }
         return out
     }
@@ -2407,7 +2776,7 @@ object Blend3 {
                 } else {
                     e.copy(
                         reason =
-                            "${e.name.label} was rounded away by the ${f.kind.word} of ${Frames3.mm(f.size)} mm — " +
+                            "${e.name.label} was rounded away by the ${f.kind.word} ${f.section.sizePhrase()} — " +
                                 "${d.name.label} stands in its place, and its two tangent rails are edges of this body",
                     )
                 },
@@ -2449,37 +2818,31 @@ object Blend3 {
     }
 
     /**
-     * The **outward normal of the blend's own surface**, in the section's coordinates, at [q] on it.
+     * The **outward normal of the blend's own surface** — out of the body — on one piece of the section.
      *
-     * One rule for both kinds and both signs: the blend's surface faces the **corner** when the wedge was
-     * subtracted (a convex edge — the material is on the far side of it) and away from the corner when the
-     * wedge was added (a concave one). For a fillet that is `q − centre`, flipped on a concave edge; for a
-     * chamfer it is the bevel's perpendicular chosen the same way.
+     * One rule for every section, and it is the wedge's own winding rather than a shape: the wedge's loop is
+     * counter-clockwise, so its interior lies to the **left** of travel, and the direction *into* the wedge
+     * at a section piece is `perp(dir)` where the loop runs along that piece forwards ([Wedge.forward]) and
+     * its negative where it runs back. The blend's surface then faces **into** the wedge where the wedge was
+     * subtracted (a convex edge — the material is on the far side of it) and away from it where the wedge was
+     * added (a concave one).
+     *
+     * *Why this replaced the two shape-specific readings.* The old rule was `q − centre` for an arc and the
+     * bevel's perpendicular toward the corner for a segment. Both are this rule collapsed onto the shape they
+     * were written for — and the arc one is **wrong for a cove**, an arc bulging away from the crease, whose
+     * centre lies on the other side of the curve entirely. A drawn profile may be either, so the reading has
+     * to come from the region and not from the curve.
      */
     private fun bandOutward(
-        wedge: Wedge,
-        choice: BlendChoice,
-        q: Vec2,
+        e: ProfileElement,
+        forward: Boolean,
+        convex: Boolean,
     ): Vec2? {
-        val sign = if (choice.convex) 1.0 else -1.0
-        return when (val e = wedge.piece) {
-            is ProfileElement.ArcE -> {
-                val d = q - e.arc.center
-                if (d.length() <= Vec2.EPS) null else d.normalized() * sign
-            }
-            is ProfileElement.Seg -> {
-                val dir = (e.segment.b - e.segment.a)
-                if (dir.length() <= Vec2.EPS) {
-                    null
-                } else {
-                    val n = dir.normalized().perp()
-                    // toward the corner (the section's origin) when convex, away from it when concave
-                    val toward = if (n.dot(Vec2(0.0, 0.0) - q) >= 0.0) n else n * -1.0
-                    toward * sign
-                }
-            }
-            else -> null
-        }
+        val (_, dir) = midOf(e) ?: return null
+        val n = dir.perp()
+        if (n.length() <= Vec2.EPS) return null
+        val sign = (if (forward) 1.0 else -1.0) * (if (convex) 1.0 else -1.0)
+        return n.normalized() * sign
     }
 
     /** The mid-point and the tangent direction of a section piece — where its orientation is decided. */
@@ -2521,15 +2884,28 @@ object Blend3 {
      * [Revolve3.bandPatch]) rather than restated, which is what keeps "a cylinder" one sentence in this
      * drawing instead of three.
      */
-    private fun bandPatchOf(d: Dressing): FacePatch {
-        val name = d.name
-        val el =
-            soleElement(d.crease)
-                ?: return FacePatch(name, null, emptyList(), "${d.edge.name.label} is a chain of several pieces, so its band has no single surface")
-        val piece =
-            orientedSection(d)
-                ?: return FacePatch(name, null, emptyList(), "the ${d.crease.edge.name.label} blend has no section curve with a side")
-        return inBlendsWords(d, bandCarrier(d, el, piece))
+    private fun bandPatchesOf(d: Dressing): List<FacePatch> {
+        val sections = orientedSections(d)
+        val el = soleElement(d.crease)
+        return sections.mapIndexed { k, piece ->
+            val name = d.nameAt(k)
+            when {
+                el == null ->
+                    FacePatch(name, null, emptyList(), "${d.edge.name.label} is a chain of several pieces, so its band has no single surface")
+                // a Bézier, a conic or a function curve in the profile: the band it sweeps is a real
+                // surface and its triangles are exact to the tessellation, but this drawing has no word
+                // for it — so the face keeps its index and carries the reason (OP-15's approximated class)
+                piece == null ->
+                    FacePatch(
+                        name,
+                        null,
+                        emptyList(),
+                        "${name.label} sweeps a piece of the profile this drawing has no surface for — it draws, " +
+                            "measures, prints and exports, and it offers no sketch plane and no exact section",
+                    )
+                else -> inBlendsWords(d, bandCarrier(d, el, piece, name))
+            }
+        }
     }
 
     /**
@@ -2540,8 +2916,8 @@ object Blend3 {
         d: Dressing,
         el: Curve3Element,
         piece: ProfileElement,
+        name: FaceName,
     ): FacePatch {
-        val name = d.name
         return when (el) {
             is Curve3Element.Seg3 -> {
                 val v = el.end - el.start
@@ -2555,7 +2931,7 @@ object Blend3 {
             }
             is Curve3Element.Arc3 -> {
                 val (frame, sr) =
-                    revolvedBand(d, el, piece) ?: return FacePatch(
+                    revolvedBand(d.crease, el, piece) ?: return FacePatch(
                         name,
                         null,
                         emptyList(),
@@ -2607,21 +2983,7 @@ object Blend3 {
      * square to the frame it turns in — there is no revolution to name and the caller says so.
      */
     private fun revolvedBand(
-        d: Dressing,
-        el: Curve3Element.Arc3,
-        piece: ProfileElement,
-    ): Pair<Revolve3.Frame, ProfileElement>? = revolvedBand(d.crease, d.wedge, d.choice, el, piece)
-
-    private fun revolvedBand(
-        p: Piece,
-        el: Curve3Element.Arc3,
-        piece: ProfileElement,
-    ): Pair<Revolve3.Frame, ProfileElement>? = revolvedBand(p.crease, p.wedge, p.choice, el, piece)
-
-    private fun revolvedBand(
         crease: Crease,
-        wedge: Wedge,
-        choice: BlendChoice,
         el: Curve3Element.Arc3,
         piece: ProfileElement,
     ): Pair<Revolve3.Frame, ProfileElement>? {
@@ -2654,10 +3016,7 @@ object Blend3 {
         // the map may reverse orientation (either sign is a reflection), and the material-left convention
         // is what [Revolve3.bandOf] reads a flat band's outward side from — so it is re-established *after*
         // the map rather than assumed to survive it
-        val moved = GeomMath.transform(piece, a)
-        val (mid, _) = midOf(wedge.piece) ?: return null
-        val outward = bandOutward(wedge, choice, mid) ?: return null
-        return frame to materialLeft(moved, a.linear(outward).normalized())
+        return frame to (mappedSection(piece, a) ?: return null)
     }
 
     /** One tangent rail of a band, as a curve in the world — a straight one, or a ring about the edge's axis. */
@@ -2719,12 +3078,14 @@ object Blend3 {
     fun bandCut(
         f: Feature3.Blend,
         edge: Int,
+        part: Int,
         cut: Plane3,
     ): Revolve3.BandCut? {
         val (pieces, at) = bandOf(f, edge) ?: return null
         val piece = pieces[at]
         val el = soleElement(piece.crease) as? Curve3Element.Arc3 ?: return null
-        val (frame, sr) = revolvedBand(piece, el, orientedSection(piece) ?: return null) ?: return null
+        val section = orientedSections(piece).getOrNull(part) ?: return null
+        val (frame, sr) = revolvedBand(piece.crease, el, section) ?: return null
         return Revolve3.cutBandOf(frame, sr, cut)
     }
 
@@ -2784,11 +3145,12 @@ object Blend3 {
     internal fun bandStrip(
         f: Feature3.Blend,
         edge: Int,
+        part: Int,
     ): Section3.RuledStrip? {
         val (pieces, at) = bandOf(f, edge) ?: return null
         val piece = pieces[at]
         val el = piece.seg ?: return null
-        val section = orientedSection(piece) ?: return null
+        val section = orientedSections(piece).getOrNull(part) ?: return null
         val v = el.end - el.start
         val len = v.length()
         if (len <= Geom3.WELD_TOL) return null
@@ -2822,6 +3184,7 @@ object Blend3 {
     internal fun parallelBandCut(
         f: Feature3.Blend,
         edge: Int,
+        part: Int,
         cut: Plane3,
     ): List<ProfileElement>? {
         val (pieces, at) = bandOf(f, edge) ?: return null
@@ -2833,7 +3196,7 @@ object Blend3 {
         val u = v * (1.0 / len)
         val n = cut.normal.normalized()
         if (abs(u.dot(n)) > DIR_EPS) return null
-        val section = orientedSection(piece) ?: return null
+        val section = orientedSections(piece).getOrNull(part) ?: return null
         // the section's own points that lie in the cut plane: a straight leg meets it once, an arc twice
         val e1 = piece.crease.e1
         val e2 = piece.crease.ref.e2
@@ -2910,19 +3273,27 @@ object Blend3 {
         return t >= sweep - 1e-9
     }
 
-    /** The blend's section curve, traversed with the material to its left — the band's own generator. */
-    private fun orientedSection(d: Dressing): ProfileElement? = orientedSection(d.wedge, d.choice)
-
-    private fun orientedSection(p: Piece): ProfileElement? = orientedSection(p.wedge, p.choice)
-
-    private fun orientedSection(
+    /**
+     * The blend's section pieces, each traversed with the material to its left — the band's own generators,
+     * one per piece of the section, in the section's own order.
+     *
+     * A piece whose direction this drawing cannot state — a Bézier, a conic, a function curve — comes back
+     * **null in its own slot** rather than sinking the whole list: its band keeps its index and carries a
+     * reason, which is OP-15's approximated class exactly as a spline offset gets it, while its neighbours
+     * are named and cut exactly.
+     */
+    private fun orientedSections(
         wedge: Wedge,
         choice: BlendChoice,
-    ): ProfileElement? {
-        val (mid, _) = midOf(wedge.piece) ?: return null
-        val outward = bandOutward(wedge, choice, mid) ?: return null
-        return materialLeft(wedge.piece, outward)
-    }
+    ): List<ProfileElement?> =
+        wedge.pieces.map { e ->
+            val outward = bandOutward(e, wedge.forward, choice.convex)
+            if (outward == null) null else materialLeft(e, outward)
+        }
+
+    private fun orientedSections(d: Dressing): List<ProfileElement?> = orientedSections(d.wedge, d.choice)
+
+    private fun orientedSections(p: Piece): List<ProfileElement?> = orientedSections(p.wedge, p.choice)
 
     private fun sectionPointAt(
         e: ProfileElement,

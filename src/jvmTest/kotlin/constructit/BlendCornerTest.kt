@@ -14,6 +14,7 @@ import constructit.editor.ElementKind
 import constructit.editor.Tools
 import constructit.geom.Blend3
 import constructit.geom.BlendKind
+import constructit.geom.BlendSection
 import constructit.geom.Geom3
 import constructit.geom.GeomMath
 import constructit.geom.Section3
@@ -106,7 +107,7 @@ class BlendCornerTest {
         val body = Evaluator().solid(base)
         val (targets, whyT) = Blend3.targets(body.feature, whole, address)
         assertNotNull(targets, whyT)
-        val (choices, why) = Blend3.choicesFor(body, targets, size, kind)
+        val (choices, why) = Blend3.choicesFor(body, targets, BlendSection(kind, size))
         assertNotNull(choices, why)
         return cx.blend(base, base, cx.planeXY(), cx.const(size.mm), kind, whole, address, choices)
     }
@@ -303,8 +304,8 @@ tool filletedge els=e12 clicks=3.392929260632428,51.410033777603246 scalar="r" s
 
         val body = Evaluator().solid(tipOf(issueScript))
         val targets = listOf(7, 6)
-        val choices = assertNotNull(Blend3.choicesFor(body, targets, r, BlendKind.FILLET).first, "the pair scores its choices")
-        val (chain, whyChain) = Blend3.blended(body, body, targets, r, BlendKind.FILLET, choices)
+        val choices = assertNotNull(Blend3.choicesFor(body, targets, BlendSection(BlendKind.FILLET, r)).first, "the pair scores its choices")
+        val (chain, whyChain) = Blend3.blended(body, body, targets, BlendSection(BlendKind.FILLET, r), choices)
         assertNotNull(chain, whyChain)
         assertManifold(chain.mesh, "the two-edge chain in one gesture")
         val together = Geom3.volume(chain.mesh)
