@@ -217,3 +217,27 @@ design back crisply, adopt it, credit it in DESIGN.md. When they overrule a reco
 (hide-state persistence, framed-by-default), the reversal is documented, not litigated. Answer
 their questions with the mechanism, then the plan, then queue position. Redeploy notices always
 include the commit hash and what to try.
+
+## 10. Two agents at once — the worktree pattern (session 81)
+
+Parallel packages work when, and only when, they are physically separated:
+
+- **One agent in the main tree, the other in a git worktree** (`git worktree add -b <branch> <scratch>/wt-x HEAD`),
+  each with a FILE BOUNDARY paragraph in its brief. Separate project dirs also keep their gradle builds from
+  corrupting each other's incremental state. **Run `git worktree add` from the ConstructIt repo** — a `cd` into a
+  sibling repo earlier in the same shell command once produced a worktree of the *plugin* repository, and the
+  agent had to notice and recreate it.
+- **`DESIGN.md` has one writer.** The main-tree agent edits it; the worktree agent writes its as-built note, log
+  entry and queue line to `tmp/DESIGN-<topic>.md`, each block preceded by `INSERT AFTER: <exact existing line
+  fragment>`, and the orchestrator splices them after the merge (a python loop asserting each anchor is unique).
+  Normalize session labels afterwards — agents guess "session N+1" — and renumber duplicate `Turn` entries.
+- **Merging**: commit the worktree branch yourself (house-style message), merge into master after the main-tree
+  package is committed, run the full gate on the merged tree (a jsMain-only or build-file change is exactly where
+  merges break), then splice and gate again if the splice touched anything the build reads.
+- **The `build/` ignore rule swallows any package directory named `build`.** A `buildSrc` generator written in
+  package `constructit.build` was never committed and the merged tree could not configure; name such packages for
+  what they are (`constructit.gradle`). After a merge, `git ls-files` the new directories the report names.
+- **A session limit kills every running agent at once** (HTTP 429 mid-flight). Their uncommitted work is in the
+  trees; when the limit resets, `SendMessage` each one "Resume exactly where you left off: <its last visible step,
+  read from the transcript's last tool calls>" rather than re-dispatching — the transcript context survives.
+  Make the stall monitor grep the transcript tail for "session limit" so the two cases are told apart.
