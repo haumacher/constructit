@@ -100,7 +100,7 @@ class Edit3DProbeTest {
 
         @Suppress("UNCHECKED_CAST")
         val mesh = Evaluator().solid(part.ref as SolidRef).mesh
-        assertManifold(mesh, "pyramid drilled through the 3D view")
+        assertManifold(mesh, "pyramid drilled through the 3D view", foldsBackOnItself = true)
         assertTrue(Geom3.volume(mesh) < 300000.0 - 100.0, "the bore took material: ${Geom3.volume(mesh)}")
 
         val once = constructit.editor.DocumentFormat.save(ed.doc)

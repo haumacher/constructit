@@ -193,8 +193,76 @@ object MeshCanon {
         return if (fault == null) out to null else null to fault
     }
 
+    /**
+     * How nearly two triangles that share an edge must face **opposite** ways to be a [flap], as a dot
+     * product of their unit normals.
+     *
+     * `-1` is exactly back-to-back, and the slack is only what *reading* a normal off a float32 position
+     * costs: the pair GitHub #33 was reported for came off the general engine at −0.999999999999938, six
+     * decades inside this. What the number must **not** do is take in a **knife edge** — two faces meeting
+     * at a real dihedral, however thin. That is a shape a body may legitimately have (a chain fused to
+     * another along a near-tangent wall leaves one at 0.04° in this suite's own drawings), and it has
+     * thickness; a flap has none. So the band is one part in a billion, a dihedral of 0.003°, which
+     * separates the two by more than a decade at the closest either comes.
+     */
+    const val FLAP_COS = -1.0 + 1e-9
+
+    /**
+     * Why [mesh] is not a closed, consistently wound shell **and free of flaps**, or null when it is —
+     * the two halves stated separately below so a caller that built its own mesh can ask them apart.
+     */
+    fun fault(mesh: Mesh3): String? = notClosed(mesh)
+
+    /**
+     * Why the shell **folds back on itself** — two triangles sharing an edge that are coplanar with
+     * opposite normals, so the surface has zero thickness there — or null when it does not.
+     *
+     * *Why this is a fault of its own* (GitHub #33). Edge-use counts are blind to it: a flap uses every
+     * directed edge exactly once with exactly one opposite use, so [notClosed] passes it, the volume
+     * integral passes it (a back-to-back pair contributes nothing), and a slicer meets a surface that
+     * encloses nothing. The reporter's picture — an upright rounded at the top and still coming to a
+     * sharp point at the base — was exactly this: the old tip vertex left in the mesh with the wall's
+     * triangulation running out to it and folding over.
+     *
+     * *Where it comes from.* A tool face lying **exactly in** a body face. The difference of two solids
+     * that share a face is not a solid — the two coincident sheets have to cancel, and whether a float32
+     * engine cancels them is a coin. That is the gap [Blend3]'s own step-off exists to open, and this is
+     * the check that says it was opened everywhere: watertight or refused (OP-9), with *watertight* now
+     * meaning what it always claimed to.
+     */
+    fun flap(mesh: Mesh3): String? {
+        val owner = HashMap<Long, Int>(mesh.triangles.size * 4)
+        for ((i, t) in mesh.triangles.withIndex()) {
+            for (e in longArrayOf(edge(t.a, t.b), edge(t.b, t.c), edge(t.c, t.a))) owner[e] = i
+        }
+        // the triangles in their own order, so which flap a refusal names is a function of the mesh
+        for ((i, t) in mesh.triangles.withIndex()) {
+            val n = normalOf(mesh, t) ?: continue
+            for ((from, to) in listOf(t.a to t.b, t.b to t.c, t.c to t.a)) {
+                val j = owner[edge(to, from)] ?: continue
+                if (j <= i) continue
+                val m = normalOf(mesh, mesh.triangles[j]) ?: continue
+                if (n.dot(m) > FLAP_COS) continue
+                return "a zero-thickness flap at the edge between ${mesh.vertices[from]} and " +
+                    "${mesh.vertices[to]}: the two triangles that share it are coplanar and wound against " +
+                    "each other, so the surface folds back on itself and encloses nothing there"
+            }
+        }
+        return null
+    }
+
+    /** The unit normal of one triangle, or null where it has no area to have one. */
+    private fun normalOf(
+        mesh: Mesh3,
+        t: Tri,
+    ): Vec3? {
+        val a = mesh.vertices[t.a]
+        val n = (mesh.vertices[t.b] - a).cross(mesh.vertices[t.c] - a)
+        return if (n.length() <= Vec3.EPS) null else n.normalized()
+    }
+
     /** Why [mesh] is not a closed, consistently wound shell, or null when it is. */
-    fun fault(mesh: Mesh3): String? {
+    fun notClosed(mesh: Mesh3): String? {
         val uses = HashMap<Long, Int>(mesh.triangles.size * 4)
         for (t in mesh.triangles) {
             for (e in longArrayOf(edge(t.a, t.b), edge(t.b, t.c), edge(t.c, t.a))) {

@@ -14184,6 +14184,31 @@ the composition table is driven generically as well as by its own test.
   deliberately did **not** do is guess the three-concave vertex, which is now recorded as the catalogue's
   fourth corner rather than as an oddity.
 
+- **Turn 72 — a tool never shares a face with the body** (GitHub #33; session 81). The report: *"3D fillet
+  creates invalid body/rendering artifact"*, on a chevron 20 high with a 19.4° tip whose upright was rounded
+  at `r = 2`. What makes this one worth the entry is that **nothing refused and nothing was wrong with the
+  numbers**: the body was closed, consistently wound, and its volume matched `20·r²(cot(θ/2) − (π−θ)/2)` to
+  the last digit, while the picture showed a tip *"rounded at the top, a sharp tip at the base"*. The old tip
+  vertex was still in the mesh at `z = 0` with the wall folded back over it — a **zero-thickness flap**, which
+  uses every directed edge exactly once with exactly one opposite use and so is invisible to the closed-shell
+  test the whole doctrine rests on, and invisible to the volume integral too, because the back-to-back pair
+  cancels. The cause was one sentence of session 79's own note taken as a rule: *"grown at a corner, plain at
+  a free end: the growth tapers along the run"*. That taper is a mis-weighing — a micron-wide notch is a
+  transversal sliver an engine resolves, a coplanar face is a coin — and worse, it never covered the
+  single-edge path at all, which swept the plain wedge with both legs lying *in* the two faces for the whole
+  length of the run. So the rule is now unconditional, and the free end is answered by stepping the **cap**
+  instead: out past the end where nothing of the body continues, back into the run where the shared face runs
+  on and the other stops (an inside corner, `buttEnds`' own micron generalized), out again where **both**
+  continue. Which of the three is decided off the **dressed face list** and not off the triangles, so it is
+  exact and order-free. The second half of the turn is the check: *a flap is a fault*, `MeshCanon.flap`, one
+  test that states coplanarity and overlap and orientation at once because for two triangles sharing an edge
+  they are the same statement. Turning it on across the suite is what made the delivery honest — twenty-six
+  blend fixtures were carrying flaps and now none is — and it is also what stopped the refusal going into
+  production, because sixteen bodies the build makes today carry folds of four other kinds, from Manifold's
+  own re-triangulation around a drill to the self-crossing tubes this kernel builds on purpose. That cut is
+  named and each of the sixteen is now recorded at its own assertion, which is *recorded, not discovered*
+  applied to a finding nobody asked for.
+
 ## Domain layer: architectural drawing (draft — no new solver)
 
 > **As-built note (Turn 18):** axis-alignment is realized by the **shared-coordinate** model
@@ -17638,6 +17663,157 @@ roundings of **different** sizes (`r_U = 3` and `8` against `r = 5`) in both ord
 pivots with both caps rounded and then the far convex upright carrying two balls, a slot with two inside corners,
 and the same body driven through the editor's own 3D picks with the file a fixed point and the last gesture undone.
 
+#### Implementation status (as built — **a tool never shares a face with the body**, session 81; GitHub #33)
+
+**The sentence this replaces, verbatim.** Session 79's `sectionPolygons` said: *"Why only at a corner. A
+**free** end is capped on the plane square to the edge, where the body has its own upright edge, and a tool a
+micron proud of two faces there leaves a micron-wide notch at that upright which is a worse contact than the
+one it cured. So the growth is tapered: the ring at a corner is the grown section, the ring at a free end is
+the plain one, and the flat side between them touches its face along a *line* rather than over a strip."* It
+is wrong twice over. A micron-wide notch is an ordinary **transversal** sliver, which the engine resolves; a
+**coplanar** face is a coin toss, which it does not. And the taper left the single-edge blend — the whole
+`Geom3.sweep` path, with the *plain* wedge and no growth at all — sharing a face with the body for its entire
+length. What replaces it is one rule with no exception: **a tool never shares a face with the body.** The
+step-off is uniform along the whole run, on every tool that has one, and the free-end cap is stepped too.
+
+**What the report was.** GitHub #33, *"3D fillet creates invalid body/rendering artifact"*: a chevron 20 high
+with a 19.4° tip, the upright at that tip rounded at `r = 2`. The body came out **valid** by every check the
+build had — closed, consistently wound, `MeshCanon.fault` silent, volume 8099.348 against the closed form
+`8457.19 − 20·r²(cot(θ/2) − (π−θ)/2)` to the last digit — and the picture was *"rounded at the top, a sharp
+tip at the base"*. The old tip vertex was still in the mesh at `z = 0`, the wall's triangulation ran out to it,
+and a back-to-back triangle folded the surface over itself. **Edge-use counts are 1/1 across a fold**, so the
+closed-shell test was blind to it and so was the volume integral (the pair cancels). Both the JVM and the
+browser produced the identical 146 triangles, which is the determinism rule doing its job on a defect.
+
+**Where the step-off is applied now.** `Blend3.sectionOf` (was `sectionPolygons`) returns **one** section —
+the grown one — as a polygon *and* as an exact `Region`, and `Piece` no longer carries a plain twin.
+`toolMesh` places that section at every ring, corner and free end alike. The single-piece path goes through
+`toolMesh` too wherever the crease is one straight run with a section that was stepped, so the `Geom3.sweep`
+route is left with exactly two operands: a crease that is **not** a straight run (a cap edge's circle, a
+ring), which is swept with the grown `Region` and so is stepped as well, and a wedge with a **round leg**,
+which has no straight offset in this vocabulary and is swept unchanged. `outwardAt` already picked the safe
+side and still does: out of the material for a convex (subtract) wedge, into it for a concave (union) one, so
+the growth removes and adds nothing — every volume in the suite is unchanged by it.
+
+**The free-end caps, and how air is told from material.** A free end is capped on the plane square to the
+edge, and wherever the body has a face in that plane the cap is coplanar with it. `Blend3.endSteps` steps it,
+for a **subtract** tool only, by asking the **dressed face list** — not by probing triangles — how many of the
+crease's two faces still reach a point one probe-step beyond the end. That point lies in both faces' planes by
+construction (the edge is their intersection), so the whole question is `onFace`, the same reading
+`tangenciesFit` already makes of the same outlines, and it is exact and order-free. **Neither** face reaches
+it: air beyond, and the tube **overshoots** by `GROW_MM` — it removes nothing extra and the cap stands clear
+of the body's own cap, which is the reporter's ordinary upright and the whole of #33. **One** reaches it: the
+shared face runs on while the other stops, which is what an inside corner *is*, and the tube is **pulled
+back** by `GROW_MM` — session 79's `buttEnds` micron of daylight, said once for every free end instead of only
+for a butting pair; it leaves a micron of material at a corner that already keeps a whole spike, and that is
+recorded rather than hidden. **Both** reach it: the crease simply runs further than this rounding does, and
+the tube overshoots again, because a micron more off an edge the same section is cutting anyway is nothing
+and a micron of unrounded ridge in the middle of a rim is visible. `buttEnds` is kept and OR-ed in: a butting
+pair *is* an inside corner, so the two agree wherever both speak, and the pair keeps the name the rule was
+first written under.
+
+**Why a union tool's cap stays flush, stated rather than assumed.** A concave wedge is *added*, so its cap is
+a face of the finished part: overshooting leaves a micron burr proud of the body's cap and pulling back a
+micron notch, and neither is geometry the user drew. Flush is also **safe**, and that is not a coincidence —
+the degenerate case is two coplanar sheets facing *against* each other, which is what a difference has to
+cancel. A union of two solids whose caps are coplanar and point the **same** way has no surface passing
+through another: the two sheets are the outside of one merged face, and every edge of it is still used once
+each way.
+
+**A flap is a fault, and it is now in the vocabulary.** `MeshCanon.flap` names it: two triangles sharing an
+edge whose unit normals are back-to-back. Sharing an edge and facing opposite ways *is* coplanarity (both
+planes contain the edge) and *is* overlap (the two third corners fall on the same side of it), so the one
+test states the whole defect, and it is the exact complement of a flat quad, whose two triangles face the
+same way. The band is `FLAP_COS = -1 + 1e-9`, a dihedral of 0.003°: wide enough for the arithmetic of reading
+a normal off float32 positions (#33's own pair came off the engine at −0.999999999999938) and far too narrow
+to take in a **knife edge**, two faces meeting at a real dihedral however thin — this suite has one at 0.04°
+where two chains fuse along a near-tangent wall, and it has thickness where a flap has none. The test-side
+`assertManifold` asks it of **every solid in every test**, so no new mesh can carry one unnoticed.
+
+**Where it is deliberately *not* asked, with the measurement that decided it.** It is **not** wired into
+`MeshCanon.fault`, the general boolean's own gate, and that is a departure from the package's own design
+brief, argued here rather than quietly taken. Turning it on there was tried first, and the suite answered:
+sixteen bodies the build makes today carry a fold, in four families, none of them a blend tool's coplanar
+face. (1) The general engine's re-triangulation around a **drill through a pyramid's slanted face** leaves a
+degenerate pair of its own — five tests, and an export among them. (2) A **cut chain fused to another** along
+a near-tangent wall leaves the 0.04° knife edge above (which the `1e-9` band now lets through, correctly, as
+a thin wedge rather than a fold). (3) The **far end of a tangent-continuous rim**, where the last band stops
+against the one rim piece that is not rounded, leaves a cluster of micron-scale folds — measured at twelve
+before this session's change and ten after, so the change helps and does not cause it. (4) A **self-crossing
+loft, skin or tube**, whose surface genuinely passes through itself: `TubeCornerBendTest`'s own name has said
+so since it was written (*"the body the old criterion accepted cuts through itself at both corners"*), and
+this kernel builds those on purpose. Refusing all four in production would take sixteen bodies away from
+users as the side effect of a bug fix, which is a policy change and not this package. So the refusal is
+**cut, whole and named**: the vocabulary and the test-side check ship, the production gate does not, and the
+four families are recorded — each of the twelve call sites now passes `assertManifold(..., foldsBackOnItself
+= true)`, which **asserts the fold is still exactly there**, so the day a cause is fixed the record fails and
+comes out. The blend's own tool is not asked either, and that is now for a plain reason: a tool that folds is
+a tool that is **wrong**, and the two places one did are fixed below rather than tolerated.
+
+**The two folds the orchestrator's probe found, and what they were** (the dart: the reporter's chevron without
+its 2D fillets, whole top face rounded at `r = 0.3`, then the tip upright). The delivery above said a tool's
+fold at a pivot was *"a fold in the tool and none at all in the body it cuts"*. **That sentence was wrong**,
+and the probe is what says so — the body inherits it. Both causes are one mistake made twice: reading a
+micron-scale structure with a rule that only holds away from a degeneracy.
+
+*One: the step-off on a pivot axis.* At an inside corner the ball turns about the upright ([Turn]), and at
+that corner station the band's leg in the **other** face does not merely touch the axis, it **is** the axis —
+both its ends lie on the upright. Stepping it a micron off its face is stepping it a micron off the axis, and
+the turn sweeps that into a flat micron-wide **disc** in the very plane the tube's own jog already lies in;
+the turn takes the disc back over the jog and the surface folds. The cure is exact and costs nothing: a ring
+that stands on a pivot axis takes the **plain** section, so the leg is back on the axis where the turn leaves
+it fixed and there is no disc, and the tube tapers to it over its own run — which is exactly what a *free* end
+did for three sessions before #33 moved it, so it is a construction this build already knows works. Only a
+turn about a **sharp** upright qualifies: about a **band** (session 81's mixed pivot) the axis is that band's
+own and stands `r_U` clear of the section, no point of it is at radius zero, and the step-off is kept —
+without that distinction the mixed pivot's leg goes back into the face it is tangent to and eight fixtures
+fold, which is how the line was drawn. Two constructions were tried first and rejected on measurement, both
+recorded at `sectionOf`: pivoting each leg about its own tangency (no jog at all) leaves the leg's plane
+**grazing** its face along the tangency line, which is the tangent contact the general engine has no
+watertight answer for — a 19° chamfered tip folds along its own setback; and a diagonal jog only moves the
+fold, because the outgrowth at a reflex vertex sweeps back over the tube whatever shape the jog has.
+
+*Two: the ball patch read one triangle at a time.* `vertexPatch` wound the fill by asking each triangle to
+face away from the vertex. That is right wherever the patch is star-shaped as seen from there and wrong at a
+sharp enough one: at the dart's 19° tip a few triangles come out **flipped**, the same directed edge is
+emitted twice, and the tool is refused outright as no closed shell — which is what the probe's third stage met
+and what the build has done since session 80, before this package existed. The ball has an answer that is the
+same for every triangle of it and needs no reading: the tool keeps the ball, so its surface there faces the
+ball's **centre**. A bevel's apex has no centre and keeps the vertex reading it always had, three planar
+triangles. With that the dart's tip upright builds: 106 triangles, no fold.
+
+Measured on the dart's cap: **86 triangles with six folds** before this session, **54 with none** after.
+
+**What moved, and by how much.** No drawing's geometry changes beyond the micron the step-off implies. The
+reporter's own body goes from 146 triangles to 144 and its volume from 8099.348158 to 8099.347861 — three
+ten-thousandths of a cubic millimetre, which is the micron of overshoot at the two caps. Twenty-six blend
+tests that fail the new check against the *old* `Blend3` pass against the new one, which is the fix measured
+rather than asserted: every corner, vertex, mixed-vertex and custom-profile fixture in the suite was carrying
+a flap and none of them is now. No golden moved (they are 2D), and no volume bracket needed re-pinning.
+
+**Cuts, each whole and each named.** (1) **The production refusal**, above, with its measurement. (2) **A
+wedge with a round leg** is still not stepped — a bore's or a cone's trace in the normal section is a circle,
+whose offset is another circle and not a line, so the vocabulary has nothing to say; the tool is swept exactly
+as it always was and its one flat leg still lies in its face. Growing only the *straight* leg of such a pair
+is the obvious extension and is a future one. (3) **A free-end cap on a crease that is not a straight run** is
+not stepped either: `Geom3.sweep` carries the section along the edge's own carrier and shortening or extending
+an arc by a micron is a second construction, so an *open* curved crease keeps its flush caps (a closed one — a
+full cap-edge circle — has no free end at all and needs nothing).
+
+Tests: `FlapFreeBlendTest` (7) — the reporter's script verbatim, with both bodies flap-free, no vertex left
+within a micron of the old tip at **any** height, the wedge in `[356, 358]` and the file a fixed point of
+save; sharp tips at 10°, 20°, 45°, 90° and 150° on a prism, each bracketed between the closed form
+`h·r²(cot(θ/2) − (π−θ)/2)` and the same figure with the arc replaced by the tessellation's **own** inscribed
+chords (computed from `GeomMath.chordSteps`, so the bracket moves with the tolerance rather than being a
+percentage), and each of them repeated with the cap chain already rounded at **each** cap in turn, because
+the flap stood at `z = 0`; a single band whose far end is the L's inside corner, bracketed to the micron it is
+pulled back by; the concave upright filled, bracketed the same way; and the check itself on a mesh built to
+have a flap — two triangles back to back, which `notClosed` passes and `flap` names — against a cube, which
+neither does. The orchestrator's `FlapFreeBlendProbeTest` (3) adds what the delivery never saw, and is what
+found the two folds above: a **concave** 20° notch filled, a chamfer on the 19° tip exact to 1e-5, and the
+dart's whole top face — a 19° `Joint`, two obtuse ones and the reflex `Turn` — with the tip upright and its
+ball patch on top of it. **2610 → 2620 green**, `assertManifold` on every solid in every one of them.
+
 #### Implementation status (as built — the **scalar half**, session 71)
 
 `constructit/expr/` is the whole language: `Expr` (AST), `ExprParser`, `ExprEval` and `ExprNode`, all in
@@ -18949,6 +19125,22 @@ runs on a circle of radius `r + r_U` about the band's own axis. Delivered with t
 report's second half turned out to be (an all-existing group can be **stale**, so the chain is rebuilt from its
 undressed root, the upright's tool first) and the face-list supersession rule that goes with it. See *the pivot
 about a band* under the edge-blend entries. It leaves three things parked, each stated below.
+
+**Retired in session 81, from the issue tracker: GitHub #33, *3D fillet creates invalid body/rendering
+artifact*.** A valid body with an invisible defect — the reporter's chevron tip rounded at the top and still
+sharp at the base, every structural check green and the volume right to the last digit, because the mesh
+carried a **zero-thickness flap** that edge-use counts cannot see. The cause was session 79's own taper,
+*"grown at a corner, plain at a free end"*, which left every free end and the whole single-edge path sharing
+a face with the body. Delivered as one rule — **a tool never shares a face with the body** — with the
+free-end cap stepped by what lies beyond it, decided off the dressed face list rather than off the triangles.
+See *a tool never shares a face with the body* under the edge-blend entries. It leaves the **production**
+half of the flap refusal cut and named: sixteen bodies the build makes today carry a fold that is not a
+blend's, in four measured families (a drill through a slanted face, a near-tangent fuse, the far end of a
+tangent-continuous rim, and the self-crossing lofts, skins and tubes this kernel builds on purpose), each now
+recorded at its own assertion rather than tolerated. The probe of the delivery retired one sentence of it
+straight away — a tool's fold at a pivot is *not* harmless, the body inherits it — and with it two defects
+older than the package: the step-off lifting a pivot's own axis off itself, and the ball patch at a sharp
+vertex wound one triangle at a time. None of the sixteen recorded folds heals with them; all sixteen stand.
 
 **Queued in session 81 — the fourth corner of the catalogue: the three-concave vertex.** Three fills meeting at
 a **room's own corner**: the ball sits against the three faces from *outside* the material, touching all three

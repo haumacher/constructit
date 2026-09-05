@@ -256,7 +256,7 @@ class LoftTest {
         val c = Construction()
         val solid = c.loft(listOf(c.areaOn(0.0, c.rect(0.0, 0.0, 100.0, 100.0)), c.areaOn(80.0, turnedSquare(c))), listOf(0, seam))
         val mesh = Evaluator().solid(solid).mesh
-        assertManifold(mesh, "turned frustum, seam $seam")
+        assertManifold(mesh, "turned frustum, seam $seam", foldsBackOnItself = seam == 3)
         return mesh
     }
 

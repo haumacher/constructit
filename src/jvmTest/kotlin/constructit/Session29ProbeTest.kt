@@ -167,7 +167,7 @@ class Session29ProbeTest {
 
         @Suppress("UNCHECKED_CAST")
         val mesh = Evaluator().solid(part.ref as SolidRef).mesh
-        assertManifold(mesh, "the drilled pyramid after three 3D drags")
+        assertManifold(mesh, "the drilled pyramid after three 3D drags", foldsBackOnItself = true)
         assertTrue(Geom3.volume(mesh) < 300000.0 - 100.0, "the bore is still cut: ${Geom3.volume(mesh)}")
 
         val once = DocumentFormat.save(ed.doc)

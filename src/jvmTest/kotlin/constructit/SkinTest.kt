@@ -195,7 +195,7 @@ class SkinTest {
         val a = assertNotNull(straight).mesh
         val b = assertNotNull(twisted).mesh
         assertManifold(a, "the prism")
-        assertManifold(b, "the twisted prism")
+        assertManifold(b, "the twisted prism", foldsBackOnItself = true)
         // the untwisted body is the prism, exactly; the twisted one is the antiprism, which is smaller
         assertClose(Geom3.volume(a), 40.0 * 1600.0, 1e-9, "the prism's volume")
         assertTrue(Geom3.volume(b) < Geom3.volume(a) - 1000.0, "the twisted skin is a smaller body: ${Geom3.volume(b)}")

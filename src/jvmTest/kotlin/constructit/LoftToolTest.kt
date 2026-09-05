@@ -267,7 +267,7 @@ class LoftToolTest {
         val volA = a.volumeOf(a.solids().single())
         val volB = b.volumeOf(b.solids().single())
         assertManifold(a.meshOf(a.solids().single()), "seam A")
-        assertManifold(b.meshOf(b.solids().single()), "seam B")
+        assertManifold(b.meshOf(b.solids().single()), "seam B", foldsBackOnItself = true)
         assertTrue(abs(volA - volB) > 1000.0, "clicking a different corner is a different solid ($volA vs $volB)")
 
         val signsA = DocumentFormat.save(a.doc).lines().first { it.startsWith("tool loft") }

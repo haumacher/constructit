@@ -7,6 +7,7 @@ import constructit.editor.Element
 import constructit.geom.Frames3
 import constructit.geom.Geom3
 import constructit.geom.Mesh3
+import constructit.geom.MeshCanon
 import constructit.geom.Path3
 import constructit.geom.ProfileElement
 import constructit.geom.Segment
@@ -15,6 +16,7 @@ import java.io.File
 import kotlin.math.abs
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * The straight pieces of a plan drawing (`Document.planOf`), which emits [ProfileElement]s since walls
@@ -61,6 +63,19 @@ fun geometryNodeOf(el: Element): Node {
 fun assertManifold(
     mesh: Mesh3,
     what: String = "solid",
+    /**
+     * That this body is **known** to fold back on itself, and the fold is what is being asserted rather
+     * than its absence (GitHub #33's flap check, applied to what was already in the build).
+     *
+     * Three families carry one, all of them older than the check and none of them a blend's coplanar tool:
+     * a **self-crossing** loft, skin or tube, which this kernel builds on purpose and whose surface really
+     * does pass through itself (`TubeCornerBendTest`'s own name has said so since it was written); the
+     * general engine's re-triangulation around a **drill through a slanted face**, where it leaves a
+     * degenerate pair of its own; and the **end of a tangent-continuous rim**, where a band stops against
+     * an unrounded neighbour. Each is a real finding and each is recorded here rather than tolerated: the
+     * assertion is inverted, so the day the cause is fixed this call fails and the record comes out.
+     */
+    foldsBackOnItself: Boolean = false,
 ) {
     assertTrue(mesh.triangles.isNotEmpty(), "$what has no triangles")
     for ((i, t) in mesh.triangles.withIndex()) {
@@ -89,6 +104,16 @@ fun assertManifold(
                 "$what edge ${e.first}->${e.second} (triangle $i) has $back opposite uses, expected 1 (open or inconsistently wound)",
             )
         }
+    }
+    // **and no flap** (GitHub #33): two triangles sharing an edge, coplanar and wound against each other,
+    // is a surface folded back on itself with no thickness between the two sheets. Every edge-use count is
+    // 1/1 there, so the checks above are blind to it, and the volume integral is too — the pair cancels.
+    // The production twin is [MeshCanon.flap], and this calls it rather than restating it.
+    val fold = MeshCanon.flap(mesh)
+    if (foldsBackOnItself) {
+        assertTrue(fold != null, "$what is recorded as folding back on itself, and no longer does — take the record out")
+    } else if (fold != null) {
+        fail("$what has $fold")
     }
     val vol = Geom3.volume(mesh)
     assertTrue(vol > 0.0, "$what encloses no positive volume ($vol mm^3) — is it wound inside out?")

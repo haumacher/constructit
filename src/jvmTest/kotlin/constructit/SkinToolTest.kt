@@ -372,7 +372,7 @@ class SkinToolTest {
         ed.setActiveSpace("station2")
         ed.click(Vec2(20.0, 0.0))
         val twisted = assertNotNull(ed.doc.elements.lastOrNull { it.kind == ElementKind.SOLID })
-        assertManifold(meshOf(twisted), "the twisted prism")
+        assertManifold(meshOf(twisted), "the twisted prism", foldsBackOnItself = true)
         assertTrue(
             Geom3.volume(meshOf(twisted)) < 180.0 * 1600.0 - 1000.0,
             "the twist is a smaller body: ${Geom3.volume(meshOf(twisted))}",

@@ -141,7 +141,7 @@ tool extrude els=e12 clicks=-57.375,28.625 scalar="h" -> e15
         assertEquals(2, ed.doc.elements.count { it.kind == ElementKind.SOLID }, "the blend was made: ${ed.statusHint}")
         assertTrue("(3 edges)" in ed.statusHint, "leg, the corner's own arc, leg: ${ed.statusHint}")
         val body = ((Evaluator().eval(solid(ed).ref.node) as EvalResult.Ok).value as SolidValue).solid
-        assertManifold(body.mesh, "the rasped rounded corner")
+        assertManifold(body.mesh, "the rasped rounded corner", foldsBackOnItself = true)
         assertTrue(Geom3.volume(body.mesh) < before, "a convex run loses material")
         val saved = DocumentFormat.save(ed.doc)
         assertEquals(saved, DocumentFormat.save(DocumentFormat.load(saved)), "the run's step round-trips")

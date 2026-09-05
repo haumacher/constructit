@@ -1048,14 +1048,28 @@ object Blend3 {
         val wedge: Wedge,
         val choice: BlendChoice,
         val sec: BlendSection,
-        /** The wedge's boundary, counter-clockwise in the section frame, starting at the section's corner. */
-        val section: List<Vec2>,
-        /** The same boundary grown out through both faces, point for point — see [sectionPolygons]. */
+        /**
+         * The wedge's boundary **grown out through both faces**, counter-clockwise in the section frame and
+         * starting at the grown corner — the one section every ring of the tool is placed from
+         * ([sectionOf]).
+         */
         val grown: List<Vec2>,
+        /**
+         * The **un**-stepped boundary, point for point with [grown] — what a ring standing on a **pivot
+         * axis** is placed from, and nothing else. See [toolMesh].
+         */
+        val plain: List<Vec2>,
+        /** The same shape as an exact region, for the sweep along a crease that is not a straight run. */
+        val grownRegion: Region,
+        /** Whether that section really was stepped off — false for a wedge with a round leg ([Grown]). */
+        val stepped: Boolean,
         /** The same polygon triangulated once — the tool's cap at every free end. */
         val caps: List<Geom3.Tri3>,
         /** The edge as one straight run, or null: only a straight edge can carry a corner (see [cornersOf]). */
         val seg: Curve3Element.Seg3?,
+        /** How far the tube is stepped along the run at each free end — see [endSteps]. */
+        val backAtStart: Double,
+        val backAtEnd: Double,
     ) {
         /** How long the run is — asked only where [seg] is there. */
         val length: Double get() = seg!!.let { (it.end - it.start).length() }
@@ -1093,46 +1107,91 @@ object Blend3 {
     }
 
     /**
-     * The two section polygons the **stitched** tool is swept between: the wedge's own boundary, and the
-     * same boundary **grown out through both faces** by [GROW_MM] — point for point, so a ring may be
-     * either without the quads between two rings losing their correspondence.
+     * The blend's section as the tool actually carries it: one polygon, and the same shape as a region.
      *
-     * *Why grown.* The wedge's two legs lie exactly *in* the two faces, so the tool it sweeps has a flat
-     * side coincident with a face of the body over a strip as wide as the tangency. One such contact a mesh
-     * boolean can resolve; two of them overlapping at a corner — or one meeting a face another blend has
-     * already trimmed — is a coplanar overlap whose answer is a fraction of a float32, and that is the
-     * *"used 2 times with 2 opposite uses"* both reporters met. Stepping the legs a micron **outside** their
-     * own faces turns those contacts into ordinary transversal crossings: the flat sides now cross the faces
-     * at exactly the tangency lines instead of lying along them, and the arc between the two tangencies —
-     * the only part of the section that decides any geometry — is untouched.
+     * [stepped] is false for the one section that has no step-off to make — a wedge with a **round** leg,
+     * whose offset is not a line and is not in this vocabulary (see [sectionOf]). Such a tool is swept
+     * exactly as it always was, so nothing about it moves.
+     */
+    private class Grown(val polygon: List<Vec2>, val plain: List<Vec2>, val region: Region, val stepped: Boolean)
+
+    /**
+     * The section the tool is swept with: the wedge's own boundary with each straight leg **pivoted off its
+     * face about its own tangency** by [GROW_MM] at the crease — as a polygon (what a stitched tube's rings
+     * are placed from) and as an exact [Region] (what [Geom3.sweep] carries along a curved crease), which
+     * are the same shape said twice.
      *
-     * *Why only at a corner.* A **free** end is capped on the plane square to the edge, where the body has
-     * its own upright edge, and a tool a micron proud of two faces there leaves a micron-wide notch at that
-     * upright which is a worse contact than the one it cured. So the growth is tapered: the ring at a corner
-     * is the grown section, the ring at a free end is the plain one, and the flat side between them touches
-     * its face along a *line* rather than over a strip.
+     * *Why stepped off at all.* The wedge's two legs lie exactly *in* the two faces, so the tool it sweeps
+     * has a flat side coincident with a face of the body over a strip as wide as the tangency. One such
+     * contact a mesh boolean can resolve; two of them overlapping at a corner — or one meeting a face
+     * another blend has already trimmed — is a coplanar overlap whose answer is a fraction of a float32,
+     * and that is the *"used 2 times with 2 opposite uses"* both reporters met. Moving the leg off its face
+     * turns that into an ordinary contact along the **tangency line only** — which the arc already makes,
+     * being tangent to the face there — and the arc between the two tangencies, the only part of the
+     * section that decides any geometry, is untouched.
      *
-     * *And nothing extra is removed.* At a convex crease the material is inward of both faces, so a micron
-     * beyond either is outside the body; at a concave one the wedge is added and the growth lies inside
-     * material already there. Every volume in the suite is unchanged by it, which is what says so.
+     * *And why the jog back onto the tangency is **diagonal*** (the probe of GitHub #33). The step-off has
+     * to come back to the tangency: that point is the arc's own end, it is on the face by definition, and
+     * moving it would move the geometry. So each leg is a strip a micron off its face that ends a micron
+     * short of the tangency's foot, joined to the tangency by a short jog. **That jog must not stand square
+     * to its own leg**, and the reason is the pivot. At an inside corner the ball turns about the upright
+     * ([Turn]), and at the corner station the leg in the *other* face **is** that axis — both its ends lie
+     * on the upright, the tangency at radius zero. A square jog there is **radial**, so the turn sweeps it
+     * into a flat micron-wide disc about the axis — and the tube's own jog, extruded along the run, lies in
+     * the very same plane and the turn takes the disc back over it. That is a zero-thickness fold in the
+     * tool, and a boolean hands it straight on to the body: a 100° pivot at `r = 0.3` on a dart's reflex
+     * vertex does exactly that ([MeshCanon.flap] names it at `z = 20 − r`). A **diagonal** jog — a micron
+     * out and a micron along the leg — sweeps a *cone* whose apex is the tangency, on the axis, and a cone
+     * shares no plane with the tube's own jog. The pure alternative, pivoting the leg about its tangency so
+     * that nothing jogs at all, was tried and is worse: it leaves the leg's whole plane **grazing** the
+     * face along the tangency line instead of standing clear of it, which is the tangent contact the
+     * general engine has no watertight answer for (a 19° chamfered tip folds along its own setback line).
+     *
+     * *And the whole run of it, not only a corner* (GitHub #33). Session 79's rule read *"grown at a corner,
+     * plain at a free end: the growth tapers along the run"*, on the argument that a tool a micron proud of
+     * its two faces at a **free** end leaves a micron-wide notch at the body's own upright there. It does,
+     * and a micron-wide notch is an ordinary transversal sliver the engine resolves; a coplanar face is a
+     * coin toss, and the reporter's chevron is where it came up tails — the tip vertex left in the mesh at
+     * `z = 0` with the wall folded back over it, a zero-thickness flap ([MeshCanon.flap]). **A tool never
+     * shares a face with the body**: the step-off is uniform along the whole run, on every tool, and the
+     * free end is answered by stepping the *cap* instead ([endSteps]).
+     *
+     * *And nothing extra is removed.* [outwardAt] steps each leg to its own **safe** side: out of the
+     * material at a convex crease (where the wedge is subtracted, so a micron beyond either face is air),
+     * into it at a concave one (where the wedge is added, so the micron lies in material already there).
+     * Every volume in the suite is unchanged by it, which is what says so.
      *
      * A **round** leg (a fillet against a cylinder) has no straight offset in this vocabulary, so it is
      * swept as it always was — a plane against a curved band is not the degenerate case.
      */
-    private fun sectionPolygons(
+    private fun sectionOf(
         crease: Crease,
         wedge: Wedge,
-    ): Pair<Pair<List<Vec2>, List<Vec2>>?, String?> {
+    ): Pair<Grown?, String?> {
         val o = Vec2(0.0, 0.0)
         val arc = wedge.pieces.flatMap { GeomMath.tessellatePiece(it, GeomMath.TESS_TOL_MM) }
         val n1 = outwardAt(wedge.t1, wedge.t2)
         val n2 = outwardAt(wedge.t2, wedge.t1)
-        val plain: List<Vec2>
         val grown: List<Vec2>
+        val plain: List<Vec2>
+        val region: Region
+        val stepped: Boolean
         if (crease.leg1.line != null && crease.leg2.line != null && n1 != null && n2 != null) {
             val corner = offsetCorner(n1, n2) ?: return null to "the two faces at that crease run too nearly parallel to step off"
+            val g1 = wedge.t1 + n1 * GROW_MM
+            val g2 = wedge.t2 + n2 * GROW_MM
             plain = listOf(o, wedge.t1) + arc + listOf(wedge.t2)
-            grown = listOf(corner, wedge.t1 + n1 * GROW_MM) + arc + listOf(wedge.t2 + n2 * GROW_MM)
+            grown = listOf(corner, g1) + arc + listOf(g2)
+            // the very same boundary as an exact loop: the two legs stepped off, a square jog back onto
+            // each tangency, and the blend's own curve between them untouched
+            val loop =
+                Loop(
+                    listOf(ProfileElement.Seg(Segment(corner, g1)), ProfileElement.Seg(Segment(g1, wedge.t1))) +
+                        wedge.pieces +
+                        listOf(ProfileElement.Seg(Segment(wedge.t2, g2)), ProfileElement.Seg(Segment(g2, corner))),
+                )
+            region = Region(if (GeomMath.signedArea(loop) >= 0.0) loop else GeomMath.reverseLoop(loop), emptyList())
+            stepped = true
         } else {
             val pts = ArrayList<Vec2>()
             pts.add(o)
@@ -1142,16 +1201,91 @@ object Blend3 {
             val kept = ArrayList<Vec2>(pts.size)
             for (q in pts) if (kept.isEmpty() || (q - kept.last()).length() > Geom3.WELD_TOL) kept.add(q)
             while (kept.size > 1 && (kept.first() - kept.last()).length() <= Geom3.WELD_TOL) kept.removeAt(kept.size - 1)
-            plain = kept
             grown = kept
+            plain = kept
+            region = wedge.region
+            stepped = false
         }
-        if (plain.size < 3) return null to "the rounding's own section has fewer than three corners"
+        if (grown.size < 3) return null to "the rounding's own section has fewer than three corners"
         // one winding for both, so index k of either ring is the same point of the same section
         return if (Geom3.polygonArea(grown) >= 0.0) {
-            (plain to grown) to null
+            Grown(grown, plain, region, stepped) to null
         } else {
-            (reversedFromFirst(plain) to reversedFromFirst(grown)) to null
+            Grown(reversedFromFirst(grown), reversedFromFirst(plain), region, stepped) to null
         }
+    }
+
+    /**
+     * How far each end of a straight run's tube is stepped **along the run**, in mm — positive *back* into
+     * the run, negative *out* past its end — so that a free end's cap never lies in a face of the body
+     * either (GitHub #33, the other half of [sectionOf]'s step-off).
+     *
+     * A free end is capped on the plane square to the edge there, and wherever the body has a face in that
+     * plane — the ordinary upright, whose two ends stand on the part's own caps; an edge ending at an
+     * inside corner, where the wall across the corner is square to it — the cap is coplanar with it and the
+     * difference is the same coin toss the legs were. So the cap is stepped a micron to whichever side is
+     * safe, and which side that is, is decided by **what lies beyond the end**:
+     *
+     * - **Air** — nothing of the body continues past — and the tube **overshoots** by [GROW_MM]. It removes
+     *   nothing extra (it is air) and the cap now stands clear of the body's own face.
+     * - **Material** — the crease's *shared* face runs on past the end while the other stops, which is what
+     *   an inside corner is — and the tube is **pulled back** by [GROW_MM]: session 79's `buttEnds` micron
+     *   of daylight, said once for every free end rather than only for a butting pair. It leaves a micron
+     *   of material at a corner that already keeps a whole spike there, and that is recorded.
+     * - **The crease runs on** — *both* faces continue, so the edge simply carries further than this
+     *   rounding does (a smooth run handed over to the next band, or a chain the user stopped short) — and
+     *   the tube **overshoots** again: a micron more is taken off an edge the very same section is cutting
+     *   anyway, and where the run really does stop it is a micron of a rounding the user asked for.
+     *
+     * *How the three are told apart, exactly and deterministically:* by the **dressed face list**, not by a
+     * probe of the triangles. The point a micron-scale step beyond the end lies in both faces' planes (the
+     * edge is their intersection), so the question is only whether it is still *on* each face's own
+     * outline — [onFace], the same reading [tangenciesFit] already makes of the same lists. Two faces
+     * reaching it is a crease that runs on, one is an inside corner, none is air.
+     *
+     * *And only for a **subtract** tool.* A concave wedge is **added**, so its cap is a face of the finished
+     * part: overshooting would leave a micron burr standing proud of the body's cap and pulling back a
+     * micron notch, and both are geometry the user did not draw. Flush is also *safe* there, which is why
+     * it is not a compromise: a union of two solids whose caps are coplanar **and point the same way** has
+     * no surface passing through another — the two sheets are the outside of one merged face, each edge of
+     * it still used once each way. The degenerate case is coplanar sheets facing *against* each other,
+     * which is what a difference makes and what the step-off exists to prevent.
+     */
+    private fun endSteps(
+        crease: Crease,
+        choice: BlendChoice,
+        sec: BlendSection,
+    ): Pair<Double, Double> {
+        if (!choice.convex) return 0.0 to 0.0
+        val seg = soleElement(crease) as? Curve3Element.Seg3 ?: return 0.0 to 0.0
+        val run = seg.end - seg.start
+        if (run.length() <= Geom3.WELD_TOL) return 0.0 to 0.0
+        val dir = run.normalized()
+        val delta = min(sec.reach(), crease.length / 2.0) * PROBE_FRACTION
+        if (delta <= Geom3.WELD_TOL) return 0.0 to 0.0
+        return stepBeyond(crease, seg.start - dir * delta) to stepBeyond(crease, seg.end + dir * delta)
+    }
+
+    /** Back into the run where [beyond] is material an inside corner keeps, out past its end otherwise. */
+    private fun stepBeyond(
+        crease: Crease,
+        beyond: Vec3,
+    ): Double = if (facesReaching(crease, beyond) == 1) GROW_MM else -GROW_MM
+
+    /** How many of the crease's two faces still reach [p] — see [endSteps]. */
+    private fun facesReaching(
+        crease: Crease,
+        p: Vec3,
+    ): Int {
+        var count = 0
+        for (face in listOf(crease.face1, crease.face2)) {
+            val plane = face.plane ?: continue
+            val rings = Project3.ringsOf(face.outline)
+            if (rings.isEmpty()) continue
+            if (abs(plane.distanceTo(p)) > ON_BOUNDARY_TOL) continue
+            if (onFace(rings, plane.toLocal(p))) count++
+        }
+        return count
     }
 
     /** [poly] traversed the other way round, keeping its first point first — the same points, one permutation. */
@@ -1186,16 +1320,32 @@ object Blend3 {
         choice: BlendChoice,
         sec: BlendSection,
     ): Pair<Piece?, String?> {
-        val (polys, whyPoly) = sectionPolygons(crease, wedge)
-        if (polys == null) return null to "${crease.edge.name.label}: $whyPoly"
-        val (plain, grown) = polys
-        val distinct = ArrayList<Vec2>(plain.size)
-        for (q in plain) if (distinct.none { (it - q).length() <= Geom3.WELD_TOL }) distinct.add(q)
+        val (section, whySection) = sectionOf(crease, wedge)
+        if (section == null) return null to "${crease.edge.name.label}: $whySection"
+        val grown = section.polygon
+        val distinct = ArrayList<Vec2>(grown.size)
+        for (q in grown) if (distinct.none { (it - q).length() <= Geom3.WELD_TOL }) distinct.add(q)
         val (caps, whyCaps) = Geom3.triangulate(Geom3.TessRegion(distinct, emptyList()))
         if (caps == null) {
             return null to "${crease.edge.name.label}: ${whyCaps ?: "the rounding's section cannot be triangulated"}"
         }
-        return Piece(index, existing, crease, wedge, choice, sec, plain, grown, caps, soleElement(crease) as? Curve3Element.Seg3) to null
+        val (back0, back1) = endSteps(crease, choice, sec)
+        return Piece(
+            index,
+            existing,
+            crease,
+            wedge,
+            choice,
+            sec,
+            grown,
+            section.plain,
+            section.region,
+            section.stepped,
+            caps,
+            soleElement(crease) as? Curve3Element.Seg3,
+            back0,
+            back1,
+        ) to null
     }
 
     /**
@@ -1352,7 +1502,12 @@ object Blend3 {
             pieces: List<Piece>,
             out: Geom3.MeshBuilder,
         ) {
-            val section = pieces[a].grown
+            // **the plain section where the pivot axis runs through it** — about a *sharp* upright the leg
+            // in the other face lies along that upright, so a step-off would lift it a micron off the axis
+            // and the turn would sweep that micron into a disc ([toolMesh]). About a **band** the axis
+            // stands `r_U` away from the section and there is no such point, so the step-off is kept and
+            // the leg does not lie in the face it is tangent to.
+            val section = if (extra.isEmpty()) pieces[a].plain else pieces[a].grown
             for (l in 0 until rings.size - 1) {
                 val lo = section.map { rings[l].at(it) }
                 val hi = section.map { rings[l + 1].at(it) }
@@ -1759,17 +1914,17 @@ object Blend3 {
         val rings = members.map { m -> pieces[m.first].grown.map { m.third.at(it) } }
         if (rings.any { it.size < 5 }) return null
         val tangency = arrayOfNulls<Vec3>(3)
-        val grownTangency = arrayOfNulls<Vec3>(3)
+        val steppedTangency = arrayOfNulls<Vec3>(3)
         val blends = ArrayList<List<Vec3>>(3)
         for (ring in rings) {
             val n = ring.size
-            for ((plain, grown) in listOf(ring[2] to ring[1], ring[n - 2] to ring[n - 1])) {
+            for ((plain, stepped) in listOf(ring[2] to ring[1], ring[n - 2] to ring[n - 1])) {
                 val k = faces.indices.firstOrNull { abs(offPlane(faces[it].plane!!, plain)) <= RING_TOL } ?: return null
-                if (abs(offPlane(faces[k].plane!!, grown) - GROW_MM) > RING_TOL) return null
+                if (abs(offPlane(faces[k].plane!!, stepped) - GROW_MM) > RING_TOL) return null
                 val known = tangency[k]
                 if (known != null && (known - plain).length() > RING_TOL) return null
                 tangency[k] = plain
-                grownTangency[k] = grown
+                steppedTangency[k] = stepped
             }
             blends.add(ring.subList(2, n - 1))
         }
@@ -1789,7 +1944,7 @@ object Blend3 {
             val want = faces[k].plane!!.normal.normalized()
             val cp = rings[onFace[k][0]][0]
             val cq = rings[onFace[k][1]][0]
-            val tk = grownTangency[k]!!
+            val tk = steppedTangency[k]!!
             out.add(facing(grownVertex, cp, tk, want))
             out.add(facing(grownVertex, tk, cq, want))
         }
@@ -1819,7 +1974,17 @@ object Blend3 {
                 is ProfileElement.Seg -> apexPatch(pieces, members, loop)
                 else -> null
             } ?: return null
-        for ((a, b, c) in fill) out.add(facing(a, b, c, (a + b + c) * (1.0 / 3.0) - at))
+        // **the fill is wound against its own surface, not against the vertex** (the probe of GitHub #33).
+        // Asking each triangle to face away from [at] reads the patch one triangle at a time, and at a sharp
+        // enough vertex — a dart's 19° tip — the answer disagrees with the patch's own winding for a few of
+        // them: those come out flipped, the same directed edge is emitted twice, and the tool is refused as
+        // no closed shell. The ball has an exact answer that is the same for every triangle of it: the tool
+        // keeps the ball, so its surface there faces the ball's **centre**. A bevel's apex has no centre and
+        // keeps the reading it always had — three planar triangles, where the vertex is the right reference.
+        for ((a, b, c) in fill) {
+            val g = (a + b + c) * (1.0 / 3.0)
+            out.add(facing(a, b, c, ball?.let { it.first - g } ?: (g - at)))
+        }
         return out to ball
     }
 
@@ -1859,6 +2024,9 @@ object Blend3 {
      * A polar mesh rather than a fan: rings walk out from the patch's own middle to [loop] along great
      * circles, so the last ring **is** the boundary, point for point, and every step's sag is the one
      * [GeomMath.chordSteps] gives a curve of this radius (OP-15 — deterministic, never adaptive).
+     *
+     * The rings are wound by the loop's own order and **nothing re-reads them one triangle at a time** —
+     * see the note on the fill in [vertexPatch], which is where a per-triangle reading went wrong.
      */
     private fun spherePatch(
         centre: Vec3,
@@ -2656,6 +2824,22 @@ object Blend3 {
      * The winding is stated rather than fixed up afterwards. The section is counter-clockwise in `(e1, e2)`
      * and `(e1, e2, u)` is right-handed, so the quads run from the ring nearer the run's start to the one
      * further along it, the far cap keeps the section's own winding and the near cap is reversed.
+     *
+     * **The one ring that is not stepped off is the one standing on a pivot axis** (the probe of GitHub
+     * #33). At an inside corner the ball turns about the upright ([Turn]), and at that corner station the
+     * band's leg in the *other* face **lies along** that upright — the whole leg, both of its ends, not
+     * merely a point of it. Step it a micron off its face and it is a micron off the **axis**, and the turn
+     * sweeps it round as a micron-wide disc whose plane is the very plane the tube's own jog lies in: the
+     * tool folds back over itself there, and the boolean hands the fold on to the body (`MeshCanon.flap`
+     * names it at `z = 20 − r` on a dart's 100° reflex vertex). So such a `Turn` end takes the **plain**
+     * section, its leg back on the axis where the turn leaves it exactly fixed, and the tube tapers to it
+     * over its own run — which is what a *free* end did for three sessions before #33 moved it, so it is a
+     * construction this build already knows works, applied where it is now the one that has to hold.
+     *
+     * Every other ring keeps the step-off, because none of them stands on an axis anything turns about: a
+     * mitre, a ball vertex, a free end — and a turn about a **band** ([Turn.extra], session 81's mixed
+     * pivot), where the axis is that band's own and stands `r_U` clear of the section, so no point of the
+     * section is at radius zero and stepping the legs off costs nothing.
      */
     private fun toolMesh(
         pieces: List<Piece>,
@@ -2667,21 +2851,30 @@ object Blend3 {
         val b = Geom3.MeshBuilder()
         // the corners' own surfaces first, so the tool is one shell before a single tube is drawn
         for (c in corners) if (c.ends.any { it.first in group }) c.emit(pieces, b)
+        // the ends that stand **on** a pivot axis: a turn about a sharp upright, and only that one
+        val pivots = HashSet<Pair<Int, Boolean>>()
+        for (c in corners) if (c is Turn && c.extra.isEmpty()) pivots.addAll(c.ends)
         for (at in group) {
             val piece = pieces[at]
             val seg = piece.seg ?: return null to "${piece.crease.edge.name.label} is not one straight run, so it carries no corner"
             val atStart = rings[at to true]
             val atEnd = rings[at to false]
             val u = (seg.end - seg.start).normalized()
-            val back0 = if ((at to true) in butts) GROW_MM else 0.0
-            val back1 = if ((at to false) in butts) GROW_MM else 0.0
+            // a butting pair keeps its own micron of daylight, and every other free end is stepped by what
+            // lies beyond it ([endSteps]) — the two agree wherever both speak, since a butt *is* an inside
+            // corner, and the pair is kept named because that is where the rule was first written down
+            val back0 = if ((at to true) in butts) GROW_MM else piece.backAtStart
+            val back1 = if ((at to false) in butts) GROW_MM else piece.backAtEnd
             val p0 = atStart ?: Placement(seg.start + u * back0, piece.crease.e1, piece.crease.ref.e2)
             val p1 = atEnd ?: Placement(seg.end - u * back1, piece.crease.e1, piece.crease.ref.e2)
-            // grown at a corner, plain at a free end: the growth tapers along the run ([sectionPolygons])
-            val r0 = (if (atStart != null) piece.grown else piece.section).map { p0.at(it) }
-            val r1 = (if (atEnd != null) piece.grown else piece.section).map { p1.at(it) }
-            for (m in piece.section.indices) {
-                val n = (m + 1) % piece.section.size
+            // stepped off everywhere but on a pivot axis: a tool never shares a face with the body, and
+            // never folds over itself at a turn either ([sectionOf], GitHub #33 and its probe)
+            val s0 = if ((at to true) in pivots) piece.plain else piece.grown
+            val s1 = if ((at to false) in pivots) piece.plain else piece.grown
+            val r0 = s0.map { p0.at(it) }
+            val r1 = s1.map { p1.at(it) }
+            for (m in piece.grown.indices) {
+                val n = (m + 1) % piece.grown.size
                 b.triangle(r0[m], r0[n], r1[n])
                 b.triangle(r0[m], r1[n], r1[m])
             }
@@ -2691,7 +2884,12 @@ object Blend3 {
         val mesh = b.build()
         if (mesh.triangles.isEmpty()) return null to "the rounding's own tool has no triangles"
         if (Geom3.volume(mesh) <= 0.0) return null to "the rounding's own tool encloses no volume"
-        MeshCanon.fault(mesh)?.let { return null to "the rounding's own tool is not a closed shell: $it" }
+        // Closedness, and deliberately **not** [MeshCanon.flap]. The tool is a *union of bands*, and where
+        // one of them pivots about an upright ([Turn]) the section's own tangency stands on the pivot axis
+        // while its stepped-off twin a micron away sweeps a micron-wide disc round it — so the tool overlaps
+        // itself by exactly that micron there, which is a fold in the tool and no fold at all in the body it
+        // cuts. A flap is a statement about a *result* (OP-9), and that is where it is asked ([MeshCanon.fault]).
+        MeshCanon.notClosed(mesh)?.let { return null to "the rounding's own tool is not a closed shell: $it" }
         return mesh to null
     }
 
@@ -2870,8 +3068,13 @@ object Blend3 {
         ): Pair<Solid3?, String?> {
             val lead = pieces[group.firstOrNull { !pieces[it].existing } ?: group.first()]
             val (tool, whyTool) =
-                if (group.size == 1) {
-                    Geom3.sweep(lead.crease.path, lead.crease.e1, SweepProfile.Section(lead.wedge.region), plan = null)
+                if (group.size == 1 && !(lead.seg != null && lead.stepped)) {
+                    // **the two tools that are still one sweep.** A crease that is not a straight run — a
+                    // cap edge's circle, a ring — has no tube to stitch and no free end to step; and a wedge
+                    // with a **round** leg has no step-off in this vocabulary at all. Both are swept exactly
+                    // as they always were, the first with the **grown** section (which is the whole of what
+                    // GitHub #33 asks of a tool that has one) and the second with its own, unmoved.
+                    Geom3.sweep(lead.crease.path, lead.crease.e1, SweepProfile.Section(lead.grownRegion), plan = null)
                 } else {
                     val (mesh, whyMesh) = toolMesh(pieces, group, rings, buttEnds(pieces, group, rings), corners)
                     if (mesh == null) {

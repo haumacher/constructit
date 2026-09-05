@@ -253,7 +253,7 @@ attach e9 e19
                 "the shells the sweep would have emitted",
             )
         val mesh = shells(MeshQuality.FINE)
-        assertManifold(mesh, "the folded tube — watertight, which is exactly why nothing refused")
+        assertManifold(mesh, "the folded tube — watertight, which is exactly why nothing refused", foldsBackOnItself = true)
         assertTrue(Geom3.volume(mesh) > 0.0, "…and positively volumed")
         for (c in cornersOf(path, 10.0)) {
             assertTrue(selfIntersections(mesh, c, 60.0) > 0, "the surface cuts through itself at the corner at $c")
