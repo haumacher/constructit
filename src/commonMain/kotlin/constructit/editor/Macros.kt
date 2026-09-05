@@ -59,13 +59,17 @@ class MacroDef(
     val tool: ToolDef by lazy {
         ToolDef(
             toolId,
-            name,
             ToolCategory.CUSTOM,
             slots = pointInputs.map { SlotKind.POINT },
             // the dimension comes from the wired parameter's own value, so a custom tool's scalar can be
             // typed exactly like a built-in one's (OP-13) without the definition declaring anything extra
             scalars = scalarInputs.map { ScalarSlot(it.name, dimensionOf(it.ref)) },
-            help =
+            // A macro's words are the *document's*, not the message bundle's (OP-29): its name is what the
+            // user called it and its help is composed from the ports it declares, so there is no ARB key to
+            // look up — which is exactly what [ToolDef.labelText] exists for. Slice 2 turns the composed
+            // sentence below into a message with placeholders, like every other composed sentence.
+            labelText = name,
+            helpText =
                 "Custom tool $name: click ${pointInputs.size} point${if (pointInputs.size == 1) "" else "s"}" +
                     " (the first places the instance)" +
                     if (scalarInputs.isEmpty()) "." else ", with ${scalarInputs.joinToString(", ") { it.name }} from the panel.",

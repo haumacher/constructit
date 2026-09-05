@@ -1,12 +1,16 @@
 package constructit
 
+import com.microsoft.playwright.Browser
 import com.microsoft.playwright.BrowserType
 import com.microsoft.playwright.Page
 import com.microsoft.playwright.Playwright
+import com.sun.net.httpserver.HttpServer
 import constructit.editor.Tools
 import constructit.geom.Vec2
+import constructit.l10n.Messages
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.io.File
+import java.net.InetSocketAddress
 import java.nio.file.Paths
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -2710,6 +2714,144 @@ class BrowserE2ETest {
 
             assertTrue(errors.isEmpty(), "the shell threw: $errors")
             browser.close()
+        }
+    }
+
+    /**
+     * **The chrome speaks German** (OP-29), in a real browser and through the real formatter.
+     *
+     * Three things only a browser can answer. That switching the language **re-renders without a reload** —
+     * the static panel, the tool buttons the palette builds, and a plural and a select rendered by
+     * `intl-messageformat` rather than by ICU4J. That the choice is **remembered**, which means
+     * `localStorage`, which means an origin: this scenario is therefore served over HTTP rather than opened
+     * as a `file:` URL, since Chrome denies site data to a file page. And that switching **back** is a
+     * switch back, not a reload in disguise.
+     *
+     * The two formatters are compared here in the only honest way: the expected strings are computed *by
+     * ICU4J*, in this JVM, from the same pattern and the same arguments, and asserted against what FormatJS
+     * put on the page.
+     */
+    @Test
+    fun theChromeSpeaksGerman() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val dist = File("build/dist/js/productionExecutable")
+        assertTrue(File(dist, "index.html").exists(), "run ./gradlew jsBrowserDistribution first")
+        File("build/e2e").mkdirs()
+
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            val name = exchange.requestURI.path.removePrefix("/").ifEmpty { "index.html" }
+            val file = File(dist, name)
+            val bytes = if (file.isFile && file.canonicalPath.startsWith(dist.canonicalPath)) file.readBytes() else ByteArray(0)
+            val type =
+                when (file.extension) {
+                    "html" -> "text/html"
+                    "js" -> "text/javascript"
+                    "wasm" -> "application/wasm"
+                    else -> "application/octet-stream"
+                }
+            exchange.responseHeaders.add("Content-Type", type)
+            exchange.sendResponseHeaders(if (bytes.isEmpty()) 404 else 200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try {
+            Playwright.create().use { pw ->
+                val browser =
+                    pw.chromium().launch(
+                        BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true),
+                    )
+                // the browser asks for German, and the app must not take that as permission to break
+                val page = browser.newContext(Browser.NewContextOptions().setLocale("de-DE")).newPage()
+                val errors = ArrayList<String>()
+                page.onPageError { errors.add(it) }
+                page.setViewportSize(1000, 700)
+                page.navigate("http://127.0.0.1:${server.address.port}/index.html")
+                page.waitForSelector("#canvas")
+
+                fun heading(): String = page.querySelector("#panel-chrome h3").textContent()
+
+                fun toolTip(id: String): String = page.getAttribute("#tool-$id", "title")
+
+                // `navigator.language` is de-DE, which is not a bundled tag — its *language* is
+                assertEquals("de", page.inputValue("#v-lang"), "the browser's own language decides the first load")
+                assertEquals(Messages.uiPanelDrawing("de"), heading())
+                assertTrue(toolTip("filletedge").startsWith(Messages.toolFilletedgeTitle("de")), "got: ${toolTip("filletedge")}")
+
+                // English, on demand — and the palette's buttons follow, though the *set* of tools did not change
+                page.selectOption("#v-lang", "en")
+                assertEquals("Drawing", heading())
+                assertTrue(toolTip("filletedge").startsWith("Fillet edge"), "got: ${toolTip("filletedge")}")
+                page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/50-chrome-en.png")))
+
+                // ...and back to German, which is the switch this slice is about
+                page.selectOption("#v-lang", "de")
+                assertEquals(Messages.uiPanelDrawing("de"), heading())
+                assertEquals(Messages.uiPanelElements("de"), page.querySelector("#panel-elements h3").textContent())
+                assertEquals(Messages.uiSave("de"), page.querySelector("#f-download").textContent())
+                page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/51-chrome-de.png")))
+
+                // **A plural, through `intl-messageformat`** — and the string ICU4J produces for the same
+                // pattern and the same count, computed right here, is what it has to equal.
+                val box = page.querySelector("#canvas").boundingBox()
+                val y = box.y + box.height * 0.5
+                page.click("#tool-point")
+                page.keyboard().down("Alt")
+                page.mouse().click(box.x + box.width * 0.3, y)
+                page.mouse().click(box.x + box.width * 0.6, y)
+                page.keyboard().up("Alt")
+                page.click("#tool-select")
+                page.click("#tree .item")
+                page.click("#g-add")
+                val singular = page.querySelector("#create-dialog .cdtitle").textContent()
+                assertTrue(
+                    singular.endsWith(Messages.uiDialogTitle("", 1, "de")),
+                    "the browser's plural must be ICU4J's; got '$singular', expected it to end with " +
+                        "'${Messages.uiDialogTitle("", 1, "de")}'",
+                )
+                page.click("#cd-cancel")
+                page.mouse().move(box.x + box.width * 0.05, box.y + box.height * 0.95)
+                page.mouse().down()
+                page.mouse().move(box.x + box.width * 0.95, box.y + box.height * 0.05)
+                page.mouse().up()
+                page.click("#g-add")
+                val plural = page.querySelector("#create-dialog .cdtitle").textContent()
+                assertTrue(
+                    plural.endsWith(Messages.uiDialogTitle("", 2, "de")),
+                    "…and its other branch too; got '$plural'",
+                )
+                page.click("#cd-cancel")
+
+                // **A select, through the same engine**: the tree's note about a hidden element
+                page.click("#tree .item")
+                page.click("#s-hide")
+                page.click("#v-hidden")
+                val hidden = page.querySelectorAll("#tree .item").map { it.getAttribute("title") ?: "" }
+                assertTrue(
+                    hidden.any { it == Messages.uiTreeHidden("user", "de") },
+                    "the select's `other` branch, rendered by FormatJS; got $hidden",
+                )
+                page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/52-chrome-de-plural.png")))
+
+                // **Remembered**: a reload comes back German without asking the browser again
+                page.reload()
+                page.waitForSelector("#canvas")
+                assertEquals("de", page.inputValue("#v-lang"), "the language is persisted")
+                assertEquals(Messages.uiPanelDrawing("de"), heading())
+
+                // …and choosing English is remembered just as well, so nothing is one-way
+                page.selectOption("#v-lang", "en")
+                page.reload()
+                page.waitForSelector("#canvas")
+                assertEquals("en", page.inputValue("#v-lang"))
+                assertEquals("Drawing", heading())
+
+                assertTrue(errors.isEmpty(), "the shell threw: $errors")
+                browser.close()
+            }
+        } finally {
+            server.stop(0)
         }
     }
 }

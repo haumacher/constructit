@@ -26,6 +26,8 @@ import constructit.geom.Justification
 import constructit.geom.MeshBool
 import constructit.geom.MeshQuality
 import constructit.geom.Vec2
+import constructit.l10n.L10n
+import constructit.l10n.Messages
 import constructit.units.Dimension
 import constructit.units.Quantity
 import kotlinx.browser.document
@@ -49,7 +51,77 @@ fun main() {
     window.addEventListener("load", { setupApp() })
 }
 
+/**
+ * Where the chosen language is remembered (OP-29). Shell state, never part of the drawing: the file is the
+ * construction and says nothing about who is reading it (OP-18).
+ */
+private const val LOCALE_KEY = "constructit.locale"
+
+/**
+ * The languages the bundle carries, each named **in itself**.
+ *
+ * Endonyms are the one piece of chrome text that is deliberately *not* translated: a picker that renamed
+ * its own options as you switched would strand a reader who cannot read the language they just chose.
+ * A locale with no entry here shows its tag, which is honest and never blank.
+ */
+private val LOCALE_NAMES = mapOf("en" to "English", "de" to "Deutsch", "fr" to "Français")
+
+/** `localStorage` is refused outright in some contexts (a private window, a `file:` page), hence the catch. */
+private fun storedLocale(): String? =
+    try {
+        window.localStorage.getItem(LOCALE_KEY)
+    } catch (e: Throwable) {
+        null
+    }
+
+private fun storeLocale(locale: String) {
+    try {
+        window.localStorage.setItem(LOCALE_KEY, locale)
+    } catch (e: Throwable) {
+        // a browser that will not remember the choice still honours it for this session
+    }
+}
+
+/**
+ * What language to start in: what the reader last chose, else what the browser asks for, else English.
+ *
+ * `Messages.indexOf` is what turns `de-AT` into `de` and anything unknown into English, so this is the one
+ * place the tag from `navigator.language` has to be understood at all.
+ */
+private fun chooseLocale(): String {
+    val stored = storedLocale()
+    if (stored != null && Messages.locales.contains(stored)) return stored
+    return Messages.locales[Messages.indexOf(window.navigator.language)]
+}
+
+/**
+ * Write the message bundle into the page's **static** chrome (OP-29).
+ *
+ * `index.html` carries keys rather than words — `data-i18n` for the text of an element, `data-i18n-title`
+ * and `data-i18n-placeholder` for the two attributes that are read as prose — so the markup states the
+ * structure and the ARB states the words, exactly as the tool table does. Called once at startup and again
+ * whenever the language changes, which is the whole of "switching re-renders the chrome without a reload".
+ */
+private fun applyStaticText() {
+    fun each(
+        attribute: String,
+        write: (HTMLElement, String) -> Unit,
+    ) {
+        val nodes = document.querySelectorAll("[$attribute]")
+        for (i in 0 until nodes.length) {
+            val el = nodes.item(i) as HTMLElement
+            write(el, Messages.text(el.getAttribute(attribute) ?: continue))
+        }
+    }
+    each("data-i18n") { el, text -> el.textContent = text }
+    each("data-i18n-title") { el, text -> el.setAttribute("title", text) }
+    each("data-i18n-placeholder") { el, text -> el.setAttribute("placeholder", text) }
+}
+
 private fun setupApp() {
+    // The language first, before anything is drawn or measured: every label below reads it (OP-29).
+    L10n.locale = chooseLocale()
+    applyStaticText()
     val canvas = document.getElementById("canvas") as HTMLCanvasElement
     val canvas3 = document.getElementById("canvas3") as HTMLCanvasElement
     val ctx = canvas.getContext("2d") as CanvasRenderingContext2D
@@ -363,12 +435,12 @@ private fun setupApp() {
             if (!scene.isEmpty) viewport.frame(scene)
             editor.note(
                 if (scene.isEmpty && !viewport.editing()) {
-                    "Nothing solid yet — trace an Outline (or a Wall), then use Extrude or Revolve."
+                    Messages.msgNothingSolid()
                 } else {
                     viewport.help()
                 },
             )
-            if (!gl.available) editor.note("This browser gave no WebGL context, so the 3D view cannot draw.")
+            if (!gl.available) editor.note(Messages.msgNoWebgl())
         } else {
             editor.note("")
         }
@@ -378,9 +450,8 @@ private fun setupApp() {
     /** What the status line says while the preview is up: what is in it, and what it deliberately is not. */
     fun previewNote(scene: ExportScene): String =
         scene.refusal
-            ?: "Preview: ${scene.nodes.size} solid(s), ${scene.triangleCount} triangles — display only " +
-            "(drag to orbit, wheel to zoom, Space+drag to move, double-click to reframe)" +
-            if (scene.notes.isEmpty()) "" else " · ${scene.notes.joinToString("; ")}"
+            ?: Messages.msgPreviewSummary(scene.nodes.size, scene.triangleCount) +
+            if (scene.notes.isEmpty()) "" else Messages.msgPreviewNotes(scene.notes.joinToString("; "))
 
     /**
      * Show or hide the preview. **The editing views are untouched by its presence**: it is a canvas above
@@ -409,7 +480,7 @@ private fun setupApp() {
                 editor.note(previewNote(scene))
                 console.log("[Preview] ready — ${scene.nodes.size} solid(s), ${scene.triangleCount} triangles")
             } else {
-                editor.note(preview.problem ?: "the preview could not start")
+                editor.note(preview.problem ?: Messages.msgPreviewFailed())
             }
             renderPanel(editor, view3d, viewport)
         }
@@ -565,20 +636,20 @@ private fun setupApp() {
         }
         if (key == "Shift" && !editor.axisLock) {
             editor.axisLock = true
-            editor.note("Axis lock: the drag is restricted to one axis (release Shift to free it)")
+            editor.note(Messages.msgAxislock())
             repaint()
         }
         if (key == " " && !spaceDown) {
             spaceDown = true
             viewport.panMode = true // the same key means the same thing in both views
             e.preventDefault() // Space would otherwise scroll the page
-            editor.note(if (view3d) "Space: drag to move what the view looks at" else "Space: drag to pan (release to resume selecting)")
+            editor.note(if (view3d) Messages.msgSpace3d() else Messages.msgSpace2d())
             repaint()
         }
         if (key == "Alt" && editor.snapEnabled) {
             e.preventDefault() // Alt alone would otherwise reach the browser menu bar
             editor.snapEnabled = false
-            editor.note("Alt: clicks place at the cursor and flattened corners are kept (release to resume)")
+            editor.note(Messages.msgAlt())
             repaint()
         }
         // the camera modifier, while the 3D view is drawing: it only *says* so here — the routing decision is
@@ -589,11 +660,7 @@ private fun setupApp() {
             // reversal that is selecting and moving geometry under SELECT, not only drawing under a tool
             if (viewport.editing()) {
                 editor.note(
-                    if (viewport.drawing()) {
-                        "Ctrl: drag to orbit the view without leaving the tool (release to draw again)"
-                    } else {
-                        "Ctrl: drag to orbit the view (release to select and drag on the plane again)"
-                    },
+                    if (viewport.drawing()) Messages.msgCtrlDrawing() else Messages.msgCtrlSelecting(),
                 )
             }
             repaint()
@@ -838,7 +905,7 @@ private fun setupApp() {
                 if (target == null) {
                     editor.doc.unwireParameter(entry)
                 } else if (!editor.doc.wireParameter(entry, target)) {
-                    editor.note("Can't wire ${entry.name}: type mismatch or would create a cycle")
+                    editor.note(Messages.msgWireRefused(entry.name))
                 }
                 editor.checkpoint()
                 repaint()
@@ -881,7 +948,7 @@ private fun setupApp() {
         }
         val idx = t.getAttribute("data-fidx")?.toIntOrNull() ?: return@addEventListener
         val v = t.value.toDoubleOrNull() ?: return@addEventListener
-        if (!editor.writeSelectionField(idx, v)) editor.note("That value is determined by the construction and can't be set here")
+        if (!editor.writeSelectionField(idx, v)) editor.note(Messages.msgValueDerived())
         repaint()
     })
     // Hovering a name in *built from* / *used by* points the canvas at that element, and clicking it goes
@@ -915,10 +982,10 @@ private fun setupApp() {
         try {
             val fresh = DocumentFormat.load(text)
             editor.replaceDocument(fresh)
-            note("Loaded ${fresh.elements.size} element(s)")
+            note(Messages.msgLoaded(fresh.elements.size))
             ok = true
         } catch (e: Throwable) {
-            note(e.message ?: "could not load that file", error = true)
+            note(e.message ?: Messages.msgLoadFailed(), error = true)
         }
         repaint()
         return ok
@@ -957,7 +1024,7 @@ private fun setupApp() {
     /** The fallback that always works: hand the script to the browser as a download. */
     fun downloadScript(
         text: String,
-        why: String = "",
+        why: (String) -> String = { Messages.msgSaved(it) },
     ) {
         val blob = Blob(arrayOf(text), BlobPropertyBag(type = "text/plain"))
         val url = URL.createObjectURL(blob)
@@ -965,7 +1032,7 @@ private fun setupApp() {
         anchor.download = DocumentName.fileName(docName())
         anchor.click()
         URL.revokeObjectURL(url)
-        note("Saved ${anchor.download}$why")
+        note(why(anchor.download))
     }
 
     /** Write [text] through [handle]; any refusal (a revoked permission, a vanished file) falls back. */
@@ -976,7 +1043,7 @@ private fun setupApp() {
         fun failed() {
             // the handle is no longer good for anything, so stop pretending it is
             fileHandle = null
-            downloadScript(text, " (the file could not be written, so it was downloaded)")
+            downloadScript(text) { Messages.msgSavedDownloaded(it) }
         }
         try {
             val created: dynamic = handle.createWritable()
@@ -990,7 +1057,7 @@ private fun setupApp() {
                                 { _: dynamic ->
                                     // the file the bytes went into names the drawing from now on
                                     setDocName(DocumentName.fromFileName(handle.name as String))
-                                    note("Saved ${DocumentName.fileName(docName())}")
+                                    note(Messages.msgSaved(DocumentName.fileName(docName())))
                                 },
                                 { _: dynamic -> failed() },
                             )
@@ -1010,7 +1077,7 @@ private fun setupApp() {
         val accept: dynamic = js("({})")
         accept["text/plain"] = arrayOf(DocumentName.EXTENSION)
         val type: dynamic = js("({})")
-        type.description = "ConstructIt drawing"
+        type.description = Messages.msgCitDescription()
         type.accept = accept
         return arrayOf(type)
     }
@@ -1025,7 +1092,7 @@ private fun setupApp() {
         val outcome = DocumentFormat.saveFile(editor.doc)
         val text =
             outcome.text ?: run {
-                note(outcome.refusal ?: "Not saved", error = true)
+                note(outcome.refusal ?: Messages.msgNotSaved(), error = true)
                 return
             }
         val handle = fileHandle
@@ -1055,11 +1122,15 @@ private fun setupApp() {
                     // A *cancelled* picker is not a failure, and downloading behind the user's back would be
                     // the wrong answer to "not that name". Anything else — a refused prompt, no gesture —
                     // is the API being unavailable in practice, so it falls back.
-                    if ((e.name as? String) == "AbortError") note("Save cancelled") else downloadScript(text, " (the file picker was refused)")
+                    if ((e.name as? String) == "AbortError") {
+                        note(Messages.msgSaveCancelled())
+                    } else {
+                        downloadScript(text) { Messages.msgSavedRefused(it) }
+                    }
                 },
             )
         } catch (e: Throwable) {
-            downloadScript(text, " (the file picker was refused)")
+            downloadScript(text) { Messages.msgSavedRefused(it) }
         }
     }
 
@@ -1086,13 +1157,13 @@ private fun setupApp() {
                                         setDocName(DocumentName.fromFileName(h.name as String))
                                     }
                                 },
-                                { _: dynamic -> note("could not read that file", error = true) },
+                                { _: dynamic -> note(Messages.msgReadFailed(), error = true) },
                             )
                         },
-                        { _: dynamic -> note("could not read that file", error = true) },
+                        { _: dynamic -> note(Messages.msgReadFailed(), error = true) },
                     )
                 },
-                { e: dynamic -> if ((e.name as? String) == "AbortError") note("Open cancelled") else fallback() },
+                { e: dynamic -> if ((e.name as? String) == "AbortError") note(Messages.msgOpenCancelled()) else fallback() },
             )
         } catch (e: Throwable) {
             return false
@@ -1145,12 +1216,12 @@ private fun setupApp() {
         val copied = DocumentFormat.saveFile(editor.doc)
         val text = copied.text
         if (text == null) {
-            note(copied.refusal ?: "Not copied", error = true)
+            note(copied.refusal ?: Messages.msgNotCopied(), error = true)
             return@addEventListener
         }
         window.navigator.clipboard.writeText(text).then(
-            { note("Copied ${text.lines().size - 1} step(s) to the clipboard") },
-            { note("Clipboard refused; use Save instead", error = true) },
+            { note(Messages.msgCopied(text.lines().size - 1)) },
+            { note(Messages.msgClipboardRefused(), error = true) },
         )
     })
 
@@ -1211,7 +1282,7 @@ private fun setupApp() {
                 note(result.message, error = !result.ok)
                 repaint()
             }
-            reader.onerror = { _ -> note("could not read that file", error = true) }
+            reader.onerror = { _ -> note(Messages.msgReadFailed(), error = true) }
             reader.readAsArrayBuffer(file)
             // so picking the same file twice in a row fires `change` the second time too
             importPicker.value = ""
@@ -1255,6 +1326,24 @@ private fun setupApp() {
     (document.getElementById("measure-list") as HTMLElement).addEventListener("click", {
         val row = (it.target as? HTMLElement)?.closest(".mrow") ?: return@addEventListener
         editor.clickScalar(editor.doc.scalars.firstOrNull { s -> s.id == row.getAttribute("data-sid") })
+        repaint()
+    })
+
+    // The language picker (OP-29). Switching rewrites the static chrome, drops the palette (its buttons
+    // carry the tool names) and repaints; nothing reloads, and nothing about the drawing changes — the file
+    // is locale-neutral, so the very same construction is on the canvas a frame later.
+    val langSelect = document.getElementById("v-lang") as HTMLSelectElement
+    langSelect.innerHTML =
+        Messages.locales.joinToString("") { "<option value=\"$it\">${LOCALE_NAMES[it] ?: it}</option>" }
+    langSelect.value = L10n.locale
+    langSelect.addEventListener("change", {
+        L10n.locale = langSelect.value
+        storeLocale(L10n.locale)
+        applyStaticText()
+        // the palette is rebuilt only when the *set* of tools changes, and the set did not — the words did
+        paletteShows = null
+        // a standing note was composed in the language before last, so it goes rather than lingering
+        editor.note("")
         repaint()
     })
 
@@ -1306,19 +1395,21 @@ private fun buildPalette(editor: Editor) {
         key: Char?,
         active: Boolean = false,
     ): String {
-        val hint = (if (help.isEmpty()) label else "$label — $help") + if (key == null) "" else " (shortcut $key)"
+        val hint =
+            (if (help.isEmpty()) label else Messages.uiPaletteTooltip(label, help)) +
+                if (key == null) "" else Messages.uiPaletteShortcut(key.toString())
         val cls = "tool" + (if (active) " active" else "") + if (Tools.iconOf(id) != null) " icon" else ""
         val body = Tools.iconOf(id)?.let { Icons.wrap(it) } ?: label
         return "<button class=\"$cls\" id=\"tool-$id\" data-tool=\"$id\" title=\"$hint\">$body${keyTag(key)}</button>"
     }
     sb.append("<div class=\"icons\">")
-    sb.append(button(Tools.SELECT, "Select / Drag", "Drag a point to reshape the construction", Tools.SELECT_KEY, active = true))
+    sb.append(button(Tools.SELECT, Tools.SELECT_LABEL, Tools.SELECT_HELP, Tools.SELECT_KEY, active = true))
     sb.append("</div>")
     for (cat in constructit.editor.ToolCategory.values()) {
         val inCat = tools.filter { it.category == cat }
         // the custom category exists only once the document defines a macro
         if (inCat.isEmpty()) continue
-        sb.append("<div class=\"cat\">${cat.name.lowercase()}</div>")
+        sb.append("<div class=\"cat\">${Messages.text("category." + cat.name.lowercase())}</div>")
         // icons first, wrapped into a grid; then whatever has no glyph, as full-width text rows. The order
         // within each half is the table's, so a tool never moves about between builds.
         val withIcon = inCat.filter { it.icon != null }
@@ -1351,7 +1442,7 @@ private fun renderCreateDialog(editor: Editor) {
     val rows =
         d.candidates.withIndex().joinToString("") { (i, c) ->
             val checked = if (c.checked) " checked" else ""
-            val what = if (c.isPoint) "point" else "parameter"
+            val what = if (c.isPoint) Messages.uiDialogPoint() else Messages.uiDialogParameter()
             "<label class=\"cdrow\"><input type=\"checkbox\" data-cidx=\"$i\"$checked>" +
                 "<span>${c.label}</span><span class=\"tports\">$what</span></label>"
         }
@@ -1376,13 +1467,14 @@ private fun renderCreateDialog(editor: Editor) {
                 "<span>${d.closureLabel}</span><span class=\"tports\">${d.closureNote}</span></label>"
         }
     host.innerHTML =
-        "<div class=\"cdtitle\">${d.title} — ${d.members.size} element(s)</div>" +
+        "<div class=\"cdtitle\">${Messages.uiDialogTitle(d.title, d.members.size)}</div>" +
         "<div class=\"cdhelp\">${d.help}</div>" +
-        "<input id=\"cd-name\" type=\"text\" placeholder=\"name\" value=\"${d.name}\">" +
+        "<input id=\"cd-name\" type=\"text\" placeholder=\"${attr(Messages.uiDialogName())}\" value=\"${d.name}\">" +
         framed +
         closure +
         rows +
-        "<div class=\"cdbuttons\"><button id=\"cd-ok\">Create</button><button id=\"cd-cancel\">Cancel</button></div>"
+        "<div class=\"cdbuttons\"><button id=\"cd-ok\">${Messages.uiDialogCreate()}</button>" +
+        "<button id=\"cd-cancel\">${Messages.uiDialogCancel()}</button></div>"
 }
 
 private fun renderPanel(
@@ -1428,8 +1520,8 @@ private fun renderPanel(
     (document.getElementById("t-restamp") as org.w3c.dom.HTMLButtonElement).disabled = pattern == null && ride == null
     (document.getElementById("t-pattern") as HTMLElement).textContent =
         when {
-            ride != null -> "${ride.label} on pattern ${ride.pattern.name}: ${ride.count} each, ${ride.fanTotal} copies"
-            pattern != null -> "Pattern ${pattern.name}: ${pattern.count} instances, ${pattern.gestures.size} gesture(s) riding it"
+            ride != null -> Messages.uiPatternRide(ride.label, ride.pattern.name, ride.count, ride.fanTotal)
+            pattern != null -> Messages.uiPatternSelf(pattern.name, pattern.count, pattern.gestures.size)
             else -> ""
         }
 
@@ -1459,14 +1551,14 @@ private fun renderPanel(
             // an opening's jamb (OP-21) is a selection that owns no element, so it is asked about separately —
             // its fields are the interval's own parameters
             if (editor.selection == null && editor.selectedJamb == null) {
-                "<div class=\"hint\">Click a corner, a leg or an opening's jamb to read and set its values.</div>"
+                "<div class=\"hint\">${Messages.uiInspectorEmpty()}</div>"
             } else if (editor.selectionCount > 1 && fields.isEmpty()) {
                 // a *placed* group is the exception: several elements are selected, but they have one handle
                 // between them — the frame (OP-16 step 2) — so its fields are shown rather than nothing
                 // fields address one handle (OP-13), so a multi-selection shows none — but it is what
                 // delete, hide and Group act on, hence the count
                 "<div class=\"selname\">${editor.selectionLabel()}</div>" +
-                    "<div class=\"hint\">Delete, Hide and Group act on all of them. Click one element for its values.</div>"
+                    "<div class=\"hint\">${Messages.uiInspectorMany()}</div>"
             } else {
                 "<div class=\"selname\">${editor.selectionLabel()}</div>" +
                     invalidRow(editor) +
@@ -1482,7 +1574,7 @@ private fun renderPanel(
                             "<span class=\"funit\">${unitLabel(f.dim)}</span>" +
                             "</div>"
                     } +
-                    (if (fields.isEmpty()) "<div class=\"hint\">No editable values — this element is fully derived.</div>" else "") +
+                    (if (fields.isEmpty()) "<div class=\"hint\">${Messages.uiInspectorDerived()}</div>" else "") +
                     dependencyRows(editor)
             }
     }
@@ -1497,16 +1589,16 @@ private fun renderPanel(
                 // the name is editable exactly where the file can carry it (OP-16 × OP-7), as a parameter's is
                 val name =
                     if (editor.doc.canRenameGroup(g)) {
-                        "<input class=\"gname\" data-gid=\"${g.id}\" value=\"${g.name}\" title=\"Rename — Enter to commit\">"
+                        "<input class=\"gname\" data-gid=\"${g.id}\" value=\"${g.name}\" title=\"${attr(Messages.uiRenameTitle())}\">"
                     } else {
                         "<span class=\"gname\">${g.name}</span>"
                     }
                 "<div class=\"grow\" data-gid=\"${g.id}\">" +
                     name +
                     "<span class=\"gcount\">${editor.doc.groupMembers(g).size}</span>" +
-                    "<button class=\"gplace\" title=\"${if (g.placed) "Unplace — its points become free again where they are" else "Place — give it a frame; dragging then moves the whole group"}\">${if (g.placed) "⊗" else "⌖"}</button>" +
-                    "<button class=\"gvis\" title=\"Hide or show every member\">${if (editor.isGroupVisible(g)) "◉" else "○"}</button>" +
-                    "<button class=\"gdrop\" title=\"Dissolve the group — its elements stay\">×</button>" +
+                    "<button class=\"gplace\" title=\"${attr(if (g.placed) Messages.uiGroupUnplaceTitle() else Messages.uiGroupPlaceTitle())}\">${if (g.placed) "⊗" else "⌖"}</button>" +
+                    "<button class=\"gvis\" title=\"${attr(Messages.uiGroupVisibilityTitle())}\">${if (editor.isGroupVisible(g)) "◉" else "○"}</button>" +
+                    "<button class=\"gdrop\" title=\"${attr(Messages.uiGroupDissolveTitle())}\">×</button>" +
                     "</div>"
             }
     }
@@ -1515,14 +1607,18 @@ private fun renderPanel(
     val mlistTools = document.getElementById("macros-list") as HTMLElement
     mlistTools.innerHTML =
         editor.doc.macros.joinToString("") { m ->
+            val points = Messages.uiMacroPorts(m.pointInputs.size)
             val ports =
-                "${m.pointInputs.size} pt" +
-                    if (m.scalarInputs.isEmpty()) "" else " + ${m.scalarInputs.joinToString(", ") { it.name }}"
+                if (m.scalarInputs.isEmpty()) {
+                    points
+                } else {
+                    Messages.uiMacroPortsScalars(points, m.scalarInputs.joinToString(", ") { it.name })
+                }
             val instances = editor.doc.instancesOf(m).size
-            "<div class=\"trow\" data-mid=\"${m.id}\" title=\"Editing the original updates all $instances instance(s)\">" +
+            "<div class=\"trow\" data-mid=\"${m.id}\" title=\"${attr(Messages.uiMacroTitle(instances))}\">" +
                 "<span class=\"tname\">${m.name}</span>" +
                 "<span class=\"tports\">$ports · $instances×</span>" +
-                "<button class=\"tdrop\" title=\"Retire this tool — the construction it was made from stays\">×</button>" +
+                "<button class=\"tdrop\" title=\"${attr(Messages.uiMacroRetireTitle())}\">×</button>" +
                 "</div>"
         }
 
@@ -1542,15 +1638,13 @@ private fun renderPanel(
         lawRows.innerHTML =
             editor.sectionFamilyRows.joinToString("") { r ->
                 val hint =
-                    if (r.isTwist) {
-                        "The run&#39;s own turn as a formula over t — 15deg * t is a blade&#39;s wash. Blank leaves the typed twist spread evenly along the run."
-                    } else {
-                        "A formula over t for ${r.name}: the section is re-read with this value at every station, so the outline itself varies. Blank leaves ${r.name} constant."
-                    }
-                "<div class=\"flrow\" title=\"$hint\">" +
+                    if (r.isTwist) Messages.uiFamilylawTwistTitle() else Messages.uiFamilylawTitle(r.name)
+                val placeholder =
+                    if (r.isTwist) Messages.uiFamilylawTwistPlaceholder() else Messages.uiFamilylawPlaceholder()
+                "<div class=\"flrow\" title=\"${attr(hint)}\">" +
                     "<span class=\"flname\">${r.name}(t)</span>" +
-                    "<input data-fl=\"${r.name}\" value=\"${r.text}\" placeholder=\"${if (r.isTwist) "15deg * t" else "constant"}\">" +
-                    "<button data-fl=\"${r.name}\" title=\"State this law: on the selected swept body, or armed for the next Sweep. Blank takes it away.\">Apply</button>" +
+                    "<input data-fl=\"${r.name}\" value=\"${r.text}\" placeholder=\"${attr(placeholder)}\">" +
+                    "<button data-fl=\"${r.name}\" title=\"${attr(Messages.uiFamilylawApplyTitle())}\">${Messages.uiApply()}</button>" +
                     "</div>"
             }
     }
@@ -1567,7 +1661,7 @@ private fun renderPanel(
                 val q = ev.scalar(s.ref)
                 val boundId = editor.doc.boundEntry(s)?.id ?: ""
                 // wire options: other scalars of the same dimension
-                val opts = StringBuilder("<option value=\"\">free</option>")
+                val opts = StringBuilder("<option value=\"\">${Messages.uiParamFree()}</option>")
                 for (t in editor.doc.scalars) {
                     if (t === s) continue
                     val td = (ev.eval(t.ref.node) as? constructit.core.EvalResult.Ok)?.let { (it.value as? constructit.core.ScalarValue)?.q?.dim }
@@ -1584,9 +1678,9 @@ private fun renderPanel(
                 // the name is editable exactly where the file can carry it (OP-7); the others say why not
                 val name =
                     if (editor.doc.canRenameParameter(s)) {
-                        "<input class=\"pname\" data-sid=\"${s.id}\" value=\"${s.name}\" title=\"Rename — Enter to commit\">"
+                        "<input class=\"pname\" data-sid=\"${s.id}\" value=\"${s.name}\" title=\"${attr(Messages.uiRenameTitle())}\">"
                     } else {
-                        "<span class=\"pname\" title=\"Named by the step that created it, so it cannot be renamed\">${s.name}</span>"
+                        "<span class=\"pname\" title=\"${attr(Messages.uiParamDerivedTitle())}\">${s.name}</span>"
                     }
                 "<div class=\"prow$active\" data-sid=\"${s.id}\">" +
                     name +
@@ -1594,9 +1688,8 @@ private fun renderPanel(
                     // every tick is a live write (OP-13 — typing and nudging are the same operation)
                     "<input class=\"pval\" type=\"number\" step=\"${stepFor(q.dim)}\" data-sid=\"${s.id}\" value=\"${displayValue(q)}\"$disabled>" +
                     "<span class=\"punit\">${unitLabel(q.dim)}</span>" +
-                    "<input class=\"pexpr\" data-sid=\"${s.id}\" value=\"$formula\" placeholder=\"= formula\"" +
-                    " title=\"A formula over the other values (d/2 + 1mm, sin(a)*r) and over a named point's " +
-                    "coordinates (P.x/2) — blank frees it again\"" +
+                    "<input class=\"pexpr\" data-sid=\"${s.id}\" value=\"$formula\" placeholder=\"${attr(Messages.uiParamFormula())}\"" +
+                    " title=\"${attr(Messages.uiParamFormulaTitle())}\"" +
                     (if (wired) " disabled" else "") + ">" +
                     "<select class=\"pbind\" data-sid=\"${s.id}\"${if (formula.isNotEmpty()) " disabled" else ""}>$opts</select>" +
                     "</div>"
@@ -1639,16 +1732,16 @@ private fun renderPanel(
             val why =
                 if (!gone) {
                     null
-                } else if (editor.doc.hiddenByConstruction(it)) {
-                    "hidden by the construction (Show leaves it hidden)"
                 } else {
-                    "hidden — select it and press Show to bring it back"
+                    // one message with a `select`, not two keys: which of the two reasons applies is part
+                    // of the sentence, and a language that says it differently says it in one place (OP-29)
+                    Messages.uiTreeHidden(if (editor.doc.hiddenByConstruction(it)) "construction" else "user")
                 }
             val flag =
                 (if (bad == null) "" else "<span class=\"flag\" title=\"${attr(bad.reason)}\">⚠</span>") +
                     (if (why == null) "" else "<span class=\"flag\" title=\"${attr(why)}\">○</span>")
             val title =
-                listOfNotNull(bad?.let { b -> "can't be built right now: ${b.reason}" }, why).joinToString("; ")
+                listOfNotNull(bad?.let { b -> Messages.uiTreeInvalid(b.reason) }, why).joinToString("; ")
             "<div class=\"item$active${if (bad == null) "" else " invalid"}${if (gone) " gone" else ""}\" data-eid=\"${it.id}\"" +
                 (if (title.isEmpty()) "" else " title=\"${attr(title)}\"") +
                 ">$flag${it.kind.name.lowercase()}$where<span class=\"eid\">${editor.doc.displayName(it)}</span></div>"
@@ -1669,7 +1762,7 @@ private fun attr(text: String): String =
 private fun invalidRow(editor: Editor): String {
     val el = editor.selection?.takeIf { editor.selectionCount == 1 } ?: return ""
     val bad = editor.invalidElements.firstOrNull { it.element === el } ?: return ""
-    return "<div class=\"warn\">can't be built right now: ${attr(bad.reason)}</div>"
+    return "<div class=\"warn\">${attr(Messages.uiInspectorInvalid(bad.reason))}</div>"
 }
 
 /**
@@ -1680,10 +1773,9 @@ private fun elementNameRow(editor: Editor): String {
     val el = editor.selection?.takeIf { editor.selectionCount == 1 } ?: return ""
     if (!editor.doc.canNameElement(el)) return ""
     val given = editor.doc.userNameOf(el) ?: ""
-    return "<div class=\"frow\"><span class=\"flabel\">name</span>" +
+    return "<div class=\"frow\"><span class=\"flabel\">${Messages.uiInspectorName()}</span>" +
         "<input id=\"insp-name\" class=\"fname\" value=\"$given\" placeholder=\"${editor.doc.nameOf(el)}\" " +
-        "title=\"A name of your own for this element. The script name stays what the file and every message call it; " +
-        "clear the field to drop the name.\"></div>"
+        "title=\"${attr(Messages.uiInspectorNameTitle())}\"></div>"
 }
 
 /**
@@ -1698,14 +1790,15 @@ private fun materialRow(editor: Editor): String {
     val el = editor.selection?.takeIf { editor.selectionCount == 1 } ?: return ""
     if (!editor.doc.canSetMaterial(el)) return ""
     val m = editor.doc.materialOf(el)
-    val assigned = if (editor.doc.assignedMaterial(el) == null) " (default)" else ""
-    return "<div class=\"frow\"><span class=\"flabel\">material$assigned</span>" +
+    val label = Messages.uiInspectorMaterial()
+    val shown = if (editor.doc.assignedMaterial(el) == null) Messages.uiInspectorMaterialDefault(label) else label
+    return "<div class=\"frow\"><span class=\"flabel\">$shown</span>" +
         "<input id=\"insp-color\" class=\"fcolor\" type=\"color\" value=\"${m.color}\" " +
-        "title=\"Base colour. What an exported GLB and the realistic preview both render — one material, two consumers.\">" +
+        "title=\"${attr(Messages.uiInspectorColorTitle())}\">" +
         "<input id=\"insp-rough\" class=\"fmat\" type=\"number\" min=\"0\" max=\"1\" step=\"0.05\" value=\"${Format.num(m.roughness)}\" " +
-        "title=\"Roughness: 0 is mirror-smooth, 1 is fully diffuse.\">" +
+        "title=\"${attr(Messages.uiInspectorRoughnessTitle())}\">" +
         "<input id=\"insp-metal\" class=\"fmat\" type=\"number\" min=\"0\" max=\"1\" step=\"0.05\" value=\"${Format.num(m.metallic)}\" " +
-        "title=\"Metalness: 0 is a dielectric (plastic, wood), 1 is bare metal.\">" +
+        "title=\"${attr(Messages.uiInspectorMetalnessTitle())}\">" +
         "</div>"
 }
 
@@ -1731,14 +1824,14 @@ private fun dependencyRows(editor: Editor): String {
         if (inputs.isEmpty()) {
             ""
         } else {
-            "<div class=\"drow\"><span class=\"dlabel\">built from</span>" +
+            "<div class=\"drow\"><span class=\"dlabel\">${Messages.uiInspectorBuiltfrom()}</span>" +
                 inputs.joinToString("") { chip(it.element, it.role) } + "</div>"
         }
     val by =
         if (dependents.isEmpty()) {
             ""
         } else {
-            "<div class=\"drow used\"><span class=\"dlabel\">used by</span>" +
+            "<div class=\"drow used\"><span class=\"dlabel\">${Messages.uiInspectorUsedby()}</span>" +
                 dependents.joinToString("") { chip(it, null) } + "</div>"
         }
     return from + by
