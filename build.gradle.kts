@@ -1,4 +1,4 @@
-import constructit.build.GenerateMessagesTask
+import constructit.gradle.GenerateMessagesTask
 
 plugins {
     kotlin("multiplatform") version "1.9.24"

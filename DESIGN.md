@@ -14286,6 +14286,30 @@ the composition table is driven generically as well as by its own test.
   named and each of the sixteen is now recorded at its own assertion, which is *recorded, not discovered*
   applied to a finding nobody asked for.
 
+- **Turn 75 — languages, slice 1: the words leave the code** (OP-29; session 81). The mechanism the session-81 design
+  asked for, delivered against the chrome: `l10n/app_en.arb` as the source of truth, a `buildSrc` task
+  compiling every bundle into typed Kotlin accessors, ICU4J and `intl-messageformat` as the two
+  `formatMessage` actuals, and a language picker in the top bar that re-renders without a reload and is
+  remembered in `localStorage`. What is worth the entry is not the mechanism, which the design had already
+  settled, but the three ways contact with real tools corrected it. **`#` inside a plural does not survive
+  translation** — the pipeline rewrites it as `{#}`, which ICU refuses — so every plural here is written with
+  the explicit `{name}` form. **A translator will rename a placeholder**: DeepL turned `{reason}` into
+  `{Grund}` and `{name}` into `{nom}`, a message no formatter can bind, and the generator now fails the build
+  on it rather than leaving it to a test. And **"a third language is one line" turned out to be a claim about
+  the plugin rather than about the design**: because `x-translated` stamps a *source resource* and not a
+  (resource, language) pair, adding French to `targetLangs` translated nothing at all and billed nothing;
+  with the stamps stripped it arrived complete, German was reused verbatim, and the chrome switched to French
+  with no code change — so the design's claim holds and the plugin's bookkeeping is what needs the fix. The
+  German bundle took a real human pass: 85 corrections, of which three were *broken* (the renamed
+  placeholders), about twenty were terms of art (`Verrundung abrunden` for *Fillet edge* — the glossary
+  turning a verb into a noun and DeepL then adding a verb of its own; `kostenlos` for *free*;
+  `Bemaßungskonstruktion` for *Dim construction*, which is to fade and not to dimension), and the rest were
+  one-word-per-concept sweeps where DeepL, consistent inside a request and free between them, had rendered
+  *centre*, *solid* and *sphere locus* three ways each. That last is the argument for the glossary and also
+  its limit: a glossary pins a lemma, and a lemma pinned across a verb and a noun is how *Fillet edge* became
+  *round off the fillet*.
+
+
 - **Turn 74 — the flap becomes the gate** (GitHub #33's by-product; session 81). Turn 73 left the refusal cut
   and named: sixteen bodies the build made then folded back on themselves, in four families, so *a flap is a
   fault* shipped as a test-side check with twelve records asserting that each fold was **still there**. This
@@ -15746,6 +15770,89 @@ if not, added to it. Locale is chosen from the browser's language, switchable in
 switch — applied to the chrome: tool rows, panels, help. (2) The status notes and refusal reasons, area by area,
 as messages-as-values. (3) Number and unit formatting in the UI. (4) The glossary and the review loop, with
 German as the first target and the mechanism proven on a third language.
+
+### Implementation status (as built — **slice 1: the mechanism, applied to the chrome**, session 81)
+
+Slice 1 is delivered whole and the chrome speaks two languages. What follows is the shape it actually took,
+the three places the design's own sentences had to be corrected by contact with the tools, and what is
+deliberately still English.
+
+**The words left the code.** `Tools.kt` no longer carries a single English word. Its 134 `ToolDef` rows lost
+their `label`, `help =` and `slotNames =` arguments outright; `ToolDef.label`, `.help` and `.slotNames` are
+now **derived** properties that look their tool up by **id** — `tool.<id>.title`, `tool.<id>.help`,
+`tool.<id>.slot.<n>` — so the table states the *structure* of a tool and the ARB states its *words*. That is
+the same split OP-21 makes between structure and content, one layer up, and it is what makes the data-driven
+registry pay a second time: adding a tool is still one row, and the row now has nothing to translate. The
+escape hatch is one constructor parameter, `labelText`/`helpText`, used by exactly one caller — a document's
+own macro (OP-6), whose name is the *user's* and whose help is composed from the ports it declares, so there
+is no key to look up. `index.html` went the same way: it states `data-i18n`, `data-i18n-title` and
+`data-i18n-placeholder` and carries no prose at all, and `Main.kt`'s `applyStaticText()` fills it in — once
+at startup, again on every switch, which is the whole of "re-renders without a reload".
+
+**A test is what keeps it true.** `ChromeBundleTest` reads the three files the slice owns, lexes their string
+literals (Kotlin block comments *nest*, which this repository's KDoc exercises) and fails on anything that
+reads as an English sentence. Two exemptions, both by rule rather than by list: a **scalar slot's name** is
+whitelisted by asking `Tools.all` itself, because that word becomes the *name of a parameter in the file* and
+is therefore format, never UI (OP-18) — and a handful of exact CSS/JS/markup fragments, listed with their
+reason. The value of the test is not today's coverage but tomorrow's: the next tool, the next button.
+
+**The generator, and where it lives.** `buildSrc/` — one task class, `:generateMessages`, no plugin id and no
+publication, which is what a *build's own code* looks like. It reads `l10n/app_en.arb` and every
+`app_<lang>.arb` beside it and emits one `constructit.l10n.Messages` object: a `patterns` table of
+`key → Array<String?>` with English always in slot 0, one typed function per key whose parameters are that
+key's declared placeholders, and a `locale` parameter defaulting to `L10n.locale`. Keys are emitted **sorted**
+so the same bundles give byte-identical Kotlin however the JSON is ordered, and the table is filled in chunks
+of sixty because the JVM caps a method at 64 KB. The generated sources are wired into `commonMain` through a
+task provider, so an ARB edit recompiles, and they are **not** committed.
+
+**Placeholder order is read off the message, not off the JSON.** The ARB's `placeholders` map has no order a
+reader must preserve, and Groovy's `JsonSlurper` does not preserve the one the file happens to show. So the
+generated signature follows the order the **English pattern first mentions** each name: `"{title} — {count,
+plural, …}"` gives `uiDialogTitle(title, count)`. Deterministic, and the order a reader would guess.
+
+**Three corrections the tools forced.**
+
+1. **`#` may not be used inside a plural.** The design assumed ICU as written; the translation pipeline
+   rewrites `#` as `{#}`, which is not ICU at all and which ICU4J refuses. Every plural in this repository is
+   therefore written with the explicit `{name}` form, which is the same message and survives a round trip
+   through a translator. Recorded in CLAUDE.md as a rule, because the next plural will be written by someone
+   who has not read this note.
+2. **A translation may rename a placeholder, and the build must refuse it.** DeepL translated `{reason}` into
+   `{Grund}` and `{name}` into `{nom}` — the *hole*, not the words around it — which no formatter can bind
+   and which would have rendered `{Grund}` at the user. `:generateMessages` now fails on it, soundly (it looks
+   only for the names the English message declares, so text inside a plural branch can never be mistaken for
+   an argument), and `MessageBundleTest` asserts the reverse direction with ICU4J's own `MessagePattern`. A
+   defect only a test catches is a defect that reaches a branch nobody ran tests on.
+3. **"A third language is one line" is false today, and the reason is in the plugin.** `x-translated` is a
+   checksum of the *source resource*, not of the pair (resource, target language), so once the English bundle
+   is stamped a **newly added** target language is considered already done: adding `'fr'` to `targetLangs`
+   produced `{"@@locale": "fr"}` and billed nothing. The mechanism above is genuinely one line — with the
+   stamps stripped from the source, French arrived complete, German was reused verbatim (hand review and all),
+   and the chrome switched to it with no code change whatever: `Messages.locales` became `[en, de, fr]`, the
+   picker grew an option, plurals and selects read correctly in French. It is the *plugin's* bookkeeping that
+   needs the extra step. Recorded for that project's own tracker; not fixed here.
+
+**What is deliberately still English**, stated so it is not looked for: everything slice 2 owns. `Editor`'s
+status hints, `Document`'s 249 notes, the refusal reasons in `geom/` and the `EvalResult.Invalid` texts, the
+`CreateDialog`'s title and help, the words `Handle` gives a field, and the element-kind nouns the census
+prints — about 1200 composed sentences. A German session therefore shows a **German chrome around English
+prose**, which is what a slice looks like from inside. Two smaller ones, each for a reason rather than for
+lack of time: a **scalar slot's name** stays locale-neutral because it is a file identifier (above), and the
+**units** `mm` and `°` stay as they are because number and unit formatting is slice 3.
+
+**The file stays locale-neutral, and it is asserted.** `MessageBundleTest.theFileSaysTheSameThingInEveryLanguage`
+builds two drawings, saves each under `en` and under `de`, and requires the two scripts to be byte-identical
+— then round-trips the German one. Nothing in `DocumentFormat` changed, and this is what says so out loud.
+
+**Cost, measured.** The English bundle is 668 keys and 62 KB of text. German cost 62,165 billed DeepL
+characters in 1 m 26 s, over 189 requests — one per *distinct description*, which is how the plugin batches,
+and the reason the title, help and slot names of one tool deliberately share one description that names that
+tool. The production bundle grew **44.1 KB gzipped** (`constructit.js` +45.5 KB, `index.html` −1.4 KB, since
+its prose moved into the bundle), against a budget of 60 KB: that is FormatJS's engine plus one whole extra
+language. A **third** language would have taken it to +73.2 KB, over the budget — and French, unlike German,
+has had no human pass. Both reasons say the same thing, so `app_fr.arb` is not committed; the proof it was
+run for is recorded above.
+
 
 ## Open work queue (crash-safe snapshot; ordered)
 
@@ -19510,6 +19617,22 @@ its own **warp** (the rule `Geom3.sweep` already follows) would make both turns 
 what a ruled loft *means* rather than a defect fix.
 
 **Queued in session 81 — languages (OP-29), four slices, behind the issue tracker.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, and the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge. See *Languages (OP-29)*.
+
+**Slice 1 of the languages retired in session 81 — the mechanism, and the chrome.** The ARB, the generator,
+the two `format` actuals and the locale switch are built, and the whole chrome speaks them: 134 tool rows,
+their help and slot names, the ten category headings, the generic slot words, and every label, button,
+placeholder and tooltip of `index.html` and `Main.kt` — 668 keys, English and German, with a
+`ChromeBundleTest` that fails the build on an English sentence left behind in any of the three files. What
+remains of OP-29 is unchanged in shape and is what the queue still holds: **(2)** the ~1200 composed status
+notes and refusal reasons as messages-as-values, which is the load-bearing refactor and the reason a German
+session today reads as a German chrome around English prose; **(3)** number and unit formatting; **(4)** the
+review loop, which slice 1 has now walked once and left two findings for the plugin's own tracker — a target
+language added after the source is stamped translates nothing, and the ARB `description` doubling as the
+DeepL *context* means per-key documentation costs one request per key. It leaves one thing parked, stated
+where it belongs: a **scalar slot's name** is shown in the panel and in the status line but is also the name
+of a parameter in the file, so it cannot be translated as it stands — giving it a display name beside its
+file name is slice 2's business, not a deferral of slice 1's.
+
 
 **Parked in session 81 — the two upright shapes the pivot cannot follow, and the two limits that hide them.**
 `Blend3` now refuses by name where the upright a pair pivots about is **not square** to the face they share, or
