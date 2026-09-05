@@ -11780,8 +11780,8 @@ class Document {
         val what = "Connect${if (mode == Continuity.G2) " (curvature)" else ""}"
         val runs = listOf(first, second).map { spaceCurveRef(it, what) ?: return null }
         val ends =
-            if (signs.size == 2) {
-                signs.map { if (it == CurveEnd.START.ordinal) CurveEnd.START else CurveEnd.END }
+            if (signs.size >= 2) {
+                signs.take(2).map { if (it == CurveEnd.START.ordinal) CurveEnd.START else CurveEnd.END }
             } else {
                 val ev = Evaluator()
                 listOf(
@@ -11796,18 +11796,112 @@ class Document {
             return null
         }
         val one = cx.const(Quantity.number(1.0))
-        val curve =
-            add(
-                cx.connect(runs[0], ends[0], runs[1], ends[1], tensionA ?: one, tensionB ?: one, mode),
-                ElementKind.SPACE_CURVE,
-                Styles.SPACE_CURVE,
-            )
+        val run = cx.connect(runs[0], ends[0], runs[1], ends[1], tensionA ?: one, tensionB ?: one, mode)
+        val from = "a ${mode.word} join from the ${ends[0].word} of ${nameOf(first)} to the ${ends[1].word} of ${nameOf(second)}"
+        val structurally = inSpaceBecause(first, second)
+        val inSpace = structurally ?: keptInSpaceByItsFile(mode, signs)
+        if (inSpace == null) {
+            val plane = planeOfSpace(first.space)
+            val spans =
+                (0 until mode.spans).map { i ->
+                    add(cx.planarSpan(run, plane, i, mode.spans), ElementKind.BEZIER, Styles.CURVE)
+                        .also { it.space = first.space }
+                }
+            registerSigns(spans.first(), ends.map { it.ordinal })
+            val named = spans.joinToString(", ") { nameOf(it) }
+            val piecesWord =
+                if (spans.size == 1) {
+                    "a drawing curve — it can close an outline, be filleted, broken or dimensioned like any other"
+                } else {
+                    "${spans.size} drawing curves — together they are the join, and an outline can take all of them"
+                }
+            note = "$named: $from — $piecesWord; exact, and it follows both of them"
+            // **The deliberate change, said once on load** (GitHub #34, OP-18's versioning doctrine, and the
+            // fillet's own precedent at [DocumentFormat.SUPERSEDING_FILLET_VERSION]): the file's literals are
+            // untouched and the geometry is to the last bit what it was — what is different is that the join
+            // is now a curve *of the drawing*, which is exactly what the report asked for.
+            if ((replayingVersion ?: DocumentFormat.VERSION) < DocumentFormat.PLANAR_JOIN_VERSION) {
+                noteLoad(
+                    "$named ${if (spans.size == 1) "is" else "are"} the join of ${nameOf(first)} and " +
+                        "${nameOf(second)} read in the drawing — the same curve in the same place, now a drawing " +
+                        "curve, so an outline can be bounded by it",
+                )
+            }
+            return spans.first()
+        }
+        val curve = add(run, ElementKind.SPACE_CURVE, Styles.SPACE_CURVE)
         curve.space = first.space
-        registerSigns(curve, ends.map { it.ordinal })
-        note =
-            "${nameOf(curve)}: a ${mode.word} join from the ${ends[0].word} of ${nameOf(first)} to the " +
-            "${ends[1].word} of ${nameOf(second)} — exact, and it follows both of them"
+        // …and where the reading is the *file's* rather than the picks', that is a choice, so it is written
+        // down beside the two ends and never worked out again (OP-1, OP-18) — see [keptInSpaceByItsFile]
+        registerSigns(curve, ends.map { it.ordinal } + if (structurally == null) listOf(1) else emptyList())
+        note = "${nameOf(curve)}: $from — a curve in space, because $inSpace; exact, and it follows both of them"
+        // …and the load says so **once**, on the file that predates the reading, never again afterwards: a
+        // file that carries the marker already means this, and a note about it would go on firing for ever
+        if (structurally == null && (replayingVersion ?: DocumentFormat.VERSION) < DocumentFormat.PLANAR_JOIN_VERSION) {
+            noteLoad(
+                "${nameOf(curve)} stays a curve in space: a curvature join is ${mode.spans} pieces, and the one " +
+                    "name this file gives it names all of them — connect the two curves again to have it as " +
+                    "the drawing curves an outline can take",
+            )
+        }
         return curve
+    }
+
+    /**
+     * Why the join of [first] and [second] cannot be a curve **of the drawing**, or null when it can — the
+     * whole of GitHub #34's rule, and it is read off what was picked rather than off where anything stands
+     * (OP-21).
+     *
+     * *"Connect curves result cannot be used to define an outline"*: the join of two drawn curves of one
+     * space lies in that space's plane, so it **is** a drawing curve, and making it one is what lets it bound
+     * an outline, be filleted, broken, dimensioned and swept like everything else drawn. Two picks that are
+     * drawings of one space is a fact of the two elements' kinds and spaces — structure, decided when the
+     * node is built and never re-derived — so a replay reaches the same reading without measuring anything.
+     *
+     * Anything else keeps the reading it always had: a curve in space has no plane to be drawn in, and two
+     * spaces have no one plane between them.
+     */
+    private fun inSpaceBecause(
+        first: Element,
+        second: Element,
+    ): String? =
+        when {
+            first.kind == ElementKind.SPACE_CURVE && second.kind == ElementKind.SPACE_CURVE ->
+                "${nameOf(first)} and ${nameOf(second)} are curves in space"
+            first.kind == ElementKind.SPACE_CURVE -> "${nameOf(first)} is a curve in space"
+            second.kind == ElementKind.SPACE_CURVE -> "${nameOf(second)} is a curve in space"
+            first.space != second.space ->
+                "${nameOf(first)} and ${nameOf(second)} are drawn in ${spaceLabel(spaceOf(first))} and " +
+                    "${spaceLabel(spaceOf(second))}, which have no one plane between them"
+            else -> null
+        }
+
+    /**
+     * Why a join the picks say is planar is nonetheless kept **as the curve in space its file made it** —
+     * null for every join this build builds, and a sentence for the one case a file can carry (GitHub #34).
+     *
+     * **A name in a file names the same geometry for ever** (OP-18). A G1 join is one piece either way, so an
+     * older file's `-> e7` still names the whole of it and the new reading costs that file nothing. A **G2**
+     * join is three, and three drawing curves cannot wear one name: the step would create three elements
+     * where the script declares one, and anything built on `e7` — a tube, a station, a sweep — would find a
+     * third of the bend under it. So a file older than [DocumentFormat.PLANAR_JOIN_VERSION] keeps the curve
+     * in space it was written with, the load says so once, and re-connecting the two curves is how the user
+     * asks for the new reading.
+     *
+     * It is decided **once**, on that load, and then **written down** as a third entry in the step's own
+     * `signs=` — the same treatment the two ends get, for the same reason (OP-1: scoring happens once; OP-18:
+     * a choice is stored, never re-derived). That is what makes the re-saved file a fixed point: it says
+     * `signs=0;0;1`, and every later load reads the join in space because the file says so rather than
+     * because of a version it no longer declares.
+     */
+    private fun keptInSpaceByItsFile(
+        mode: Continuity,
+        signs: List<Int>,
+    ): String? {
+        if (mode.spans == 1) return null
+        val marked = signs.size > 2 && signs[2] != 0
+        val older = (replayingVersion ?: DocumentFormat.VERSION) < DocumentFormat.PLANAR_JOIN_VERSION
+        return if (marked || older) "this drawing was written with it as one run in space" else null
     }
 
     /**

@@ -98,7 +98,10 @@ tool extrude els=e12 clicks=-57.375,28.625 scalar="h" -> e15
         val notes = doc3.loadNotes.joinToString("\n")
         assertTrue("e13" in notes && "e14" in notes, "both roundings are named on load: $notes")
         val saved = DocumentFormat.save(doc3)
-        assertTrue(saved.lines().first().trim() == "constructit 4", "re-saved at the current version: ${saved.lines().first()}")
+        assertTrue(
+            saved.lines().first().trim() == "constructit ${DocumentFormat.VERSION}",
+            "re-saved at the current version: ${saved.lines().first()}",
+        )
         val doc4 = DocumentFormat.load(saved)
         assertTrue(doc4.loadNotes.isEmpty(), "a current file has nothing to be told: ${doc4.loadNotes}")
         assertEquals(saved, DocumentFormat.save(doc4), "and is a fixed point")
