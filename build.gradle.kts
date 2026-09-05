@@ -1,6 +1,13 @@
+import constructit.build.GenerateMessagesTask
+
 plugins {
     kotlin("multiplatform") version "1.9.24"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
+    // OP-29: the user's own DeepL front-end (haumacher/auto-translate), resolved from the sibling
+    // composite declared in settings.gradle.kts (which says why the published one will not do). It
+    // contributes the `translateArb` task and nothing else — see `translateArb { }` below and the note in
+    // CLAUDE.md: it is *not* part of the ordinary build, because it spends DeepL characters.
+    id("de.haumacher.auto-translate-arb")
 }
 
 repositories {
@@ -44,6 +51,12 @@ val lwjglAssimpClassifier =
 val manifoldNpmVersion = "3.5.1"
 
 /**
+ * FormatJS's ICU MessageFormat engine (OP-29), for the browser. Pinned to the 10.x line deliberately: it
+ * still publishes a CommonJS entry point, which is what a Kotlin/JS `@JsModule` import resolves against.
+ */
+val intlMessageFormatNpmVersion = "10.7.9"
+
+/**
  * three.js, for the in-app realistic preview (`Preview3`, src/jsMain). Declared here so the version is one
  * fact, and **loaded by a dynamic `import('three')`** rather than a static one: webpack then splits it into a
  * chunk of its own, so the ~600 KB library rides only the sessions that open the preview panel and the main
@@ -71,6 +84,44 @@ val manifoldWasm by tasks.registering(Copy::class) {
     into(layout.buildDirectory.dir("manifoldWasm"))
 }
 
+/**
+ * OP-29's **languages**: the ARB bundles, and the two things the build does with them.
+ *
+ * `l10n/app_en.arb` is the source of truth and every `app_<lang>.arb` beside it a target the plugin wrote.
+ * They live at the top of the repository rather than under `src/<target>/resources` on purpose: nothing reads them
+ * at *runtime* — [generateMessages] compiles them into Kotlin — so shipping them inside the jar and the
+ * browser distribution would be a copy of every string nobody ever opens. They are sources, and the
+ * translator rewrites them in place (it stamps `x-translated` checksums onto the English one so the next
+ * run only pays for what changed), which is a thing a build directory must never hold.
+ */
+val l10nDir = layout.projectDirectory.dir("l10n")
+
+/**
+ * The English ARB compiled to typed Kotlin (OP-29) — one function per key, the key's placeholders as its
+ * parameters, every locale's pattern beside it. Wired into `commonMain` below, so an edit to an ARB
+ * regenerates and recompiles; the generated sources are build output and are not committed.
+ */
+val generateMessages by tasks.registering(GenerateMessagesTask::class) {
+    group = "build"
+    description = "Compile l10n/app_*.arb into typed Kotlin message accessors (OP-29)"
+    bundles.from(l10nDir.asFileTree.matching { include("app_*.arb") })
+    outputDir.set(layout.buildDirectory.dir("generated/l10n/commonMain"))
+}
+
+/**
+ * DeepL, through the user's own plugin (OP-29). **Not part of the ordinary build**: it costs characters, so
+ * it is run by hand when the English bundle has changed, and the German it writes is reviewed and committed
+ * like a golden. The API key is read from `deepl.apiKey` in `~/.gradle/gradle.properties`.
+ */
+translateArb {
+    serverId = "deepl"
+    sourceFile = l10nDir.file("app_en.arb").asFile
+    targetLangs = listOf("de")
+    // The terms of art DeepL cannot know (fillet → Verrundung, chamfer → Fase, …). One tab-separated file
+    // per language pair; see l10n/glossary/en-de.tsv for why each line is there.
+    glossaryDir = l10nDir.dir("glossary").asFile
+}
+
 kotlin {
     jvm()
     js(IR) {
@@ -88,6 +139,9 @@ kotlin {
                 // the JT writer/reader (sibling project, substituted by the composite build in settings)
                 implementation("de.haumacher.kotlinjt:kotlinJT:0.1.0-SNAPSHOT")
             }
+            // the compiled ARB bundles (OP-29). A task provider rather than a path, so the dependency is
+            // the build's own and every compilation waits for the generator.
+            kotlin.srcDir(generateMessages)
         }
         val commonTest by getting {
             dependencies {
@@ -96,6 +150,9 @@ kotlin {
         }
         val jvmMain by getting {
             dependencies {
+                // ICU MessageFormat's reference implementation (OP-29) — the JVM actual of `formatMessage`.
+                // 13 MB of locale data, which is exactly why the browser gets FormatJS's 40 KB instead.
+                implementation("com.ibm.icu:icu4j:75.1")
                 // the general boolean engine (OP-9), behind the `MeshBool` expect/actual seam
                 implementation("org.clojars.cartesiantheatrics:manifold3d:$manifoldVersion:$manifoldClassifier")
                 // ...and the one library that jar links against but does not carry: `libmanifold.so` is
@@ -118,6 +175,9 @@ kotlin {
         val jsMain by getting {
             dependencies {
                 implementation("org.jetbrains.kotlinx:kotlinx-html-js:0.11.0")
+                // ICU MessageFormat in the browser (OP-29) — the JS actual of `formatMessage`. The same
+                // syntax ICU4J reads on the JVM, which is what lets one ARB serve tests and shell alike.
+                implementation(npm("intl-messageformat", intlMessageFormatNpmVersion))
                 // the same engine as WASM (OP-9); loaded at startup, see `MeshBool` in src/jsMain
                 implementation(npm("manifold-3d", manifoldNpmVersion))
                 // the realistic preview's renderer, code-split by its dynamic import (see above)
@@ -147,4 +207,12 @@ tasks.named<Test>("jvmTest") {
         inputs.files(tasks.named("jsBrowserDistribution"))
     }
     testLogging { events("passed", "failed", "skipped") }
+}
+
+// The compiled ARB bundles are generated Kotlin (OP-29) — machine-written, several thousand lines of it,
+// and regenerated on every ARB edit. Linting it would say nothing about this repository's own style.
+ktlint {
+    filter {
+        exclude { it.file.path.contains("/build/generated/") }
+    }
 }

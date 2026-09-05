@@ -62,6 +62,8 @@
         #view-mode button.active { background: #1f77b4; color: #fff; border-color: #1f77b4; }
         /* which 2D sketch space the canvas shows (OP-17) — a view indicator, and the way back to the plan */
         #v-space { font: inherit; font-size: 12px; padding: 1px 4px; border: 1px solid #ccc; border-radius: 6px; background: #fff; color: #444; }
+        /* the chrome's language (OP-29) — the same control shape as the space indicator beside it */
+        #v-lang { font: inherit; font-size: 12px; padding: 1px 4px; border: 1px solid #ccc; border-radius: 6px; background: #fff; color: #444; }
 
         /* right panel — a FRAME, not one long column of content (OP-13, panel polish).
            The panel used to be a single scroll box holding everything, which made its scroll offset a
@@ -122,15 +124,19 @@
         .mrow:hover { background: #eef4fb; }
         .mrow.active { background: #e2eefb; outline: 1px solid #1f77b4; }
         .mrow .mval { color: #2ca02c; }
-        #file-actions { display: flex; gap: 4px; }
+        /* The panel is a fixed 250px and a translated label is not (OP-29): German's "Speichern unter…" is
+           half again as wide as "Save as…". So the button rows *wrap* rather than overflowing the panel,
+           and each view option owns a line, so that a longer label can never be torn off its checkbox. */
+        #file-actions { display: flex; flex-wrap: wrap; gap: 4px; }
         #file-actions button { font-size: 12px; padding: 2px 8px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
         #file-actions button:hover { background: #f0f0f0; }
         /* the three export buttons: the same row shape as the file actions above them */
-        #export-actions { display: flex; gap: 4px; margin-top: 4px; }
+        #export-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
         #export-actions button { flex: 1; font-size: 12px; padding: 2px 4px; border: 1px solid #ccc; background: #fff;
             border-radius: 6px; cursor: pointer; }
         #export-actions button:hover { background: #f0f0f0; }
         #tool-options, #wall-options, #view-actions { font-size: 12px; padding: 3px 0; }
+        #view-actions label { display: block; }
         #tool-options input { width: 48px; font-size: 12px; }
         /* the rule the selection names (OP-23): the one sentence about the selection that lives outside the
            inspector, so it takes the inspector's discipline — a *reserved* two lines that scroll inside
@@ -214,20 +220,23 @@
 <div id="app">
     <div id="topbar">
         <span class="brand">ConstructIt</span>
-        <input id="f-name" value="drawing" spellcheck="false" autocomplete="off"
-               title="The drawing's name. Save writes &lt;name&gt;.cit; it is not stored in the file (the file is the construction).">
+        <input id="f-name" value="drawing" spellcheck="false" autocomplete="off" data-i18n-title="ui.name.title">
         <a id="f-anchor" hidden></a>
         <span id="edit-actions">
-            <button id="e-undo" title="Undo (Ctrl+Z)">Undo</button>
-            <button id="e-redo" title="Redo (Ctrl+Y / Ctrl+Shift+Z)">Redo</button>
-            <button id="e-delete" title="Delete the selection and everything built on it (Del)">Delete</button>
+            <button id="e-undo" data-i18n-title="ui.undo.title" data-i18n="ui.undo"></button>
+            <button id="e-redo" data-i18n-title="ui.redo.title" data-i18n="ui.redo"></button>
+            <button id="e-delete" data-i18n-title="ui.delete.title" data-i18n="ui.delete"></button>
         </span>
         <span id="view-mode">
-            <button id="v-2d" class="active" title="The drawing: construct, drag, dimension">2D</button>
-            <button id="v-3d" title="The solids, shaded — and the working plane, drawn and edited in place: drag to select and move, Ctrl+drag to orbit, wheel to zoom, Space+drag to pan">3D</button>
-            <button id="v-prev" title="Realistic preview: the solids with their materials, lit and tone-mapped — what an exported GLB looks like. Display only; drag to orbit.">Preview</button>
-            <select id="v-space" title="Which 2D sketch space the canvas shows and tools draw into: the plan, or a face (Sketch on face)"></select>
+            <button id="v-2d" class="active" data-i18n-title="ui.view2d.title">2D</button>
+            <button id="v-3d" data-i18n-title="ui.view3d.title">3D</button>
+            <button id="v-prev" data-i18n-title="ui.preview.title" data-i18n="ui.preview"></button>
+            <select id="v-space" data-i18n-title="ui.space.title"></select>
         </span>
+        <!-- The language of the chrome (OP-29). Its options are **endonyms** — each language named in
+             itself — which is why they are not in the message bundle: a picker that renamed the languages
+             as you switched would be a picker nobody could get back out of. -->
+        <select id="v-lang" data-i18n-title="ui.lang.title"></select>
         <span id="status"></span>
     </div>
     <div id="main">
@@ -237,87 +246,87 @@
             <!-- the panel's two regions: the chrome, then the Elements census docked under it. Each scrolls
                  inside itself, so no click in one can move the other (see #panel in the stylesheet). -->
             <div id="panel-chrome">
-            <h3>Drawing</h3>
+            <h3 data-i18n="ui.panel.drawing"></h3>
             <div id="file-actions">
-                <button id="f-copy" title="Copy the drawing as a construction script">Copy</button>
-                <button id="f-download" title="Save the drawing — back to the same file once it has one">Save</button>
-                <button id="f-saveas" title="Save under a new name or in another place">Save as…</button>
-                <button id="f-load" title="Load a construction script">Open…</button>
+                <button id="f-copy" data-i18n-title="ui.copy.title" data-i18n="ui.copy"></button>
+                <button id="f-download" data-i18n-title="ui.save.title" data-i18n="ui.save"></button>
+                <button id="f-saveas" data-i18n-title="ui.saveas.title" data-i18n="ui.saveas"></button>
+                <button id="f-load" data-i18n-title="ui.open.title" data-i18n="ui.open"></button>
                 <input id="f-file" type="file" accept=".cit,.txt" hidden>
-                <button id="x-import" title="Import a JT file (ISO 14306) as reference bodies: each body arrives as a frozen mesh with a live placement — drag its point or retype its angle to move it">Import JT…</button>
+                <button id="x-import" data-i18n-title="ui.importjt.title" data-i18n="ui.importjt"></button>
                 <input id="x-import-file" type="file" accept=".jt" hidden>
             </div>
             <div id="export-actions">
-                <button id="x-glb" title="Export GLB (glTF 2.0) — for viewing: one node per solid, PBR materials, metres and +Y-up as the spec requires">GLB</button>
-                <button id="x-3mf" title="Export 3MF — for printing: the unit is stated (mm) and the mesh is checked watertight before it is written">3MF</button>
-                <button id="x-stl" title="Export binary STL — the universal fallback: triangles only, millimetres by convention">STL</button>
-                <button id="x-jt" title="Export JT (ISO 14306) — for CAD interchange: Siemens JT, written by the kotlinJT sibling; millimetres declared, one named part per solid">JT</button>
+                <button id="x-glb" data-i18n-title="ui.glb.title">GLB</button>
+                <button id="x-3mf" data-i18n-title="ui.3mf.title">3MF</button>
+                <button id="x-stl" data-i18n-title="ui.stl.title">STL</button>
+                <button id="x-jt" data-i18n-title="ui.jt.title">JT</button>
             </div>
             <div id="file-note"></div>
             <div id="view-actions">
-                <label title="Dim the construction the result is built from (OP-14)">
-                    <input id="v-dim" type="checkbox"> Dim construction
+                <label data-i18n-title="ui.dim.title">
+                    <input id="v-dim" type="checkbox"> <span data-i18n="ui.dim"></span>
                 </label>
-                <label title="Draw what you have hidden, as dashed grey ghosts, so you can find it and press Show. A ghost never takes a click from geometry that is really there, and no tool builds on one. A point welded onto another is hidden by the construction and stays hidden.">
-                    <input id="v-hidden" type="checkbox"> Show hidden
+                <label data-i18n-title="ui.hidden.title">
+                    <input id="v-hidden" type="checkbox"> <span data-i18n="ui.hidden"></span>
                 </label>
             </div>
             <div id="wall-options">
-                <label title="Which side of the centerline a new wall's thickness sits on (OP-21). With Thicken it applies to the NEXT curve you click, so a run can change side part-way.">
-                    Wall side
+                <label data-i18n-title="ui.wallside.title">
+                    <span data-i18n="ui.wallside"></span>
                     <select id="v-just">
-                        <option value="center">centred</option>
-                        <option value="left">left</option>
-                        <option value="right">right</option>
+                        <option value="center" data-i18n="ui.wallside.centred"></option>
+                        <option value="left" data-i18n="ui.wallside.left"></option>
+                        <option value="right" data-i18n="ui.wallside.right"></option>
                     </select>
                 </label>
             </div>
             <div id="tool-options">
-                <label title="How many vertices a polygon or instances an array builds. Structural: it is recorded with the tool, so changing it applies to the next use, not to what is already drawn.">
-                    Count
+                <label data-i18n-title="ui.count.title">
+                    <span data-i18n="ui.count"></span>
                     <input id="t-count" type="number" min="2" max="512" step="1" value="6">
                 </label>
-                <button id="t-restamp" title="Re-stamp at the count above the rule the selection names: a pattern member re-counts that pattern (the ring is rebuilt and every gesture riding it re-runs, OP-23), while geometry a replicated gesture built re-counts that gesture — the sides of every copy at once (#18)." disabled>Re-stamp pattern</button>
+                <button id="t-restamp" data-i18n-title="ui.restamp.title" data-i18n="ui.restamp" disabled></button>
                 <div id="t-pattern" class="hint"></div>
             </div>
-            <h3>Selection</h3>
+            <h3 data-i18n="ui.panel.selection"></h3>
             <div id="inspector"></div>
             <div id="sel-actions">
-                <button id="s-hide" title="Hide the selected elements — a recorded step, so it is saved with the drawing and undoes like any other (OP-18). Tick 'Show hidden' to find them again.">Hide</button>
-                <button id="s-show" title="Show the selected elements again">Show</button>
+                <button id="s-hide" data-i18n-title="ui.hide.title" data-i18n="ui.hide"></button>
+                <button id="s-show" data-i18n-title="ui.show.title" data-i18n="ui.show"></button>
             </div>
-            <h3>Groups &amp; tools</h3>
+            <h3 data-i18n="ui.panel.groups"></h3>
             <div id="groups-form">
-                <button id="g-add" title="Group the selected elements (OP-16)">Group…</button>
-                <button id="g-tool" title="Make a reusable tool out of the selected construction (OP-6)">Make tool…</button>
+                <button id="g-add" data-i18n-title="ui.group.title" data-i18n="ui.group"></button>
+                <button id="g-tool" data-i18n-title="ui.maketool.title" data-i18n="ui.maketool"></button>
             </div>
             <div id="create-dialog"></div>
             <div id="groups-list"></div>
             <div id="macros-list"></div>
-            <h3>Parameters</h3>
+            <h3 data-i18n="ui.panel.parameters"></h3>
             <div id="params-form">
-                <input id="p-name" placeholder="name" value="r">
+                <input id="p-name" data-i18n-placeholder="ui.param.name" value="r">
                 <input id="p-value" type="number" value="20">
-                <select id="p-unit"><option value="mm">mm</option><option value="deg">°</option><option value="num">#</option></select>
+                <select id="p-unit"><option value="mm">mm</option><option value="deg">&deg;</option><option value="num">#</option></select>
                 <button id="p-add">+</button>
             </div>
             <div id="params-list"></div>
-            <details id="fc-form" title="Formulas over the parameter t, both reading any value above. A curve piece: x(t), y(t) over a stated domain — an involute of the circle of radius r is x = r*(cos(t)+t*sin(t)), y = r*(sin(t)-t*cos(t)). A swept section's size law: r(t) for a tube, scale(t) for a profile, with t from 0 at the start of the run to 1 at its end.">
-                <summary>Formulas over t</summary>
-                <input id="fc-x" placeholder="x(t)" value="r * (cos(t) + t * sin(t))">
-                <input id="fc-y" placeholder="y(t)" value="r * (sin(t) - t * cos(t))">
-                <input id="fc-from" value="0" title="t from — a number, or a formula over the values above">
-                <input id="fc-to" value="1.6" title="t to — a number, or a formula over the values above">
-                <button id="fc-add">Draw</button>
-                <input id="sl-text" placeholder="section law r(t) / scale(t) — e.g. 5mm * (1 - t/2)" title="A swept section's size along its run: one formula over t, which is 0 at the start of the run and 1 at its end. A tube reads it as the radius itself (5mm * (1 - t/2) is a tapered handle, 2mm + 8mm*t*t a horn); a swept profile reads it as a scale about the point it rides on (1 + t/2 is half again as large at the end). Select a swept body to see and change its own law; select nothing to arm the next Tube or Sweep.">
-                <button id="sl-set" title="State the size law: on the selected swept body, or armed for the next Tube or Sweep. Blank takes it away.">Apply</button>
-                <div id="fl-rows" title="A row per named parameter the selected section is built from, plus the run's own twist: give any of them a formula over t and the section is read once per station, so root and tip are genuinely different outlines. Select a swept body to see and change its own laws; select the section to arm the next Sweep."></div>
+            <details id="fc-form" data-i18n-title="ui.formulas.title">
+                <summary data-i18n="ui.formulas"></summary>
+                <input id="fc-x" data-i18n-placeholder="ui.fc.x" value="r * (cos(t) + t * sin(t))">
+                <input id="fc-y" data-i18n-placeholder="ui.fc.y" value="r * (sin(t) - t * cos(t))">
+                <input id="fc-from" value="0" data-i18n-title="ui.fc.from.title">
+                <input id="fc-to" value="1.6" data-i18n-title="ui.fc.to.title">
+                <button id="fc-add" data-i18n="ui.fc.draw"></button>
+                <input id="sl-text" data-i18n-placeholder="ui.sectionlaw" data-i18n-title="ui.sectionlaw.title">
+                <button id="sl-set" data-i18n-title="ui.sectionlaw.apply.title" data-i18n="ui.apply"></button>
+                <div id="fl-rows" data-i18n-title="ui.familylaws.title"></div>
             </details>
-            <h3>Measurements</h3>
+            <h3 data-i18n="ui.panel.measurements"></h3>
             <div id="measure-list"></div>
             </div><!-- /#panel-chrome -->
             <div id="panel-elements">
-                <h3>Elements</h3>
+                <h3 data-i18n="ui.panel.elements"></h3>
                 <div id="tree"></div>
             </div>
         </aside>

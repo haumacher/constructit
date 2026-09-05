@@ -29,10 +29,15 @@ parameters so recompute/undo/reload are deterministic.
 ./gradlew ktlintFormat                               # auto-fix lint violations
 ./gradlew jsBrowserDevelopmentRun --continuous       # live-reloading dev server
 ./gradlew jsBrowserDistribution                      # production bundle -> build/dist/js/productionExecutable/
+./gradlew translateArb --no-configuration-cache      # NOT part of the build: re-translate l10n/ through DeepL
 ```
 
 Kotlin Multiplatform (JVM + JS/IR browser), Gradle wrapper included, JDK 17+.
 The Playwright E2E needs Playwright's browsers installed and only runs under `-De2e=1`.
+
+Two siblings are **composite builds**, checked out next to this repo by convention (see
+`settings.gradle.kts`, which carries a `-P` escape hatch for each): `../kotlinJT` for the JT
+writer/reader, and `../auto-translate` for the `translateArb` task below.
 
 Lint is ktlint (official style) via the `org.jlleitschuh.gradle.ktlint` plugin. `.editorconfig`
 relaxes two rules to match this codebase's deliberate style: `max_line_length = off` (the
@@ -41,6 +46,33 @@ data-driven `ToolDef` table in `Tools.kt` is intentionally one wide line per too
 ktlint-clean; run `ktlintFormat` before committing. Note: inline comments inside an argument list
 (trailing `// ...` after an argument) trip the `discouraged-comment-location` rule, which cannot be
 disabled without crashing the engine — put such comments on their own line above the argument.
+
+### Languages (OP-29)
+
+User-visible text of the **chrome** — tool titles, help lines, slot names, category headings, panel labels,
+buttons, the fixed hints — lives in `l10n/app_en.arb` and its translated siblings, never in Kotlin or in
+`index.html`. The English ARB is the source of truth; `:generateMessages` (in `buildSrc/`) compiles every
+bundle into one typed accessor per key in `constructit.l10n.Messages`, and that runs in the ordinary build,
+so **editing an ARB recompiles**. The generated sources are build output and are not committed.
+
+- **Adding a string**: add the key, its English text and a real `@key` `description` to `l10n/app_en.arb`
+  (the description is what DeepL is given as *context*, so write one that disambiguates), plus typed
+  `placeholders` if it has any. Call the generated accessor. Keys are `tool.<id>.title|help|slot.<n>`,
+  `category.<name>`, `slot.<kind>`, `ui.*` for the panel and `msg.*` for a note.
+- **`index.html` states keys, never words**: `data-i18n`, `data-i18n-title`, `data-i18n-placeholder`, which
+  `Main.kt`'s `applyStaticText()` fills in and refills when the language changes.
+- **`ChromeBundleTest` fails the build on an English sentence** left in `Tools.kt`, `Main.kt` or
+  `index.html`. A scalar slot's name is exempt by rule: it becomes a *parameter name in the file*, so it is
+  format and stays locale-neutral (OP-18).
+- **Formatting is ICU MessageFormat**, done by the reference engines behind one `expect fun formatMessage`
+  — ICU4J on the JVM, FormatJS's `intl-messageformat` in the browser. Never hand-roll a formatter, and
+  prefer `{name}` to `#` inside a plural (the translation pipeline mangles `#`).
+- **`translateArb` is not part of the build**: it spends DeepL characters, so it is run by hand when the
+  English bundle has changed. It needs `deepl.apiKey` in `~/.gradle/gradle.properties`, and
+  `--no-configuration-cache` (the plugin reads `Task.project` at execution time). `l10n/app_de.arb` is
+  committed **like a golden**: machine-written, then reviewed by hand — and a hand fix survives later runs,
+  because the plugin reuses an existing target entry whose English source is unchanged. `l10n/glossary/`
+  pins the terms of art DeepL cannot know.
 
 ## Architecture
 
