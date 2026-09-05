@@ -153,9 +153,9 @@ public open class MsgError(
 public operator fun Msg?.contains(other: CharSequence): Boolean = this != null && other in this.render()
 
 /**
- * One argument, ready for [formatMessage]: a nested [Msg] becomes its own sentence in the same [locale],
- * everything else is handed to the formatter as it stands (a number stays a number, so a plural can count
- * it).
+ * One argument, ready for [formatMessage]: a nested [Msg] becomes its own sentence in the same [locale], a
+ * [Num] becomes a figure spelled the way [locale] spells figures, and everything else is handed to the
+ * formatter as it stands (an `Int` stays an `Int`, so a plural can count it and ICU can write it out).
  */
 public fun renderArg(
     value: Any?,
@@ -163,5 +163,6 @@ public fun renderArg(
 ): Any? =
     when (value) {
         is Msg -> value.render(locale)
+        is Num -> value.render(locale)
         else -> value
     }

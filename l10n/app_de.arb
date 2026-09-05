@@ -2164,5 +2164,16 @@
   "note.sphereLocus.positiveSide": "positiv",
   "note.sphereLocus.negativeSide": "negativ",
   "@@x-geom-session-81-corners": "geom: session 81 corners",
-  "refusal.blend.freeEndNotchReachesPast": "{word} {sizePhrase} entlang {name} endet frei in einer eigenen Fläche, und die Kerbe, die seine Stirnfläche aus dieser Fläche nimmt, reicht über das hinaus, was von der Berandung dieser Fläche übrig ist – am größten passt dort {fitPhrase}"
+  "refusal.blend.freeEndNotchReachesPast": "{word} {sizePhrase} entlang {name} endet frei in einer eigenen Fläche, und die Kerbe, die seine Stirnfläche aus dieser Fläche nimmt, reicht über das hinaus, was von der Berandung dieser Fläche übrig ist – am größten passt dort {fitPhrase}",
+  "@@x-section-slice3": "l10n: session 81 slice 3",
+  "format.length": "{value} mm",
+  "format.angle": "{value}°",
+  "format.area": "{value} mm²",
+  "format.volume": "{value} mm³",
+  "format.plain": "{value}",
+  "format.other": "{value} [{dim}]",
+  "unit.mm": "mm",
+  "unit.deg": "°",
+  "unit.millimetres": "Millimeter",
+  "unit.degrees": "Grad"
 }

@@ -680,8 +680,11 @@ class BrowserE2ETest {
             assertTrue(activeTool() == "cutopenings", "typing a name must arm no tool; got ${activeTool()}")
 
             val valField = page.querySelector("#params-list .pval[data-sid='$sid']")
-            assertTrue(valField.getAttribute("type") == "number", "a value field is a native number field")
-            assertTrue(valField.getAttribute("step") == "1", "nudged by 1 mm")
+            // a **text** field since OP-29 slice 3, because a native number field is localized by the
+            // browser's language rather than by the app's — and the nudge it used to give for free is
+            // written out instead, which is what the ArrowUp below actually exercises
+            assertTrue(valField.getAttribute("type") == "text", "a value field is spelled by the app, not by Chrome")
+            assertTrue(valField.getAttribute("data-step") == "1", "nudged by 1 mm")
             val thin = page.evaluate("() => document.querySelector('#canvas').toDataURL()") as String
             valField.click()
             page.keyboard().press("ArrowUp")
@@ -1110,6 +1113,26 @@ class BrowserE2ETest {
                 selector,
             ) as List<Any?>
         return (counts[0] as Number).toInt() to (counts[1] as Number).toInt()
+    }
+
+    /**
+     * Poll until [ready], or fail naming [what].
+     *
+     * A Kotlin loop rather than Playwright's `waitForFunction`, and deliberately: since OP-29 slice 3 the
+     * thing being waited for is a *language chunk*, and what says it has landed is the same Kotlin
+     * expression the assertion after it reads — written once, in one language, instead of twice in two.
+     */
+    private fun until(
+        page: Page,
+        what: String,
+        ready: () -> Boolean,
+    ) {
+        val deadline = System.currentTimeMillis() + 15_000
+        while (System.currentTimeMillis() < deadline) {
+            if (ready()) return
+            page.waitForTimeout(50.0)
+        }
+        assertTrue(false, "timed out waiting for $what")
     }
 
     /**
@@ -2810,8 +2833,10 @@ class BrowserE2ETest {
                 assertTrue("fillet of 6 mm" in readout, "…and each says which edge and what size: $readout")
                 page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/53-dressed-body.png")))
 
-                // …in German, which for a new panel noun is the whole of OP-29's discipline
+                // …in German, which for a new panel noun is the whole of OP-29's discipline. The German
+                // text is a chunk fetched on demand since slice 3, so the switch is a request away.
                 page.selectOption("#v-lang", "de")
+                until(page, "the German chunk to land") { children().all { row -> row.startsWith(Messages.uiElementDressing("de")) } }
                 assertTrue(
                     children().all { it.startsWith(Messages.uiElementDressing("de")) },
                     "the rounding rows speak German: ${children()}",
@@ -2981,6 +3006,116 @@ class BrowserE2ETest {
                 page.waitForSelector("#canvas")
                 assertEquals("en", page.inputValue("#v-lang"))
                 assertEquals("Drawing", heading())
+
+                assertTrue(errors.isEmpty(), "the shell threw: $errors")
+                browser.close()
+            }
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    /**
+     * **The language's text arrives as a chunk, and its numbers arrive with it** (OP-29 slice 3).
+     *
+     * Two halves of one slice, and they are checked together because they are the same moment. The session
+     * starts English, and the German chunk is *not* downloaded — that is the whole point of the split, and
+     * the only way to see it is from outside, in the network log. Then the reader switches, `l10n/de.js` is
+     * requested by a **relative** path (which is what makes the deployed page work under `/constructit/`),
+     * the standing note re-reads itself in German — and the millimetres in it, which slice 2 left as
+     * pre-formatted English text, now read `5,5` because the figure is a value and Chrome's own
+     * `Intl.NumberFormat` spells it.
+     *
+     * The parameter panel is the other direction: a German session types a comma into a value field and
+     * gets its comma back, while `GermanSessionTest` says what the *file* got, which is a decimal point.
+     */
+    @Test
+    fun theGermanChunkArrivesOnDemandAndItsNumbersWithIt() {
+        assumeTrue(System.getProperty("e2e") == "1", "browser E2E disabled (run with -De2e=1)")
+
+        val dist = File("build/dist/js/productionExecutable")
+        assertTrue(File(dist, "index.html").exists(), "run ./gradlew jsBrowserDistribution first")
+        assertTrue(File(dist, "l10n/de.js").exists(), "the German chunk must be deployed beside the page")
+        File("build/e2e").mkdirs()
+
+        val server = serve(dist)
+        try {
+            Playwright.create().use { pw ->
+                val browser = pw.chromium().launch(BrowserType.LaunchOptions().setChannel("chrome").setHeadless(true))
+                // an English browser, so the first load is the one that must *not* pay for the German
+                val page = browser.newContext(Browser.NewContextOptions().setLocale("en-US")).newPage()
+                val errors = ArrayList<String>()
+                page.onPageError { errors.add(it) }
+                val asked = java.util.Collections.synchronizedList(ArrayList<String>())
+                page.onRequest { asked.add(it.url()) }
+                page.setViewportSize(1000, 700)
+                page.navigate("http://127.0.0.1:${server.address.port}/index.html")
+                page.waitForSelector("#canvas")
+
+                fun chunkRequests() = asked.toList().count { it.endsWith("/l10n/de.js") }
+
+                assertEquals(0, chunkRequests(), "an English session must not download the German text")
+
+                // a wall and a rounded-off extrusion, so the status note quotes a length with a decimal
+                val box = page.querySelector("#canvas").boundingBox()
+                page.fill("#p-name", "t")
+                page.fill("#p-value", "10")
+                page.click("#p-add")
+                page.click("#tool-wall")
+                val wx = box.x + box.width * 0.8
+                val wy1 = box.y + box.height * 0.2
+                val wy2 = box.y + box.height * 0.6
+                page.mouse().click(wx, wy1)
+                page.mouse().click(wx + 3.0, wy2)
+                page.keyboard().press("Escape")
+                page.fill("#p-name", "d")
+                page.fill("#p-value", "5.5")
+                page.click("#p-add")
+                page.click("#tool-extrude")
+                page.mouse().click(wx + 20.0, (wy1 + wy2) / 2)
+
+                fun status(): String = page.querySelector("#status").textContent()
+
+                fun valueOf(name: String): String =
+                    page
+                        .querySelectorAll("#params-list .prow")
+                        .first { it.querySelector(".pname").inputValue() == name }
+                        .querySelector(".pval")
+                        .inputValue()
+
+                assertTrue("5.5 mm" in status(), "the English note quotes the size with a point; got '${status()}'")
+                assertEquals("5.5", valueOf("d"), "…and so does the field it was typed into")
+
+                // ---- the switch: one chunk, fetched once, and every number in the language ----
+                page.selectOption("#v-lang", "de")
+                until(page, "the German chunk to land") { chunkRequests() == 1 && "5,5" in status() }
+                assertEquals(1, chunkRequests(), "the German text is one request, made when it is asked for")
+                assertTrue("5,5 mm" in status(), "the standing note re-reads itself in German; got '${status()}'")
+                assertFalse("5.5" in status(), "…with no English number left in it; got '${status()}'")
+                assertEquals("5,5", valueOf("d"), "and the value field follows the language")
+                page.screenshot(Page.ScreenshotOptions().setPath(Paths.get("build/e2e/53-numbers-de.png")))
+
+                // ---- and the other direction: a German session *types* a comma ----
+                page
+                    .querySelectorAll("#params-list .prow")
+                    .first { it.querySelector(".pname").inputValue() == "d" }
+                    .querySelector(".pval")
+                    .fill("6,25")
+                // the field keeps the keyboard while it is being typed into, so the panel is redrawn from
+                // the value it took only once something else has the focus — which is what proves the round
+                // trip: the comma went in, a `Double` came out, and the comma came back
+                page.click("#tool-select")
+                until(page, "the panel to redraw from the value it took") { valueOf("d") == "6,25" }
+
+                // ---- back to English: the same value, the reader's own point, and no second download ----
+                // (English is in the main bundle, so this switch is synchronous — the `until` is only
+                // waiting for the repaint the switch schedules.)
+                page.selectOption("#v-lang", "en")
+                until(page, "English") { valueOf("d") == "6.25" }
+                assertEquals("6.25", valueOf("d"), "the value did not change, only how it is written")
+                page.selectOption("#v-lang", "de")
+                until(page, "German again") { valueOf("d") == "6,25" }
+                assertEquals(1, chunkRequests(), "a chunk already in the page is not asked for twice")
 
                 assertTrue(errors.isEmpty(), "the shell threw: $errors")
                 browser.close()

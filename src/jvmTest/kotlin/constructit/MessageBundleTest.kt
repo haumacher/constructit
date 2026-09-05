@@ -7,11 +7,15 @@ import constructit.editor.Tools
 import constructit.geom.Vec2
 import constructit.l10n.L10n
 import constructit.l10n.Messages
+import constructit.l10n.decimalSeparator
 import constructit.l10n.formatMessage
+import constructit.l10n.formatNumber
+import constructit.l10n.readDecimal
 import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -276,6 +280,65 @@ class MessageBundleTest {
         ed.setTool(Tools.EXTRUDE)
         ed.click(Vec2(40.0, 25.0))
         return ed
+    }
+
+    /**
+     * **One chunk per language, and the main bundle back to English** (OP-29 slice 3).
+     *
+     * Slice 2's table carried every language into every session — 84.6 KB gzipped of German that an
+     * English reader downloads and never reads. This asserts the split at its source, where it is cheap to
+     * check and impossible to drift: the generated *common* source carries the English and none of the
+     * German, and each other language is a chunk beside it, holding exactly the keys that language
+     * actually translates. What the chunk does in a browser is `BrowserE2ETest`'s to say.
+     */
+    @Test
+    fun everyLanguageButEnglishRidesInItsOwnChunk() {
+        val common = File("build/generated/l10n/commonMain/constructit/l10n/Messages.kt")
+        assertTrue(common.exists(), "expected the generator to have run: ${common.path}")
+        val source = common.readText()
+        val english = bundle("en")
+        val german = bundle("de")
+        val sample = german.keys.first { english[it] != null && german[it] != english[it] }
+        assertTrue(source.contains(quoted(english.getValue(sample))), "the English pattern belongs in the main bundle")
+        assertFalse(source.contains(quoted(german.getValue(sample))), "the German one does not: $sample")
+
+        val chunk = File("build/generated/l10n/jsResources/l10n/de.js")
+        assertTrue(chunk.exists(), "expected one chunk per language: ${chunk.path}")
+        val text = chunk.readText()
+        assertTrue(text.contains(quoted(german.getValue(sample))), "…it belongs in German's chunk: $sample")
+        // a classic script assigning a flat array, which is what loads over `file:` as well as over http
+        assertTrue(text.contains("""(g.constructitL10n = g.constructitL10n || {})["de"] = ["""), text.take(200))
+        // and only what German carries: a key it does not translate falls back rather than being copied
+        val untranslated = english.keys.firstOrNull { it !in german }
+        if (untranslated != null) assertFalse(text.contains(quoted(untranslated)), "$untranslated is not German's to carry")
+    }
+
+    /** A Kotlin/JavaScript string literal of [text], which is how both generated artifacts spell one. */
+    private fun quoted(text: String): String =
+        "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
+
+    /**
+     * **The number is the reference engine's too** (OP-29 slice 3), and the separator is asked of it rather
+     * than tabulated. Two properties, and the second is what keeps the existing suite readable: German
+     * writes a comma, and English writes exactly what `Format.num` already wrote — no grouping, no padding
+     * — so not one of the ~1500 English assertions in this repository had to move.
+     */
+    @Test
+    fun theEngineWritesTheNumberAndSaysHowToReadItBack() {
+        assertEquals("5.5", formatNumber("en", 5.5, 1))
+        assertEquals("5,5", formatNumber("de", 5.5, 1))
+        assertEquals("12345.5", formatNumber("en", 12345.5, 1), "no grouping: a drawing's figures read against the file")
+        assertEquals("12345,5", formatNumber("de", 12345.5, 1))
+        assertEquals("5", formatNumber("de", 5.0, 3), "a maximum, never a padding")
+        assertEquals('.', decimalSeparator("en"))
+        assertEquals(',', decimalSeparator("de"))
+        assertEquals(',', decimalSeparator("de-AT"))
+        // …and the one written rule reads back what it wrote, in either language
+        for (locale in listOf("en", "de")) {
+            for (value in listOf(0.0, 5.5, -0.125, 12345.5)) {
+                assertEquals(value, readDecimal(formatNumber(locale, value, 3), decimalSeparator(locale)), "$locale/$value")
+            }
+        }
     }
 
     /**

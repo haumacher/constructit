@@ -75,10 +75,10 @@ data class Quantity(val base: Double, val dim: Dimension) {
     }
 
     /** Value expressed in millimetres (length only). */
-    val mm: Double get() = requireDim(Dimension.LENGTH, Msg.text("millimetres")).base
+    val mm: Double get() = requireDim(Dimension.LENGTH, Msgs.unitMillimetres()).base
 
     /** Value expressed in degrees (angle only). */
-    val deg: Double get() = requireDim(Dimension.ANGLE, Msg.text("degrees")).base * 180.0 / PI
+    val deg: Double get() = requireDim(Dimension.ANGLE, Msgs.unitDegrees()).base * 180.0 / PI
 
     /** Raw dimensionless value. */
     val value: Double get() = base

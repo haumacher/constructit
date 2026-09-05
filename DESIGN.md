@@ -14495,6 +14495,30 @@ the composition table is driven generically as well as by its own test.
   budget slice 1 set, because the table now holds every sentence of the app in every language; nothing about
   the engine is to blame and the cure is a chunk per language, recorded on the queue.
 
+- **Turn 81 — languages, slice 3: the numbers speak too, and the text rides in a chunk** (OP-29; session
+  81). Two things worth an entry, and the first is that they turned out to be one. **A figure is a value in
+  exactly the way a sentence is**: state it once in the file's own spelling, spell it at the edge. What
+  makes that cheap is where the wrapping happens — the ARB declares which holes are figures and the
+  *generator* turns those arguments into `Num`, so 130 placeholders became locale-aware with **no call site
+  moved at all**, and the engine goes on stating a size the way it always did. The second is a rule about
+  rules: this slice writes exactly **one**, a reader for a decimal number, and it writes it because there is
+  nothing to call — `Intl.NumberFormat` and ICU4J's `NumberFormat` both only *write*, and only one of them
+  is in the browser, which is where people type. So the *separator* is still asked of the engine (the
+  non-digit in `formatNumber(locale, 1.5, 1)`) and only the reading is ours, in one place, for both
+  platforms, and strict enough to refuse `1.234` in German — the one input that genuinely means two things.
+  Three findings from contact with the tools. **A native number field is localized by the browser, not by
+  the app**, so `type="number"` had to go and the nudge it gave for free had to be written out; that is the
+  price of an app whose language is its own. **A chunk must be a `<script>`, not a `fetch`**, because half
+  the E2E suite and anyone opening the distribution from disk runs over `file:`, where a browser refuses an
+  XHR and an ES module but still loads a classic script — a constraint no amount of design would have
+  produced, and one that also makes the deployed path relative and therefore correct under Pages. And **no
+  grouping, no padding** is what let a change to every number in the app leave all ~1500 English assertions
+  reading the same sentence: English output is byte-identical to what the canonical formatter already wrote,
+  so the diff of the slice contains no reworded test. The measurement: 656.1 → 581.5 KB gzipped, with the
+  German 87.8 KB now paid only by German readers — 12.1 KB above slice 1 rather than the ~10 KB hoped for,
+  and the gap is slice 2's own *English* text, which no chunking can move.
+
+
 - **Turn 80 — a dressed list must not depend on how many gestures made it** (the queued section limit (a) and
   the catalogue's fourth corner; session 81). Two queue entries, and the interesting thing is what the first
   one turned out to be *about*. The stated fault was small and the fix was the sentence the queue already
@@ -16633,6 +16657,115 @@ invariant, listed by hand in `EngineBundleTest` with the reason for each. And **
 turning those into ICU number arguments changes what the English says and is slice 3's whole subject. The
 messages are shaped for it: one `phrase`/`lengthWord` argument per number, reused, never a `"5 mm"` baked
 into a pattern.
+
+### Implementation status (as built — **slice 3: the numbers speak too, and the text rides in a chunk**, session 81)
+
+Slice 2 left a German session German in every word and English in every figure: `{closingGap}` read `0.3`
+in Berlin exactly as in London, because the engine handed each message a `String` it had already spelled.
+Slice 3 closes that, and pays back the 84.6 KB the last one cost. Two halves, and they turn out to be the
+same mechanism twice — *state the thing once, spell it at the edge.*
+
+**A figure is a value, exactly as a sentence is.** `constructit.l10n.Num` is what a measured figure becomes
+inside a `Msg`: the number in the **file's own spelling** (a decimal point, and the digits `Format.num` /
+`Frames3.mm` already rounded to — OP-18) plus the one operation the edge performs, `render(locale)`. The
+ARB declares which holes are figures — a new placeholder type, `"decimal"`, on 130 of them — and
+`:generateMessages` wraps those arguments in `Num` in the `Msgs` factory. **Not one call site moved.** That
+is the point rather than a saving: the engine goes on stating a size the way it always did, in the spelling
+the file uses, and the *reader* decides how it is punctuated. `Frames3.mm(dev)` still returns
+`"0.3"`; `Msgs.refusalPath…(mm = …)` now carries a number; and the same refusal object reads *"0.3 mm"* and
+*"0,3 mm"* with nothing recomputed, which is the slice-2 property extended one level down.
+
+**The reference engines do the numbers too.** One seam, `expect fun formatNumber(locale, value,
+fractionDigits)`, with ICU4J's `NumberFormat` as the JVM actual and the browser's own `Intl.NumberFormat` as
+the JS actual — the same two implementations of one specification that `formatMessage` already stands on,
+and in the browser's case a formatter for every language it knows, already there, costing the bundle
+nothing. Two things it is asked *not* to do, and both are load-bearing: **no grouping** (`12345.5` stays
+`12345.5`, never `12,345.5`) and **no padding** (`fractionDigits` is a maximum). Together they make English
+output byte-identical to what `Format.num` wrote before the slice, which is why all ~1500 English
+substring assertions in the suite read the same sentence they read on the day they were written, and why
+the diff of this slice contains no reworded test. **Rounding is never the formatter's job**: what reaches
+it has already been rounded by `Format.num`'s platform-independent arithmetic, and `fractionDigits` is the
+number of decimals that rule actually produced. *The locale changes the separator, never the precision.*
+
+**Units are messages, where they are words.** `mm`, `mm²`, `mm³` and `°` are international and stand as
+they are; what is *not* international is the spacing round them, their order relative to the number, and
+the unit **named in words** — so `format.length`, `format.angle`, `format.area`, `format.volume`,
+`format.plain`, `format.other`, `unit.mm`, `unit.deg`, `unit.millimetres` and `unit.degrees` are ARB keys
+like any other, and a language that writes the unit first can move it. `Format.quantityMsg(q)` is the one
+place a figure and its unit are put together, and `Format.quantity(q)` is it rendered in the language now
+active — which is what carried the change into the dimension annotations on the canvas
+(`DimensionAnnotation.label`), the measurement list and `Preview`'s live read-outs without any of them
+knowing about it. `Document.lengthWord` went from `String` to `Msg` for the same reason: a note that quotes
+a size was freezing the *number's* language at the moment the note was written.
+
+**The one rule this project writes instead of calling a library, and why.** `readDecimal(text, separator)`
+— what a reader typed, as a number. There is no reference *parser* to call: `Intl.NumberFormat` and ICU4J's
+`NumberFormat` both only **write**, and only one of them exists in the browser at all, which is precisely
+where the typing happens. Rather than let the two platforms disagree about what `5,5` means, both use this,
+and it is deliberately the narrowest rule that closes the loop the panel opens: the locale's own separator
+(asked of the engine itself — `formatNumber(locale, 1.5, 1)` is `1.5` or `1,5`, and the one character in it
+that is not a digit *is* the separator, so there is no table of separators here to fall behind CLDR)
+becomes a `.`, **any other `.` or `,` makes the text not a number**, and Kotlin's `toDoubleOrNull` does the
+rest. The strictness is the interesting half: a German session refuses `1.234`, which is the one input that
+genuinely means two things — and since the writer never emits a grouping separator, nothing this
+application produced is ever refused by its own rule. It runs in both directions, which is why there is one
+of it and not two: `Num` re-reads the canonical figure a refusal states (separator `.`) before respelling
+it, and the panel reads what a person typed (separator theirs).
+
+**The parameter panel gave up its native number field, and got its nudge back by hand.** `<input
+type="number">` is localized by the **browser's** language, not by the app's, so a German session in an
+English Chrome could neither type nor read `5,5`; the value fields are `type="text" inputmode="decimal"`
+now, spelled by `Format.display` and read by `Format.read`. What the native field also gave — the spinner,
+and the arrow keys that make typing and nudging one operation (OP-13) — is written out once, over any field
+carrying a `data-step`, and dispatched as the browser's own `input` and `change` events so that a value is
+still committed in exactly one place. The same treatment reached the inspector's handle fields and the two
+material factors, where the 0..1 range the native field only *advertised* is now actually enforced. **The
+file is untouched**: `DocumentFormat` keeps the decimal point in every language, asserted on GitHub #35's
+and #31's own scripts and on a connect fixture — saved under `de`, byte-identical to `en`, a fixed point
+under both, and every `<number>mm` literal in them still spelled with a point.
+
+**One chunk per language, and the main bundle back to English.** The generator already held one table per
+locale; it now emits them to three places rather than one. **English** is compiled into `commonMain` and
+rides in the main bundle, because it is the fall-back for every key a language does not carry and because
+the first paint cannot wait for a request. **Every other language** goes twice: as Kotlin into `jvmMain`,
+where a headless test renders `de` and `en` in one expression and nothing may be asynchronous, and as
+`l10n/<lang>.js` into the browser distribution. `Bundle` is the seam — `patterns(locale)` answers the
+compiled table on the JVM and, in the browser, whatever `install()` has been given; a language whose chunk
+is not here is not an error and never blocks, since every key simply falls back to English.
+
+**The chunk is a `<script>`, not a `fetch`, and that is a finding rather than a preference.** Half of
+`BrowserE2ETest` — and anyone who opens the distribution from disk — runs the page over `file:`, where a
+browser refuses an XHR, a `fetch` and an ES module outright but still loads a classic script. So the chunk
+assigns a flat `[key, pattern, key, pattern, …]` array under `window.constructitL10n`, the shell adds the
+element and reads it back without `Object.keys`, and the `src` is **relative**, which is what makes the same
+file work at the root of a dev server and under `/constructit/` on Pages (the workflow copies the whole
+`productionExecutable` directory, chunks included). The keys are sorted, so the deployed file is
+byte-identical for identical input — checked by regenerating it.
+
+**Measured.** `constructit.js` fell from **656.1 KB to 581.5 KB gzipped, −74.6 KB**, and `l10n/de.js` is
+87.8 KB gzipped that only a German session ever asks for. Slice 2's whole +84.6 KB is therefore off the
+English path, and the main bundle stands **12.1 KB above slice 1's** — which is not the ~10 KB the queue
+hoped for, and the 2 KB is worth naming honestly: slice 1's bundle *also* carried German, so the number to
+beat was never English-only, and what remains is slice 2's own English text (1495 new keys) minus what
+splitting saved. The chunk is larger than the 74.6 KB it removed because it repeats all 2163 keys, which the
+combined table used to share with English; that repetition is paid only by the reader who wanted the
+language.
+
+**Where the switch now happens.** The first paint **waits** for the chosen language's chunk — a page that
+painted English and corrected itself a frame later would be a flash of the wrong language rather than a
+saving, and the wait is one same-origin request against a 600 KB bundle already parsed. The picker does the
+same: nothing reads a language whose text is not in, so a switch is never half-done, and a chunk already in
+the page is not asked for twice. `BrowserE2ETest.theGermanChunkArrivesOnDemandAndItsNumbersWithIt` is what
+says so from outside — an English session that downloads **no** German, a switch that fetches
+`l10n/de.js` exactly once, the standing note re-reading itself as *"5,5 mm"*, a comma typed into a value
+field and given back as a comma, and the same value read as `6.25` a moment later in English.
+
+**What is deliberately still English**, stated so it is not looked for. The **expression parser's own
+diagnostics** (`expr/Expr.kt`: *"a value is expected at position 4"*, *"unknown unit 'in'"*) — slice 2's
+note parked them here on the grounds that they are about the syntax of a number, and they are still parked:
+they are a sublanguage with character positions in them, they belong with the parser rather than with the
+panel, and moving them was not the slice that also changes how the bundle loads. They go on the queue with
+slice 4. And **`exchange/`**'s import and export notes, which no slice has yet owned.
 
 
 ## Open work queue (crash-safe snapshot; ordered)
@@ -20618,7 +20751,7 @@ boundary piece for equal endpoints, and `tangenciesFit` asking the **dressed** f
 chain what one pass built (a bullnose). See the as-built note *the free end's notch* under the edge-blend
 entries.
 
-**Queued in session 81 — languages (OP-29); slices 1 and 2 retired, slices 3 and 4 still open.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, and the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge. See *Languages (OP-29)*. What is left is **(3)** number and unit formatting in the UI — the decimal comma, the display unit, and with them the `Frames3.mm`/`Format.num` strings that slice 2 deliberately kept as pre-formatted arguments — and **(4)** the review loop, proven on a third language.
+**Queued in session 81 — languages (OP-29); slices 1, 2 and 3 retired, slice 4 still open.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, ICU4J and `Intl.NumberFormat` as the two `formatNumber` actuals, the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge — and one chunk per language, fetched when it is chosen. See *Languages (OP-29)*. What is left is **(4)** the review loop, proven on a third language; and parked with it, the two areas no slice has owned: the **expression parser's own diagnostics** (`expr/Expr.kt`) and the **`exchange/` layer**'s import and export notes.
 
 **Slice 1 of the languages retired in session 81 — the mechanism, and the chrome.** The ARB, the generator,
 the two `format` actuals and the locale switch are built, and the whole chrome speaks them: 134 tool rows,

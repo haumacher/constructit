@@ -14197,7 +14197,7 @@ class Document {
                 if (kind == BlendKind.PROFILE) {
                     Msgs.noteOneDressedBodyProfileRun(name = profileEl?.let { nameOf(it) } ?: "?")
                 } else {
-                    Msgs.noteDressSizedRounding(word = kind.word, size = size?.let { lengthWord(it) } ?: "?")
+                    Msgs.noteDressSizedRounding(word = kind.word, size = size?.let { lengthWord(it) } ?: Msg.text("?"))
                 },
             scope = if (whole) "face" else "edge",
             where = where,
@@ -15675,8 +15675,12 @@ class Document {
      * invalid (OP-7), so the 3D view stays empty, and a note that said "0 mm" would leave the user with no
      * way to connect that empty view to the parameter they picked. What is *wrong* with it is said by
      * [madeSolid], which reads the result rather than guessing from an input.
+     *
+     * It is a **value** rather than a sentence since OP-29 slice 3: the figure and its unit together,
+     * spelled by whoever reads the note and not by whoever wrote it. It was a `String` through slice 2,
+     * which is why a German session read `5.5 mm` inside an otherwise German sentence.
      */
-    private fun lengthWord(ref: ScalarRef): String = Format.quantity(evalQuantity(ref) ?: 0.0.mm)
+    private fun lengthWord(ref: ScalarRef): Msg = Format.quantityMsg(evalQuantity(ref) ?: 0.0.mm)
 
     /** The thick path [el] is the footprint of, if any. */
     fun thickNetworkOf(el: Element): ThickNetwork? = thickNetworks.firstOrNull { it.footprint === el }

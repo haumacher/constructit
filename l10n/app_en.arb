@@ -3722,10 +3722,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a path — a curve in 3D space, used as the run a section is swept along. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "fd440f32"
@@ -3941,7 +3941,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about hollowing a solid into a shell — a wall of a given thickness with a cavity behind it, open at some faces if the user says so. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "e1016591"
@@ -3956,10 +3956,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about hollowing a solid into a shell — a wall of a given thickness with a cavity behind it, open at some faces if the user says so. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "d09975c4"
@@ -3969,7 +3969,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about hollowing a solid into a shell — a wall of a given thickness with a cavity behind it, open at some faces if the user says so. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "8070e744"
@@ -3979,7 +3979,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about hollowing a solid into a shell — a wall of a given thickness with a cavity behind it, open at some faces if the user says so. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "d0e8c9e9"
@@ -3994,7 +3994,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about hollowing a solid into a shell — a wall of a given thickness with a cavity behind it, open at some faces if the user says so. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "ce123aed"
@@ -4004,7 +4004,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about hollowing a solid into a shell — a wall of a given thickness with a cavity behind it, open at some faces if the user says so. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "fe8b8096"
@@ -4019,7 +4019,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about hollowing a solid into a shell — a wall of a given thickness with a cavity behind it, open at some faces if the user says so. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "reason": {
         "type": "message"
@@ -4123,16 +4123,16 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about building one curve in space out of two drawn views of it. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm3": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm4": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "bf392b3a"
@@ -4150,7 +4150,7 @@
         "type": "String"
       },
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "716d0833"
@@ -4163,7 +4163,7 @@
         "type": "String"
       },
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "e66bbd01"
@@ -4203,10 +4203,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about building one curve in space out of two drawn views of it. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "d40b9ed6"
@@ -4226,10 +4226,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a station: a frame at a given distance along a curve, where a section is placed. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "e6766890"
@@ -4239,10 +4239,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a station: a frame at a given distance along a curve, where a section is placed. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "c4b93db3"
@@ -4252,7 +4252,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a station: a frame at a given distance along a curve, where a section is placed. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "8cb8b997"
@@ -4262,7 +4262,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a station: a frame at a given distance along a curve, where a section is placed. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "3520a848"
@@ -4272,7 +4272,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a station: a frame at a given distance along a curve, where a section is placed. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "90dfef81"
@@ -5139,16 +5139,16 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm3": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm4": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "507454ba"
@@ -5158,10 +5158,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "912a911f"
@@ -5463,7 +5463,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "sizeWord": {
         "type": "message"
@@ -5579,13 +5579,13 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a blend: a rounding (fillet), a chamfer or a drawn profile run along the edges of a solid, and the corners where several of them meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm3": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "bc343dd3"
@@ -5924,7 +5924,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a chain of pieces used as a cutting surface driven through a solid. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "7212fa7f"
@@ -5949,7 +5949,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a chain of pieces used as a cutting surface driven through a solid. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "a4fd7ffb"
@@ -5987,7 +5987,7 @@
         "type": "String"
       },
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "e01fafee"
@@ -6169,7 +6169,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about the solid modelling kernel: extruding, revolving, sweeping, lofting, slicing and triangulating. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "bf1d6305"
@@ -6199,7 +6199,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about the solid modelling kernel: extruding, revolving, sweeping, lofting, slicing and triangulating. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "de0b9316"
@@ -6209,7 +6209,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about the solid modelling kernel: extruding, revolving, sweeping, lofting, slicing and triangulating. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "9eff6a1c"
@@ -6219,7 +6219,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about the solid modelling kernel: extruding, revolving, sweeping, lofting, slicing and triangulating. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "c2e8f08a"
@@ -6229,10 +6229,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about the solid modelling kernel: extruding, revolving, sweeping, lofting, slicing and triangulating. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "deg2": {
-        "type": "String"
+        "type": "decimal"
       },
       "deg": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "431db69e"
@@ -6285,7 +6285,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about the solid modelling kernel: extruding, revolving, sweeping, lofting, slicing and triangulating. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "41c4ee9"
@@ -6295,7 +6295,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about the solid modelling kernel: extruding, revolving, sweeping, lofting, slicing and triangulating. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "7f1a968d"
@@ -6305,7 +6305,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about the solid modelling kernel: extruding, revolving, sweeping, lofting, slicing and triangulating. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "d07ca42d"
@@ -6757,7 +6757,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about the curve where two solids meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "a330cbc9"
@@ -6767,7 +6767,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about the curve where two solids meet. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "1fb06c50"
@@ -6777,7 +6777,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a section that rides the run of a swept body where the run crosses the section's own plane. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "45c164f4"
@@ -6787,7 +6787,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a section that rides the run of a swept body where the run crosses the section's own plane. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "39da5964"
@@ -6797,7 +6797,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about projecting a drawn curve onto the face of a solid. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "1fb06c50"
@@ -6852,7 +6852,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a skin: a solid stretched over several drawn cross-sections. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "k2": {
         "type": "int"
@@ -6998,10 +6998,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a skin: a solid stretched over several drawn cross-sections. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       },
       "k2": {
         "type": "int"
@@ -7022,10 +7022,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a skin: a solid stretched over several drawn cross-sections. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       },
       "what": {
         "type": "message"
@@ -7044,13 +7044,13 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a skin: a solid stretched over several drawn cross-sections. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm3": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "7d8db96e"
@@ -7120,7 +7120,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a sweep: a section carried along a run, with laws that may vary its size and its twist along the way. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "what": {
         "type": "String"
@@ -7139,7 +7139,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a sweep: a section carried along a run, with laws that may vary its size and its twist along the way. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "what": {
         "type": "String"
@@ -7219,13 +7219,13 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a sweep: a section carried along a run, with laws that may vary its size and its twist along the way. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "bendAt": {
         "type": "message"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       },
       "subject": {
         "type": "message"
@@ -7241,19 +7241,19 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a sweep: a section carried along a run, with laws that may vary its size and its twist along the way. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm3": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       },
       "what": {
         "type": "message"
       },
       "mm4": {
-        "type": "String"
+        "type": "decimal"
       },
       "subject": {
         "type": "message"
@@ -7274,13 +7274,13 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a sweep: a section carried along a run, with laws that may vary its size and its twist along the way. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm3": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       },
       "subject": {
         "type": "message"
@@ -7758,7 +7758,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one comes from a single construction step in the dependency graph — an intersection that has no solution, a tangent that does not exist, a degenerate input — and is shown against the element that step builds. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "e52dbdd1"
@@ -7768,7 +7768,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one comes from a single construction step in the dependency graph — an intersection that has no solution, a tangent that does not exist, a degenerate input — and is shown against the element that step builds. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "577c525c"
@@ -7783,7 +7783,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one comes from a single construction step in the dependency graph — an intersection that has no solution, a tangent that does not exist, a degenerate input — and is shown against the element that step builds. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "word2": {
         "type": "message"
@@ -7852,7 +7852,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one comes from a single construction step in the dependency graph — an intersection that has no solution, a tangent that does not exist, a degenerate input — and is shown against the element that step builds. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "d7db146e"
@@ -8060,7 +8060,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one comes from a single construction step in the dependency graph — an intersection that has no solution, a tangent that does not exist, a degenerate input — and is shown against the element that step builds. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "deg": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "8875f253"
@@ -8070,13 +8070,13 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one comes from a single construction step in the dependency graph — an intersection that has no solution, a tangent that does not exist, a degenerate input — and is shown against the element that step builds. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "deg2": {
-        "type": "String"
+        "type": "decimal"
       },
       "deg": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "a518ae0f"
@@ -8142,7 +8142,7 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one comes from a single construction step in the dependency graph — an intersection that has no solution, a tangent that does not exist, a degenerate input — and is shown against the element that step builds. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "86f9ad33"
@@ -8162,10 +8162,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one comes from a single construction step in the dependency graph — an intersection that has no solution, a tangent that does not exist, a degenerate input — and is shown against the element that step builds. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "746ffaa3"
@@ -8511,10 +8511,10 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a family of sections placed along a run, out of which a swept or lofted body is built. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "mm2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "b242c909"
@@ -8720,7 +8720,7 @@
     "description": "One word ConstructIt — a parametric 2D/3D CAD program that builds geometry as a dependency graph — drops into longer sentences it builds (status notes and refusals). It is not a sentence of its own, so it has to fit where those sentences put it. It says what size would fit, inside a refusal about a rounding that is too large.",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "e6e27664"
@@ -8730,7 +8730,7 @@
     "description": "One word ConstructIt — a parametric 2D/3D CAD program that builds geometry as a dependency graph — drops into longer sentences it builds (status notes and refusals). It is not a sentence of its own, so it has to fit where those sentences put it. It says what size would fit, inside a refusal about a drawn profile that is too large.",
     "placeholders": {
       "percent": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "d23c6d12"
@@ -8740,7 +8740,7 @@
     "description": "One word ConstructIt — a parametric 2D/3D CAD program that builds geometry as a dependency graph — drops into longer sentences it builds (status notes and refusals). It is not a sentence of its own, so it has to fit where those sentences put it. It names the size a rounding has, inside a longer refusal: \"a fillet of radius 5 mm leaves no material\".",
     "placeholders": {
       "mm": {
-        "type": "String"
+        "type": "decimal"
       },
       "sizeWord": {
         "type": "message"
@@ -8844,13 +8844,13 @@
         "type": "String"
       },
       "at": {
-        "type": "String"
+        "type": "decimal"
       },
       "len": {
-        "type": "String"
+        "type": "decimal"
       },
       "need": {
-        "type": "String"
+        "type": "decimal"
       },
       "subject": {
         "type": "message"
@@ -8866,13 +8866,13 @@
     "description": "Refusal message of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It is shown in the status line and beside the element in the side panel, to say why something the user asked for cannot be built and what to do instead. This one is about a sweep: a section carried along a run, with laws that may vary its size and its twist along the way. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "at": {
-        "type": "String"
+        "type": "decimal"
       },
       "len": {
-        "type": "String"
+        "type": "decimal"
       },
       "need": {
-        "type": "String"
+        "type": "decimal"
       },
       "subject": {
         "type": "message"
@@ -8881,7 +8881,7 @@
         "type": "message"
       },
       "at2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "458f4282"
@@ -9300,7 +9300,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the space origin: an anchor on the plane, plus an in-plane offset (OP-17). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
@@ -9329,7 +9329,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the space origin: an anchor on the plane, plus an in-plane offset (OP-17). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
@@ -9345,7 +9345,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the space origin: an anchor on the plane, plus an in-plane offset (OP-17). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "368d52e6"
@@ -9388,7 +9388,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the space origin: an anchor on the plane, plus an in-plane offset (OP-17). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "ec0d960"
@@ -10323,7 +10323,7 @@
         "type": "String"
       },
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
@@ -10469,7 +10469,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: points. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "end": {
         "type": "message"
@@ -10487,7 +10487,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: points. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "kept": {
         "type": "message"
@@ -10554,7 +10554,7 @@
         "type": "int"
       },
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
@@ -10563,7 +10563,7 @@
         "type": "String"
       },
       "num2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "5bef9382"
@@ -11047,7 +11047,7 @@
         "type": "String"
       },
       "size": {
-        "type": "String"
+        "type": "message"
       },
       "name": {
         "type": "String"
@@ -11282,7 +11282,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the loft as a skin over drawn sections (OP-26's hull route, session 78 — queue entry 1). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
@@ -11445,10 +11445,10 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the loft as a skin over drawn sections (OP-26's hull route, session 78 — queue entry 1). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "size": {
-        "type": "String"
+        "type": "message"
       },
       "size2": {
-        "type": "String"
+        "type": "message"
       },
       "name": {
         "type": "String"
@@ -11493,7 +11493,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the loft as a skin over drawn sections (OP-26's hull route, session 78 — queue entry 1). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "1b559efe"
@@ -11503,7 +11503,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the loft as a skin over drawn sections (OP-26's hull route, session 78 — queue entry 1). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "size": {
-        "type": "String"
+        "type": "message"
       },
       "space": {
         "type": "String"
@@ -12674,7 +12674,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the lift: a drawn curve is the run it already is (OP-26, step 1's missing source). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "size": {
-        "type": "String"
+        "type": "message"
       },
       "name": {
         "type": "String"
@@ -12698,7 +12698,7 @@
         "type": "message"
       },
       "size": {
-        "type": "String"
+        "type": "message"
       },
       "name": {
         "type": "String"
@@ -12735,10 +12735,10 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the lift: a drawn curve is the run it already is (OP-26, step 1's missing source). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "num2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "f2b9159e"
@@ -12767,7 +12767,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the ball: what a circle says one dimension up (session 52's queue, item 3). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "size": {
-        "type": "String"
+        "type": "message"
       }
     },
     "x-translated": "f8506a9f"
@@ -13379,16 +13379,16 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: imported curves: a frozen run, its placement, and the sketch a flat one makes (OP-26, step 9). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "num4": {
-        "type": "String"
+        "type": "decimal"
       },
       "num3": {
-        "type": "String"
+        "type": "decimal"
       },
       "num2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "42f93960"
@@ -13403,7 +13403,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: imported curves: a frozen run, its placement, and the sketch a flat one makes (OP-26, step 9). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "251d1efa"
@@ -13413,16 +13413,16 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: imported curves: a frozen run, its placement, and the sketch a flat one makes (OP-26, step 9). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "num4": {
-        "type": "String"
+        "type": "decimal"
       },
       "num3": {
-        "type": "String"
+        "type": "decimal"
       },
       "num2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "fa012808"
@@ -13435,7 +13435,7 @@
         "type": "int"
       },
       "num": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "125002a4"
@@ -14139,7 +14139,7 @@
     "description": "Status line of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears at the bottom of the window and reports what the last action did, what a tool is waiting for, or why an action was refused and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from: what cannot be built right now, and what just changed about that (OP-3, *refusals speak*). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
@@ -14260,7 +14260,7 @@
     "description": "Status line of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears at the bottom of the window and reports what the last action did, what a tool is waiting for, or why an action was refused and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from: sketch spaces: which 2D space this canvas is showing (OP-17). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "f4dfce11"
@@ -14285,7 +14285,7 @@
     "description": "Status line of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears at the bottom of the window and reports what the last action did, what a tool is waiting for, or why an action was refused and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from: sketch spaces: which 2D space this canvas is showing (OP-17). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "from": {
         "type": "String"
@@ -15646,7 +15646,7 @@
     "description": "Status line of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears at the bottom of the window and reports what the last action did, what a tool is waiting for, or why an action was refused and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from: the one pick cycle (OP-16 / OP-13 / OP-21). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
@@ -15659,7 +15659,7 @@
     "description": "Status line of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears at the bottom of the window and reports what the last action did, what a tool is waiting for, or why an action was refused and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from: the one pick cycle (OP-16 / OP-13 / OP-21). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "legIndex": {
         "type": "int"
@@ -15698,7 +15698,7 @@
         "type": "message"
       },
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "instead": {
         "type": "message"
@@ -16308,7 +16308,7 @@
         "type": "String"
       },
       "angle": {
-        "type": "String"
+        "type": "decimal"
       },
       "facing": {
         "type": "message"
@@ -16887,7 +16887,7 @@
         "type": "message"
       },
       "size": {
-        "type": "String"
+        "type": "message"
       },
       "name": {
         "type": "String"
@@ -17097,7 +17097,7 @@
     "description": "A short phrase ConstructIt — a parametric 2D/3D CAD program that builds geometry as a dependency graph — puts at the head of a status note, naming the tool that was used. A tube of a fixed radius swept along a run.",
     "placeholders": {
       "size": {
-        "type": "String"
+        "type": "message"
       }
     },
     "x-translated": "ba8a9cf1"
@@ -17145,7 +17145,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: the 2D->3D seam as tools (OP-17). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "size": {
-        "type": "String"
+        "type": "message"
       },
       "name": {
         "type": "String"
@@ -17356,7 +17356,7 @@
     "description": "Status note of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). It appears in the status line at the bottom of the window right after the user has used a tool, and says either what was just built or — when the tool cannot do what was asked — why not and what to do instead. Element names like \"e14\" are the drawing's own names and are never translated. This one comes from the tools for: one dressed body, many roundings (OP-30, GitHub #35). Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands. Text in curly braces is a placeholder filled in at run time (an element name, a count or a measurement); keep it exactly as it stands.",
     "placeholders": {
       "size": {
-        "type": "String"
+        "type": "message"
       },
       "word": {
         "type": "message"
@@ -17499,7 +17499,7 @@
         "type": "message"
       },
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
@@ -17511,7 +17511,7 @@
         "type": "String"
       },
       "num2": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "7725008d"
@@ -17524,7 +17524,7 @@
         "type": "message"
       },
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
@@ -17549,7 +17549,7 @@
         "type": "message"
       },
       "num": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
@@ -17921,13 +17921,13 @@
         "type": "String"
       },
       "roughness": {
-        "type": "String"
+        "type": "decimal"
       },
       "name": {
         "type": "String"
       },
       "metallic": {
-        "type": "String"
+        "type": "decimal"
       }
     },
     "x-translated": "98d757f4"
@@ -18314,5 +18314,79 @@
         "type": "message"
       }
     }
+  },
+  "@@x-section-slice3": "l10n: session 81 slice 3",
+  "format.length": "{value} mm",
+  "@format.length": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. A length, in millimetres.",
+    "placeholders": {
+      "value": {
+        "type": "decimal"
+      }
+    }
+  },
+  "format.angle": "{value}°",
+  "@format.angle": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. An angle, in degrees.",
+    "placeholders": {
+      "value": {
+        "type": "decimal"
+      }
+    }
+  },
+  "format.area": "{value} mm²",
+  "@format.area": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. An area, in square millimetres.",
+    "placeholders": {
+      "value": {
+        "type": "decimal"
+      }
+    }
+  },
+  "format.volume": "{value} mm³",
+  "@format.volume": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. A volume, in cubic millimetres.",
+    "placeholders": {
+      "value": {
+        "type": "decimal"
+      }
+    }
+  },
+  "format.plain": "{value}",
+  "@format.plain": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. A plain number, with no unit at all — a ratio or a factor.",
+    "placeholders": {
+      "value": {
+        "type": "decimal"
+      }
+    }
+  },
+  "format.other": "{value} [{dim}]",
+  "@format.other": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. A quantity in a unit the program has no name for; {dim} is the exponents of length and angle, which is format and not a word.",
+    "placeholders": {
+      "value": {
+        "type": "decimal"
+      },
+      "dim": {
+        "type": "String"
+      }
+    }
+  },
+  "unit.mm": "mm",
+  "@unit.mm": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The unit symbol shown beside a length field in the properties panel."
+  },
+  "unit.deg": "°",
+  "@unit.deg": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The unit symbol shown beside an angle field in the properties panel."
+  },
+  "unit.millimetres": "millimetres",
+  "@unit.millimetres": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The word for the unit of length, used when a value is refused for having the wrong dimension (“a value in millimetres is expected”)."
+  },
+  "unit.degrees": "degrees",
+  "@unit.degrees": {
+    "description": "Number and unit formatting of ConstructIt, a parametric 2D/3D CAD program that builds geometry as a dependency graph (a construction, not a constraint solver). These strings put a measured figure together with its unit, for the status line, the properties panel and the dimension annotations on the drawing. {value} is the number itself, already written in the reader's own notation (a decimal comma in German, a decimal point in English) — keep it exactly as it stands, and move it only if the language puts the unit before the number. The unit symbols mm, mm², mm³ and ° are international and are not translated; only the spacing around them and the word forms are. The word for the unit of angle, used when a value is refused for having the wrong dimension (“a value in degrees is expected”)."
   }
 }
