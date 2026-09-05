@@ -456,8 +456,8 @@ sealed interface Feature3 {
      * base did — none of which a `MeshBoolean` can do (OP-9's sink rule). See [Section3.faces] and
      * [Section3.edges], both of which delegate here.
      *
-     * **It wraps a feature, not a solid, and that is what keeps it pure.** `(base, targets, kind, size,
-     * choices)` is enough to rebuild the identical body — the base's own mesh, the wedge swept along each
+     * **It wraps a feature, not a solid, and that is what keeps it pure.** `(base, targets, sections,
+     * choices, absent)` is enough to rebuild the identical body — the base's own mesh, the wedge swept along each
      * edge, the boolean — so [Solid3]'s "the mesh is a pure function of the feature" holds verbatim and a
      * reload derives the same triangles from the same numbers. [choices] are the discrete signs the
      * gesture scored once and the step restates (OP-1/OP-18); nothing here is re-scored.
@@ -476,23 +476,52 @@ sealed interface Feature3 {
         val base: Feature3,
         /** Which of the base's edges are blended — indices into [Section3.edges] of [base], in order. */
         val targets: List<Int>,
-        val kind: BlendKind,
-        val size: Double,
+        /**
+         * The section run along each of [targets] — **one per target**, and that is what makes a dressed
+         * body *one* feature whatever its roundings are (OP-30's next step).
+         *
+         * A blend used to carry one `(kind, size, profile)` for its whole target list, so roundings of
+         * different sizes could only be a **chain** of blends: one boolean per level, no corner built
+         * between a fillet r₁ and a fillet r₂ that meet, and no level section through the result (the
+         * composition of two levels' outline corrections is not stated). Per target, the whole dressing is
+         * one pass: the corners are looked for among *all* of its bands at once, the booleans are one per
+         * group instead of one per size, and the face-outline correction is made once from every band.
+         *
+         * The rest of [Blend3] already worked per **piece**, each of which carries its own section — which
+         * is why this is a small change rather than a new machine.
+         */
+        val sections: List<BlendSection>,
         val choices: List<BlendChoice>,
         /**
-         * The **drawn section** a [BlendKind.PROFILE] blend runs, in its own (setback, setback) coordinates
-         * — empty for the two built-ins, which state their section from [size] alone (GitHub #30).
+         * The **tombstones**: positions in [targets] whose rounding was removed, each mapped to the number
+         * of band faces it held (OP-30's *slot kept for the life of the dressing*).
          *
-         * A value like every other input of a feature: the profile is an ordinary drawn element of the
-         * construction, so editing it re-blends the body through the same recompute a retyped radius uses,
-         * and deleting it cascades (OP-21).
+         * Removing a rounding used to slide every band, rail and corner slot after it, which is the index
+         * instability OP-17 forbids and which was refused by name until now. A removed rounding therefore
+         * keeps its **slot**: its target stays in this list marked absent, contributes its band and rail
+         * slots with a reason and no surface — exactly what an edge a rounding *consumed* already emits —
+         * and contributes no geometry at all. So nothing after it renumbers, and an address into the
+         * tombstone is a refusal that names the rounding that is gone (OP-3).
+         *
+         * [sections] and [choices] still carry an entry at an absent position, so the three lists stay
+         * parallel and index-addressable; an absent position's section states its **kind** and a zero size,
+         * since the kind is all the refusal needs and there is no geometry left to state.
          */
-        val profile: List<ProfileElement> = emptyList(),
+        val absent: Map<Int, Int> = emptyMap(),
     ) : Feature3 {
         override val footprint: List<Region> get() = base.footprint
 
-        /** What this blend's section **is** — the one object [Blend3] reads it through. */
-        val section: BlendSection get() = BlendSection(kind, size, profile)
+        /** The section run along target [k] — [Blend3]'s one reading of what this blend does there. */
+        fun sectionAt(k: Int): BlendSection = sections[k]
+
+        /** Whether target [k] is a **tombstone**: its rounding was removed and only its slots are left. */
+        fun isAbsent(k: Int): Boolean = k in absent
+
+        /** How many band faces the tombstone at [k] keeps — 0 where the rounding stands. */
+        fun bandsAt(k: Int): Int = absent[k] ?: 0
+
+        /** The positions of [targets] whose rounding **stands** — the pieces this blend actually builds. */
+        val standing: List<Int> get() = targets.indices.filter { it !in absent }
 
         /**
          * **The dressed face and edge lists, derived at most once per feature instance** (OP-5, GitHub #35).
@@ -510,7 +539,7 @@ sealed interface Feature3 {
          * the value it belongs to, and a drag that rebuilds the chain every frame drops the old one with it.
          *
          * It is a memo in [constructit.core.Node.computeMemoized]'s sense and it changes nothing observable:
-         * the lists are a pure function of `(base, targets, kind, size, choices, profile)` (OP-15), and being
+         * the lists are a pure function of `(base, targets, sections, choices, absent)` (OP-15), and being
          * declared in the class **body** they are excluded from the data class's `equals`/`hashCode`/`copy`.
          */
         internal val dressedFaces: Pair<List<FacePatch>?, String?> by lazy { Blend3.deriveDressedFaces(this) }

@@ -447,8 +447,9 @@ class BlendFeatureTest {
         ed.activeScalar = ed.doc.newParameter("r2", 3.0.mm)
         ed.setTool(Tools.CHAMFER_EDGE)
         ed.click(Vec2(20.0, 30.0))
-        // **One dressed body with two entries** (OP-30). They round by different parameters, so they are two
-        // passes — which is exactly the chain of two dress-up features the feature assertion below reads.
+        // **One dressed body with two entries** (OP-30). They round by different parameters and by different
+        // *kinds*, and since OP-30's next step they are still **one pass**: `Feature3.Blend` carries a
+        // section per target, so a fillet and a chamfer of the same dressing are one feature and one call.
         assertEquals(2, ed.solids().size, "fillet then chamfer, one dressed body: ${ed.statusHint}")
         assertEquals(2, ed.doc.elements.count { it.kind == ElementKind.DRESSING }, "…with a row per rounding")
         val v = volumeOf(ed.solids().last())
@@ -458,7 +459,12 @@ class BlendFeatureTest {
         val back = DocumentFormat.load(text)
         assertClose(volumeOf(back.elements.last { it.kind == ElementKind.SOLID }), v, 1e-6, "and the same body comes back")
         val f = (Evaluator().valueOf(back.elements.last { it.kind == ElementKind.SOLID }.ref) as SolidValue).solid.feature
-        assertTrue(f is Feature3.Blend && f.base is Feature3.Blend, "a chain of two dress-up features: $f")
+        assertTrue(f is Feature3.Blend && f.base !is Feature3.Blend, "one dress-up feature, not a chain of two: $f")
+        assertEquals(
+            listOf(BlendKind.FILLET, BlendKind.CHAMFER),
+            f.sections.map { it.kind },
+            "…with a section per target, in the gestures' own order",
+        )
     }
 
     // ---- 5: the mesh tier, kept and stated ----

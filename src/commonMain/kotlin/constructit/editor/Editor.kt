@@ -421,12 +421,16 @@ class Editor(
     }
 
     /**
-     * Delete the selected **roundings** (OP-30) — the journal edited, re-saved and replayed, exactly as every
-     * other structural edit is (OP-23's re-stamp; [Document.journalWithoutEntry] states the two shapes).
+     * Delete the selected **roundings** (OP-30) — the body's node re-stamped in place and the rounding's own
+     * step left standing as a **tombstone** ([Document.tombstoneStep]), so that every band, rail and address
+     * after it keeps its number.
      *
      * All-or-nothing and by name, as the ordinary delete is: a mixed selection is refused rather than half
      * done, and the **only** rounding of a body is refused with the gesture that does work named — that body
-     * *is* that rounding, so what the user means is to delete the body.
+     * *is* that rounding, so what the user means is to delete the body. Nothing else is refused any more: the
+     * one index-stability gap OP-30 left — a rounding chained on a rail of a rounding being taken off — is
+     * what the tombstone cures, and that chained rounding is now invalid with a reason that names the
+     * rounding that went (OP-3) instead of the removal being refused.
      */
     private fun deleteDressingEntries(targets: List<Element>): Boolean {
         val others = targets.filter { it.kind != ElementKind.DRESSING }
@@ -438,13 +442,8 @@ class Editor(
             return false
         }
         for (el in targets) {
-            doc.entryRemovalRefusal(el)?.let {
-                statusHint = "Delete: $it"
-                changed()
-                return false
-            }
             val d = doc.dressingWith(el)
-            if (d != null && d.entries.size == 1) {
+            if (d != null && d.standing.size == 1) {
                 statusHint =
                     "Delete: ${doc.nameOf(el)} is the only rounding of ${doc.nameOf(d.body)} — that body *is* " +
                     "that rounding, so delete ${doc.nameOf(d.body)} itself to take it off"
@@ -459,8 +458,8 @@ class Editor(
         }
         val what = if (targets.size == 1) doc.nameOf(targets[0]) else "${targets.size} roundings"
         val before = DocumentFormat.save(doc)
-        // **last rounding first**, so the one that shares its step with the body is re-stamped once, at the
-        // end, onto a rounding that is still there (see [Document.journalWithoutEntry])
+        // **last rounding first**, so a bulk removal reads the standing count the way one gesture at a time
+        // would (see [Document.removeDressingEntry])
         for (el in targets.sortedByDescending { doc.dressEntryIndex(it) }) {
             if (!doc.removeDressingEntry(el)) {
                 restore(before)

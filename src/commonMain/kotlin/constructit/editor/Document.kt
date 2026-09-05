@@ -1575,6 +1575,7 @@ class Document {
         pendingDofs.clear()
         pendingExprBinding = null
         pendingFuncCurve = null
+        pendingTombstone = null
         // an identity snapshot, not a count: a step may *remove* elements too (a break replaces one
         // leg with three), and then a count would mistake shifted survivors for new ones
         val before = elements.toHashSet()
@@ -1616,6 +1617,11 @@ class Document {
             // …and the **family laws** this operation's sweep states (OP-26, session 79), by the identical
             // rule one tier up: the binding is the sole authority for the texts, so the writer restates the
             // step's own `laws=` from it and re-stating a row is an edit of this very step
+            // …and, where this step is a rounding whose rounding was **removed**, the slots it keeps and
+            // the `signs=` it was written with: a tombstone declares no element for [storedSigns] to read
+            // its choices off, so the step itself holds them (OP-30)
+            pendingTombstone?.let { tombstones[step] = it }
+            pendingTombstone = null
             pendingSweepFamily?.let { sweepFamilies[step] = it }
             pendingSweepFamily = null
             // …and the correspondence this operation's skin states, owned by its step for the same reason
@@ -1857,7 +1863,9 @@ class Document {
         // **A rounding is listed under the body it dresses** (OP-30): the panel is a tree one level deep, and
         // that level is stated here rather than by whoever draws it — the same division of labour [listedIn]
         // already makes. Document order is otherwise untouched, so an entry only ever *moves up* to its body.
-        val under = dressings.associate { d -> d.body to d.entries.map { it.el }.filter { e -> listed.any { it === e } } }
+        // …the roundings that **stand**: a tombstone has no row at all, because it is the addresses'
+        // business and not the user's (OP-30)
+        val under = dressings.associate { d -> d.body to d.standing.mapNotNull { it.el }.filter { e -> listed.any { it === e } } }
         val out = ArrayList<Element>(listed.size)
         for (el in listed) {
             if (dressingWith(el) != null) continue
@@ -7035,7 +7043,10 @@ class Document {
      * The scored signs [step] must restate (OP-18): those of the elements **it** created, in creation order.
      * Empty for every step that scores nothing, which is why the writer needs no per-tool case.
      */
-    internal fun storedSigns(step: Step): List<Int> = step.creates.flatMap { scoredSigns[it.id] ?: emptyList() }
+    internal fun storedSigns(step: Step): List<Int> =
+        step.creates.flatMap { scoredSigns[it.id] ?: emptyList() }
+            // …and a **tombstone** declares no element to read them off, so its own step holds them (OP-30)
+            .ifEmpty { tombstones[step]?.second ?: emptyList() }
 
     /** The same, for a set of elements — one **copy** of a replicated gesture (OP-23). */
     private fun storedSigns(els: List<Element>): List<Int> = els.flatMap { scoredSigns[it.id] ?: emptyList() }
@@ -13996,8 +14007,12 @@ class Document {
      * of booleans a function of the numbers (OP-21).
      */
     class DressEntry(
-        /** The element this entry is — a [ElementKind.DRESSING] row under its body, with a name and a step. */
-        val el: Element,
+        /**
+         * The element this entry is — a [ElementKind.DRESSING] row under its body, with a name and a step —
+         * and **null once the rounding has been removed**: what is left then is a [tombstone][absentBands],
+         * which is an address's business and not the user's, so it has no row and no name (OP-30).
+         */
+        val el: Element?,
         val kind: BlendKind,
         /** The size parameter this entry rounds by, or null for a drawn-profile entry. */
         val size: ScalarRef?,
@@ -14011,7 +14026,20 @@ class Document {
         val choices: List<BlendChoice>,
         /** What the click named, in the drawing's own words — the panel's readout. */
         val where: String,
-    )
+        /**
+         * −1 while this rounding stands; otherwise how many **band faces** it held when it was removed — the
+         * tombstone's own slot count, frozen at the removal (OP-30's *slot kept for the life of the
+         * dressing*).
+         *
+         * Frozen rather than re-derived, because a drawn profile's piece count is a *value*: re-reading it
+         * after the rounding is gone would let editing that profile slide the numbers of the roundings after
+         * it, which is the very instability the tombstone exists to remove (OP-17).
+         */
+        val absentBands: Int = -1,
+    ) {
+        /** Whether this entry is a **tombstone**: its rounding was removed and only its slots are left. */
+        val absent: Boolean get() = absentBands >= 0
+    }
 
     /**
      * A part's **dressing**: the body one solid element shows, and the roundings it is made of (OP-30).
@@ -14027,6 +14055,9 @@ class Document {
         val base: Element,
     ) {
         val entries = ArrayList<DressEntry>()
+
+        /** The roundings that **stand** — what the element list shows and what the user can take off. */
+        val standing: List<DressEntry> get() = entries.filter { !it.absent }
     }
 
     private val dressings = ArrayList<Dressing>()
@@ -14126,45 +14157,54 @@ class Document {
     /**
      * Build [d]'s body from its entries and **bind the view onto it** (OP-30) — the re-stamp, in one place.
      *
-     * The entries are grouped into **passes** by the section they round with: consecutive entries that share
-     * a kind, a size *node* and a profile *node* are one `Blend3.blended` call, so the reporter's seven
-     * roundings at one radius `r` are one pass — one set of corners built among all of them and one stitched
-     * tool per group, which is the whole of what *"applied at once"* asks for. Grouping is by node identity
-     * and by adjacency, both facts about the **graph** rather than about the numbers, so the count of sweeps
-     * and booleans cannot move when a radius is retyped (OP-21). Entries rounding by different parameters
-     * chain, exactly as a chain of roundings always has, and the corners between the passes are built by the
-     * same machinery that has always built them ([Blend3]'s existing bands).
+     * **One pass, whatever the sizes and the kinds** (OP-30's next step). A dressing used to be grouped into
+     * passes by the section its entries rounded with — consecutive entries sharing a kind, a size *node* and
+     * a profile *node* were one `Blend3.blended` call and the rest **chained** on top. That collapsed the
+     * reporter's file whole (his seven roundings all read the one parameter `r`), but it left three things
+     * standing for a dressing of several sizes: one boolean per pass instead of one per group, no corner
+     * between a fillet r₁ and a fillet r₂ that meet, and no exact level section through the result, since
+     * the second pass's outline corrections land on faces the first already corrected and the composition
+     * of the two is not stated. `Blend3.blended` now takes a **section per target**, so the whole dressing
+     * is one call: every band fresh in one pass, every corner looked for among all of them, one stitched
+     * tool per group, and the face outlines corrected once from every band.
+     *
+     * What a corner between two *different* sections is has **not** changed, and this package invents no
+     * variable-section corner: two congruent sections that meet make a corner (a crossing, a pivot, a ball —
+     * [Blend3]'s own catalogue), a non-congruent pair of built-ins is left to the boolean to trim exactly as
+     * it always was, and a pair where one side is a drawn profile is refused by name (`Blend3`'s mixed
+     * corner). What is new is only that the pair is now *seen* in one pass rather than in two levels.
      */
-    @Suppress("UNCHECKED_CAST")
     private fun rebuildDressing(d: Dressing) {
-        val plane = planeOfSpace(d.base.space)
-        var tip = d.base.ref as SolidRef
-        var pass = ArrayList<DressEntry>()
-
-        fun flush() {
-            val lead = pass.firstOrNull() ?: return
-            tip = passRef(tip, plane, lead.kind, lead.size, lead.profileRef, pass.flatMap { it.targets }, pass.flatMap { it.choices })
-            pass = ArrayList()
-        }
-        for (e in d.entries) {
-            val lead = pass.firstOrNull()
-            if (lead != null && !(lead.kind == e.kind && lead.size?.node === e.size?.node && lead.profileRef?.node === e.profileRef?.node)) flush()
-            pass.add(e)
-        }
-        flush()
+        @Suppress("UNCHECKED_CAST")
+        val from = d.base.ref as SolidRef
+        val tip = cx.blendAll(from, planeOfSpace(d.base.space), d.entries.map { runOf(it) })
         (d.body.ref.node as IndirectNode).boundTo = tip.node
     }
 
     /**
-     * **One pass of a dressing**: [targets] of [from] rounded in one `Blend3.blended` call (OP-30).
+     * One entry of a dressing as the run [Construction.blendAll] rounds it by (OP-30).
      *
-     * The single place a dressing's geometry is constructed — the first rounding builds its body through it
-     * and every re-stamp rebuilds through it — because the two must not be able to disagree. What makes them
-     * the same is that both hand over the **resolved target list** (`run=`) rather than an address for the
-     * node to resolve at eval time: which edges a gesture named is decided when the step runs (OP-21), so a
-     * whole-face pick that skipped edges an earlier rounding took keeps skipping exactly those, and adding an
-     * unrelated rounding cannot re-resolve a pass that was already built.
+     * The single place a dressing's geometry is stated — the first rounding builds its body through it and
+     * every re-stamp rebuilds through it — because the two must not be able to disagree. What makes them the
+     * same is that both hand over the **resolved target list** rather than an address for the node to
+     * resolve at eval time: which edges a gesture named is decided when the step runs (OP-21), so a
+     * whole-face pick that skipped edges an earlier rounding took keeps skipping exactly those, and adding
+     * an unrelated rounding cannot re-resolve a rounding that was already built.
+     *
+     * A **tombstone** hands over no size and no profile: it contributes its band and rail slots and nothing
+     * else, so a rounding that is no longer there cannot make the body recompute (OP-30).
      */
+    private fun runOf(e: DressEntry): Construction.BlendRun =
+        Construction.BlendRun(
+            e.kind,
+            if (e.absent) null else e.size,
+            if (e.absent) null else e.profileRef,
+            e.targets,
+            e.choices,
+            absentBands = e.absentBands,
+        )
+
+    /** A dressing's **first** rounding, built through the one construction [runOf] states (OP-30). */
     @Suppress("UNCHECKED_CAST")
     private fun passRef(
         from: SolidRef,
@@ -14174,19 +14214,8 @@ class Document {
         profile: ProfileRef?,
         targets: List<Int>,
         choices: List<BlendChoice>,
-    ): SolidRef =
-        cx.blend(
-            from,
-            from,
-            plane,
-            size,
-            kind,
-            whole = false,
-            address = targets.firstOrNull() ?: 0,
-            choices = choices,
-            profile = profile,
-            run = targets,
-        )
+        absentBands: Int = -1,
+    ): SolidRef = cx.blendAll(from, plane, listOf(Construction.BlendRun(kind, size, profile, targets, choices, absentBands)))
 
     /**
      * Take the entry [el] off its dressing **in place** (OP-30): the journal loses its step, the entry list
@@ -14204,14 +14233,39 @@ class Document {
      */
     fun removeDressingEntry(el: Element): Boolean {
         val d = dressingWith(el) ?: return false
-        if (d.entries.size <= 1) return false
-        if (!journalWithoutEntry(el)) return false
-        d.entries.removeAll { it.el === el }
+        val k = d.entries.indexOfFirst { it.el === el }
+        if (k < 0 || d.standing.size <= 1) return false
+        val e = d.entries[k]
+        val bands = bandsHeldBy(d, e)
+        if (!tombstoneStep(el, bands, signsOfEntry(e))) return false
+        // **the slot stays**: the entry becomes a tombstone in the very position it stood, so every band,
+        // rail and address after it keeps its number (OP-30, OP-17)
+        d.entries[k] = DressEntry(null, e.kind, e.size, e.profile, e.profileRef, e.whole, e.address, e.targets, e.choices, e.where, bands)
         elements.removeAll { it === el }
         scoredSigns.remove(el.id)
         rebuildDressing(d)
         return true
     }
+
+    /**
+     * How many **band faces** one entry of [d] holds right now — the tombstone's frozen slot count (OP-30).
+     *
+     * Read off the dressed face list rather than derived from the kind, because a drawn profile runs one
+     * band per piece of its own chain and the list is where that count already is. One per target where the
+     * body cannot be read at all, which is the count every built-in has.
+     */
+    private fun bandsHeldBy(
+        d: Dressing,
+        e: DressEntry,
+    ): Int {
+        val target = e.targets.firstOrNull() ?: return 1
+        val faces = (Evaluator().valueOf(d.body.ref) as? SolidValue)?.solid?.feature?.let { Section3.faces(it).first } ?: return 1
+        return maxOf(1, faces.count { (it.name as? FaceName.BlendBand)?.edge == target })
+    }
+
+    /** One entry's `signs=` — the address first, then its scored choices, exactly as the gesture wrote it. */
+    private fun signsOfEntry(e: DressEntry): List<Int> =
+        listOf(e.address) + e.choices.flatMap { if (e.kind == BlendKind.PROFILE) it.signsWithFlip() else it.signs() }
 
     /** One entry's readout, in the drawing's own words — *"a fillet of 5 mm along the upright edge"*. */
     private fun entryPhrase(
@@ -14252,8 +14306,8 @@ class Document {
      */
     fun entriesEmptyingRefusal(els: List<Element>): String? {
         for (d in dressings) {
-            val doomed = d.entries.count { e -> els.any { it === e.el } }
-            if (doomed > 0 && doomed == d.entries.size) {
+            val doomed = d.entries.count { e -> e.el != null && els.any { it === e.el } }
+            if (doomed > 0 && doomed == d.standing.size) {
                 return "${nameOf(d.body)} would be left with no rounding at all, and it is the roundings that " +
                     "make it that body — delete ${nameOf(d.body)} itself to take them all off, or leave one on"
             }
@@ -14262,85 +14316,60 @@ class Document {
     }
 
     /**
-     * Why removing the entry [el] would move an address something else already recorded, or null when it
-     * would not — the one index-stability gap OP-30 leaves, refused rather than paid for silently (OP-17).
+     * Turn the entry [el]'s step into a **tombstone** (OP-30's *slot kept for the life of the dressing*):
+     * the step stays exactly where it stands, declares that rounding no longer, and states the [bands] it
+     * held so a replay lays out the very same slots.
      *
-     * **What moves and what does not.** The dressed list is the base's own faces and edges at their own
-     * indices, then one **band** (two **rails**) per rounded edge in entry order, then the corner patches.
-     * *Adding* a rounding therefore moves nothing that was already addressable: the base's slots keep their
-     * indices and every band and rail already there keeps its own — only the corner patches, which stand
-     * after all the bands, shift by one (stated at OP-30 in DESIGN.md). **Removing** one is the other case:
-     * every band and rail after it slides up by that entry's own count.
+     * **Why the step stays rather than going.** Removing a rounding used to *drop* its step, and the dressed
+     * list then closed up behind it: every band, rail and corner slot after that entry slid up by its own
+     * count, which is the index instability OP-17 forbids and which had to be refused by name while anything
+     * addressed one of them (a rounding chained on a rail — the one pick the rail decision keeps out of the
+     * dressing for exactly this reason). A removed rounding now keeps its **slot** instead, with a reason and
+     * no surface — precisely what an edge a rounding *consumed* already keeps — so nothing after it
+     * renumbers, the refusal goes, and an address into the tombstone is invalid with a sentence that names
+     * the rounding that is gone (OP-3).
      *
-     * What actually *holds* such an address is exactly one thing, and it is why this is narrow: a sketch
-     * space records a **footprint boundary piece**, not a face index ([Section3.FACE_ADDRESS_CONVENTION]),
-     * and a footprint is the base's own plan, which no rounding touches. What does hold one is a **rounding
-     * chained on a rail** of this body — an edge that exists only because of an earlier entry — which is the
-     * one pick OP-30 keeps out of the dressing for this very reason.
+     * **The file states it, because the drawing does** (OP-18, OP-21). The step's own row is the tombstone:
+     * it keeps its place in the journal — which is what says *where* in the entry order the slot is — loses
+     * its `-> name`, and gains one new optional argument, `removed=<bands>`. Nothing else about the row
+     * changes and no stored literal means anything new, so no version is owed; `law=`, `laws=` and `match=`
+     * arrived on the `tool` row the same way. [bands] is frozen at the removal rather than re-read, because
+     * a drawn profile's piece count is a *value* and re-reading it would let editing that profile slide the
+     * numbers the tombstone exists to hold still.
      *
-     * The cure is a **slot kept for the life of the dressing**: a removed rounding's bands, rails and corner
-     * faces staying in the list with a reason, exactly as an edge a rounding consumed keeps its slot. That is
-     * a change to `Blend3`'s own layout rather than to the editor, so until it is made the removal is refused
-     * **by name**, with the gesture that does work.
+     * **A dressing's first rounding is the step that made the body, and it still makes it.** Its tombstone
+     * declares one name — the body — where a living first rounding declares two, and a joining tombstone
+     * declares none where a living entry declares one: the declaration count is still the structure, one
+     * name fewer on each side ([dressingDeclares]). The body it then makes is simply undressed until the
+     * entries after it dress it, which is what a dressing with a tombstone at position 0 *is*.
      */
-
-    fun entryRemovalRefusal(el: Element): String? {
-        val d = dressingWith(el) ?: return null
-        val k = d.entries.indexOfFirst { it.el === el }
-        if (k < 0) return null
-        val baseEdges =
-            (Evaluator().valueOf(d.base.ref) as? SolidValue)?.solid?.feature
-                ?.let { Section3.edges(it).first?.size } ?: return null
-        val firstRail = baseEdges + 2 * d.entries.take(k).sumOf { it.targets.size }
-        val standing =
-            dressings.firstOrNull { other -> other.base === d.body && other.entries.any { it.address >= firstRail } }
-                ?: return null
-        return "${nameOf(el)} cannot be removed while ${nameOf(standing.body)} is rounded on a rail of " +
-            "${nameOf(d.body)} that stands after this rounding's own — taking it off would slide that rail's " +
-            "number and round a different edge. Remove ${nameOf(standing.body)} first, or take off a " +
-            "rounding no rail of it stands after"
+    internal fun tombstoneStep(
+        el: Element,
+        bands: Int,
+        signs: List<Int>,
+    ): Boolean {
+        val step = creatingStep(el) ?: return false
+        step.creates.removeAll { it === el }
+        tombstones[step] = bands to signs
+        return true
     }
 
     /**
-     * Remove the entry [el] from the dressing it belongs to, **by editing the journal** — the caller then
-     * re-saves and replays, which is what makes it one undo with the body keeping its name (OP-23).
+     * The steps that are **tombstones** and what each of them keeps: how many band faces the rounding held,
+     * and the `signs=` it was written with (OP-30).
      *
-     * Two shapes, because a dressing's **first** rounding is the step that made the body:
-     * - an ordinary entry's step created nothing but that entry, so the step goes and nothing else moves;
-     * - the first entry's step created the body *and* the entry, so the **next** entry's step is re-stamped
-     *   to create the body too, addressing what the dropped step addressed, and the dropped step goes. The
-     *   body is still declared by one step, so its name and everything built on it survive; the surviving
-     *   step stays where it stood, because its own `param` was declared between the two.
-     *
-     * False where the entry is the dressing's only one: then the body *is* that rounding, and the honest
-     * gesture is to delete the body — which the ordinary delete already does, and which the caller says.
+     * Keyed by step for the reason `exprBindings`, `sweepLaws` and `skinMatches` are: the writer restates
+     * the row from here, and a tombstone declares no element for [storedSigns] to read its choices off.
      */
-    internal fun journalWithoutEntry(el: Element): Boolean {
-        val d = dressingWith(el) ?: return false
-        val i = d.entries.indexOfFirst { it.el === el }
-        val step = creatingStep(el) ?: return false
-        if (i > 0 || !step.creates.any { it === d.body }) {
-            journal.remove(step)
-            return true
-        }
-        // the **first surviving** rounding after this one, so removing two at once still leaves the body
-        // declared by a step: the one just above it may already be gone from the journal
-        val next = d.entries.drop(1).firstOrNull { e -> creatingStep(e.el) != null } ?: return false
-        val nextStep = creatingStep(next.el) ?: return false
-        // the surviving gesture's own arguments, addressing what *this* step addressed: the base, which the
-        // dropped step named and the next one named the body by
-        val args = nextStep.args.map { a -> if (a is Arg.Keyed && a.key == "els") step.args.firstOrNull { it is Arg.Keyed && it.key == "els" } ?: a else a }
-        val merged = Step(nextStep.kind, args)
-        merged.creates.add(d.body)
-        merged.creates.add(next.el)
-        merged.createsScalars.addAll(nextStep.createsScalars)
-        merged.ownDofs.addAll(nextStep.ownDofs)
-        // …and it stands where the **surviving** gesture stood, not where the dropped one did: its own
-        // parameter was declared between the two, and a step may not run before the `param` it names
-        journal[journal.indexOfFirst { it === nextStep }] = merged
-        journal.remove(step)
-        return true
-    }
+    private val tombstones = HashMap<Step, Pair<Int, List<Int>>>()
+
+    /** How many band slots the tombstone [step] keeps, or null where it is an ordinary step (OP-30). */
+    internal fun tombstoneBands(step: Step): Int? = tombstones[step]?.first
+
+    /** Set while a rounding step that carries `removed=` is replaying — see [tombstoneStep]. */
+    internal var dressingRemoved: Int = -1
+
+    private var pendingTombstone: Pair<Int, List<Int>>? = null
 
     /**
      * **Break an edge of [solid]** — a fillet or a chamfer along a provenance-named edge, built as OP-9's own
@@ -14446,10 +14475,15 @@ class Document {
         // it out again, which is what keeps the writer and the reader agreeing for every chain shape. An
         // **older** file has no such convention, so the migration gate decides it per line ([dressingJoins]).
         val version = replayingVersion
+        // **the rounding being replayed is a tombstone** — its step says so with `removed=` (OP-30). One
+        // name fewer is declared on each side of the join, because the rounding itself is no longer one of
+        // the things the step makes: a tombstone that makes the body declares the body alone, and one that
+        // joins a dressing declares nothing at all.
+        val removedBands = if (version == null) -1 else dressingRemoved
         val joins =
             when {
                 version == null -> true
-                version >= DocumentFormat.DRESSED_BODY_VERSION -> dressingDeclares == 1
+                version >= DocumentFormat.DRESSED_BODY_VERSION -> dressingDeclares == (if (removedBands >= 0) 0 else 1)
                 else -> dressingJoins
             }
         val dress = dressingOf(on)?.takeIf { tipEl === on && baseEl === on && joins }
@@ -14539,6 +14573,29 @@ class Document {
         // file has already said this rounding joins, that is the answer, and re-deriving it would let a body
         // whose parameter changed under it fail to *load* rather than merely be invalid (OP-3, OP-18).
         val join = dress?.takeIf { replayingVersion != null || addressesBase(it, whole, address, targets, ev) }
+        // **a tombstone joins as a slot and nothing else** (OP-30): no row in the element list — a tombstone
+        // is the addresses' business, not the user's — no size read, no note, and the body re-stamped in
+        // place so that the entries after it keep their numbers.
+        if (removedBands >= 0) {
+            val tomb = DressEntry(null, kind, size, profileEl, profileRef, whole, address, targets, choices, where, removedBands)
+            if (join != null) {
+                join.entries.add(tomb)
+                rebuildDressing(join)
+                pendingTombstone = removedBands to entrySigns
+                noteEdit()
+                return null
+            }
+            // …and the **first** rounding's tombstone is still the step that makes the body: it makes it
+            // undressed, and the entries after it dress it (see [tombstoneStep])
+            if (baseEl !== tipEl) return null
+            val made = passRef(baseEl.ref as SolidRef, planeOfSpace(baseEl.space), kind, size, profileRef, targets, choices, removedBands)
+            val body0 = add(cx.indirect(made), ElementKind.SOLID, Styles.SOLID)
+            body0.space = baseEl.space
+            dressings.add(Dressing(body0, baseEl).also { it.entries.add(tomb) })
+            pendingTombstone = removedBands to entrySigns
+            madeSolid(body0, "${nameOf(baseEl)} with its first rounding removed — the slot it held is kept so nothing after it renumbers")
+            return body0
+        }
         if (join != null) {
             // …and an older file's chain, re-stated as entries, says so **once** (OP-18's version marker:
             // the meaning of those steps changed, deliberately, and a load may say so exactly one time)

@@ -14436,6 +14436,38 @@ the composition table is driven generically as well as by its own test.
   always was, and the suite holds the two to one standard by asserting, after each, that the in-place body
   *is* the body a replay of the saved script builds.
 
+- **Turn 78 — one pass whatever the sizes, and a slot kept for the life of the dressing** (GitHub #35;
+  OP-30's recorded next step; session 81). Turn 77 left two things written down and unbuilt, and building
+  them showed they were **one** missing fact: `Feature3.Blend` could say only a single section for its whole
+  target list. That is why a dressing of several sizes had to be a *chain* of passes, and — the same
+  sentence one word over — why a target list could hold only roundings that **stand**, so removing one closed
+  the list up behind it. The feature now carries a section per target and a set of absent ones, and both go.
+  What that buys is one boolean per **group** rather than per pass (a group is which bands meet, which is
+  topology and not the order the gestures were made in — two roundings that share a corner are one stitched
+  tool even with a third declared between them), one dressed-list derivation instead of a chain of them, and
+  a removed rounding that keeps its band and rail slots with a reason and no surface, exactly as an edge a
+  rounding *consumed* already keeps its slot. So the one index-stability gap Turn 77 refused by name is
+  closed, and an address into a tombstone is invalid with a sentence naming the rounding that went.
+  Three findings are worth carrying past the feature. **The section belongs to the feature, not to the
+  call**: the alternative was `(target, section, choice)` triples inside `Blend3.blended`, and it fails
+  because the *face list* is derived from the feature — a band's surface and a rail's kind are the section's
+  own facts, so a section the derivation was never given is the "two constructions of one thing" mistake
+  again. **A queued limit can be a misdiagnosis, and only the measurement settles it**: section limit (b)
+  said a chain of roundings does not compose its face-outline corrections, and it composes them perfectly —
+  a plate rounded 3 mm on top and 5 mm underneath sections to the analytic area, chained and in one pass, to
+  the last bit. What the *"two sizes"* symptom really was is limit (a) one edge further along: two adjacent
+  edges at different radii build no corner, so each band has a **free end**, and a free end notches faces
+  nobody corrects. (b) is retired as not-a-bug; (a) stands with its cure. And **a structural deletion is
+  recorded, not merely performed**: the tombstone is the removed rounding's own step, left where it stood
+  with one name fewer and one new optional argument, `removed=<bands>` — the position in the journal *is*
+  the slot's position, which is the only fact about a tombstone that cannot be derived. No stored literal
+  changed meaning, so no version was owed, and the declaration count goes on being the structure with one
+  name fewer on each side: a tombstoned *first* rounding still makes its body, undressed, and the entries
+  after it dress it. What was deliberately **not** kept is the corner slots: a corner is built between two
+  roundings, so tombstoning one would mean setting live bands back against a band that is not there — a body
+  the drawing does not have. Corner patches already move when a rounding is added, nothing durable addresses
+  one, and the thing that does — a rounding chained on a rail — is precisely what now holds still.
+
 
 ## Domain layer: architectural drawing (draft — no new solver)
 
@@ -15794,7 +15826,7 @@ its coplanarity is exact, so it keeps it.
 - **The carrier curves are not consumed.** A thickened segment stays a visible segment, as the ortho
   carrier's legs always did. Hiding it is a view decision, and the view has no such state (OP-18).
 
-## One dressed body, many roundings (OP-30 — OPEN; design entry, session 81)
+## One dressed body, many roundings (OP-30 — RESOLVED; design entry session 81, delivered in three parts, sessions 81–82)
 
 **The ask (user, GitHub #35).** *"Each fillet creates a new 3D object — this may be part of the performance
 problem and also is inconvenient. I have no chance to remove a fillet from some edge except the very last one
@@ -16070,7 +16102,8 @@ dressing for this very reason — and while one stands there the removal is refu
 The cure is the design's own: a **slot kept for the life of the dressing** — a removed rounding's bands,
 rails and corner faces staying in the list with a reason, exactly as an edge a rounding consumed keeps its
 slot. Together with per-target sections in one `blended` call it is the same small change in one place, and
-it is the next step of OP-30 rather than a defect of it:
+it is the next step of OP-30 rather than a defect of it (**both built in session 81** — see the note below,
+which also records why the *corner* slots are not tombstoned):
 
 - `Feature3.Blend` gains a per-target section (or `Blend3.blended` takes `(targets, section, choices)`
   triples instead of one section for the list), which turns the six sites in `Blend3` that read `f.section`
@@ -16081,7 +16114,8 @@ it is the next step of OP-30 rather than a defect of it:
   surface, which is `dressedEdges`/`dressedFaces` emitting what a consumed edge already emits.
 
 Both are edits to `Blend3` and `Section3`, which part 1 owned in the same session; they are recorded here so
-that the next session starts from the mechanism rather than from a surprise.
+that the next session starts from the mechanism rather than from a surprise. It did, and the note below is
+what came of it: the refusal above is gone, and `Document.entryRemovalRefusal` with it.
 
 **What the tests hold.** `DressedBodyTest` (10) — the reporter's file as one dressed body with seven entries
 in one pass, its volume against the chain's own answer on this build and the file a fixed point with one load
@@ -16105,6 +16139,163 @@ re-based on the new contract rather than weakened — what used to count *solids
 `BlendMixedVertexTest` compares the body with *n* roundings against the body with *n + 1* by cutting the same
 script short, and the pivot it used to see *superseded* is now built once about the band because one pass
 never makes the sharp-upright corner in the first place. **2670 → 2696 green**, `assertManifold` throughout.
+
+### Implementation status (as built — **the next step**: one pass whatever the sizes, and a slot kept for the life of the dressing, session 81)
+
+The two things the note above left standing are built, and they turned out to be the same edit twice: a
+`Feature3.Blend` that could say only **one** section for its whole target list is what forced a dressing of
+several sizes to be a *chain*, and a target list that could hold only roundings that **stand** is what forced
+a removal to close the list up behind it. The feature now carries a section per target and a set of absent
+ones, and both problems go with that.
+
+**A. One pass whatever the sizes and the kinds.** `Feature3.Blend` is `(base, targets, sections, choices,
+absent)`: `sections[k]` is the `BlendSection` run along `targets[k]`, so kind, size and drawn profile are
+per-rounding. `Blend3.blended` takes the list; the six sites that read `f.section` inside a
+`for ((k, i) in f.targets.withIndex())` loop — `chainPieces`, `dressingsOf`, `piecesOf`, `blended`'s own
+preparation, `dressedEdges`'s consumed-edge reason and `smoothRail`'s kind test — read `sections[k]` instead,
+and everything else in `Blend3` was already per **piece**, each of which has carried its own section since
+session 79. That is the whole change; it is small because the machinery underneath was already shaped for it.
+
+*Where the section belongs, and why the feature and not the call.* The alternative was to leave
+`Feature3.Blend` alone and give `blended` `(target, section, choice)` triples. It was rejected because the
+feature is what the **face list** is derived from: `deriveDressedFaces` needs to know which section made band
+*k* in order to state that band's surface and its trim, and `deriveDressedEdges` needs its kind to say
+whether a rail is smooth. A triple known only inside the call would leave those two deriving a section they
+were not given, which is the *"two constructions of one thing"* mistake OP-30's own note already records
+once. The feature carrying it is also the plainer sentence: **a dressed body is one feature whatever its
+roundings are.**
+
+*What follows in the editor.* `Document.rebuildDressing` no longer groups entries into passes at all — it
+maps every entry to a `Construction.BlendRun` and hands the whole list to `Construction.blendAll`, one node,
+one `Blend3.blended` call. The pass-grouping by kind, size node and adjacency is gone with it, and so is the
+one thing it decided that the graph does not: *adjacency in the entry list*. Two roundings that share a
+corner are now one stitched tool whether or not a third was declared between them — the count of booleans is
+one per **group**, and a group is which bands meet, which is topology (OP-21) and not the order of gestures.
+`Construction.blend` — one gesture, one section — is unchanged and is still what the mesh tier and every DSL
+caller use; `blendAll` is the dress-up tier only, so it carries no `applyTo`/`base` pair and no silhouette.
+Its operands are **deduplicated by node identity**, because the reporter's seven roundings all read his one
+parameter and an input list naming it seven times would claim seven edges where the graph has one.
+
+*What a corner between two different sections is — unchanged, and deliberately.* Two sections make a corner
+where they are **congruent** on the face they share (`ringsAgree`), and then it is one of the three the
+catalogue already has: a crossing, a pivot about a band, a ball at a convex vertex. A non-congruent pair of
+built-ins — a fillet r₁ meeting a fillet r₂ — builds **no** corner and is left to the boolean to trim, which
+is what every pair did before session 79 and what the chain did here; a pair where one side is a **drawn
+profile** has no congruent reading to fall back on and is refused by name (`Blend3.mixedCorner`). No
+variable-section corner is invented, and none is claimed. What one pass changes about such a pair is only
+that it is *seen* in one call: the body is one feature, and each face the two cut has its outline corrected
+once from both bands instead of once per level.
+
+**The queued section limit (b) is retired as a misdiagnosis, and the measurement says so.** (b) was recorded
+as *"a chain of roundings … the second level's trims land on faces the first already corrected, and the
+correction is not composed"*, with the chain named as the cause and this follow-up as the cure. The follow-up
+is here and the composition was **already right**: a plate whose top rim is rounded at 3 mm and whose bottom
+rim is rounded at 5 mm sections into the analytic area at a plane through either band, and the chained build
+of the same two roundings gives the identical number to the last bit
+(`DressedBodyOnePassTest.aLevelSectionThroughTwoSizesIsExact`). What the *"two sizes"* symptom actually was
+is **limit (a) one edge further along**: two *adjacent* rim edges at different radii build no corner, so each
+band has a **free end** at the vertex where they meet, and a free end notches faces whose outlines nobody
+corrects. That case still refuses, in (a)'s own sentence, and it refuses identically before and after this
+package (`twoAdjacentSizesStillMeetLimitAAndSayItInTheSameWords`). So the queue keeps (a) with its cure and
+drops (b); a dressing of several sizes now sections exactly wherever a dressing of one size does.
+
+**B. A slot kept for the life of the dressing.** `Feature3.Blend.absent` maps a **position** in `targets` to
+the number of band faces the rounding that stood there held. Such a target contributes its band slots and its
+two rail slots to the dressed lists with a **reason** and no surface — which is exactly what an edge a
+rounding *consumed* already contributes, and the same three lines of `deriveDressedFaces` /
+`deriveDressedEdges` emit it — and it contributes no piece, no corner, no tool and no boolean. So the bands,
+rails and addresses of every entry after it keep their numbers, and `Document.entryRemovalRefusal` is gone:
+the one index-stability gap OP-30 left standing is closed rather than refused.
+
+An address **into** a tombstone is invalid with a reason (OP-3) and heals nowhere: *"the fillet of boundary
+edge #2 of the top face was removed; nothing stands here — the slot is kept for the life of this dressing so
+that the roundings after it keep their numbers. Round boundary edge #2 of the top face itself instead."*
+`creaseOf` already refuses an edge that carries a reason, so a rounding chained on a tombstoned rail meets
+that sentence with no new machinery. It does **not** heal by re-adding the rounding: re-adding is a new entry
+at the **end** of the list with a slot of its own, because an entry's position is what its slots are numbered
+by and moving one would move everything after it. That is stated rather than worked around — the cure the
+sentence names is to round the base edge instead.
+
+*The base edge is a crease again.* A tombstone rounded nothing away, so the base edge it addressed loses the
+*"was rounded away by"* reason it carried and is an ordinary edge of the body once more. That is the one
+thing about the dressed list a tombstone does change, and it is the honest one.
+
+*Corner slots are **not** tombstoned, and the argument is the design's own.* The note above asked for band,
+rail *and* corner slots. A corner is not a property of one rounding: it is built between two, and its patches
+are emitted from the pieces the pass actually has. Keeping a dead rounding's corners would mean running
+`cornersOf` over pieces that are not there — and then the *live* bands would be set back by corners with a
+band that does not exist, which is a body the drawing does not have. So corner patches are derived from the
+roundings that stand. That is no new instability: corner patches stand **after** all the bands and already
+move by one when a rounding is *added*, which the note above states, and nothing durable addresses one — a
+sketch space records a footprint boundary piece (`Section3.FACE_ADDRESS_CONVENTION`), and the one thing that
+does hold a dressed-list index is a rounding chained on a **rail**, which is exactly what is now held still.
+
+**The file: one more optional argument, and no version bump.** A removed rounding's step **stays in the
+journal, where it stood** — which is what states the tombstone's position in the entry order, the only fact
+about it that is not derivable — declares one name fewer, and gains `removed=<bands>`:
+
+```
+tool filletedge els=e9 clicks=20,0 scalar="r0" signs=8;-1;1;0;1 removed=1 -> e10
+tool filletedge els=e10 clicks=40,15 scalar="r1" signs=9;-1;1;0;1 removed=1
+```
+
+The **declaration count is still the structure** (the rule the writer and the reader share, stated above),
+one name fewer on each side: a living first rounding declares the body and its own row and a tombstoned one
+declares the body alone; a living entry declares its row and a tombstoned one declares nothing. So a
+dressing whose *first* rounding was removed is still made by that rounding's step — it makes the body
+**undressed**, and the entries after it dress it — and the merge-into-the-next-step machinery the previous
+note describes is gone, which is one construction fewer rather than one more.
+
+*Why no version bump.* Nothing that a file already contains means anything new: every existing row parses
+and builds exactly as it did, and a pre-existing drawing has no tombstone in it. What arrives is one new
+**optional** `tool` argument, which is how `law=` (session 77), `laws=` (session 79) and `match=`
+(session 78) all arrived — none of them bumped the version either, and an older build meeting one says
+`unknown tool argument`, which is the same honest failure it has always given. OP-18's rule is about a stored
+literal's *meaning* changing, and no literal's does. `DRESSED_BODY_VERSION` stays 6 and `VERSION` stays 6.
+
+*Why `removed=` carries a number and not just a marker.* A rounding's band count is one for the two
+built-ins and one **per piece of the drawn chain** for a profile rounding, and a drawn profile is a *value*:
+re-reading its piece count after the rounding is gone would let editing that profile slide the numbers the
+tombstone exists to hold still. So the count is frozen at the removal, written down, and taken verbatim
+(OP-18, OP-21). A tombstone reads no operand at all — its size and its profile are handed to the node as
+null — so a rounding that is not there can never make the body recompute.
+
+*Where the writer keeps the two facts.* A tombstone declares no element, and `Document.storedSigns` reads a
+step's `signs=` off the elements it created — so the step itself holds them, in `Document.tombstones`, keyed
+by step exactly as `exprBindings`, `sweepLaws` and `skinMatches` are. `DocumentFormat.restate` writes
+`removed=` from the same map, so both the live removal and a replay reach the writer by one route.
+
+**Tombstones are the body's, and they go with it.** They are steps of the dressed body, so deleting the body
+deletes them; the element list never shows one (a tombstone is the *addresses'* business, not the user's);
+and one undo puts the rounding back and takes the tombstone with it, because undo is a script snapshot and
+the tombstone is a row of the script. The one boundary worth naming: a **cascade** — deleting the drawn
+profile a `PROFILE` rounding names — drops that rounding's step altogether and closes its slot up, exactly
+as a cascade drops any step. That is the cascade's own semantics (the gesture never happened) and not the
+*Delete this rounding* gesture, which is what leaves a tombstone.
+
+**What the tests hold.** `DressedBodyOnePassTest` (7) — three sizes on one rim as one feature with three
+sections and the chain's own volume to a part in `1e6`, measured against a pre-6 impure chain loaded on this
+very build; **one boolean per group and not per pass**, counted with `Geom3.combines` on the fixture that
+separates the two readings (edges 8 and 9 share a radius and a corner, edge 10 is opposite and is declared
+between them: two booleans where the chain needed three, and one dressed-list derivation instead of a chain
+of them); two fillets of different radii meeting at a corner built, manifold, and the chain's own volume; a
+fillet meeting a **drawn profile** still refused in `mixedCorner`'s words while two fillets at the same
+corner are no refusal at all; the reporter's one-node file unchanged (seven targets, two booleans, one
+derivation); the level section through two sizes exact at both bands and byte-equal to the chain's; and the
+adjacent-sizes case refusing in limit (a)'s words, identically to the chain. `DressedBodyTombstoneTest` (8) —
+the third rounding's band and rail slots unmoved when the second is taken off, the removed one's slots kept
+with a reason and no surface and its base edge a crease again, no row in the element list; a band address
+taken before the removal still naming that band afterwards; a rounding chained on the **removed** entry's
+rail invalid with the sentence that names it and the gesture that works; `save → load → save` a fixed point
+with the tombstone in it and `absent` coming back as `{1: 1}`; undo putting the rounding back and the
+tombstone going; the *first* rounding's tombstone still declaring the body; two tombstones in a row leaving
+the body that one rounding makes on its own; and deleting the body taking every rounding step and every
+tombstone with it. Three existing tests were re-based on the new contract rather than weakened —
+`DressedBodyTest.threeGesturesOnTheDressedBodyAreOneSolidAndThreeEntries` and
+`BlendFeatureTest.aChainedBlendRoundTripsThroughTheGesture` used to assert a **chain** of features for
+different sizes and different kinds and now assert one feature with a section per target, and
+`DressedBodyTest.theFirstRoundingComesOffToo` used to count two steps left and now counts three, one of them
+the tombstone. **2705 → 2720 green**, `assertManifold` throughout.
 
 
 ## Languages (OP-29 — OPEN; design entry, session 81)
@@ -20020,8 +20211,22 @@ OP-30 entry, with the rail decision, the migration's purity rule, and the one in
 standing with its cure (a slot kept for the life of the dressing, and per-target sections in one `blended`
 call — both edits to `Blend3`/`Section3`).
 
+**Retired in session 81 — OP-30's recorded next step, *one pass whatever the sizes, and a slot kept for the
+life of the dressing*.** `Feature3.Blend` carries a **section per target** and a set of **absent** ones, so a
+dressing is always one `Blend3.blended` call however many sizes, kinds and drawn profiles its roundings use:
+one boolean per group instead of one per pass, one dressed-list derivation instead of a chain of them, and
+the corners looked for among every band at once (the corner rule itself is unchanged — congruent sections
+make a corner, a non-congruent pair of built-ins is left to the boolean, a drawn profile against anything
+else is refused by name, and no variable-section corner is invented). A **removed** rounding leaves a
+tombstone: its target stays in the feature's list contributing its band and rail slots with a reason and no
+surface, exactly as an edge a rounding consumed keeps its slot, so nothing after it renumbers and
+`Document.entryRemovalRefusal` is gone — the last index-stability gap OP-30 left. Corner slots are
+deliberately not tombstoned, with the argument recorded. The file states a tombstone as the rounding's own
+step left where it stood, declaring one name fewer and carrying `removed=<bands>`; no stored literal's
+meaning moved, so the version stays 6. See the as-built note *the next step* under the OP-30 entry.
 
-**Queued in session 81 — level sections through a rounded body, two refusals found by the OP-30 probe.** Both pre-date OP-30 and both speak the same sentence (*"the plane's section of this solid does not close into an area — one of the faces it crosses is cut in a way this drawing states only as curves; read the section on a working plane instead"*): (a) a **single band with a free end** — a fillet along one rim edge of a plate — notches the two side faces its caps stand in with the wedge's own section, and `dressedFaces` corrects the outlines of the band's *own* two faces only, so those side faces keep a stale outline and the level section cannot close; the cure is the same analytic correction for the **end** faces (a wedge of two lines and an arc taken out of a corner of the outline — line against line, line against circle, nothing new). (b) a **chain of roundings** (two levels, or two sizes inside one dressing, which chain by design until the one-pass-per-size follow-up lands) — the second level's trims land on faces the first already corrected, and the correction is not composed; the one-pass follow-up removes the chain for one dressing, and the composition is the general cure. A whole-face rounding (a closed chain) sections exactly today, which is why the OP-30 probe uses one.
+
+**Queued in session 81 — level sections through a rounded body; (b) retired in session 81 as not-a-bug, (a) still open.** Both pre-date OP-30 and both speak the same sentence (*"the plane's section of this solid does not close into an area — one of the faces it crosses is cut in a way this drawing states only as curves; read the section on a working plane instead"*): (a) a **single band with a free end** — a fillet along one rim edge of a plate — notches the two side faces its caps stand in with the wedge's own section, and `dressedFaces` corrects the outlines of the band's *own* two faces only, so those side faces keep a stale outline and the level section cannot close; the cure is the same analytic correction for the **end** faces (a wedge of two lines and an arc taken out of a corner of the outline — line against line, line against circle, nothing new). ~~(b) a **chain of roundings** — the second level's trims land on faces the first already corrected, and the correction is not composed.~~ **(b) was a misdiagnosis and is retired in session 81, unfixed because there was nothing to fix**: the chain composes its corrections perfectly, and the one-pass follow-up (OP-30's next step) proved it by answering the identical number. A plate rounded 3 mm on its top rim and 5 mm on its bottom one sections into the analytic area at a plane through either band, both as a chain of two levels and as one pass, to the last bit (`DressedBodyOnePassTest.aLevelSectionThroughTwoSizesIsExact`). What the *"two sizes"* symptom really is, is **(a) one edge further along**: two *adjacent* rim edges at different radii are not congruent, so **no corner is built** between them and each band has a **free end** at the vertex they meet at — and a free end is exactly what (a) is about. That case refuses identically before and after the follow-up (`twoAdjacentSizesStillMeetLimitAAndSayItInTheSameWords`), so what is queued here is (a) alone, and its cure is the whole of it. A whole-face rounding (a closed chain) sections exactly today, which is why the OP-30 probe uses one — and so now does a dressing of several closed chains at several sizes.
 
 **Queued in session 81 — languages (OP-29), four slices, behind the issue tracker.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, and the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge. See *Languages (OP-29)*.
 

@@ -279,7 +279,9 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         for (e in entries) assertEquals(ed.doc.dressingWith(e)?.body, bodyOf(ed.doc), "…each a child of the one body")
         assertNull((Evaluator().eval(bodyOf(ed.doc).ref.node) as? EvalResult.Invalid)?.reason, "and the body builds")
 
-        // three different parameters of the same value are three passes; three uses of one parameter is one
+        // **one pass whatever the sizes** (OP-30's next step): three different parameters of the same value
+        // used to be three chained passes, and are now one `Blend3.blended` call with a section per target —
+        // one boolean per group instead of one per size, and every corner among all three bands built at once
         val shared = plate()
         val r = shared.doc.newParameter("r", 3.0.mm)
         for (at in listOf(Vec2(20.0, 0.0), Vec2(40.0, 15.0), Vec2(20.0, 30.0))) {
@@ -290,7 +292,8 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         val one = featureOf(bodyOf(shared.doc))
         assertTrue(one is Feature3.Blend && one.targets.size == 3 && one.base !is Feature3.Blend, "one shared radius, one pass: $one")
         val three = featureOf(bodyOf(ed.doc))
-        assertTrue(three is Feature3.Blend && three.base is Feature3.Blend, "three radii of their own, three passes: $three")
+        assertTrue(three is Feature3.Blend && three.targets.size == 3 && three.base !is Feature3.Blend, "three radii of their own, still one pass: $three")
+        assertEquals(3, (three as Feature3.Blend).sections.size, "…with a section per target")
 
         // …and both are the same body, to boolean noise: sharing a parameter changes what is computed, never what is built
         assertClose(volumeOf(bodyOf(shared.doc)), volumeOf(bodyOf(ed.doc)), abs(volumeOf(bodyOf(ed.doc))) * 1e-9, "the same three roundings")
@@ -335,7 +338,11 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         // the body kept its identity — the extrusion and the one dressing, exactly as before
         assertEquals(2, ed.doc.elements.count { it.kind == ElementKind.SOLID }, "one dressed body over one extrusion")
         val text = DocumentFormat.save(ed.doc)
-        assertEquals(2, text.lines().count { it.startsWith("tool filletedge") }, "two steps left:\n$text")
+        // …and its **step stays** as a tombstone (OP-30's next step): the row keeps its place, declares the
+        // body and no rounding, and says how many band slots it holds, so nothing after it renumbers
+        assertEquals(3, text.lines().count { it.startsWith("tool filletedge") }, "three steps, one of them a tombstone:\n$text")
+        assertEquals(1, text.lines().count { "removed=" in it }, "…and it says so: \n$text")
+        assertTrue("removed=1 -> e10" in text, "the tombstone still declares the body it made:\n$text")
         assertEquals(text, DocumentFormat.save(DocumentFormat.load(text)), "and the file is a fixed point")
     }
 
@@ -384,13 +391,18 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
         assertTrue(abs(volumeOf(chained) - one) > abs(one) * 1e-9, "the rail's body followed: ${volumeOf(chained)} vs $one")
         back.doc.setParameter(back.doc.scalars.first { it.name == "r0" }, 3.0.mm)
         assertClose(volumeOf(chained), one, abs(one) * 1e-9, "…and came back with it")
-        // …and taking one out from under it is refused by name while it stands there
+        // …and taking one out from under it is **no longer refused** (OP-30's next step): the removed
+        // rounding keeps its slot, so the rail this dressing stands on keeps its own number and goes on
+        // naming the very same edge. What used to be `Document.entryRemovalRefusal` is gone with it.
         val first = entriesOf(back.doc).first()
-        val why = assertNotNull(back.doc.entryRemovalRefusal(first), "the entry under the rail is held in place")
-        assertTrue("is rounded on a rail of" in why, "…by name: $why")
+        val railEdge = assertNotNull(Section3.edges(featureOf(back.doc.elements.first { it === body || it.id == body.id })).first)[rail].name
         back.selectElement(first)
-        assertTrue(!back.deleteSelection(), "and the removal is refused: ${back.statusHint}")
-        assertEquals(3, entriesOf(back.doc).size, "nothing moved")
+        assertTrue(back.deleteSelection(), "the removal goes through: ${back.statusHint}")
+        assertEquals(2, entriesOf(back.doc).size, "one rounding of the dressing and the rail's own")
+        val after = assertNotNull(Section3.edges(featureOf(back.doc.elements.first { it.id == body.id })).first)
+        assertEquals(railEdge, after[rail].name, "the rail kept its number: ${after[rail].name} vs $railEdge")
+        assertNull(after[rail].reason, "…and it is still an edge of the body")
+        assertNotNull(volumeOf(back.doc.elements.last { it.kind == ElementKind.SOLID }), "the rail's body still builds")
     }
 
     /**
@@ -412,12 +424,13 @@ tool filletedge els=e19 clicks=52.78762484641989,32.49678119098172 scalar="r" si
 
         // last first, which is the order [Editor.deleteSelection] sorts them into
         assertEquals(listOf(0, 1, 2), all.map { ed.doc.dressEntryIndex(it) }, "the entries are in order")
-        assertTrue(ed.doc.journalWithoutEntry(all[1]), "the middle one out of the journal")
-        assertTrue(ed.doc.journalWithoutEntry(all[0]), "…then the first, which re-stamps the body's own step")
+        assertTrue(ed.doc.removeDressingEntry(all[1]), "the middle one off")
+        assertTrue(ed.doc.removeDressingEntry(all[0]), "…then the first, whose own step still makes the body")
         val text = DocumentFormat.save(ed.doc)
         val back = DocumentFormat.load(text)
         assertEquals(1, entriesOf(back).size, "one rounding left: $text")
         assertEquals(2, back.elements.count { it.kind == ElementKind.SOLID }, "…on the one body it always was")
+        assertEquals(2, text.lines().count { "removed=" in it }, "…and two tombstones stated in the file:\n$text")
         assertEquals(text, DocumentFormat.save(back), "and the file is a fixed point")
     }
 

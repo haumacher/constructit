@@ -3575,7 +3575,7 @@ class Construction {
                         // base's ([Feature3.Blend]). The triangles are the ones the boolean just made, restated
                         // under the analytic feature and sharing the very same derivation, which is the whole
                         // point of `Solid3.restated`: one mesh, two statements of the same body.
-                        val f = Feature3.Blend(body.feature, targets, kind, r, choices.take(targets.size), drawn)
+                        val f = Feature3.Blend(body.feature, targets, List(targets.size) { sec }, choices.take(targets.size))
                         // it must still say why, if the dressed list cannot be stated — otherwise a body would
                         // claim faces it cannot produce, and every reader downstream would meet the refusal
                         // instead of this node (OP-3: the refusal belongs where the decision is)
@@ -3618,6 +3618,109 @@ class Construction {
      */
     private fun chainRootOf(node: Node): SolidRef? =
         blendChainRoot[node] ?: (node as? IndirectNode)?.let { chainRootOf(it.boundTo ?: it.target) }
+
+    /**
+     * **One rounding inside a dressing's single pass** (OP-30's next step): what it rounds by, and where.
+     *
+     * A dressing used to be a *chain* of passes — consecutive entries sharing a kind, a size node and a
+     * profile node were one `Blend3.blended` call and the rest chained on top. That cost one boolean per
+     * pass rather than one per group, built no corner between a fillet r₁ and a fillet r₂ that meet, and
+     * refused a level section through the result, because the second pass's outline corrections land on
+     * faces the first already corrected and the composition is not stated. A run per rounding, all of them
+     * in one call, removes all three at once: the corners are looked for among every band of the dressing,
+     * the booleans are one per group, and the face outlines are corrected once from every band.
+     *
+     * [size] and [profile] are **nodes**, as they always were, so retyping a radius re-rounds the body with
+     * nothing rebuilt, and *"the same radius on these edges"* is still one parameter feeding many roundings.
+     * [targets] and [choices] are structure, resolved when the gesture ran (OP-21/OP-1).
+     */
+    class BlendRun(
+        val kind: BlendKind,
+        val size: ScalarRef?,
+        val profile: ProfileRef?,
+        val targets: List<Int>,
+        val choices: List<BlendChoice>,
+        /**
+         * −1 for a rounding that stands; otherwise the number of **band slots** the rounding that was
+         * removed here keeps — a tombstone ([Feature3.Blend.absent]).
+         *
+         * A tombstone reads no operand at all: its size and its profile are handed over as null, because a
+         * rounding that is not there may not make the body recompute when a number it no longer uses is
+         * retyped. What it keeps is its slots, so nothing after it renumbers.
+         */
+        val absentBands: Int = -1,
+    ) {
+        val absent: Boolean get() = absentBands >= 0
+    }
+
+    /**
+     * A dressing's **one pass**: [runs] rounded together on [from], in one `Blend3.blended` call (OP-30).
+     *
+     * The dress-up tier only — [from] is both the body addressed and the body cut, which is what a dressing
+     * always is — so there is no `applyTo`/`base` pair here and no mesh tier to fall back to. A dressing of
+     * one rounding goes through it as readily as a dressing of seven at three sizes: the number of booleans
+     * is a fact about which of the bands share a vertex, and never about the numbers (OP-21).
+     */
+    fun blendAll(
+        from: SolidRef,
+        space: PlaneRef,
+        runs: List<BlendRun>,
+    ): SolidRef {
+        // the chain's undressed root, read off the graph exactly as [blend] reads it (session 81)
+        val chainRoot = chainRootOf(from.node)
+        // the operands, **deduplicated by node identity**: the reporter's seven roundings all read his one
+        // parameter `r`, and one input list naming it seven times would say the graph has seven edges where
+        // it has one
+        val operands = ArrayList<Ref<*>>()
+        val at = HashMap<Node, Int>()
+
+        fun index(r: Ref<*>?): Int =
+            if (r == null) {
+                -1
+            } else {
+                at.getOrPut(r.node) {
+                    operands.add(r)
+                    operands.size - 1
+                }
+            }
+        index(from)
+        // the space is an operand for the reason [blend] has it: a dressing belongs to the drawing its base
+        // was sketched in, so the body follows that space's own edits and goes when it goes
+        index(space)
+        val iSize = runs.map { if (it.absent) -1 else index(it.size) }
+        val iProfile = runs.map { if (it.absent) -1 else index(it.profile) }
+        val iRoot = index(chainRoot)
+        val made: SolidRef =
+            op(*operands.toTypedArray()) {
+                val body = (it[0] as SolidValue).solid
+                openShellOf(body)?.let { why -> return@op EvalResult.Invalid(why) }
+                val targets = ArrayList<Int>()
+                val sections = ArrayList<BlendSection>()
+                val choices = ArrayList<BlendChoice>()
+                val absent = HashMap<Int, Int>()
+                for ((k, run) in runs.withIndex()) {
+                    val r =
+                        if (iSize[k] < 0) 0.0 else sc(it[iSize[k]]).requireDim(Dimension.LENGTH, "${run.kind.word} ${run.kind.sizeWord}").mm
+                    val drawn = if (iProfile[k] < 0) emptyList() else (it[iProfile[k]] as ProfileValue).profile.elements
+                    val sec = BlendSection(run.kind, r, drawn)
+                    for ((j, t) in run.targets.withIndex()) {
+                        if (run.absent) absent[targets.size] = run.absentBands
+                        targets.add(t)
+                        sections.add(sec)
+                        choices.add(run.choices.getOrNull(j) ?: BlendChoice(1, 1, 0, true))
+                    }
+                }
+                val rootBody = if (iRoot < 0) null else (it[iRoot] as SolidValue).solid
+                val (out, why) = Blend3.blended(body, body, targets, sections, choices, absent, rootBody)
+                if (out == null) return@op EvalResult.Invalid(why ?: "cannot blend that edge")
+                val f = Feature3.Blend(body.feature, targets, sections, choices, absent)
+                val (faces, whyFaces) = Section3.faces(f)
+                if (faces == null) return@op EvalResult.Invalid(whyFaces ?: "this blend has no faces to name")
+                EvalResult.Ok(SolidValue(out.restated(f)))
+            }
+        blendChainRoot[made.node] = chainRoot ?: from
+        return made
+    }
 
     /**
      * The **value one entry of a dressing shows**: the size that entry rounds by (OP-30).

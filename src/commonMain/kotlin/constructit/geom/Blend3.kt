@@ -301,7 +301,11 @@ object Blend3 {
         if (feature !is Feature3.Blend) return false
         val below = Section3.edges(feature.base).first ?: return false
         if (index < below.size) return smoothRail(feature.base, index)
-        return feature.kind == BlendKind.FILLET
+        // …of **that rail's own rounding**, since one pass may run several sections (OP-30's next step): the
+        // rails append two per target in the feature's order, so the target is the pair's index
+        val k = (index - below.size) / 2
+        if (feature.isAbsent(k)) return false
+        return feature.sections.getOrNull(k)?.kind == BlendKind.FILLET
     }
 
     /**
@@ -1389,11 +1393,14 @@ object Blend3 {
             val (edges, _) = Section3.edges(below)
             if (edges != null) {
                 for ((k, i) in f.targets.withIndex()) {
+                    // a **tombstone** took nothing off this body, so there is no band of it under anything
+                    if (f.isAbsent(k)) continue
+                    val sec = f.sections.getOrNull(k) ?: continue
                     val edge = edges.getOrNull(i) ?: continue
                     val crease = creaseOf(below, edge).first ?: continue
                     val choice = f.choices.getOrNull(k) ?: continue
-                    val wedge = wedgeOf(crease, f.section, choice).first ?: continue
-                    out.add(pieceOf(i, true, crease, wedge, choice, f.section).first ?: continue)
+                    val wedge = wedgeOf(crease, sec, choice).first ?: continue
+                    out.add(pieceOf(i, true, crease, wedge, choice, sec).first ?: continue)
                 }
             }
             f = below
@@ -3016,8 +3023,19 @@ object Blend3 {
         base: Solid3,
         applyTo: Solid3,
         targets: List<Int>,
-        sec: BlendSection,
+        /**
+         * The section run along each of [targets] — **one per target** (OP-30's next step), so a dressing of
+         * three sizes is one pass rather than three chained blends. [blended] with one section for the whole
+         * list is the overload below, which is what a single gesture and the mesh tier still call.
+         */
+        sections: List<BlendSection>,
         choices: List<BlendChoice>,
+        /**
+         * The **tombstones** — positions in [targets] whose rounding was removed, mapped to the band slots
+         * it keeps ([Feature3.Blend.absent]). They contribute no piece, no tool and no boolean here; they
+         * exist only so the dressed face and edge lists keep their slots.
+         */
+        absent: Map<Int, Int> = emptyMap(),
         /**
          * The **undressed root** of the chain [base] stands on — the body every rounding in it was cut out
          * of — and null where there is none (a first blend, or one whose tip an ordinary boolean made).
@@ -3028,12 +3046,15 @@ object Blend3 {
          */
         root: Solid3? = null,
     ): Pair<Solid3?, String?> {
-        val kind = sec.kind
-        if (kind != BlendKind.PROFILE && sec.size <= Geom3.WELD_TOL) {
-            return null to "a ${kind.word} needs a positive ${kind.sizeWord} — this one is ${Frames3.mm(sec.size)} mm"
-        }
-        if (kind == BlendKind.PROFILE && sec.profile.isEmpty()) {
-            return null to "a ${kind.word} needs a drawn profile to run along the edge"
+        if (sections.size < targets.size) return null to "this blend recorded ${sections.size} sections for ${targets.size} edges"
+        for ((k, sec) in sections.withIndex()) {
+            if (k in absent || k >= targets.size) continue
+            if (sec.kind != BlendKind.PROFILE && sec.size <= Geom3.WELD_TOL) {
+                return null to "a ${sec.kind.word} needs a positive ${sec.kind.sizeWord} — this one is ${Frames3.mm(sec.size)} mm"
+            }
+            if (sec.kind == BlendKind.PROFILE && sec.profile.isEmpty()) {
+                return null to "a ${sec.kind.word} needs a drawn profile to run along the edge"
+            }
         }
         val feature = base.feature
         val (edges, whyEdges) = Section3.edges(feature)
@@ -3041,9 +3062,12 @@ object Blend3 {
         if (choices.size < targets.size) return null to "this blend recorded ${choices.size} choices for ${targets.size} edges"
         // **Every target prepared first, then the corners, then one tool per group.** The pieces are built
         // in the step's own order, so a blend with no corner in it reaches [Geom3.sweep] exactly as it did
-        // before this session and its triangles are the same triangles.
+        // before this session and its triangles are the same triangles. A **tombstoned** target is skipped
+        // outright: it keeps a slot in the dressed lists and nothing else (OP-30).
         val pieces = ArrayList<Piece>()
         for ((k, i) in targets.withIndex()) {
+            if (k in absent) continue
+            val sec = sections[k]
             val edge = edges.getOrNull(i) ?: return null to "this solid has no edge #${i + 1} (it has ${edges.size})"
             val (crease, why) = creaseOf(feature, edge)
             if (crease == null) return null to why
@@ -3053,7 +3077,7 @@ object Blend3 {
             if (!tangenciesFit(crease, wedge)) {
                 val fits = largestFitting(crease, sec, choice)
                 return null to
-                    "a ${kind.word} ${sec.sizePhrase()} reaches past ${crease.face1.name.label} " +
+                    "a ${sec.kind.word} ${sec.sizePhrase()} reaches past ${crease.face1.name.label} " +
                     "or ${crease.face2.name.label} at ${crease.edge.name.label} — the largest that fits there is " +
                     sec.fitPhrase(fits)
             }
@@ -3061,6 +3085,11 @@ object Blend3 {
             if (piece == null) return null to whyPiece
             pieces.add(piece)
         }
+        // **A dressing whose every rounding has been removed is its own base** — nothing fresh is cut, so
+        // there is no tool, no corner and no boolean, and the bands under it (if any) are already off
+        // (OP-30's tombstone). Stated here rather than reached through [cornersOf], which would answer the
+        // same body the long way round.
+        if (pieces.isEmpty()) return applyTo to null
         // …and the bands already under this one, so a blend of a blend on an adjacent edge builds the same
         // corner a one-gesture chain would (GitHub #27, [chainPieces]).
         pieces.addAll(chainPieces(feature))
@@ -3068,11 +3097,15 @@ object Blend3 {
         found.refusal?.let { return null to it }
         val corners = found.list
         crowdedCorner(pieces, corners)?.let { c ->
-            val fits = largestCornerFitting(pieces, sec)
+            // …in the words of the **fresh** rounding the corner crowds, since a pass may run several
+            // sections and only one of them is the gesture the user is making (OP-3: the reason belongs
+            // where the decision is)
+            val blamed = c.ends.map { pieces[it.first] }.firstOrNull { !it.existing } ?: pieces[c.ends.first().first]
+            val fits = largestCornerFitting(pieces)
             return null to
-                "${c.label(pieces)} is too sharp for a ${kind.word} ${sec.sizePhrase()} — " +
+                "${c.label(pieces)} is too sharp for a ${blamed.sec.kind.word} ${blamed.sec.sizePhrase()} — " +
                 "the corner the roundings share would reach further along an edge than the edge is long. " +
-                "The largest that fits there is ${sec.fitPhrase(fits)}"
+                "The largest that fits there is ${blamed.sec.fitPhrase(fits)}"
         }
         mixedCorner(pieces, corners)?.let { return null to it }
         val rings = HashMap<Pair<Int, Boolean>, Placement>()
@@ -3182,6 +3215,23 @@ object Blend3 {
         }
         return result to null
     }
+
+    /**
+     * [blended] with **one section for the whole target list** — one gesture's own reading of itself.
+     *
+     * The case a single rounding is, kept as its own call rather than made every caller's business: the mesh
+     * tier and the DSL's one-gesture `blend` state a kind and a size, not a list of them, and a dressing
+     * whose entries all share a size node hands over the same section repeated. Per-target sections are what
+     * a *dressing* of several sizes needs (OP-30's next step), and it is the overload above.
+     */
+    fun blended(
+        base: Solid3,
+        applyTo: Solid3,
+        targets: List<Int>,
+        sec: BlendSection,
+        choices: List<BlendChoice>,
+        root: Solid3? = null,
+    ): Pair<Solid3?, String?> = blended(base, applyTo, targets, List(targets.size) { sec }, choices, emptyMap(), root)
 
     /**
      * **The band along a circular rim, built as what it is: a surface of revolution** (session 82).
@@ -3328,10 +3378,7 @@ object Blend3 {
      * The largest size whose corners all have room, by halving — what the crowded-corner refusal names so it
      * can be acted on, the same shape of answer [largestFitting] gives for a size that outgrows a face.
      */
-    private fun largestCornerFitting(
-        pieces: List<Piece>,
-        sec: BlendSection,
-    ): Double {
+    private fun largestCornerFitting(pieces: List<Piece>): Double {
         var lo = 0.0
         var hi = 1.0
         repeat(FIT_STEPS) {
@@ -3416,20 +3463,44 @@ object Blend3 {
         val kindWord: String get() = "${sec.kind.word} itself"
     }
 
-    private fun dressingsOf(f: Feature3.Blend): Pair<List<Dressing>?, String?> {
+    /**
+     * One entry per target, in the feature's own order — **null where the rounding was removed** (OP-30's
+     * tombstone), so the two derived lists can emit that position's slots and nothing else.
+     */
+    private fun dressingsOf(f: Feature3.Blend): Pair<List<Dressing?>?, String?> {
         val (edges, whyEdges) = Section3.edges(f.base)
         if (edges == null) return null to whyEdges
-        val out = ArrayList<Dressing>(f.targets.size)
+        val out = ArrayList<Dressing?>(f.targets.size)
         for ((k, i) in f.targets.withIndex()) {
+            if (f.isAbsent(k)) {
+                out.add(null)
+                continue
+            }
+            val sec = f.sections.getOrNull(k) ?: return null to "this blend recorded no section for edge #${i + 1}"
             val edge = edges.getOrNull(i) ?: return null to "this solid has no edge #${i + 1} (it has ${edges.size})"
             val (crease, why) = creaseOf(f.base, edge)
             if (crease == null) return null to why
             val choice = f.choices.getOrNull(k) ?: return null to "this blend recorded no choice for edge #${i + 1}"
-            val (wedge, whyWedge) = wedgeOf(crease, f.section, choice)
+            val (wedge, whyWedge) = wedgeOf(crease, sec, choice)
             if (wedge == null) return null to whyWedge
-            out.add(Dressing(i, edge, crease, wedge, choice, f.section))
+            out.add(Dressing(i, edge, crease, wedge, choice, sec))
         }
         return out to null
+    }
+
+    /**
+     * What a **tombstoned** target says about itself — the sentence its band faces and its two rails carry
+     * (OP-30): the rounding is gone, the slot is not, and the gesture that does work is named.
+     */
+    private fun tombstoneWords(
+        f: Feature3.Blend,
+        k: Int,
+        edge: SolidEdge?,
+    ): String {
+        val what = edge?.name?.label ?: "edge #${f.targets[k] + 1}"
+        return "the ${f.sections.getOrNull(k)?.kind?.word ?: "rounding"} of $what was removed; nothing stands " +
+            "here — the slot is kept for the life of this dressing so that the roundings after it keep their " +
+            "numbers. Round $what itself instead"
     }
 
     /**
@@ -3469,7 +3540,7 @@ object Blend3 {
         val (dressings, whyDress) = dressingsOf(f)
         if (dressings == null) return null to whyDress
         val trims = HashMap<FaceName, MutableList<Pair<SolidEdge, Double>>>()
-        for (d in dressings) {
+        for (d in dressings.filterNotNull()) {
             for ((patch, t) in listOf(d.crease.face1 to d.wedge.t1, d.crease.face2 to d.wedge.t2)) {
                 trims.getOrPut(patch.name) { ArrayList() }.add(d.edge to t.length())
             }
@@ -3501,7 +3572,17 @@ object Blend3 {
                 },
             )
         }
-        for (d in dressings) out.addAll(bandPatchesOf(d))
+        val baseEdges = Section3.edges(f.base).first
+        for ((k, d) in dressings.withIndex()) {
+            // **a removed rounding keeps its band slots** — a reason and no surface, exactly what a consumed
+            // edge already emits, so the bands of every entry after it keep their own numbers (OP-30)
+            if (d == null) {
+                val why = tombstoneWords(f, k, baseEdges?.getOrNull(f.targets[k]))
+                for (piece in 0 until f.bandsAt(k)) out.add(FacePatch(FaceName.BlendBand(f.targets[k], piece), null, emptyList(), why))
+                continue
+            }
+            out.addAll(bandPatchesOf(d))
+        }
         // …and the corners this blend's own bands make, **appended last** ([FaceName.BlendCorner]): the ball
         // at a convex vertex and the surface its pivot sweeps at an inside one are new surfaces, and a
         // crossing and a bevelled vertex are not
@@ -3518,11 +3599,14 @@ object Blend3 {
         if (edges == null) return null
         val out = ArrayList<Piece>(f.targets.size)
         for ((k, i) in f.targets.withIndex()) {
+            // a **tombstone** builds no piece, so it is in no corner: what it keeps is a slot, not a band
+            if (f.isAbsent(k)) continue
+            val sec = f.sections.getOrNull(k) ?: return null
             val edge = edges.getOrNull(i) ?: return null
             val crease = creaseOf(f.base, edge).first ?: return null
             val choice = f.choices.getOrNull(k) ?: return null
-            val wedge = wedgeOf(crease, f.section, choice).first ?: return null
-            out.add(pieceOf(i, false, crease, wedge, choice, f.section).first ?: return null)
+            val wedge = wedgeOf(crease, sec, choice).first ?: return null
+            out.add(pieceOf(i, false, crease, wedge, choice, sec).first ?: return null)
         }
         out.addAll(chainPieces(f.base))
         return out
@@ -3734,9 +3818,12 @@ object Blend3 {
      */
     private fun cornerFacesOf(f: Feature3.Blend): List<FacePatch> {
         val pieces = piecesOf(f) ?: return emptyList()
+        // …counted over the roundings that **stand**, since [piecesOf] lists this level's own pieces first
+        // and a tombstone contributes none (OP-30)
+        val fresh = f.standing.size
         val out = ArrayList<FacePatch>()
         for (c in cornersOf(pieces).list) {
-            if (c.ends.none { it.first < f.targets.size } && c.extra.none { it < f.targets.size }) continue
+            if (c.ends.none { it.first < fresh } && c.extra.none { it < fresh }) continue
             val edges = cornerEdges(pieces, c)
             out.addAll(c.faces(pieces) { k -> FaceName.BlendCorner(edges, k) })
         }
@@ -3764,7 +3851,9 @@ object Blend3 {
         if (baseEdges == null) return null to whyEdges
         val (dressings, whyDress) = dressingsOf(f)
         if (dressings == null) return null to whyDress
-        val consumed = dressings.associateBy { it.index }
+        // …the roundings that **stand**: a tombstone rounded nothing away, so its base edge is a crease of
+        // this body again (OP-30)
+        val consumed = dressings.filterNotNull().associateBy { it.index }
         val out = ArrayList<SolidEdge>(baseEdges.size + 2 * dressings.size)
         for ((i, e) in baseEdges.withIndex()) {
             val d = consumed[i]
@@ -3774,13 +3863,28 @@ object Blend3 {
                 } else {
                     e.copy(
                         reason =
-                            "${e.name.label} was rounded away by the ${f.kind.word} ${f.section.sizePhrase()} — " +
+                            "${e.name.label} was rounded away by the ${d.sec.kind.word} ${d.sec.sizePhrase()} — " +
                                 "${d.name.label} stands in its place, and its two tangent rails are edges of this body",
                     )
                 },
             )
         }
-        for (d in dressings) {
+        for ((k, d) in dressings.withIndex()) {
+            // **a removed rounding keeps its two rail slots too**, with the same reason and a degenerate
+            // carrier: what a chained rounding addressed is still numbered where it was, and asking for it
+            // is a refusal that names the rounding that is gone rather than a different edge (OP-17, OP-3)
+            if (d == null) {
+                val target = f.targets[k]
+                val e = baseEdges.getOrNull(target)
+                val why = tombstoneWords(f, k, e)
+                val at = (e?.geom as? EdgeGeom.Straight)?.a ?: Vec3(0.0, 0.0, 0.0)
+                val band = FaceName.BlendBand(target, 0)
+                for (side in 0..1) {
+                    val face = if (side == 0) e?.between?.a else e?.between?.b
+                    out.add(SolidEdge(EdgeName.BlendRail(target, side), EdgeGeom.Straight(at, at), FacePair(face ?: band, band), why))
+                }
+                continue
+            }
             for (side in 0..1) {
                 val face = if (side == 0) d.crease.face1 else d.crease.face2
                 val t = if (side == 0) d.wedge.t1 else d.wedge.t2

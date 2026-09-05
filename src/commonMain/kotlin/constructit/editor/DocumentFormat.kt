@@ -560,7 +560,12 @@ object DocumentFormat {
                             }
                         }
                     }
-                withPairs + signsOf(doc, step) + if (dofs.isEmpty()) emptyList() else listOf(Arg.Keyed("dofs", Arg.Nums(dofs)))
+                // …and a **tombstone**'s own marker (OP-30): the rounding this step made was removed, the
+                // step stays where it stands so the entry order is the file's, and `removed=` says how many
+                // band slots it keeps. One more *optional* `tool` argument, exactly as `law=`, `laws=` and
+                // `match=` arrived: no existing literal means anything new, so no version is owed (OP-18).
+                val tomb = doc.tombstoneBands(step)?.let { listOf(Arg.Keyed("removed", Arg.Text(it.toString()))) } ?: emptyList()
+                withPairs + signsOf(doc, step) + tomb + if (dofs.isEmpty()) emptyList() else listOf(Arg.Keyed("dofs", Arg.Nums(dofs)))
             }
             // the branch this step's click chose, restated so replay never scores it again (OP-1) — see
             // [Document.intersectNear]
@@ -801,6 +806,7 @@ object DocumentFormat {
             doc.replayingVersion = null
             doc.dressingJoins = true
             doc.dressingDeclares = -1
+            doc.dressingRemoved = -1
         }
         doc.publishLoadNotes()
         return doc to ctx.notes
@@ -840,6 +846,7 @@ object DocumentFormat {
             // itself, and there is no declaration to read (OP-30)
             doc.dressingJoins = true
             doc.dressingDeclares = -1
+            doc.dressingRemoved = -1
         }
         doc.publishLoadNotes()
     }
@@ -871,6 +878,8 @@ object DocumentFormat {
             // …and, for a file at this version, the step's own declaration is the structure of the dressing:
             // one name joins, two make a body (see [Document.dressingDeclares])
             doc.dressingDeclares = declared.size
+            // …and the tombstone marker is this step's alone, read from its own `removed=` (OP-30)
+            doc.dressingRemoved = -1
             // …and the migration's element-count allowance is this step's alone: a step that was dropped
             // with a reason must not lend its allowance to the next one (OP-18)
             doc.takeMigrationExtras()
@@ -1674,6 +1683,11 @@ object DocumentFormat {
                         v.split(',').filter { it.isNotEmpty() }.map {
                             byName[it] ?: throw LoadError("unknown element '$it'")
                         }
+                // a **tombstone**: the rounding this row made was removed, and what it keeps is the number
+                // of band slots the dressed list must go on numbering it by (OP-30). Structural, replayed
+                // verbatim, and never re-derived — a drawn profile's piece count is a value, and re-reading
+                // it would let editing that profile slide the numbers after it (OP-18, OP-21).
+                "removed" -> doc.dressingRemoved = v.toIntOrNull() ?: throw LoadError("malformed removed '$v'")
                 else -> throw LoadError("unknown tool argument '$key'")
             }
         }
