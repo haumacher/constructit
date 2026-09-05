@@ -119,7 +119,7 @@ object DocumentFormat {
      * meaning is frozen the moment a build that could have written it shipped, so changing what one means is a
      * version bump plus a migration — never an edit to the reader.
      */
-    const val VERSION = 4
+    const val VERSION = 5
 
     /** The oldest version this build can still read. Every version in between is migrated on load. */
     const val OLDEST_READABLE = 1
@@ -150,6 +150,27 @@ object DocumentFormat {
      * choices of the edges its run gained (GitHub #29) — scored once on that load and written down.
      */
     const val SUPERSEDING_FILLET_VERSION = 4
+
+    /**
+     * The first version in which the **join of two drawn curves is a drawing curve** (GitHub #34: *"connect
+     * curves result cannot be used to define an outline"*).
+     *
+     * No stored literal changed shape and none is re-read: the same `tool connect els=eA,eB clicks=… signs=…`
+     * step, the same two tensions, the same geometry to the last bit. What changed is what such a step
+     * **builds** — a `BEZIER` of the sketch instead of a `SPACE_CURVE` — which is a fact of the two *picks*
+     * (both drawings of one space) rather than of the file, so the bytes are read the new way unambiguously
+     * and there is nothing to migrate. The version is what lets a load say so **once**
+     * ([Document.loadNotes]) instead of a note that would go on firing.
+     *
+     * The one thing it does gate is the **G2** join, and only in files older than this: that join is three
+     * cubics, so under the new reading it is three drawing curves, and three elements cannot wear the one
+     * name an older script declared (`-> e7`) — a step creating three where the script declares one is the
+     * load error it has always been, and anything built on that name would find a third of the bend under
+     * it. So such a file keeps the curve in space it was written with; the choice is made once on that load
+     * and **written down** as a third entry in the step's `signs=` ([Document.keptInSpaceByItsFile]), which
+     * is what makes the re-saved file a fixed point.
+     */
+    const val PLANAR_JOIN_VERSION = 5
 
     const val HEADER = "constructit $VERSION"
 

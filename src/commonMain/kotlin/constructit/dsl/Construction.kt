@@ -129,6 +129,17 @@ import kotlin.math.pow
 private const val CURVED_INTERVAL_STEPS = 24
 
 /**
+ * How far out of its plane a **join read back in the drawing** may stand before the reading is refused
+ * (mm) — see [Construction.planarSpan].
+ *
+ * Not a fit tolerance: a join whose two operands were lifted from this very plane is *in* the plane by
+ * construction, so the honest figure is round-off, and this is round-off with room to spare. It exists so
+ * that a producer which one day hands the reading something else says so (OP-3) rather than quietly
+ * flattening it.
+ */
+private const val PLANAR_JOIN_TOL_MM = 1e-6
+
+/**
  * How far a cutter on a **curved** wall leg overhangs the wall's faces (mm) — see [ThickLeg.cutterOffsets].
  *
  * Ten times the tessellation tolerance, which is the whole of the reasoning: the wall's face and the
@@ -2873,6 +2884,60 @@ class Construction {
             } else {
                 EvalResult.Ok(Path3Value(path))
             }
+        }
+
+    /**
+     * One cubic of a **join read back in the plane** (GitHub #34): span [span] of the [spans] the joining run
+     * [join] is made of, expressed in [from]'s own coordinates as the plain cubic Bézier the drawing already
+     * has.
+     *
+     * **Why the join is derived in space and then read here, rather than built in 2D.** The formula is the
+     * one in [Connect3] and there is only ever one of it: the two ends, the two outward tangents, the two
+     * tensions — and, in the G2 mode, the curvature at each end and the three spans that carry it. Building a
+     * second, planar copy of that would be two implementations of one derivation, and the two would drift at
+     * the first refusal (a closed run, a tension of nothing, a curve with no direction at the end). So the
+     * connection stays exactly what it was, the drawn picks are lifted into it as they always were
+     * ([liftedRun]), and *this* op is the one new thing: a reading, with no geometry of its own.
+     *
+     * It is exact rather than a projection with a tolerance: both operands were lifted **from** this plane,
+     * so every control point of the answer is a plane point already, and the check below is honesty rather
+     * than a fit (OP-3). What it refuses is what the structural rule that chose this reading already
+     * excludes — a run that is not [spans] cubics, or one standing out of the plane — so the reason is here
+     * to be read when a future producer breaks the assumption, never as a routine outcome.
+     */
+    fun planarSpan(
+        join: Path3Ref,
+        from: PlaneRef,
+        span: Int,
+        spans: Int,
+    ): BezierRef =
+        op(join, from) { args ->
+            val path = (args[0] as Path3Value).path
+            val plane = (args[1] as PlaneValue).plane
+            if (path.elements.size != spans) {
+                return@op EvalResult.Invalid(
+                    "this join is ${path.elements.size} piece(s) where the drawing reads it as $spans, so it " +
+                        "cannot be drawn as a curve of the sketch",
+                )
+            }
+            val cubic =
+                path.elements[span] as? Curve3Element.Bezier3
+                    ?: return@op EvalResult.Invalid(
+                        "piece ${span + 1} of this join is not a cubic, so the drawing has no curve to read it as",
+                    )
+            val controls = listOf(cubic.p0, cubic.p1, cubic.p2, cubic.p3)
+            val off = controls.maxOf { abs(plane.distanceTo(it)) }
+            if (off > PLANAR_JOIN_TOL_MM) {
+                return@op EvalResult.Invalid(
+                    "this join stands ${Frames3.mm(off)} mm out of the plane it is read in, so it is a curve in " +
+                        "space rather than one of the drawing",
+                )
+            }
+            EvalResult.Ok(
+                BezierValue(
+                    Bezier(plane.toLocal(cubic.p0), plane.toLocal(cubic.p1), plane.toLocal(cubic.p2), plane.toLocal(cubic.p3)),
+                ),
+            )
         }
 
     /**
