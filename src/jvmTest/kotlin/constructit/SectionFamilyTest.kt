@@ -338,12 +338,18 @@ class SectionFamilyTest {
      * the same substitution** (F11), so the run passes through the quarter chord of the section that is
      * actually there rather than of the one that was drawn.
      *
-     * The volume is exact — `∫₀¹ 0.12 · chord(t)² · 1000 dt = 2 496 000 mm³` — and it is asserted on the
-     * **untwisted** wing, which is where the family's own claim lives. A twisted body's *facets* lose volume
-     * to the warp of their own quads far beyond the tessellation tolerance, and that is a property of every
-     * twisted sweep in this engine rather than of a family: the control below sweeps the wing's own drawn
-     * section along the same run with the same stated twist, and the twisted wing loses the same fraction it
-     * does. (Recorded in DESIGN.md as a parked item of its own.)
+     * The volume is exact — `∫₀¹ 0.12 · chord(t)² · 1000 dt = 2 496 000 mm³` — on the **untwisted** wing, to
+     * the bit, which is where the family's own claim lives; and since session 80 it is asserted on the
+     * **washed** wing too, to within 0.2%, which is where the *sweep's* claim lives.
+     *
+     * That second assertion is the retirement of a workaround this test carried. Session 79 could only make
+     * the untwisted claim, because a twisted body's facets then lost volume to the warp of their own quads
+     * far beyond the tessellation tolerance — a property of every twisted sweep in this engine rather than
+     * of a family, which is exactly what the control below said: the wing's own *drawn* section swept along
+     * the same run with the same stated twist lost the same 12.4% fraction, so the deficit was asserted
+     * **equal** to the control's rather than absent. The warp refinement ([GeomMath.warpSteps], `SweepWarpTest`)
+     * makes both of them right, so the control now says the stronger thing — the two agree because each is
+     * separately correct, not because each is wrong in the same way.
      */
     @Test
     fun theWingTapersItsChordItsThicknessAndItsTwistAboutTheQuarterChord() {
@@ -369,6 +375,10 @@ class SectionFamilyTest {
 
         val washed = wing("15deg * t")
         assertManifold(washed.mesh, "the washed wing")
+        // …and the washed wing's volume is the *same* number, because turning each section about the run
+        // moves no material (Cavalieri) — within the warp refinement's own bound, which for this section's
+        // shape is 0.141% (`SweepWarpTest` derives it)
+        assertClose(volumeOf(washed), 2_496_000.0, 0.002 * 2_496_000.0, msg = "the washed wing's volume is its laws' too")
 
         // the root is the drawn section, read from its own quarter chord: 200 of chord, 24 thick
         assertRingIs(
@@ -413,9 +423,11 @@ class SectionFamilyTest {
         assertClose(
             volumeOf(washed) / volumeOf(flat),
             lostByTwisting,
-            0.01,
+            0.002,
             msg = "a washed family loses to its facets exactly what a washed constant section loses",
         )
+        // …and what both of them lose is now within the refinement's own bound rather than 12% of the body
+        assertClose(lostByTwisting, 1.0, 0.002, msg = "and what a twist costs a constant section is inside the tolerance")
     }
 
     /**

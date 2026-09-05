@@ -21,6 +21,8 @@ import constructit.units.deg
 import constructit.units.mm
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -285,10 +287,33 @@ class SweepTest {
         assertManifold(half.mesh, "the half-twisted sweep")
         assertVecClose(cornerDirection(half.mesh, 100.0), -Vec3.Z, 1e-9, "and half a turn puts it exactly opposite")
 
-        // …and the twist really did happen in between rather than only at the ends
-        // half way along a half turn is a quarter turn: +90° about +X takes the space's normal (+Z) to −Y
-        assertVecClose(cornerDirection(half.mesh, 50.0), -Vec3.Y, 1e-6, "the twist is spread along the run, linearly in arc length")
+        // …and the twist really did happen in between rather than only at the ends. Read at the station
+        // **nearest** mid-run and asserted against the twist at *that* station's own arc length: since the
+        // warp refinement joined the rail one (OP-26, session 80) the run's station count is whatever the
+        // two rules together ask for and no longer lands on a convenient 50 mm. Which strengthens the
+        // claim rather than weakening it — linearity is now asserted at an arbitrary station, and half a
+        // turn's midpoint (+90° about +X takes the space's normal +Z to −Y) is the case it reduces to.
+        val (midX, midDir) = cornerDirectionNear(half.mesh, 50.0)
+        val turnedBy = PI * midX / 100.0
+        assertVecClose(
+            midDir,
+            Vec3(0.0, -sin(turnedBy), cos(turnedBy)),
+            1e-6,
+            "the twist is spread along the run, linearly in arc length",
+        )
         assertTrue(full.mesh.vertices.size > 3 * 8, "a turn along a straight run is sampled finely enough to be a shape: ${full.mesh.vertices.size}")
+    }
+
+    /**
+     * The **nearest** ring to [x] and which way its far corner points — the reading a run whose station
+     * count is decided by two refinement rules at once can still make (see [cornerDirection]).
+     */
+    private fun cornerDirectionNear(
+        mesh: Mesh3,
+        x: Double,
+    ): Pair<Double, Vec3> {
+        val at = assertNotNull(mesh.vertices.minByOrNull { abs(it.x - x) }, "the mesh has vertices").x
+        return at to cornerDirection(mesh, at)
     }
 
     /**

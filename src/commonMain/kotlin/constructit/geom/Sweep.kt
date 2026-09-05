@@ -207,6 +207,33 @@ object SizeLaws {
         return sagittaSpans(worstSecond { t -> readOrNull(law, t) }, reach, tolMm)
     }
 
+    /**
+     * How many spans a **twist law** asks the run to be cut into for its bands' quads to stay flat to
+     * [tolMm] — [turnSpans]' pattern applied to the *warp* rule instead of the sagitta one (OP-26,
+     * session 80; the rule itself and what it measures are [GeomMath.warpSteps]).
+     *
+     * The two questions differ in which derivative they read, and that is the whole of it. A rail's sagitta
+     * is second order in the turn, so [turnSpans] reads `|θ″|`; a quad's warp is **first** order, so what
+     * decides it is the largest turn any one span is asked to carry, which is `max |θ′| / n`. Requiring
+     * that to be within the warp rule's own angular step gives `n ≥ [GeomMath.warpSteps]([edge], max|θ′|)`
+     * directly — read on the law's **own** fixed grid ([STEPS]) like every other law reading here, never on
+     * the stations (session 65), so a reload rebuilds the identical mesh.
+     *
+     * For the linear law every *constant* twist is, `max|θ′|` is that constant total turn and this answers
+     * exactly what the per-piece term in [Frames3.along] already would; it earns its keep on a law that
+     * turns unevenly, where the total spread flat over the run would under-cut the fast end.
+     */
+    fun warpSpans(
+        law: SizeLaw,
+        edge: Double,
+        tolMm: Double,
+    ): Int {
+        if (edge <= 0.0 || tolMm <= 0.0) return 0
+        val slope = worstSlope { t -> readOrNull(law, t) }
+        if (slope <= 0.0) return 0
+        return min(MAX_SPANS, GeomMath.warpSteps(edge, slope, tolMm))
+    }
+
     /** [law] at [t], or null where it cannot be read there — see [maxScale]'s note. */
     private fun readOrNull(
         law: SizeLaw,
@@ -293,6 +320,22 @@ object SizeLaws {
             val c = value((i + 1) * h) ?: continue
             val second = abs(c - 2.0 * b + a) / (h * h)
             if (second > worst) worst = second
+        }
+        return worst
+    }
+
+    /**
+     * The worst **first** difference of [value] over the fixed grid, per unit of the parameter — the one
+     * measurement the warp rule needs ([warpSpans]), and [worstSecond]'s twin one derivative down.
+     */
+    internal inline fun worstSlope(value: (Double) -> Double?): Double {
+        val h = 1.0 / STEPS
+        var worst = 0.0
+        for (i in 1..STEPS) {
+            val a = value((i - 1) * h) ?: continue
+            val b = value(i * h) ?: continue
+            val slope = abs(b - a) / h
+            if (slope > worst) worst = slope
         }
         return worst
     }
@@ -576,6 +619,29 @@ sealed interface SweepProfile {
                 }
                 return k
             }
+
+        /**
+         * The **longest edge** any sample's ring ever has — the family's own answer to the number the warp
+         * refinement is measured on (OP-26, session 80, [GeomMath.warpSteps]), read over the family's whole
+         * grid exactly as [reach] is, so the run is cut for the worst station rather than for the drawn one.
+         *
+         * Holes count, and that is not a detail: a hole's band warps by the same rule and its facets cut
+         * *outward* into the wall, so a thin-walled tube loses volume at both loops at once (measured before
+         * this rule existed: 65% on a 4 mm wall, against 12% for the solid bar of the same outline).
+         */
+        val edge: Double
+            get() {
+                var k = 0.0
+                for (r in rings) {
+                    for (loop in listOf(r.outer) + r.holes) {
+                        for (i in loop.indices) {
+                            val d = (loop[(i + 1) % loop.size] - loop[i]).length()
+                            if (d > k) k = d
+                        }
+                    }
+                }
+                return k
+            }
     }
 
     companion object {
@@ -849,7 +915,15 @@ object Frames3 {
      * [GeomMath.bezierSteps]'s count from its own second derivative. That count is then **refined by the
      * twist**: a point [reach] mm off the axis turning by an angle needs as many chords as a circle of that
      * radius does over the same angle ([GeomMath.chordSteps] — the revolve's own rule), so a full turn of
-     * twist along a single straight segment is resolved instead of vanishing between its two ends. Nothing
+     * twist along a single straight segment is resolved instead of vanishing between its two ends.
+     * …**and by the warp** ([GeomMath.warpSteps], session 80): the rail rule above measures what the rails
+     * do and a twist deviates by more than its rails. Between two stations each lateral quad's four corners
+     * stop being coplanar, by `2·[edge]·|sin(Δ/2)|` — *first* order in the turn, where the rail's sagitta is
+     * second, and growing with the section's own longest chord, which the rail rule cannot see at all. The
+     * diagonal that splits such a quad then cuts inward across the whole face; measured on the ordinary
+     * constant route in session 79, a 200 × 24 mm bar swept 1000 mm at a stated 15° meshed **12.4% light**
+     * with every rail well inside a fiftieth of a millimetre. Both terms are read here, and the count is the
+     * larger. Nothing
      * here reads a value the *graph's shape* depends on: the station count is computed inside one function
      * of values (OP-21) and is a pure function of them, so a reload rebuilds the identical mesh.
      *
@@ -880,6 +954,18 @@ object Frames3 {
         rollRad: Double = 0.0,
         twistRad: Double = 0.0,
         reach: Double = 0.0,
+        /**
+         * **The longest chord of the section the run carries** — the lever the *warp* refinement is measured
+         * on (OP-26, session 80, [GeomMath.warpSteps]), and zero for a caller that has no section to state,
+         * which switches the term off entirely.
+         *
+         * It is a second size of the very same profile and not a second profile: [reach] is how far the
+         * section stands *off* the axis (what a rail's own arc is measured at, and what a fold through the
+         * bend turns on) and this is how *long* one piece of its outline is (what a lateral quad's warp
+         * turns on). A twist deviates by both and the two are independent — a long section hugging the axis
+         * has a small reach and a large edge — so the station count reads both and takes the larger.
+         */
+        edge: Double = 0.0,
         tolMm: Double = GeomMath.TESS_TOL_MM,
         seed: FrameSeed? = null,
         lawSpans: Int = 0,
@@ -900,7 +986,16 @@ object Frames3 {
         // the sampling reads how much the section **turns** over the run: the stated angle, or — for a law —
         // its own total variation, which is that number for every linear law and more for one that turns back
         val turn = if (twistLaw == null) twistRad else SizeLaws.totalTurn(twistLaw)
-        val sampled = spine(path, reach, turn, tolMm, max(lawSpans, if (twistLaw == null) 0 else SizeLaws.turnSpans(twistLaw, reach, tolMm)))
+        // …and the law's own two refinements: the **sagitta** of a rail whose angle is the law
+        // ([SizeLaws.turnSpans]) and the **warp** of the quads that rail bounds ([SizeLaws.warpSpans]) —
+        // the same pair the constant twist gets per piece below, read off the law's own grid (session 80)
+        val lawTurn =
+            if (twistLaw == null) {
+                0
+            } else {
+                max(SizeLaws.turnSpans(twistLaw, reach, tolMm), SizeLaws.warpSpans(twistLaw, edge, tolMm))
+            }
+        val sampled = spine(path, reach, edge, turn, tolMm, max(lawSpans, lawTurn))
         val points = sampled.points
         val curvatures = sampled.curvatures
         val params = sampled.params
@@ -1100,6 +1195,7 @@ object Frames3 {
     private fun spine(
         path: Path3,
         reach: Double,
+        edge: Double,
         twistRad: Double,
         tolMm: Double,
         lawSpans: Int = 0,
@@ -1128,7 +1224,17 @@ object Frames3 {
             val share = if (total > Geom3.WELD_TOL) lengths[i] / total else 0.0
             // …and the law's own share of the refinement (OP-26, session 77), which is what keeps a horn a
             // horn on a straight piece instead of the cone its two end rings would otherwise be joined into
-            val steps = max(max(base[i], GeomMath.chordSteps(reach, abs(twistRad) * share, tolMm)), ceil(lawSpans * share).toInt())
+            // …and the **warp** of the quads the twist puts into every lateral band (OP-26, session 80):
+            // the rail term above is second order in the turn and blind to how long the section is, so on
+            // its own it meshes a long flat section into facets that cut inward across the whole face —
+            // 12.4% of the volume of a 200 × 24 bar at 15°. [GeomMath.warpSteps] measures that, in the same
+            // millimetres, at the same chokepoint, capped like every other law's refinement is.
+            val warp = min(SizeLaws.MAX_SPANS, GeomMath.warpSteps(edge, abs(twistRad) * share, tolMm))
+            val steps =
+                max(
+                    max(max(base[i], GeomMath.chordSteps(reach, abs(twistRad) * share, tolMm)), warp),
+                    ceil(lawSpans * share).toInt(),
+                )
             for (j in 0..steps) {
                 val t = j.toDouble() / steps
                 val p = pointAt(el, t)

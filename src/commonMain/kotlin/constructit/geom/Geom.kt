@@ -1156,6 +1156,58 @@ object GeomMath {
         return max(1, ceil(abs(sweep) / step).toInt())
     }
 
+    /**
+     * How many spans a **twisted band** needs for the quads it is made of to stay flat to [tolMm] — the
+     * *warp* rule (OP-26, session 80), and [chordSteps]' twin for the thing a twist actually deviates by.
+     *
+     * **What deviates, and why it is not a chord.** Carry a section along a straight run while turning it by
+     * `Δ` over one span. Two neighbouring section vertices `p` and `q` become four mesh corners
+     * `(p₀, p_Δ, q_Δ, q₀)`, and a quad is flat exactly when its alternating sum
+     * `N = p₀ − p_Δ + q_Δ − q₀` vanishes. Reading the section in the frame's own plane as complex numbers,
+     * the rotation is a multiplication and the sum factors:
+     *
+     * ```
+     * N = (1 − e^{iΔ})·(p − q)      hence      |N| = 2·|sin(Δ/2)|·|p − q|
+     * ```
+     *
+     * — the axial components cancel outright, so the warp lies wholly in the cross-section plane. Two
+     * readings of that number matter. `|N|` is the distance the fourth corner stands off the plane of the
+     * other three (`N` is perpendicular to that plane to first order here, so the bound is attained, not
+     * merely bounded); `|N|/2` is the gap between the two diagonals' midpoints, and `|N|/4` is how far the
+     * two triangles the quad is split into sag from the surface at its centre. **This rule drives `|N|`**,
+     * the corner-off-plane reading — the strictest of the three, and the one a stated planarity tolerance
+     * ordinarily means.
+     *
+     * So the whole rule is `2·e·|sin(Δ/2)| ≤ tol`, i.e. a step of `2·asin(tol / 2e)`, where **[edge] is the
+     * longest chord of the tessellated section** — not its reach. That is the load-bearing difference from
+     * [chordSteps], which measures a *rail*: a vertex [reach][chordSteps] mm off the axis leaves its own arc
+     * by `reach·(1 − cos(Δ/2))`, second order in `Δ` and blind to how long the section is. The warp is
+     * **first** order in `Δ` and grows with the section's own edges, which is why a long flat section
+     * meshed by the rail rule alone loses volume by percent while every rail is within a fiftieth of a
+     * millimetre (the session-79 measurement: 12.4% on a 200 × 24 bar).
+     *
+     * The tolerance is [effectiveTol] of the **edge**, so the rule is scale-invariant in exactly the sense
+     * [chordSteps] is (GitHub #13): a body and its scaled twin get the same station count. What that buys,
+     * and what it costs, is one closed form — the volume a diagonal split loses is
+     * `Δ·Σeᵢ²/12` per unit of run per unit of turn, so the **relative** volume error of a twisted sweep
+     * after this refinement is at most `REL_TOL · Σeᵢ² / (12·A)`, a number about the section's *shape*
+     * alone (0.14% for a 200 × 24 rectangle, 0.03% for a square, larger for a thin wall). Stated because
+     * OP-15 asks the error to be stated in the unit the answer is read in.
+     */
+    fun warpSteps(
+        edge: Double,
+        sweep: Double,
+        tolMm: Double,
+        quality: MeshQuality = MeshQuality.FINE,
+    ): Int {
+        if (edge <= 0.0) return 1
+        val half = (effectiveTol(edge, tolMm, quality) / (2.0 * edge)).coerceIn(0.0, 1.0)
+        if (half >= 1.0) return 1
+        val step = 2.0 * kotlin.math.asin(half)
+        if (step <= 0.0) return 1
+        return max(1, ceil(abs(sweep) / step).toInt())
+    }
+
     /** Points along [arc] at [steps] equal angular steps, both ends included. */
     fun sampleArc(
         arc: Arc,

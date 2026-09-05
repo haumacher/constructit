@@ -8269,6 +8269,54 @@ nothing in between. Everything here is computed inside one function of values: w
 *graph's shape* depending on a value, and the station count is a compute-time decision that is a pure
 function of the inputs, so a reload rebuilds the identical mesh vertex for vertex (asserted).
 
+**…and refined by the *warp* as well (as built, session 80 — the twisted-facet defect retired).** The rail
+rule above is right about the rails and blind to the surface between them, and session 79 measured what that
+costs: a constant 200 × 24 mm section swept 1000 mm at a stated 15° meshed to **4 204 506 mm³ against an
+exact 4 800 000 — 12.4% low**, watertight, every dimension of it right. What deviates is the **warp of each
+lateral quad**. Carry the section along a straight run turning it by `Δ` over one span; two neighbouring
+section vertices `p`, `q` become four corners, and the quad is flat exactly when the alternating sum
+`N = p₀ − p_Δ + q_Δ − q₀` vanishes. Read in the frame's own plane as complex numbers the rotation is a
+multiplication and the sum **factors**:
+
+> `N = (1 − e^{iΔ})·(p − q)`  hence  `|N| = 2·|sin(Δ/2)|·e`, where `e = |p − q|` is the section's own edge.
+
+The axial parts cancel outright, so the warp lies wholly in the cross-section plane, and — this is the whole
+point — it is **first order** in the turn and scales with the section's **edge length**, where the rail's
+sagitta `reach·(1 − cos(Δ/2))` is second order and cannot see the edge at all. `|N|` is the distance the
+fourth corner stands off the plane of the other three (`N` is perpendicular to that plane here, so the bound
+is attained); `|N|/2` is the gap between the diagonals' midpoints and `|N|/4` how far the split sags from the
+surface at the quad's centre. **The rule drives `|N|`**, the strictest reading and the one a stated planarity
+tolerance ordinarily means: `2·e·|sin(Δ/2)| ≤ tol`, a step of `2·asin(tol/2e)` — `GeomMath.warpSteps`, written
+beside `chordSteps` as its twin, with `effectiveTol` of the **edge** so it is scale-invariant in the sense
+GitHub #13 asked for. It is folded in at the **one chokepoint** the rail term already goes through
+(`Frames3.spine`, `max` with the others), per piece by arc-length share, capped by the existing
+`SizeLaws.MAX_SPANS` — a silent clamp like every other law's, not a refusal. A **twist law** reads it per span
+by `turnSpans`' own pattern: `SizeLaws.warpSpans` takes the law's worst **first** difference on the law's own
+fixed grid (`worstSlope`, `worstSecond`'s twin one derivative down), because warp is decided by the largest
+turn one span carries, not by the law's curvature. A **family** answers with `SweepProfile.Family.edge`, the
+longest edge any sample's ring ever has — holes included, because a hole's band warps by the same rule and
+its facets cut *outward* into the wall.
+
+The error that leaves is stated rather than hoped for (OP-15). The two triangles a quad splits into enclose
+`(h/6)·[4A + 2A·cos Δ − (sin Δ/2)·Σeᵢ²]` against an exact `hA`, so the deficit's leading term is
+`h·Δ·Σeᵢ²/12`; over `n` spans of a run of length `L` and total turn `T` that is `L·T·Σeᵢ²/(12n)`, and with
+`n = T·e_max/effectiveTol(e_max)` the twist, the length and the reach all cancel:
+
+> **`ΔV / V ≤ REL_TOL · Σeᵢ² / (12·A)`** — a number about the *section's shape* alone.
+
+0.141% for a 200 × 24 rectangle, 0.033% for a square, 0.129% for a 200 × 120 × 20 hollow, and 0.75% for a
+4 mm wall on that 200 × 24 outline (the honest cost of a rule that is relative rather than absolute — a
+thin wall has much edge per unit area). Measured after the fix: the bar reads 4 793 242 at 15°, 90° **and**
+180° (0.141% low at each, because `n ∝ T` makes the deficit independent of the turn), the wing's washed body
+2 492 486 against 2 496 000 where it read 2 194 283 before, and a section twisted along a helix comes within
+0.032% of its untwisted twin's volume. The price is stations: the bar's run goes from 4/19/37 to 263/1572/3143
+for the three turns, because a 200 mm edge against a 100.7 mm reach makes the warp step about eighty times the
+finer — the cost of the missing order, all of it linear in the turn. **An untwisted sweep is bit-identical**:
+a turn of zero asks for one span, so the `max` is the one it always took, asserted vertex for vertex and
+triangle for triangle against fingerprints read off the pre-fix code (`SweepWarpTest`), and no golden moved
+because no golden draws a twisted sweep. Tests: `SweepWarpTest` (6) and the wing's own washed volume, which
+retires the workaround `SectionFamilyTest` carried.
+
 **How the profile is carried, and why a corner needs no case.** Each station lays the profile out in the
 plane perpendicular to its arriving chord, in its own 2D coordinates, and then **pushes it along that chord
 onto the station's mitre plane** — the bisector of the arriving and leaving chords. Where the path is smooth
@@ -18015,21 +18063,32 @@ their outline in both directions — a wing, a hull — and those are these two 
 **Both of those two are built, and with them the numbered queue is empty** (session 78 and session 79 — see
 the two *as built* notes at this queue's tail). What remains —
 vertex blends, text as geometry, silhouette edges in the 3D view, the panel's scalar tiering,
-`transformArc`'s guard, the Apollonius and conic tangent families, and the twisted-facet warp recorded below —
+`transformArc`'s guard and the Apollonius and conic tangent families —
 is the parked list, each item recorded at its source, none with a new enabler yet.
 
-Smaller parked items, each already recorded at its source: **a twisted sweep's facets lose volume far beyond
-the tessellation tolerance** (found in session 79, and pre-existing since the twist did). The twist's own
-sampling refinement measures the **rail chords** (`GeomMath.chordSteps`: a point `reach` off the axis turning
-by `Δ` deviates from its arc by `reach·(1−cos(Δ/2))`), which is the right measure for the *surface*'s rails
-and the wrong one for what actually deviates — the **warp of each lateral quad**, whose diagonal split cuts
-inward across the whole face and does so worst where the section is long and stands off the axis. Measured: a
-constant 200 × 24 mm section swept 1000 mm with a stated 15° twist meshes to 4 204 506 mm³ against an exact
-4 800 000 — **12.4% low**, on the ordinary constant route. The mesh is still watertight and every dimension
-of it is right; what is wrong is only the volume a measurement reads off it, which is why it went unnoticed.
-The cure is a refinement term for the quad's warp (or a diagonal chosen per quad), and it is a package of its
-own because it changes every twisted sweep's mesh and therefore every golden that carries one. Recorded with
-its numbers so the next session starts from the measurement rather than from the surprise. Also:
+Smaller parked items, each already recorded at its source. **RETIRED in session 80 — the twisted-facet
+warp.** What stood here, kept verbatim so the retirement is legible: *"a twisted sweep's facets lose volume
+far beyond the tessellation tolerance (found in session 79, and pre-existing since the twist did). The
+twist's own sampling refinement measures the **rail chords** (`GeomMath.chordSteps`: a point `reach` off the
+axis turning by `Δ` deviates from its arc by `reach·(1−cos(Δ/2))`), which is the right measure for the
+*surface*'s rails and the wrong one for what actually deviates — the **warp of each lateral quad**, whose
+diagonal split cuts inward across the whole face and does so worst where the section is long and stands off
+the axis. Measured: a constant 200 × 24 mm section swept 1000 mm with a stated 15° twist meshes to
+4 204 506 mm³ against an exact 4 800 000 — **12.4% low**, on the ordinary constant route. The mesh is still
+watertight and every dimension of it is right; what is wrong is only the volume a measurement reads off it,
+which is why it went unnoticed. The cure is a refinement term for the quad's warp (or a diagonal chosen per
+quad), and it is a package of its own because it changes every twisted sweep's mesh and therefore every
+golden that carries one."* The cure was the refinement term, and it is built: the warp of a lateral quad is
+`2·e·|sin(Δ/2)|` — first order in the turn and proportional to the section's own **edge**, where the rail's
+sagitta is second order and blind to it — driven to the same millimetre tolerance at the same chokepoint
+(`GeomMath.warpSteps`, `SizeLaws.warpSpans`, `SweepProfile.Family.edge`; see *…and refined by the warp as
+well* under OP-26). The same bar now reads **4 793 242 against 4 800 000 — 0.141% low, at 15°, 90° and 180°
+alike** — inside the derived bound `REL_TOL·Σeᵢ²/(12·A)`, which is a property of the section's shape and
+nothing else. The two alternatives the record named are recorded as rejected rather than tried: choosing the
+diagonal per quad only flips the deficit's sign for half the faces and at best **halves** it, and splitting
+each quad through its centre is still first-order wrong — refinement is the cure, and it is the only one of
+the three that converges. No golden moved (none draws a twisted sweep) and an untwisted sweep is
+bit-identical. Also:
 **`GeomMath.transformArc` assumes a similarity**
 (it scales a radius by `sqrt|det|`), which is right for every caller it has — rotate, mirror, scale — and
 would be silently wrong under any affine map that is not one; session 47's projection routes conics through
@@ -18598,8 +18657,9 @@ family-only body is unchanged. (b) **A piece was measured by the distance betwee
 for every *closed* piece there is: a circle-sectioned family refused at `t = 0` with a sentence about a piece
 that had not vanished. A piece is as long as its own polyline. Both carry regression tests.
 
-**One pre-existing property discovered and recorded rather than fixed** (see the parked list): a **twisted**
-sweep's facets lose volume far beyond the tessellation tolerance, because the twist refinement measures the
+**One pre-existing property discovered and recorded rather than fixed** — *and fixed in session 80; the
+record is kept, with what it said, so the retirement is legible.* What it said: *"a **twisted** sweep's facets
+lose volume far beyond the tessellation tolerance, because the twist refinement measures the
 *rail chords* (`GeomMath.chordSteps`) while what actually deviates is the **warp of each lateral quad**, whose
 diagonal split cuts inward across the whole face. Measured: a constant 200 × 24 section swept 1000 mm with a
 stated 15° twist meshes to 4 204 506 mm³ against an exact 4 800 000 — 12.4% low, on the ordinary constant
@@ -18608,7 +18668,13 @@ nothing of its own to it, and is how the wing fixture is asserted: the **untwist
 (2 496 000 mm³, to the bit), its tip ring is exact (80 mm of chord, 9.6 mm of thickness — 12% of *that* chord
 — turned by exactly 15° about its own quarter chord), and the washed body's deficit is asserted equal to the
 constant control's. Fixing the warp is its own package: it changes every twisted sweep's mesh, hence every
-golden.
+golden."* **Retired (session 80).** The warp is now a refinement term of its own — `2·e·|sin(Δ/2)|` per quad,
+first order in the turn and proportional to the section's **edge**, driven to `tolMm` at the same chokepoint
+the rail rule goes through (`GeomMath.warpSteps`; the derivation and the resulting bound are under OP-26).
+The bar reads 4 793 242 (0.141% low, the same at 90° and 180°), the **washed** wing 2 492 486 against
+2 496 000 where it read 2 194 283 — so the wing fixture no longer needs the untwisted body to make its claim,
+and asserts both. It changed no golden after all: no golden draws a twisted sweep, and an untwisted sweep is
+bit-identical, vertex for vertex.
 
 **Storage.** `laws="chord = 200mm * (1 - 0.6*t); twist = 15deg * t"` on `tool sweep` alone
 (`ToolDef.carriesLaws`), semicolon-separated because the comma is taken by two-argument functions, quoted,
@@ -18633,11 +18699,13 @@ sweep gains faces, a family gains them by the same mechanism. (2) **No faired ro
 rather than as a cut: the family's own refinement already interpolates as finely as the tolerance asks. (3)
 **No laws on a *skin*'s drawn sections** (the mixing feature): a skin pairs *pieces* it was given, and a
 station whose section is itself a family would have to be read per sub-station, which is a second spine
-inside one feature. (4) **The swept cut**, in its own recorded words. (5) The **twisted-facet warp** above.
+inside one feature. (4) **The swept cut**, in its own recorded words. (5) The **twisted-facet warp** above —
+**no longer a cut: delivered in session 80**, see the retirement recorded with it.
 
 Tests: `SectionFamilyTest` (18, geometry) — the rigid tier reproduced corner for corner and its volume exact,
 a width that tapers alone (15 000 mm³ exact, and an end ring no factor of the drawn one can reach), the wing
-(exact volume untwisted, exact tip ring washed, and the same body at two tolerances), the drafted rib's flank
+(exact volume untwisted, its washed volume inside the warp bound since session 80, exact tip ring washed,
+and the same body at two tolerances), the drafted rib's flank
 at 3° to 1e-9, the blade's three laws on a straight run and on a helix with its tip ring exact, a coil too
 tight refusing in the family's own words, one mesh level, a hole on a law of its own (77 500 mm³ exact),
 composition with the rigid factor, the circle-section regression, and one fixture per verdict — a vanished
@@ -18705,7 +18773,8 @@ three blends at one vertex). Entry 2 shipped as ruled — the ortho corner's own
 view a leg already publishes, tangency recorded and inherited, the single pick running along the recorded run —
 see *A fillet supersedes the corner* under OP-1; the format's version rose to 4 as a marker so old files are told
 once what they now mean. **Entry 3 (custom blend profiles, #30) stands**, and the parked twisted-facet warp
-(recorded under the family's as-built note) is the other open item.
+(recorded under the family's as-built note) was the other open item — **retired in session 80**, see the
+retirement recorded there and the as-built note under OP-26.
 
 **Queued in session 79, from the issue tracker — the vertex blends (GitHub #31, #32), ahead of entry 3.** The two
 cuts the corner package named are the next two reports: at a **concave** corner two bands butt and the sharp cap
@@ -18727,4 +18796,379 @@ gesture now takes the edges that are still creases and stitches the already-roun
 on the way found and fixed a user-visible defect nobody had reported: the 3D view lent its projection to the editor
 and never took it back, so a flat-canvas gesture after a 3D one was measured through the camera. Horizontal
 sections through a dressed part are answered exactly now rather than refused. **Entry 3 (custom blend profiles,
-#30) is the numbered queue's one open entry**; the parked twisted-facet warp stands beside it.
+#30) is the numbered queue's one open entry**; the parked twisted-facet warp that stood beside it is retired in
+session 80 (`GeomMath.warpSteps` — the warp of a lateral quad, refined to the same millimetre tolerance every
+other term meets; the derivation, the bound and the measurements are under OP-26).
+
+#### Custom blend profiles — the general tier of the edge blend (GitHub #30; design entry, session 79 queue 3)
+
+**In one sentence.** *Fillet edge* and *Chamfer edge* already sweep a 2D profile along an edge and take it out
+of the corner — an arc for the one, a bevel for the other — so the general tier is the **drawn** profile:
+any open curve chain whose two ends land on the two faces, read in the corner's own frame, where its two
+coordinates *are* the setbacks along the two faces, so a skewed corner is cut to the length a rasp reaches.
+
+**The mechanism in full.** Nothing below the blend changes. `Blend3.creaseOf` already reads an edge as a
+crease — its path, its stations, and the two traces the plane square to the edge cuts the two faces in — and
+already refuses by name where that section is not one this rounding can say or where it changes along the
+edge. `wedgeOf` is the one function that differs by kind today: for a `FILLET` the blend piece is
+`FilletMath.lineLineArc`'s arc, for a `CHAMFER` the segment between the two `FilletMath.setback` points, and
+in both the wedge is *that piece closed back to the corner* by `sidePiece` along each leg. `BlendKind` gains
+a third case, `PROFILE`, whose blend piece is **read** rather than solved: the drawn chain, mapped into the
+section. Everything downstream — `sectionPolygons`, `pieceOf`, `cornersOf`, `toolMesh`, `dressedFaces`,
+`bandCut`, `spanOf`, `parallelBandCut` — takes it unchanged in shape, because all of them already consume
+"the wedge and its section curve" rather than "an arc of radius r".
+
+**The corner's own frame, stated exactly.** For a straight edge whose two traces are both **lines** (the
+first delivery's scope — see the slice), let `u₁` be the unit direction of trace 1 pointing *into* face 1 the
+way the corner opens, `u₂` the same for face 2, and the origin the crease itself. The drawn point `(x, y)`
+means the section point `x·u₁ + y·u₂`. The frame is therefore **oblique** wherever the dihedral θ is not a
+right angle, and that is the whole point:
+
+- `x` **is** the setback along face 1 and `y` **is** the setback along face 2, in millimetres, at every
+  dihedral. A profile stating `(6, 0) → (0, 3)` cuts 6 mm into one face and 3 mm into the other whether the
+  corner is 90° or 60°, which is the user's *"the cut must extend the length of the edge to produce the
+  result of a rasped edge"*, answered by the frame instead of by a case.
+- It is the **chamfer's own convention** one level up (session 76: *"a chamfer's setback is measured along
+  the carrier"*), and that is why it is the frame and not a second one: the chamfer is already the general
+  tier's one-segment profile, and it must come out vertex for vertex.
+- At θ = 90° the frame is orthonormal, so the two built-ins are reproduced exactly there — a segment from
+  `(c, 0)` to `(0, c)` is `CHAMFER c`, and the quarter-arc centred at `(r, r)` is `FILLET r`. Away from 90°
+  a drawn arc is *sheared* — an elliptic arc in the true section — which is exactly what a hot-wire template
+  pulled square to a skewed edge would cut, and is the honest reading rather than a distortion.
+
+**Rejected: the bisector frame** (orthonormal, x along the in-face bisector, y square to the shared face).
+It keeps a drawn circle circular at every dihedral, but the profile's two ends then land on the faces only
+at 90°: at any other angle either the drawing has to know the dihedral it will be used at — so one profile
+serves one corner and cannot be shared, which is the opposite of the no-solver stance's *sharing is
+equality* — or the ends miss the faces and the wedge is not closed. Named here so the trade is on record.
+
+**Which end goes to which face is a discrete choice, scored once and stored** (OP-1/OP-18). The profile's
+first end is the setback along face 1; a stored `flip` of `−1` reads it the other way. For the **single-edge**
+row it is scored from the click — the face the click fell nearer — and the status line names it in words
+(*"3 mm along the top face, 6 mm along the face over boundary edge #2"*), so a re-pick on the other side is
+the flip gesture and there is no mode. For the **face-chain** row it is not scored at all: the profile's
+first end is the setback **on the picked face**, structurally, for every edge of the chain. That is not a
+convenience — it is what makes all of a chain's corners congruent by construction, and therefore mitre-able
+(see the corners, below).
+
+**What "taken out of the corner" means when the profile is not convex.** The wedge is unchanged in
+definition: the closed loop *leg 1 from the crease to end A, the profile from A to B, leg 2 from B back to
+the crease*, oriented by `GeomMath.signedArea` exactly as today, and applied with the sign the scored
+`convex` flag carries — subtracted at a convex edge, added at a concave one. So a **cove** (an arc bulging
+away from the crease, into the material) simply removes more, an **ogee** removes some of each, and a
+**step** removes a staircase; none of them is a case. Two things the loop must be, and both are refusals
+rather than repairs: it must be **simple** (a profile that crosses itself, or crosses a leg, has no region),
+and it must stay **inside the corner's own quadrant**. A profile that leaves the quadrant would *add*
+material at a convex edge — a bead — and a section that both adds and removes needs two tools of opposite
+boolean sign derived from a *value*, which is structure decided at eval time (OP-21). The bead is refused by
+name, with the cure it already has: draw the bead as a closed section and sweep it along a curve, then
+*Union*. (At a **concave** edge the whole wedge is added already, which is the existing mechanism and needs
+nothing.)
+
+**Where the profile is drawn, and how it is picked.** In an ordinary sketch space, about that space's origin
+— the swept cut's own sentence, verbatim: *"Draw the chain about the sketch space's origin: it is read in the
+route's own frame."* Here the space contributes **numbers and nothing else**: its x is the setback along the
+first face and its y the setback along the second, both lengths in mm. It is not a geometric frame, so no
+plane, normal or handedness of it is read — which is what lets one drawn profile drive twelve edges of a box
+in four gestures, sharing one node the way a radius parameter is shared today. A curve **in space** cannot
+be read here and refuses in the sentence every plane-coordinate route already speaks (`notInThePlane`,
+OP-17 — session 76's coordinate rule: its coordinates are world ones, and every `Vec2` here means "in some
+plane's own").
+
+The slot is `SlotKind.CHAIN` — the swept cut's own, with `Document.chainOf`'s coercion already written —
+narrowed by a build-time refusal to an **open** chain, because a rounding's profile has two ends and a
+closed one has none to land on the faces. `crossSpace = true`, as the cut's row is, since the profile and
+the body need not share a space.
+
+**Two new rows** (`ToolCategory.SOLIDS`), which is four lines of table and no controller code:
+
+| id | title | slots | scalars |
+|----|-------|-------|---------|
+| `blendedge` | *Blend edge with a profile* | `CHAIN, SOLID` | none |
+| `blendfaceedges` | *Blend the edges of a face with a profile* | `CHAIN, SOLID` | none |
+
+No scalar at all: the profile's own drawing states the size, and a second number would be a second way to
+say what the drawing says (the swept cut's own argument against a roll input). The status line reads
+*"e20 with the profile e7 along the top face's 4 edges — 3 mm along the top face, 6 mm along each side"*, and
+there is **no live preview**, the standing cut for all blend rows (a `preview` lambda may not touch the
+graph, and a blend's picture is its result).
+
+---
+
+##### Composition with the corners
+
+Everything session 79 and session 80 built is keyed on **congruence read in the shared face's frame**, and
+that is what decides, exactly, when a custom profile composes.
+
+- **Two bands crossing at a convex corner** (`Joint`, `mitrePlacement`, `ringsAgree`). The mitre splits the
+  removal on the surface equidistant from the two edges and needs the two sections to agree as functions
+  `δ(h)` — the inset *in* the shared face at depth `h` *below* it. In the corner frame a section point
+  `x·u₁ + y·u₂` reads, against face 1 as the shared face, as `s = x + y·cos θ`, `h = y·sin θ`. So **two edges
+  carrying the same drawn profile, with the same orientation relative to the shared face, at the same
+  dihedral, are congruent** — which the face-chain row guarantees by construction and a hand-built chain
+  satisfies whenever the part is prismatic. The mitre then holds with no new code: `mitrePlacement` is affine
+  in the section's own coordinates and does not care what curve the section is.
+- **Two *different* profiles at a corner** — or two equal profiles at unequal dihedrals, or a custom profile
+  meeting a built-in fillet — are not congruent, the two sides do not land on one ring, and session 79's cut 2
+  applies word for word. But its fallback (leave the two wedges to overlap and let the boolean trim them) is
+  the known-bad path that produced #27 and #28. So for the custom tier it is **refused by name** instead,
+  with the cure. The built-in/built-in case is left exactly as it is — no existing drawing changes — which is
+  why the refusal is keyed on *at least one side being a custom profile* rather than on non-congruence alone.
+- **The pivot at an inside corner** (`Turn`, `turnOf`) generalizes with no argument at all: it is the band's
+  own section carried round the upright through the exterior angle, and a chain of pieces revolves into a
+  chain of surfaces. `Revolve3.bandOf` names each — a segment gives a cone, cylinder or annulus, an arc a
+  torus or sphere — and a piece whose revolution has no name keeps its index and carries the reason, which is
+  the standing honesty class. Pappus still gives what it takes exactly, `φ·∫δ(h)²/2 dh` over the profile.
+- **The convex vertex.** The ball is gone and must be said to be gone: session 80's argument was that each
+  band's section circle *is a great circle* of the ball, which is a fact about a circle of the band's own
+  radius and about nothing else. A general profile has no such patch, and inventing one would be inventing
+  geometry. The honest construction is the one a **chamfer** already gets there (`apexPatch`): the three
+  bands mitred pairwise on their three equidistant planes, meeting at the profile's own crossing of the
+  corner-frame diagonal — for the chamfer at `(c/2, c/2)`, which is exactly the apex session 80 built. It is
+  closed, exact, order-independent, and adds no new face; it is available whenever the three profiles are
+  **congruent** in all three shared faces (equal profile, equal dihedrals — the box corner and every prism
+  whose plan turns a right angle), and where they are not, the trio is left as it was, by name. What it does
+  *not* do is take the nub a rolling ball would: where the custom profile is round, the mitre apex leaves the
+  little point at the diagonal that #32 was about, and that is stated rather than hidden — the built-in
+  fillet still takes it, and "a ball fitted into a vertex of three arbitrary profiles" is a named future
+  extension with no construction behind it yet.
+
+---
+
+##### Exactness classes, face naming, and what a section of a custom band is
+
+The band a custom profile leaves is **one face per profile piece**, appended in the profile's own order after
+every base face, the way an extrusion appends one side face per boundary piece. `FaceName.BlendBand(edge)`
+gains a piece index — `BlendBand(edge, piece)`, whose `piece = 0` prints today's label unchanged, so no
+existing body's face list is renamed or renumbered.
+
+| profile piece | band on a **straight** edge | band on a **circular** edge | class |
+|---|---|---|---|
+| segment | a **plane**, with its rectangle — *sketchable* | cone / cylinder / annulus | **exact** |
+| arc | cylinder | torus / sphere | **exact** surface, chorded mesh |
+| Bézier, conic, function curve | no named surface: keeps its index, carries the reason | same | **approximated** (OP-15) |
+
+Two things worth stating because they are gains rather than plumbing. A **step** profile of four segments
+gives four *planar* band facets, and `Section3.sweptFace` already returns a plane plus a rectangle for a
+swept segment — so *sketch on face* opens on a custom band's flats, and a Cut can be drilled from one. And an
+**arc** piece refuses sketch-on-face in exactly today's words, restated in the blend's own voice by
+`inBlendsWords`: *"…is a cylinder and not a plane — it is the rounding's own section, so there is nothing to
+sketch on there; put a datum plane where you want to sketch."* Nothing new is written for either.
+
+A working plane's **section** of a custom band is the existing pair of readings, per piece: `bandStrip`'s
+rulings (the section point carried along the edge over the band's own `spanOf` extent — exact at every ruling,
+chords between) and `parallelBandCut` for the one cut the rulings cannot answer, a plane parallel to them,
+which is stated exactly from the section curve's own crossings of the cut plane. Those crossings are closed
+form for a segment and an arc and a deterministic numeric root for the rest, ordered along the piece — OP-1's
+canonical rule for parametric curves, which this drawing has stated since the spline note.
+
+---
+
+##### Storage, re-stamping, and the file
+
+The step is the generic `tool` row it has always been, with **one more element and one more integer per
+edge**:
+
+```
+tool blendedge els=e7,e20 clicks=112.5,40 signs=12;-1;1;0;1;1 -> e21
+tool blendfaceedges els=e7,e20 clicks=95,60 signs=4;-1;1;0;1;1;-1;1;0;1;1;… -> e21
+```
+
+- `els=` names **the profile first, then the solid**, in slot order, so the delete cascade
+  (`referencedElements`) and the rename path reach the profile with no new hook: it is an ordinary operand.
+- `signs=` is the address, then **five** integers per edge — `a, b, branch, convex, flip`. `a` and `b` are the
+  chamfer's own two leg directions (session 76: the setback runs along the carrier, so *which way along it* is
+  the choice), `branch` is unused and written `0`, `convex` is the material sign as today, `flip` is the
+  orientation. Five rather than four is unambiguous because the chunk size is a property of the **tool id**,
+  which the step already carries — no existing `filletedge`/`chamferedge` step is re-read differently, and no
+  new file can be mistaken for an old one.
+- **No `profile=` argument.** The profile is a drawn element, not a literal, and the file's own doctrine is
+  that a construction is recorded by the operation that made it; a serialized curve inside a step would be a
+  second, frozen copy of a drawing that already has a step of its own.
+- **No format version bump**, and the doctrine says exactly why: a bump is owed when *the same bytes mean
+  something new* (`SUPERSEDING_FILLET_VERSION` is the one case that ever earned one). Here two ids that have
+  never been loadable become loadable; every existing file replays byte for byte. This is the same argument
+  the swept cut, the loft, the sphere locus and the function family each made, and it has held every time.
+- **The profile's own edits re-blend through the DAG**, with nothing rebuilt: drag an end from 3 mm to 5 mm
+  and the blend node recomputes on the ordinary downstream cone, exactly as retyping a radius does today. A
+  profile deleted **cascades** (the blend goes with it, as any operand's dependents do); a profile that
+  becomes invalid or non-simple makes the blend **invalid with a reason naming the profile**, and it heals
+  when the drawing does (OP-3).
+- Round trip is the usual gate: `save → load → save` byte-equal, with the reloaded body's volume agreeing to
+  1e-9, and a replay scoring **nothing** — the fillet's own lesson, one tier up.
+
+---
+
+##### Refusals, drafted
+
+Each names the element and the way forward, in the blend's own words (session 65's rule):
+
+1. *"e7 is a closed loop, and a rounding's profile has two ends — one to land on each face. Break it, or draw
+   an open chain."*
+2. *"e7's ends do not state a setback on each face: this profile's first end stands at (3.0, 1.5) and a
+   profile's ends must lie on the two faces — the first at (x, 0), the last at (0, y). Move them onto the
+   axes."*
+3. *"e7 crosses itself, so there is no corner region for it to take away."*
+4. *"e7 leaves the corner between the top face and the face over boundary edge #2 — a profile that reaches
+   outside the corner would add material rather than take it. To add a bead, sweep a closed section along the
+   edge and fuse it."*
+5. *"a profile whose setback of 12 mm along the face over boundary edge #2 reaches past that face at edge #7
+   — the largest that fits there is about 9.4 mm"* (the existing `tangenciesFit` sentence, scaled by
+   halving exactly as it is today, so the message is a number to act on).
+6. *"the corner where edge #1 meets edge #2 on the top face carries two different profiles (e7 and e9), and a
+   corner is built only where the two roundings are the same section on the face they share. Give both edges
+   one profile, or round them so that only one of them reaches this corner."*
+7. *"edge #7's section against the bore is a circle, and a drawn profile states its two ends as setbacks
+   along two straight legs — round that edge with Fillet edge, whose arc is tangent to the bore by
+   construction. A drawn profile against a curved leg is a future extension."*
+8. *"e7 is a curve in space, and a profile's two numbers are setbacks in a plane's own coordinates — draw it
+   in a sketch space."* (`notInThePlane`, verbatim.)
+9. The honesty note, not a refusal: *"e7's third piece is a Bézier, so the band it sweeps is a surface this
+   drawing has no name for — it draws, measures, prints and exports, and it offers no sketch plane and no
+   exact section."*
+
+---
+
+##### Acceptance fixtures, with the numbers
+
+All on a 40 × 30 × 10 mm plate unless said otherwise; every solid `assertManifold`.
+
+1. **The chamfer is a one-segment profile.** Profile `(3, 0) → (0, 3)`, one top edge of length 40. Removes
+   `½·3·3·40 = 180 mm³` **exactly**, and the body is asserted **vertex for vertex** against the same edge
+   taken by `CHAMFER` with setback 3. This is the fixture that says the general tier is general.
+2. **The fillet is a quarter-arc profile.** Profile: the arc of radius 4 centred at `(4, 4)` from `(4, 0)` to
+   `(0, 4)`, same edge. Removes `(1 − π/4)·16·40 = 137.345175425 mm³`, and is asserted **vertex for vertex**
+   against `FILLET` radius 4 — the same arc reaching the same tessellation.
+3. **An asymmetric chamfer.** Profile `(3, 0) → (0, 6)`, one 40 mm top edge: `½·3·6·40 = 360 mm³` **exactly**,
+   with the two faces' corrected boundaries stepping in by exactly 3 and 6 mm (`correctedOutline`, 1e-9).
+4. **A step.** Profile `(4,0) → (4,1) → (2,1) → (2,3) → (0,3)`, one 40 mm edge: area 8 mm², `320 mm³`
+   **exactly**, and the band is **four planar faces** — each sketchable, with rectangles 1×40, 2×40, 2×40 and
+   2×40 — one of which carries a Cut drilled from it, which is the fixture for the face-naming half.
+5. **A cove.** The quarter-arc of radius 4 centred **at the crease**, `(4,0) → (0,4)`: the quarter disc,
+   `4π·40 = 502.654824574 mm³`. Two-sided in the fillet's own shape and with the opposite sign — never
+   **above** the exact figure, never below it by more than `π·r·t·L/3`, because inscribed chords pull this
+   boundary toward the crease where a fillet's push away from it. A **bead** (the same arc centred at
+   `(4, 4)` but drawn on the far side, leaving the quadrant) is the paired refusal fixture, asserted
+   character for character.
+6. **A skewed corner.** An equilateral-triangle prism, 20 mm tall, one upright edge — dihedral 60° — with the
+   profile `(6, 0) → (0, 3)`. Removes `½·6·3·sin 60°·20 = 155.884572681 mm³` **exactly**; the two setbacks
+   measured *in the faces* are exactly 6 and 3 mm (1e-9) and the bevel's own width is `√27 = 5.196152423 mm`.
+   This is the user's *"tricky part"* asserted as a number: the same drawing at 90° would have cut 180 mm³,
+   and the frame is what makes the 60° corner reach the length a rasp reaches rather than the length a
+   perpendicular reading would.
+7. **The whole-face chain.** The plate's top face, profile `(3, 0) → (0, 6)`, first end on the picked face.
+   By session 79's corner formula with `δ(h) = 3(1 − h/6)`, `∫₀⁶ δ² dh = 18` and `cot 45° = 1`:
+   `Σ(9·L) − Σ_corners 18 = 1260 − 72 = 1188 mm³` removed, body `10812 mm³` — **exact**, no chords anywhere,
+   asserted to the general engine's own 1e-5 relative. All four corners are mitres, and the body is
+   bit-identical in all 24 orders of the four edges taken one gesture at a time.
+8. **A box corner.** Three edges of one convex vertex, one profile, taken in all six orders: one body,
+   bit-identical, with the mitre apex at the profile's own diagonal crossing (`(c/2, c/2)` for a chamfer, so
+   fixture 1's body is reproduced). The paired refusal: two different profiles at that vertex, by name.
+9. **The file.** `save → load → save` byte-equal with `signs=` restated five-per-edge; the reloaded volume to
+   1e-9; a replay that scores nothing (drag the profile until a fresh score would flip the orientation and
+   assert the reload does not — the fillet's own regression, one tier up).
+10. **The drag.** Move the profile's end from `(3, 0)` to `(5, 0)` and the body re-blends with no node
+    rebuilt: 360 → 600 mm³ on fixture 3, one recompute, one undo.
+
+Tests: `CustomBlendProfileTest` (geometry, the numbers above), `CustomBlendProfileToolTest` (the two rows,
+the status line, the file, the cascade, every refusal by its words), `CustomBlendProfileProbeTest` (the
+compositions: a placed dressed body, a dressed body as a boolean operand, the export seam).
+
+---
+
+##### The slice
+
+**In the first delivery.** A straight edge, both traces **lines**, and a **circular** edge (the revolved band
+generalizes by the same loop the pivot already needs). The profile as an open drawn chain of segments, arcs,
+Béziers, conics and function curves, with the last three carried honestly rather than refused. Both rows.
+The oblique corner frame, the scored orientation, the face-chain's structural orientation. One band face per
+profile piece, named, sectioned, pickable, sketchable where it is a plane. Mitre corners, the inside-corner
+pivot, and the convex-vertex apex, each where the profiles are congruent and each refused by name where they
+are not. `signs=` five-per-edge, the delete cascade, byte-equal round trip, no version bump.
+
+**Out, each whole, each named where the user would look for it.**
+
+1. **A curved leg in section** — a profile against a bore or a cone, where the corner frame has no straight
+   direction to state a setback along. Refused at the pick, pointing at *Fillet edge* and *Chamfer edge*,
+   which do take it (session 76's convention). The future extension is the arc-distance reading of the same
+   frame.
+2. **A bead** — a profile that leaves the corner's quadrant and would add material at a convex edge. Refused
+   with the cure it already has (sweep a closed section, then *Union*); the reason is OP-21's, not a
+   difficulty.
+3. **A profile that varies along the edge** — the drawn section under a law of `t`, which is precisely
+   `SweepProfile.Family` (session 79) one feature over. Named as the future extension it now visibly is,
+   and refused by the same sentence the rigid-section scope already speaks.
+4. **A ball fitted to a vertex of three round custom profiles** — there is no such patch (the great-circle
+   argument is about a circle of the band's own radius), so the vertex gets the mitre apex and the nub is
+   stated. Named where #32 is answered.
+5. **A per-edge profile in one chain gesture** — one profile per gesture, because a chain whose sections
+   differ has no mitre by the congruence rule above.
+6. **The mitre crease's own named edge** — still the small separable addition sessions 79 and 80 both named.
+7. **A live preview** — the standing blend cut, unchanged.
+
+---
+
+##### Forks the user must rule
+
+1. **The section frame: oblique (the two face directions) or orthonormal (the bisector)?**
+   *Recommendation: **oblique**.* It is the only reading in which the profile's two numbers *are* the two
+   setbacks at every dihedral, which is what the report asks for and what makes one profile shareable across
+   corners of different angles. The cost is on record: away from 90° a drawn arc is an elliptic arc in the
+   true section, so the general tier reproduces `FILLET` exactly at a right dihedral and produces a sheared
+   round elsewhere — a hot wire's own answer.
+
+2. **One row with an optional profile, or two new rows?**
+   *Recommendation: **two new rows** (`blendedge`, `blendfaceedges`), and `BlendKind.PROFILE` beside `FILLET`
+   and `CHAMFER`.* Slice 2 already argued this for the four existing rows (*"which granularity a gesture
+   meant is the most durable thing a step can carry, and the tool row already carries it"*), the swept cut
+   argued it for its carry modes, and the helix for its handednesses. An optional slot would also break the
+   `OPTIONAL_*` rule that such a slot may never be a tool's last one, and here the profile is the *first*
+   pick.
+
+3. **A `SlotKind` of its own, or `CHAIN` narrowed by a refusal?**
+   *Recommendation: **`CHAIN`**, refusing a closed pick by name at build time.* `Document.chainOf`'s
+   coercion is written and the swept cut proves the idiom; what differs is a property of the *value* (open
+   vs closed), which is a refusal, not a slot. A new slot would be the right answer only if the pick had to
+   be resolved differently, and it does not.
+
+4. **Two different profiles at a corner: refuse, or fall back to the boolean's trim?**
+   *Recommendation: **refuse by name**, and only where at least one side is a custom profile.* The fallback
+   is the exact path that produced #27 and #28, and the general tier makes non-congruent corners common
+   rather than rare. Keying the refusal on "at least one side is custom" leaves every existing drawing's
+   behaviour untouched, which is what makes it free.
+
+5. **May a profile add material (a bead)?**
+   *Recommendation: **no**, refused by name with the cure.* One section would have to drive two booleans of
+   opposite sign, and how many of each is a fact about a drawn value — structure decided at eval time
+   (OP-21). A cove, an ogee and a step all remove and are all in.
+
+6. **Bézier / conic / function-curve pieces in the first delivery: in with an honesty flag, or out?**
+   *Recommendation: **in**, classed approximated.* The mesh route already tessellates every piece kind, the
+   band simply carries a reason instead of a surface — which is the class spline offsets and general fillets
+   have had since OP-15 — and cutting them would contradict the record's own *features generic* rule while
+   refusing precisely the hot wire the report describes.
+
+7. **Circular edges in the first delivery, or straight only?**
+   *Recommendation: **in**.* `revolvedBand` + `Revolve3.bandOf` name a revolved segment or arc with no new
+   table, and the loop over profile pieces is the same one the inside-corner pivot needs anyway. What stays
+   out is unchanged and unrelated: the *corner* between two edges that are not both straight (session 79's
+   standing cut).
+
+8. **`signs=` five integers per edge, or a separate `flip=` argument?**
+   *Recommendation: **five per edge**.* `signs=` is where scored discrete choices live, the chunk size is a
+   property of the tool id the step already carries, and a second argument would put the same kind of fact in
+   two places. `branch` stays written as `0` rather than dropped, so the five read as the four plus one.
+
+9. **A version bump?**
+   *Recommendation: **no**.* Two ids that could never be written before become writable; no stored literal
+   changes meaning and every existing file replays byte for byte. The doctrine's one bump was earned by the
+   opposite situation — the same bytes meaning something new.
+
+10. **The convex vertex of three custom profiles: mitre apex, or refuse?**
+    *Recommendation: **the mitre apex**, where the three are congruent; refuse by name where they are not.*
+    It is the chamfer's own vertex generalized, it closes exactly, it is order-independent, and it adds no
+    face. The nub a rolling ball would have taken is stated in the as-built note rather than hidden, and the
+    built-in fillet still takes it.
+
+
+**The design pass above is recorded ahead of its ruling** (session 80): the forks were put to the user with the recommendations stated; unless one is overruled the recommendations are the ruling, and the package is dispatched on them — a later overruling re-stamps the delivery the way every reversal in this record does.

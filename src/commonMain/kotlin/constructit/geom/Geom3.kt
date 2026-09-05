@@ -958,6 +958,26 @@ object Geom3 {
      */
     fun tessArea(t: TessRegion): Double = polygonArea(t.outer) + t.holes.sumOf { polygonArea(it) }
 
+    /**
+     * The **longest edge** of a tessellated region — the lever the twist's warp refinement is measured on
+     * (OP-26, session 80, [GeomMath.warpSteps]), and the section's other size beside its reach.
+     *
+     * Read off the tessellation rather than off the region, because the quads that warp are made of these
+     * chords and not of the arcs behind them: a circle sectioned finely has a small edge however wide it
+     * is, and a single 200 mm straight piece has a 200 mm one. **Holes count** — a hole's band warps by the
+     * same rule and its facets cut outward into the wall.
+     */
+    fun tessEdge(t: TessRegion): Double {
+        var worst = 0.0
+        for (loop in listOf(t.outer) + t.holes) {
+            for (i in loop.indices) {
+                val d = (loop[(i + 1) % loop.size] - loop[i]).length()
+                if (d > worst) worst = d
+            }
+        }
+        return worst
+    }
+
     /** A loop as its polyline of distinct corners, keeping the loop's own traversal direction. */
     fun tessellateLoop(
         loop: Loop,
@@ -1615,6 +1635,13 @@ object Geom3 {
         // law's own fixed grid and never off the stations — so a horn's wide end is resolved by exactly the
         // rule a constant section of that size would get, and no criterion's resolution is the mesh's.
         val grown = reach * SizeLaws.maxScale(profile)
+        // …and the *other* size of the same section: its **longest edge**, which is the lever the twist's
+        // **warp** refinement is measured on (OP-26, session 80, [GeomMath.warpSteps]). It is the section
+        // the mesh is actually made of that warps, so the number is read off the tessellation — holes
+        // included, since a hole's band warps by the same rule — and grown by the same worst-case factor
+        // the reach is, so a horn's wide end is resolved by the rule its own size asks for.
+        val edge = family?.edge ?: tessEdge(tess)
+        val edgeGrown = edge * SizeLaws.maxScale(profile)
         // …**and a family owns its own refinement** (OP-26, session 79, F7): its grid was decided before a
         // triangle existed, by the sagitta of its rings' own motion, so the run is cut into at least as many
         // spans as the family has samples and every sample is drawn rather than interpolated over.
@@ -1622,7 +1649,7 @@ object Geom3 {
         // grid sees on its own ([SweepProfile.Family.composedSpans]).
         val lawSpans = max(SizeLaws.spans(profile, reach, tolMm), family?.composedSpans(tolMm) ?: 0)
 
-        val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, grown, tolMm, seed, lawSpans, twistLaw)
+        val (frame, noFrame) = Frames3.along(path, up, rollRad, twistRad, grown, edgeGrown, tolMm, seed, lawSpans, twistLaw)
         if (frame == null) return null to (noFrame ?: "cannot build a moving frame along this curve")
         // **The per-station reading of the size** — one `t` over the whole run by arc length, stated once
         // here so the mesh, the plan hint and all three refusal terms read the identical number. Null for a
@@ -1777,6 +1804,10 @@ object Geom3 {
         // the law travels with the feature (OP-9's self-contained feature), so a moved tapered body's hint is
         // the tapered one — and a law that cannot be read yields no hint, exactly as an unbuildable frame does
         val grown = reach * SizeLaws.maxScale(feature.profile)
+        // the same second size the mesh reads (OP-26, session 80): the hint walks the *same* stations, so
+        // the run it draws has to be cut by the same two rules or a moved body's plan would be a different
+        // outline from the one its own triangles project to
+        val edgeGrown = (family?.edge ?: tessEdge(tess)) * SizeLaws.maxScale(feature.profile)
         val lawSpans = max(SizeLaws.spans(feature.profile, reach, tolMm), family?.composedSpans(tolMm) ?: 0)
         val (frame, _) =
             Frames3.along(
@@ -1785,6 +1816,7 @@ object Geom3 {
                 feature.roll,
                 feature.twist,
                 grown,
+                edgeGrown,
                 tolMm,
                 lawSpans = lawSpans,
                 twistLaw = feature.twistLaw,
