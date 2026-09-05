@@ -10276,6 +10276,66 @@ provenances joined — a segment run to a **helix**, a **combined run** (step 5)
 **intersection curve** (step 6), which has no end and says so in the node rather than in the gesture.
 **1555 → 1591 green**, no new golden, no version bump, no existing golden changed.
 
+**As built, session 81 (GitHub #34): the join of two drawn curves is a drawing curve.** The report is one
+sentence — *"connect curves result cannot be used to define an outline"* — and the diagnosis is one line of the
+note above read against the lift: the joining piece was always added as a `SPACE_CURVE`, because when step 7
+was built that was the only kind either operand could be. Step 1's missing source then made a *drawing* a legal
+pick in every `PATH3` slot (`Document.spaceCurveRef` lifts it), so both picks can now be curves of one sketch —
+and the bend between them lies in that sketch's own plane, while every drawing tool takes a `CURVE`. So the
+answer was a curve the drawing could not use, which is the whole defect.
+
+**The rule is structural, and it is read off the two picks** (OP-21): both drawn (liftable, not a
+`SPACE_CURVE`) and of the **same space** → the join is a `BEZIER` of that space; anything involving a curve in
+space, or two different spaces, → the `SPACE_CURVE` it always was, with the status line naming which pick
+decided it. Nothing is measured, nothing is discovered, and a replay reaches the same reading without deciding
+anything.
+
+**One formula, one derivation, and the new op is a *reading*.** The connection is still `Connect3.connected`
+over the two lifted runs, so the end choice, the tensions, the G1/G2 modes and every existing refusal are the
+same objects they were; what is added is `Construction.planarSpan`, which takes one cubic span of the resulting
+`Path3` and states it in the plane's own coordinates as a `BezierValue`. Building a second, planar copy of the
+formula was rejected outright: two implementations of one derivation drift at the first refusal. The reading
+refuses by name if the run is not the expected number of cubics or stands out of its plane (1e-6 mm) — which
+the structural rule already excludes, so the sentence is honesty rather than a routine outcome (OP-3).
+
+**A G2 join is three cubics, so in the drawing it is three drawing curves.** Cutting the mode to one span would
+have been cutting the mode; reading three spans as one drawn curve is impossible, because the drawing has no
+open poly-curve kind and inventing one is a vocabulary change no report asked for. So the step creates three
+`BEZIER` elements, the status line counts them, and the *Outline* tool takes all three — in practice with two
+clicks, because its own follow (OP-14) walks the chain the moment the boundary has a direction.
+
+**The version rose to 5, and only the G2 case is gated.** No stored literal changed shape and none is re-read:
+the same `tool connect els=… clicks=… signs=…` step, the same tensions, the same geometry to the last bit. What
+changed is what such a step *builds*, so the version is the marker that lets a load say it **once**
+(`DocumentFormat.PLANAR_JOIN_VERSION`, the fillet's own precedent at `SUPERSEDING_FILLET_VERSION`) rather than
+a note firing for ever. A **G1** join is one element either way, so an older file's `-> e7` still names the
+whole of it and everything built on that name goes on working — a sweep or a tube lifts a drawn curve exactly
+as it took a run. A **G2** join is three, and three elements cannot wear one name: the step would create three
+where the script declares one, which is the load error it has always been, and anything built on `e7` would
+find a third of the bend under it. So a file older than 5 keeps the run in space it was written with, the load
+says so once, and re-connecting the two curves is how the user asks for the new reading. That choice is scored
+on that load and **written down** as a third entry in the step's own `signs=` (`signs=0;0;1`) — the same
+treatment the two ends get, for the same reason (OP-1, OP-18) — which is what makes the re-saved file a fixed
+point rather than a file whose meaning depends on a version it no longer declares.
+
+**Nothing else moved.** No new value kind, no new slot kind, no new tool id, no controller code, no argument
+grammar: one `Construction` op, one rule and one branch in `Document.connectCurves`, one constant in
+`DocumentFormat`, and two help texts. The join still belongs to the **first** pick's space, still rides both
+curves, and still refuses the two structural things by name.
+
+Tests: `ConnectInPlaneTest` (11) — the report's file verbatim, with the join a valid `BEZIER` meeting each
+segment at the end the file's `signs=` named and leaving along it (G1 at 1e-9); the outline the report could
+not trace, closed through the tool, its four pieces and its area checked against one computed from the four
+elements' own sampled polylines (1e-6 relative) and extruded 10 mm with `assertManifold`; the G2 gesture's
+three pieces, C0 at their two joins at zero tolerance, and the six-piece outline over them with the same area
+check; a pick that is a curve in space and a pick in a second space each still giving the run in space, each
+with the status line saying which; `save → load → save` byte-equal on the fixture with no note on the second
+load; the older file's single note and the join's ends unmoved at zero tolerance; the older **G2** file kept in
+space, its `signs=0;0;1` written down, and its re-save a fixed point with nothing more to say; a tube along a
+drawn join still watertight and its file a fixed point; and one undo taking the whole join back in both modes.
+**2610 → 2621 green**, no new golden, no existing golden changed; the format's version rose to 5.
+
+
 ### Implementation status (as built — step 8: projection onto a face, an affine map and nothing else)
 
 Step 8 of the order above, and it is **smaller than the entry's own sentence in one respect and exactly it in
@@ -14184,7 +14244,24 @@ the composition table is driven generically as well as by its own test.
   deliberately did **not** do is guess the three-concave vertex, which is now recorded as the catalogue's
   fourth corner rather than as an oddity.
 
-- **Turn 72 — a tool never shares a face with the body** (GitHub #33; session 81). The report: *"3D fillet
+- **Turn 72 — the join of two drawn curves is a curve of the drawing** (GitHub #34; session 81). The report:
+  *"'connect curves' result cannot be used to define an outline"*, with a file of two segments meeting at a
+  filleted corner and a *Connect two curves* closing the figure along the bottom. The join was always built as
+  a curve in **space**, which was the only thing either operand could be when step 7 was written; step 1's lift
+  then made a drawing a legal pick in every `PATH3` slot, and from that moment the tool could be handed two
+  curves of one sketch and answer with something that sketch cannot use. The ruling is that the *kind of the
+  answer follows the kind of the picks* (OP-21): two drawings of one space make a drawing curve, anything else
+  the run in space it always was. The formula is untouched and deliberately not duplicated — the connection is
+  still derived on the lifted runs and the new op only **reads** its cubic back in the plane — because two
+  implementations of one derivation drift at the first refusal. The G2 mode's three cubics become three drawing
+  curves rather than being cut to one, and the outline tracer's own follow closes the six-piece boundary from
+  two clicks. The format rose to 5 as a marker so an older file is told once what its join now is; the one case
+  the marker actually gates is the older **G2** join, where three elements cannot wear the one name the script
+  declares, so that file keeps its run in space and the reading is written down in the step's `signs=` — a name
+  in a file names the same geometry for ever.
+
+
+- **Turn 73 — a tool never shares a face with the body** (GitHub #33; session 81). The report: *"3D fillet
   creates invalid body/rendering artifact"*, on a chevron 20 high with a 19.4° tip whose upright was rounded
   at `r = 2`. What makes this one worth the entry is that **nothing refused and nothing was wrong with the
   numbers**: the body was closed, consistently wound, and its volume matched `20·r²(cot(θ/2) − (π−θ)/2)` to
@@ -15565,6 +15642,61 @@ its coplanarity is exact, so it keeps it.
   ring with no vertices. Break it into arcs first — refused by name.
 - **The carrier curves are not consumed.** A thickened segment stays a visible segment, as the ortho
   carrier's legs always did. Hiding it is a view decision, and the view has no such state (OP-18).
+
+## Languages (OP-29 — OPEN; design entry, session 81)
+
+**The ask (user, session 81).** *"Currently the app is only English — but I'd like to offer it in multiple
+languages. We can start with English and German but the mechanism should work for a large number of languages.
+Can we make use of the Gradle auto-translate plugin for language support (haumacher/auto-translate)? This would
+require to use arb files for translation storage — since it is JSON it should fit the design nicely?"* And, on
+the first draft's *"small ICU-subset formatter"*: *"there is no ICU formatter for Kotlin? Do we really need a
+local hack?"* — no, and the design below has none.
+
+**What the plugin gives, and what it does not.** `auto-translate` reads one source ARB (`app_en.arb`: JSON,
+one string per key plus `@key` metadata — a description and typed placeholders), translates through DeepL
+**incrementally** (checksums; only new or changed entries), preserves ICU MessageFormat placeholders, plurals
+and selects, and writes one target ARB per language. Adding a language is one entry in `targetLangs`. It writes
+**files only** — it targets Flutter, whose `gen-l10n` then generates code — so consuming the ARBs is ours.
+
+**The load-bearing decision: a message is a value, rendered at the edge.** Today roughly 1200 user-visible
+sentences are *assembled* — 135 tool rows (title, help, slot names), 249 status notes in `Document`, 285 refusal
+reasons in `geom/` and 90 `EvalResult.Invalid` texts, about 70 lines of DOM chrome — and most are built from
+English fragments: `kind.word`, `hand.word`, *"the ${end.word} of ${name}"*, an *a/an* chosen in code. Fragments
+do not translate: German changes gender, case and word order. So every sentence becomes **one message with
+typed placeholders**, the enumerations move *inside* it as ICU `select` branches, and the engine stops
+producing prose: `EvalResult.Invalid` and the status note carry a `Msg(key, args)`; the UI renders it in the
+active locale. The engine stays platform-free and locale-free (CLAUDE.md's rule for `commonMain`). Tests render
+with the English bundle, so today's substring assertions keep working, and new ones may assert keys and
+arguments instead of prose.
+
+**Formatting is done by the reference engines, not by us.** There is no ICU MessageFormat for Kotlin common
+code, and both targets have the real thing: `expect fun format(locale, pattern, args): String`, with **ICU4J**'s
+`MessageFormat` as the JVM actual (tests and build; its 13 MB never reach the browser) and FormatJS's
+**`intl-messageformat`** (~30 KB, ICU-syntax compatible, an npm dependency) as the JS actual. Plurals for Polish
+or Arabic then arrive with the language. The alternative on record: Flutter's own route — let ICU4J's
+`MessagePattern` parse each message at build time and generate plain `when` branches over plural categories,
+with the browser's `Intl.PluralRules` as the JS actual — no library in the bundle, more generator; kept as the
+option if bundle size ever matters.
+
+**The English ARB is the source of truth and compiles to Kotlin.** A small Gradle task reads `app_en.arb` and
+the plugin's generated targets and emits typed accessors, one function per key with the `@key` placeholders as
+parameters, each holding the pattern per locale and calling `format`. Compile-time checking that every call
+site passes the right arguments; no runtime JSON parsing; tree-shaken. Missing keys in a target fall back to
+English.
+
+**The file stays locale-neutral.** Step ids (`filletedge`), element names (`e14`), parameter names, numbers
+with a decimal point are *format*, never UI (OP-18). Only the panel's display words and the status line are
+translated. German decimal commas belong to the UI's number formatting, which is separated from the writer's.
+
+**Terminology needs a glossary and a human pass.** DeepL does not know that *band*, *upright*, *rasped edge*
+are terms of art here. A DeepL glossary (fillet, chamfer, extrude, sketch space, datum, …) and a review of the
+German bundle are part of the first delivery; whether the plugin exposes DeepL glossaries is to be checked and,
+if not, added to it. Locale is chosen from the browser's language, switchable in the chrome, persisted.
+
+**Slices, each whole.** (1) Infrastructure — the ARB, the generator, the two `format` actuals, the locale
+switch — applied to the chrome: tool rows, panels, help. (2) The status notes and refusal reasons, area by area,
+as messages-as-values. (3) Number and unit formatting in the UI. (4) The glossary and the review loop, with
+German as the first target and the mechanism proven on a third language.
 
 ## Open work queue (crash-safe snapshot; ordered)
 
@@ -19154,6 +19286,26 @@ patch, one sign convention and one growth direction, argued rather than flipped 
 otherwise the ball's own and the figure is the same `(2 − 7π/12) r³` read the other way. A shelled box's inner
 corner is the acceptance.
 
+**Queued in session 81 — the folds the flap check found in bodies that are not blends (GitHub #33's own
+by-product).** *A flap is a fault* is now in the vocabulary (`MeshCanon.flap`) and asked of every solid in every
+test, and asking it showed that **sixteen bodies the build makes today fold back on themselves** in four
+families, none of them a blend tool's coplanar face: (1) the general engine's re-triangulation around a **drill
+through a pyramid's slanted face**; (2) a **near-tangent fuse** of two chains along a wall (let through by the
+0.003° band, because it has thickness where a flap has none — but it is a knife edge, and it is listed here so
+it is not mistaken for sound); (3) the **far end of a tangent-continuous rim**, where the last band stops
+against the one rim piece that is not rounded and leaves a cluster of micron folds; (4) **self-crossing lofts,
+skins and tubes**, which this kernel builds on purpose today and which are therefore not watertight in the
+strict sense the export doctrine states. Each is pinned where it stands (`assertManifold(...,
+foldsBackOnItself = true)` at twelve call sites asserts the fold is *still there*), so a fix at the cause fails
+the record and forces it out. Until every family is retired the check is test-side only; the production gate
+(*watertight or refused*) takes it the day the last family goes. Order of attack: (3) is the blend's own and
+shares its mechanism with the pivot's micron disc; (1) is a boolean-engine artefact and wants the tool stepped
+off the slanted face the same way a blend's tool is stepped off its walls; (4) is a construction whose
+self-crossing is a *value* — the honest answer is a refusal by name where the tube's radius exceeds the bend's,
+which is the swept-cut's own rule one feature over.
+
+**Queued in session 81 — languages (OP-29), four slices, behind the issue tracker.** English and German first, the mechanism for any number: ARB files translated incrementally by the user's `auto-translate` Gradle plugin, the English ARB compiled to typed Kotlin accessors, ICU4J and `intl-messageformat` as the two `format` actuals, and the load-bearing refactor — every status note and refusal reason a *message value* rendered at the edge. See *Languages (OP-29)*.
+
 **Parked in session 81 — the two upright shapes the pivot cannot follow, and the two limits that hide them.**
 `Blend3` now refuses by name where the upright a pair pivots about is **not square** to the face they share, or
 is **not one straight run** (a revolve's ring at an inside corner of its cap). Both are guards this build's
@@ -19166,6 +19318,17 @@ one feature over. Retiring (a) or (b) is what makes either refusal reachable —
 supports it, what makes the slanted and the ring upright buildable rather than refused. Neither is a non-goal:
 the ring case in particular is an ordinary surface of revolution whose section frame simply moves along the
 edge, which is the same generalization the pivot already made one dimension down.
+
+**Retired in session 81, from the issue tracker: GitHub #34, *"'connect curves' result cannot be used to define
+an outline"*.** The join of two drawn curves of one space is now a drawing curve — the same cubic, read in the
+plane it already lies in — so it closes an outline, is filleted, broken, dimensioned and swept like anything
+else drawn; a curvature join is three of them. A pick that is a curve in space, or two picks in two spaces,
+give the run in space they always did, and the status line says which pick decided it. See *the join of two
+drawn curves is a drawing curve* under the connect entries (OP-26, step 7). It parks nothing: the one thing it
+does not do is give the drawing an **open poly-curve kind** so that a curvature join could be one element
+rather than three, and that is a vocabulary change no report has asked for — recorded here so it is not looked
+for. The format's version rose to 5 as the marker that lets an older file be told once.
+
 
 #### Custom blend profiles — the general tier of the edge blend (GitHub #30; design entry, session 79 queue 3)
 
